@@ -1,5 +1,5 @@
 {
-  "name": "stim-cli-monorepo",
+  "name": "stim-monorepo",
   "private": true,
   "description": "Workspace root. The published packages live in packages/.",
   "workspaces": [

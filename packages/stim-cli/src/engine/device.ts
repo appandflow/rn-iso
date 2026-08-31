@@ -159,7 +159,7 @@ async function ensureOwnedIosDevice({
       if (resolved.notOwned) {
         note(
           chalk.yellow(
-            `Note: recorded sim is now named "${resolved.notOwned}", not stim-cli-owned by name -- creating a fresh owned sim instead of booting it.`,
+            `Note: recorded sim is now named "${resolved.notOwned}", not Stim-owned by name -- creating a fresh owned sim instead of booting it.`,
           ),
         );
       } else if (resolved.missing) {
@@ -169,7 +169,7 @@ async function ensureOwnedIosDevice({
         const mismatch = deviceTypeMismatch(sim.deviceTypeIdentifier, wantedType, listIosDeviceTypes());
         if (mismatch) {
           throw new Error(
-            `${mismatch}. stim-cli will not silently boot a different model. ` +
+            `${mismatch}. Stim will not silently boot a different model. ` +
               'Run `stim worktree remove` (or `stim gc --delete`) to reap the current sim, then `stim ios` again to create the requested one.',
           );
         }
@@ -197,12 +197,12 @@ async function ensureOwnedIosDevice({
         if (sim.state !== 'Booted') {
           note(
             chalk.yellow(
-              `Note: assigned sim ${sim.name} (${sim.udid}) is shut down and is not owned by stim-cli, so it will not be booted automatically.`,
+              `Note: assigned sim ${sim.name} (${sim.udid}) is shut down and is not owned by Stim, so it will not be booted automatically.`,
             ),
           );
           note(
             chalk.dim(
-              'Boot it yourself, or run `stim gc --delete` to clear the assignment so stim-cli can create an owned sim.',
+              'Boot it yourself, or run `stim gc --delete` to clear the assignment so Stim can create an owned sim.',
             ),
           );
         }
@@ -303,7 +303,7 @@ async function ensureOwnedAndroidDevice({
     const cleanup = teardownAvd(record.avdName, { del: true });
     if (cleanup.status === 'failed' || cleanup.status === 'skipped') {
       throw new Error(
-        `Owned AVD ${record.avdName} has incomplete setup and could not be deleted (${cleanup.reason || cleanup.status}). Fix the cause, then retry; stim-cli kept the device record for cleanup.`,
+        `Owned AVD ${record.avdName} has incomplete setup and could not be deleted (${cleanup.reason || cleanup.status}). Fix the cause, then retry; Stim kept the device record for cleanup.`,
       );
     }
     clearDevice(projectPath, 'android');
@@ -315,7 +315,7 @@ async function ensureOwnedAndroidDevice({
       if (resolved.notOwned) {
         note(
           chalk.yellow(
-            `Note: recorded AVD ${record.avdName} is not stim-cli-owned by name -- creating a fresh owned AVD instead of reusing it.`,
+            `Note: recorded AVD ${record.avdName} is not Stim-owned by name -- creating a fresh owned AVD instead of reusing it.`,
           ),
         );
       } else if (resolved.serial) {
@@ -351,12 +351,12 @@ async function ensureOwnedAndroidDevice({
         if (!running) {
           note(
             chalk.yellow(
-              `Note: assigned AVD ${record.avdName} (emulator-${record.consolePort}) is shut down and is not owned by stim-cli, so it will not be booted automatically.`,
+              `Note: assigned AVD ${record.avdName} (emulator-${record.consolePort}) is shut down and is not owned by Stim, so it will not be booted automatically.`,
             ),
           );
           note(
             chalk.dim(
-              'Boot it yourself, or run `stim gc --delete` to clear the assignment so stim-cli can create an owned AVD.',
+              'Boot it yourself, or run `stim gc --delete` to clear the assignment so Stim can create an owned AVD.',
             ),
           );
         }
@@ -366,7 +366,7 @@ async function ensureOwnedAndroidDevice({
   } else if (record?.serial) {
     note(
       chalk.yellow(
-        `Note: this project is assigned physical device ${record.serial}, and stim-cli no longer supports physical devices.`,
+        `Note: this project is assigned physical device ${record.serial}, and Stim no longer supports physical devices.`,
       ),
     );
     note(chalk.dim('Creating an owned emulator instead. The serial is not touched, connected or not.'));
@@ -392,7 +392,7 @@ async function ensureOwnedAndroidDevice({
       if (current?.avdName === avdName) {
         const state = current.setupIncomplete ? 'has incomplete setup' : 'was registered';
         throw new Error(
-          `AVD ${avdName} ${state} by another concurrent stim-cli run. Retry after that run finishes so the recorded device is resolved safely.`,
+          `AVD ${avdName} ${state} by another concurrent Stim run. Retry after that run finishes so the recorded device is resolved safely.`,
           { cause: e },
         );
       }
@@ -490,7 +490,7 @@ export function liveOwnedDeviceCount({
 }: { sims?: SimRecord[]; adbEmulators?: EmulatorRecord[]; config?: Config | null } = {}): number {
   let count = 0;
   for (const sim of sims) {
-    if (sim?.state === 'Booted' && sim.name?.startsWith('stim-cli-')) count++;
+    if (sim?.state === 'Booted' && sim.name?.startsWith('stim-')) count++;
   }
   const livePorts = new Set(adbEmulators.map((e) => e.consolePort));
   for (const proj of Object.values(config?.projects || {})) {
@@ -548,8 +548,8 @@ export function deviceCapacityRefusal({
   const count = liveOwnedDeviceCount({ sims, adbEmulators, config });
   if (count < max) return null;
   return {
-    code: 'STIM_CLI_AT_CAPACITY',
-    message: `${count} stim-cli device(s) are already booted and concurrency.maxDevices is ${max}, so booting another would exceed the cap.`,
+    code: 'STIM_AT_CAPACITY',
+    message: `${count} Stim device(s) are already booted and concurrency.maxDevices is ${max}, so booting another would exceed the cap.`,
     remedy: 'stop an environment (stim stop) or raise concurrency.maxDevices',
   };
 }
@@ -659,7 +659,7 @@ async function ensureIosBooted({
   if (resolved.notOwned) {
     return {
       failed: true,
-      reason: `Simulator ${udid} is now named "${resolved.notOwned}" and is not stim-cli-owned; refusing to boot it.`,
+      reason: `Simulator ${udid} is now named "${resolved.notOwned}" and is not Stim-owned; refusing to boot it.`,
     };
   }
   const sim = resolved.sim as SimRecord;
@@ -715,7 +715,7 @@ async function ensureAndroidBooted({
     };
   }
   if (resolved.notOwned) {
-    return { failed: true, reason: `AVD ${device.avdName} is not stim-cli-owned by name; refusing to boot it.` };
+    return { failed: true, reason: `AVD ${device.avdName} is not Stim-owned by name; refusing to boot it.` };
   }
   if (resolved.serial) {
     const ready = await waitForBoot(resolved.serial, timeoutMs);

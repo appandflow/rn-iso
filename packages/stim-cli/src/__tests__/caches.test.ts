@@ -26,17 +26,17 @@ function age(path: string, when = LONG_AGO) {
 
 let tmpHome: string;
 beforeEach(() => {
-  tmpHome = mkdtempSync(join(tmpdir(), 'stim-cli-test-home-'));
-  process.env.STIM_CLI_HOME = tmpHome;
+  tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-home-'));
+  process.env.STIM_HOME = tmpHome;
 });
 afterEach(() => {
   resetExecutor();
   rmSync(tmpHome, { recursive: true, force: true });
-  delete process.env.STIM_CLI_HOME;
+  delete process.env.STIM_HOME;
 });
 
 test('discoverCaches includes declared paths and expands a leading ~', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'stim-cli-declared-'));
+  const dir = mkdtempSync(join(tmpdir(), 'stim-declared-'));
   try {
     setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
     const found = discoverCaches({ declared: [dir, '/definitely/not/here'] });
@@ -50,7 +50,7 @@ test('discoverCaches includes declared paths and expands a leading ~', () => {
 });
 
 test('metro file maps are reported as an explicit file list, never as a directory to remove', () => {
-  const stray = join(tmpdir(), `metro-file-map-stim-cli-test-${process.pid}`);
+  const stray = join(tmpdir(), `metro-file-map-stim-test-${process.pid}`);
   writeFileSync(stray, 'x'.repeat(1024));
   try {
     setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
@@ -67,7 +67,7 @@ test('metro file maps are reported as an explicit file list, never as a director
 });
 
 test('discoverCaches reports the Gradle build cache from GRADLE_USER_HOME as report-only', () => {
-  const gradleHome = mkdtempSync(join(tmpdir(), 'stim-cli-gradle-home-'));
+  const gradleHome = mkdtempSync(join(tmpdir(), 'stim-gradle-home-'));
   const previous = process.env.GRADLE_USER_HOME;
   const buildCache = join(gradleHome, 'caches', 'build-cache-1');
   mkdirSync(buildCache, { recursive: true });
@@ -89,7 +89,7 @@ test('discoverCaches reports the Gradle build cache from GRADLE_USER_HOME as rep
 });
 
 test('a registration cannot make the shared Gradle build cache deletable', () => {
-  const gradleHome = mkdtempSync(join(tmpdir(), 'stim-cli-gradle-registered-'));
+  const gradleHome = mkdtempSync(join(tmpdir(), 'stim-gradle-registered-'));
   const previous = process.env.GRADLE_USER_HOME;
   const buildCache = join(gradleHome, 'caches', 'build-cache-1');
   const alias = join(gradleHome, 'build-cache-alias');
@@ -117,7 +117,7 @@ test('a registration cannot make the shared Gradle build cache deletable', () =>
 });
 
 test('a declared ancestor cannot delete its protected Gradle build-cache child', () => {
-  const gradleHome = mkdtempSync(join(tmpdir(), 'stim-cli-gradle-parent-'));
+  const gradleHome = mkdtempSync(join(tmpdir(), 'stim-gradle-parent-'));
   const previous = process.env.GRADLE_USER_HOME;
   const cachesRoot = join(gradleHome, 'caches');
   const buildCache = join(cachesRoot, 'build-cache-1');
@@ -142,7 +142,7 @@ test('a declared ancestor cannot delete its protected Gradle build-cache child',
 });
 
 test('sizeCaches keeps a precounted size and measures the rest', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'stim-cli-size-'));
+  const dir = mkdtempSync(join(tmpdir(), 'stim-size-'));
   try {
     mkdirSync(join(dir, 'sub'));
     writeFileSync(join(dir, 'sub', 'f'), 'y'.repeat(2048));
@@ -162,7 +162,7 @@ test('sizeCaches keeps a precounted size and measures the rest', () => {
 });
 
 test('pruneCache keeps a recently READ entry whose mtime is old', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'stim-cli-prune-'));
+  const dir = mkdtempSync(join(tmpdir(), 'stim-prune-'));
   try {
     const old = join(dir, 'cold');
     const read = join(dir, 'hot');
@@ -182,7 +182,7 @@ test('pruneCache keeps a recently READ entry whose mtime is old', () => {
 });
 
 test('pruneCache refuses to trim an index-backed cache, and says why', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'stim-cli-atomic-'));
+  const dir = mkdtempSync(join(tmpdir(), 'stim-atomic-'));
   try {
     writeFileSync(join(dir, 'v9.1.leaf'), 'x');
     const veryOld = new Date(Date.now() - 365 * 24 * 3600 * 1000);
@@ -198,7 +198,7 @@ test('pruneCache refuses to trim an index-backed cache, and says why', () => {
 });
 
 test('pruneCache trims one build at a time in the real build-cache layout', () => {
-  const root = mkdtempSync(join(tmpdir(), 'stim-cli-bcprune-'));
+  const root = mkdtempSync(join(tmpdir(), 'stim-bcprune-'));
   try {
     const cold = join(root, 'ios', 'aaaa-debug-sim');
     const hot = join(root, 'ios', 'bbbb-debug-sim');
@@ -225,7 +225,7 @@ test('pruneCache trims one build at a time in the real build-cache layout', () =
 });
 
 test('pruneCache trims one transform at a time in a sharded FileStore tree', () => {
-  const root = mkdtempSync(join(tmpdir(), 'stim-cli-fsprune-'));
+  const root = mkdtempSync(join(tmpdir(), 'stim-fsprune-'));
   try {
     mkdirSync(join(root, '0a'), { recursive: true });
     mkdirSync(join(root, '1f'), { recursive: true });
@@ -250,7 +250,7 @@ test('pruneCache trims one transform at a time in a sharded FileStore tree', () 
 });
 
 test('pruneCache leaves a stray file sitting above the entry depth alone', () => {
-  const root = mkdtempSync(join(tmpdir(), 'stim-cli-strayprune-'));
+  const root = mkdtempSync(join(tmpdir(), 'stim-strayprune-'));
   try {
     const stray = join(root, 'README');
     writeFileSync(stray, 'x');
@@ -270,8 +270,8 @@ test('pruneCache leaves a stray file sitting above the entry depth alone', () =>
 });
 
 test('pruneCache trims only the listed files when a cache does not own its directory', () => {
-  const mine = join(tmpdir(), `metro-file-map-stim-cli-prunetest-${process.pid}`);
-  const notMine = join(tmpdir(), `stim-cli-bystander-${process.pid}`);
+  const mine = join(tmpdir(), `metro-file-map-stim-prunetest-${process.pid}`);
+  const notMine = join(tmpdir(), `stim-bystander-${process.pid}`);
   writeFileSync(mine, 'x');
   writeFileSync(notMine, 'y');
   const longAgo = new Date(Date.now() - 90 * 24 * 3600 * 1000);
@@ -291,8 +291,8 @@ test('pruneCache trims only the listed files when a cache does not own its direc
 });
 
 test('declaredCachePaths reads the caches setting of the project it is run in', () => {
-  const projectRoot = realpathSync(mkdtempSync(join(tmpdir(), 'stim-cli-declproj-')));
-  const declared = mkdtempSync(join(tmpdir(), 'stim-cli-declcache-'));
+  const projectRoot = realpathSync(mkdtempSync(join(tmpdir(), 'stim-declproj-')));
+  const declared = mkdtempSync(join(tmpdir(), 'stim-declcache-'));
   try {
     writeFileSync(join(projectRoot, 'package.json'), JSON.stringify({ name: 'demo' }));
     upsertProject(projectRoot, {});
@@ -310,7 +310,7 @@ test('declaredCachePaths reads the caches setting of the project it is run in', 
 });
 
 test('declaredCachePaths is empty outside a project rather than an error', () => {
-  const notAProject = mkdtempSync(join(tmpdir(), 'stim-cli-noproj-'));
+  const notAProject = mkdtempSync(join(tmpdir(), 'stim-noproj-'));
   try {
     setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
     expect(declaredCachePaths(notAProject)).toEqual([]);
@@ -320,8 +320,8 @@ test('declaredCachePaths is empty outside a project rather than an error', () =>
 });
 
 test('discoverCaches says of each cache whether a project registered it', () => {
-  const registeredDir = mkdtempSync(join(tmpdir(), 'stim-cli-src-reg-'));
-  const declaredDir = mkdtempSync(join(tmpdir(), 'stim-cli-src-decl-'));
+  const registeredDir = mkdtempSync(join(tmpdir(), 'stim-src-reg-'));
+  const declaredDir = mkdtempSync(join(tmpdir(), 'stim-src-decl-'));
   try {
     setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
     register({ dir: registeredDir, name: 'Registered one' });
@@ -340,7 +340,7 @@ test('discoverCaches says of each cache whether a project registered it', () => 
 });
 
 test('a declared path that only differs in spelling dedups against the registration', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'stim-cli-dedup-'));
+  const dir = mkdtempSync(join(tmpdir(), 'stim-dedup-'));
   try {
     setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
     register({ dir, name: 'Registered one' });

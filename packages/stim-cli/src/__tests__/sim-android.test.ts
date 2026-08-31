@@ -43,8 +43,8 @@ let savedAndroidHome: string | undefined;
 let savedSdkRoot: string | undefined;
 
 beforeEach(() => {
-  tmpHome = mkdtempSync(join(tmpdir(), 'stim-cli-test-'));
-  process.env.STIM_CLI_HOME = tmpHome;
+  tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
+  process.env.STIM_HOME = tmpHome;
   savedAndroidHome = process.env.ANDROID_HOME;
   savedSdkRoot = process.env.ANDROID_SDK_ROOT;
   process.env.ANDROID_HOME = join(tmpHome, 'no-sdk-here');
@@ -53,7 +53,7 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(tmpHome, { recursive: true, force: true });
-  delete process.env.STIM_CLI_HOME;
+  delete process.env.STIM_HOME;
   if (savedAndroidHome === undefined) delete process.env.ANDROID_HOME;
   else process.env.ANDROID_HOME = savedAndroidHome;
   if (savedSdkRoot === undefined) delete process.env.ANDROID_SDK_ROOT;
@@ -147,9 +147,9 @@ test('headlessEmulatorArgs is headless on displayless linux only', () => {
 test('parseAvdRootIni keeps the content paths and ignores unrelated lines', () => {
   expect(
     parseAvdRootIni(
-      'avd.ini.encoding=UTF-8\npath = /moved/stim-cli-app.avd\npath.rel=avd/stim-cli-app.avd\ntarget=android-36\n',
+      'avd.ini.encoding=UTF-8\npath = /moved/stim-app.avd\npath.rel=avd/stim-app.avd\ntarget=android-36\n',
     ),
-  ).toEqual({ path: '/moved/stim-cli-app.avd', relativePath: 'avd/stim-cli-app.avd' });
+  ).toEqual({ path: '/moved/stim-app.avd', relativePath: 'avd/stim-app.avd' });
 });
 
 function writeAvdRoot(root: string, name: string, contents: string): void {
@@ -167,40 +167,34 @@ test('ownedAvdDirectory uses AVD_HOME, SDK_HOME, then HOME precedence', () => {
     join(tmpHome, 'default.avd'),
   ];
   for (const candidate of candidates) mkdirSync(candidate, { recursive: true });
-  writeAvdRoot(avdHome, 'stim-cli-app', `path=${candidates[0]}\n`);
-  writeAvdRoot(join(sdkHome, 'avd'), 'stim-cli-app', `path=${candidates[1]}\n`);
-  writeAvdRoot(join(home, '.android', 'avd'), 'stim-cli-app', `path=${candidates[2]}\n`);
+  writeAvdRoot(avdHome, 'stim-app', `path=${candidates[0]}\n`);
+  writeAvdRoot(join(sdkHome, 'avd'), 'stim-app', `path=${candidates[1]}\n`);
+  writeAvdRoot(join(home, '.android', 'avd'), 'stim-app', `path=${candidates[2]}\n`);
 
-  expect(
-    ownedAvdDirectory('stim-cli-app', { env: { ANDROID_AVD_HOME: avdHome, ANDROID_SDK_HOME: sdkHome }, home }),
-  ).toBe(realpathSync(candidates[0]));
-  expect(ownedAvdDirectory('stim-cli-app', { env: { ANDROID_SDK_HOME: sdkHome }, home })).toBe(
-    realpathSync(candidates[1]),
+  expect(ownedAvdDirectory('stim-app', { env: { ANDROID_AVD_HOME: avdHome, ANDROID_SDK_HOME: sdkHome }, home })).toBe(
+    realpathSync(candidates[0]),
   );
-  expect(ownedAvdDirectory('stim-cli-app', { env: {}, home })).toBe(realpathSync(candidates[2]));
+  expect(ownedAvdDirectory('stim-app', { env: { ANDROID_SDK_HOME: sdkHome }, home })).toBe(realpathSync(candidates[1]));
+  expect(ownedAvdDirectory('stim-app', { env: {}, home })).toBe(realpathSync(candidates[2]));
 });
 
 test('ownedAvdDirectory resolves moved, relative, and symlinked content directories', () => {
   const sdkHome = join(tmpHome, 'android-sdk-home');
   const root = join(sdkHome, 'avd');
-  const moved = join(tmpHome, 'moved', 'stim-cli-moved.avd');
-  const relative = join(sdkHome, 'elsewhere', 'stim-cli-relative.avd');
-  const target = join(tmpHome, 'target', 'stim-cli-linked.avd');
+  const moved = join(tmpHome, 'moved', 'stim-moved.avd');
+  const relative = join(sdkHome, 'elsewhere', 'stim-relative.avd');
+  const target = join(tmpHome, 'target', 'stim-linked.avd');
   const link = join(tmpHome, 'linked.avd');
   for (const dir of [moved, relative, target]) mkdirSync(dir, { recursive: true });
   symlinkSync(target, link, 'dir');
-  writeAvdRoot(root, 'stim-cli-moved', `path=${moved}\n`);
-  writeAvdRoot(
-    root,
-    'stim-cli-relative',
-    `path=${join(tmpHome, 'missing.avd')}\npath.rel=elsewhere/stim-cli-relative.avd\n`,
-  );
-  writeAvdRoot(root, 'stim-cli-linked', `path=${link}\n`);
+  writeAvdRoot(root, 'stim-moved', `path=${moved}\n`);
+  writeAvdRoot(root, 'stim-relative', `path=${join(tmpHome, 'missing.avd')}\npath.rel=elsewhere/stim-relative.avd\n`);
+  writeAvdRoot(root, 'stim-linked', `path=${link}\n`);
   const options = { env: { ANDROID_SDK_HOME: sdkHome }, home: join(tmpHome, 'home') };
 
-  expect(ownedAvdDirectory('stim-cli-moved', options)).toBe(realpathSync(moved));
-  expect(ownedAvdDirectory('stim-cli-relative', options)).toBe(realpathSync(relative));
-  expect(ownedAvdDirectory('stim-cli-linked', options)).toBe(realpathSync(target));
+  expect(ownedAvdDirectory('stim-moved', options)).toBe(realpathSync(moved));
+  expect(ownedAvdDirectory('stim-relative', options)).toBe(realpathSync(relative));
+  expect(ownedAvdDirectory('stim-linked', options)).toBe(realpathSync(target));
 });
 
 test('ownedAvdDirectory fails closed for invalid names and a malformed selected root', () => {
@@ -208,23 +202,23 @@ test('ownedAvdDirectory fails closed for invalid names and a malformed selected 
   const fallbackRoot = join(tmpHome, 'home', '.android', 'avd');
   const fallback = join(tmpHome, 'fallback.avd');
   mkdirSync(fallback, { recursive: true });
-  writeAvdRoot(avdHome, 'stim-cli-app', 'target=android-36\n');
-  writeAvdRoot(fallbackRoot, 'stim-cli-app', `path=${fallback}\n`);
+  writeAvdRoot(avdHome, 'stim-app', 'target=android-36\n');
+  writeAvdRoot(fallbackRoot, 'stim-app', `path=${fallback}\n`);
   const options = { env: { ANDROID_AVD_HOME: avdHome }, home: join(tmpHome, 'home') };
 
-  expect(ownedAvdDirectory('stim-cli-app', options)).toBe(null);
+  expect(ownedAvdDirectory('stim-app', options)).toBe(null);
   expect(ownedAvdDirectory('Pixel_7', options)).toBe(null);
-  expect(ownedAvdDirectory('stim-cli-../../outside', options)).toBe(null);
+  expect(ownedAvdDirectory('stim-../../outside', options)).toBe(null);
 });
 
 test('ownedAvdDirectory returns null when every emulator root is missing and ignores USER_HOME', () => {
   const userHome = join(tmpHome, 'android-user-home');
   const content = join(tmpHome, 'unsupported-user-home.avd');
   mkdirSync(content, { recursive: true });
-  writeAvdRoot(join(userHome, 'avd'), 'stim-cli-app', `path=${content}\n`);
+  writeAvdRoot(join(userHome, 'avd'), 'stim-app', `path=${content}\n`);
 
   expect(
-    ownedAvdDirectory('stim-cli-app', {
+    ownedAvdDirectory('stim-app', {
       env: {
         ANDROID_AVD_HOME: join(tmpHome, 'missing-avd-home'),
         ANDROID_SDK_HOME: join(tmpHome, 'missing-sdk-home'),
@@ -260,14 +254,14 @@ test('withAvdConfigOverrides replaces duplicates once and preserves protected ge
 });
 
 test('configureNewOwnedAvd atomically writes and verifies managed and user settings', () => {
-  const content = join(tmpHome, 'stim-cli-app.avd');
+  const content = join(tmpHome, 'stim-app.avd');
   mkdirSync(content, { recursive: true });
   const config = join(content, 'config.ini');
   writeFileSync(config, 'hw.cpu.ncore=4\ndisk.dataPartition.size=10G\n');
 
   expect(
     configureNewOwnedAvd(
-      'stim-cli-app',
+      'stim-app',
       { dataPartitionSizeGb: 6, avdConfig: { 'hw.keyboard': 'yes', 'hw.ramSize': '3072' } },
       { avdDirectory: () => content },
     ),
@@ -275,18 +269,18 @@ test('configureNewOwnedAvd atomically writes and verifies managed and user setti
   expect(readFileSync(config, 'utf8')).toBe(
     'hw.cpu.ncore=4\ndisk.dataPartition.size=6442450944\nhw.keyboard=yes\nhw.ramSize=3072\n',
   );
-  expect(readdirSync(content).filter((name) => name.includes('.stim-cli-'))).toEqual([]);
+  expect(readdirSync(content).filter((name) => name.includes('.stim-'))).toEqual([]);
 });
 
 test('configureNewOwnedAvd removes its temporary file when replacement fails', () => {
-  const content = join(tmpHome, 'stim-cli-app.avd');
+  const content = join(tmpHome, 'stim-app.avd');
   mkdirSync(content, { recursive: true });
   const config = join(content, 'config.ini');
   writeFileSync(config, 'disk.dataPartition.size=10G\n');
 
   expect(() =>
     configureNewOwnedAvd(
-      'stim-cli-app',
+      'stim-app',
       { dataPartitionSizeGb: 6 },
       {
         avdDirectory: () => content,
@@ -297,7 +291,7 @@ test('configureNewOwnedAvd removes its temporary file when replacement fails', (
     ),
   ).toThrow(/rename failed/);
   expect(readFileSync(config, 'utf8')).toBe('disk.dataPartition.size=10G\n');
-  expect(readdirSync(content).filter((name) => name.includes('.stim-cli-'))).toEqual([]);
+  expect(readdirSync(content).filter((name) => name.includes('.stim-'))).toEqual([]);
 });
 
 test('pickDefaultSystemImage prefers highest api, then google_apis, arm64 only', () => {
@@ -359,7 +353,7 @@ test('pickDefaultSystemImage honors an explicit package and returns null on no m
   expect(pickDefaultSystemImage(images, { systemImage: 'system-images;android-99;x;y' })).toBe(null);
 });
 
-test('deleteAvd refuses to delete an AVD not owned by stim-cli', () => {
+test('deleteAvd refuses to delete an AVD not owned by Stim', () => {
   setExecutor({
     run: () => {
       throw new Error('should not be called');
@@ -369,10 +363,10 @@ test('deleteAvd refuses to delete an AVD not owned by stim-cli', () => {
     },
     spawn: () => null,
   });
-  expect(() => deleteAvd('Pixel_6_API_34')).toThrow(/stim-cli/);
+  expect(() => deleteAvd('Pixel_6_API_34')).toThrow(/Stim/);
 });
 
-test('deleteAvd deletes an stim-cli-owned AVD', () => {
+test('deleteAvd deletes a Stim-owned AVD', () => {
   let ran = null;
   setExecutor({
     run: (cmd) => {
@@ -382,8 +376,8 @@ test('deleteAvd deletes an stim-cli-owned AVD', () => {
     runQuiet: () => null,
     spawn: () => null,
   });
-  deleteAvd('stim-cli-my-project');
-  expect(ran).toMatch(/delete avd -n "stim-cli-my-project"/);
+  deleteAvd('stim-my-project');
+  expect(ran).toMatch(/delete avd -n "stim-my-project"/);
 });
 
 test('deleteAvd propagates an avdmanager failure instead of swallowing it', () => {
@@ -394,7 +388,7 @@ test('deleteAvd propagates an avdmanager failure instead of swallowing it', () =
     runQuiet: () => null,
     spawn: () => null,
   });
-  expect(() => deleteAvd('stim-cli-my-project')).toThrow(/could not delete/);
+  expect(() => deleteAvd('stim-my-project')).toThrow(/could not delete/);
 });
 
 test('resolveOwnedAvdSerial reports missing when the AVD does not exist at all', () => {
@@ -403,10 +397,10 @@ test('resolveOwnedAvdSerial reports missing when the AVD does not exist at all',
     runQuiet: () => null,
     spawn: () => null,
   });
-  expect(resolveOwnedAvdSerial('stim-cli-gone')).toEqual({ missing: true });
+  expect(resolveOwnedAvdSerial('stim-gone')).toEqual({ missing: true });
 });
 
-test('resolveOwnedAvdSerial reports notOwned for a non-stim-cli AVD name', () => {
+test('resolveOwnedAvdSerial reports notOwned for a non-Stim AVD name', () => {
   setExecutor({
     run: (cmd) => (cmd === 'emulator -list-avds' ? 'Pixel_6_API_34\n' : ''),
     runQuiet: () => null,
@@ -418,23 +412,23 @@ test('resolveOwnedAvdSerial reports notOwned for a non-stim-cli AVD name', () =>
 test('resolveOwnedAvdSerial resolves the live serial by AVD identity, not by port', () => {
   setExecutor({
     run: (cmd) => {
-      if (cmd === 'emulator -list-avds') return 'stim-cli-mine\n';
+      if (cmd === 'emulator -list-avds') return 'stim-mine\n';
       if (cmd === 'adb devices') return 'List of devices attached\nemulator-5554\tdevice\n';
       return '';
     },
     runQuiet: (cmd) => {
-      if (/adb -s emulator-5554 emu avd name/.test(cmd)) return 'stim-cli-mine\nOK';
+      if (/adb -s emulator-5554 emu avd name/.test(cmd)) return 'stim-mine\nOK';
       return null;
     },
     spawn: () => null,
   });
-  expect(resolveOwnedAvdSerial('stim-cli-mine')).toEqual({ serial: 'emulator-5554' });
+  expect(resolveOwnedAvdSerial('stim-mine')).toEqual({ serial: 'emulator-5554' });
 });
 
 test('resolveOwnedAvdSerial reports notRunning when the recorded port is held by a foreign emulator', () => {
   setExecutor({
     run: (cmd) => {
-      if (cmd === 'emulator -list-avds') return 'stim-cli-mine\n';
+      if (cmd === 'emulator -list-avds') return 'stim-mine\n';
       if (cmd === 'adb devices') return 'List of devices attached\nemulator-5554\tdevice\n';
       return '';
     },
@@ -444,7 +438,7 @@ test('resolveOwnedAvdSerial reports notRunning when the recorded port is held by
     },
     spawn: () => null,
   });
-  expect(resolveOwnedAvdSerial('stim-cli-mine')).toEqual({ notRunning: true });
+  expect(resolveOwnedAvdSerial('stim-mine')).toEqual({ notRunning: true });
 });
 
 test('waitForBoot keeps polling while adb still fails', async () => {
@@ -528,7 +522,7 @@ test('bootAndroidEmulator spawns the resolved emulator binary', () => {
     },
   });
   try {
-    bootAndroidEmulator('stim-cli-app', 5556);
+    bootAndroidEmulator('stim-app', 5556);
   } finally {
     if (savedDisplay === undefined) delete process.env.DISPLAY;
     else process.env.DISPLAY = savedDisplay;
@@ -536,7 +530,7 @@ test('bootAndroidEmulator spawns the resolved emulator binary', () => {
   expect(spawned).toEqual([
     [
       join(sdk, 'emulator', 'emulator'),
-      ['-avd', 'stim-cli-app', '-port', '5556', '-no-snapshot-save', '-no-snapshot-load'],
+      ['-avd', 'stim-app', '-port', '5556', '-no-snapshot-save', '-no-snapshot-load'],
     ],
   ]);
 });
@@ -656,7 +650,7 @@ test('bootAndroidEmulator writes stdout and stderr to the log file it is given',
       return { pid: 4242, unref: () => {} };
     },
   });
-  const pid = bootAndroidEmulator('stim-cli-app', 5556, { logFile });
+  const pid = bootAndroidEmulator('stim-app', 5556, { logFile });
   expect(pid).toBe(4242);
   expect(existsSync(logFile)).toBe(true);
   const opts = spawned[0];
@@ -680,7 +674,7 @@ test('bootAndroidEmulator keeps stdio ignored when no log file is given', () => 
       return { unref: () => {} };
     },
   });
-  expect(bootAndroidEmulator('stim-cli-app', 5556)).toBe(null);
+  expect(bootAndroidEmulator('stim-app', 5556)).toBe(null);
   expect(spawned[0]?.stdio).toBe('ignore');
 });
 
@@ -696,7 +690,7 @@ test('bootAndroidEmulator still boots when the log file cannot be opened', () =>
   });
   const blocker = join(tmpHome, 'blocker');
   writeFileSync(blocker, '');
-  bootAndroidEmulator('stim-cli-app', 5556, { logFile: join(blocker, 'emulator.log') });
+  bootAndroidEmulator('stim-app', 5556, { logFile: join(blocker, 'emulator.log') });
   expect(spawned.length).toBe(1);
   expect(spawned[0]?.stdio).toBe('ignore');
 });
@@ -764,12 +758,12 @@ test('extractEmulatorFailure keeps the emulator order: cause first, notes after'
   const log = [
     'INFO         | Android emulator version 36.4.9.0 (build_id 14788078) (CL:N/A)',
     'INFO         | Graphics backend: gfxstream',
-    'ERROR        | Unknown AVD name [stim-cli-does-not-exist-64], use -list-avds to see valid list.',
-    'ERROR        | HOME is defined but there is no file stim-cli-does-not-exist-64.ini in $HOME/.android/avd',
+    'ERROR        | Unknown AVD name [stim-does-not-exist-64], use -list-avds to see valid list.',
+    'ERROR        | HOME is defined but there is no file stim-does-not-exist-64.ini in $HOME/.android/avd',
     'ERROR        | (Note: Directories are searched in the order $ANDROID_AVD_HOME, $ANDROID_SDK_HOME/avd and $HOME/.android/avd)',
   ].join('\n');
   const found = extractEmulatorFailure(log);
-  expect(found[0]).toMatch(/Unknown AVD name \[stim-cli-does-not-exist-64\]/);
+  expect(found[0]).toMatch(/Unknown AVD name \[stim-does-not-exist-64\]/);
   expect(found.length).toBe(3);
 });
 

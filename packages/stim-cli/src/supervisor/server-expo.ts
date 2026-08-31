@@ -173,7 +173,7 @@ interface ExpoExitInfo {
 
 export function expoProxyEnv(env: NodeJS.ProcessEnv): Record<string, string> {
   if (env.EXPO_PACKAGER_PROXY_URL) return {};
-  const publicUrl = env.STIM_CLI_METRO_PUBLIC_URL?.trim();
+  const publicUrl = env.STIM_METRO_PUBLIC_URL?.trim();
   // Expo otherwise combines a tunnel host with the local Metro port in its manifest.
   return publicUrl ? { EXPO_PACKAGER_PROXY_URL: publicUrl.replace(/\/+$/, '') } : {};
 }
@@ -207,7 +207,7 @@ function resolveMetroStoreInjection(
       src: 'metro',
       level: 'debug',
       event: 'cache_store_skipped',
-      msg: 'the shared Metro transform store is off (caches.injectMetroStore is false in ~/.stim-cli/config.json)',
+      msg: 'the shared Metro transform store is off (caches.injectMetroStore is false in ~/.stim/config.json)',
     });
     return null;
   }
@@ -219,7 +219,7 @@ function resolveMetroStoreInjection(
       event: 'cache_store_skipped',
       msg:
         sdkMajor === null
-          ? "could not determine this project's Expo SDK, so stim-cli left its Metro cache unchanged"
+          ? "could not determine this project's Expo SDK, so Stim left its Metro cache unchanged"
           : `Expo SDK ${sdkMajor} predates the config override added in SDK 54, so it runs with its normal Metro cache`,
     });
     return null;
@@ -230,7 +230,7 @@ function resolveMetroStoreInjection(
       src: 'metro',
       level: 'warn',
       event: 'cache_store_skipped',
-      msg: "stim-cli's Expo Metro config adapter is missing from this install, so the dev server runs on whatever transform cache the project configured",
+      msg: "Stim's Expo Metro config adapter is missing from this install, so the dev server runs on whatever transform cache the project configured",
     });
     return null;
   }
@@ -275,7 +275,7 @@ export async function startExpoServer({
   const bin = expoBinPath(root);
   if (!bin) {
     const refusal = expoBinRefusal(root);
-    throw supervisorError('STIM_CLI_EXPO_BIN', refusal.message, refusal.remedy);
+    throw supervisorError('STIM_EXPO_BIN', refusal.message, refusal.remedy);
   }
 
   const log = writer || createNdjsonWriter(join(logsDir, 'metro.ndjson'));

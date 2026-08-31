@@ -201,7 +201,7 @@ Run: `git commit -am "fix(remote): preserve Android session ownership"`
 
 **Step 1: Write failing ownership tests**
 
-Cover an owned live session, an unowned live session, a stopped session, malformed output, and a failed lookup. Assert that only the verified `stim-cli-` session receives `simulator:stop`.
+Cover an owned live session, an unowned live session, a stopped session, malformed output, and a failed lookup. Assert that only the verified `stim-` session receives `simulator:stop`.
 
 Run: `pnpm vitest run packages/stim-cli/src/__tests__/eas-simulator.test.ts packages/stim-cli/src/__tests__/device-remote.test.ts packages/stim-cli/src/__tests__/stop.test.ts packages/stim-cli/src/__tests__/reclaim.test.ts`
 
@@ -209,7 +209,7 @@ Expected: the unowned and failed-lookup cases currently call stop or report succ
 
 **Step 2: Add fail-closed live verification**
 
-Read the session with `simulator:get --id`. Require an `stim-cli-` name before stop. Treat a confirmed terminal session as already stopped. Keep the state record after every unverifiable result.
+Read the session with `simulator:get --id`. Require an `stim-` name before stop. Treat a confirmed terminal session as already stopped. Keep the state record after every unverifiable result.
 
 **Step 3: Run focused tests and commit**
 
@@ -304,11 +304,11 @@ Expected: every command exits 0. Existing lint warnings are allowed only when th
 
 **Step 2: Run local Expo field proof**
 
-Start the scratch Expo app with plain `stim-cli start --json`. Verify no tunnel is requested or recorded. Stop it.
+Start the scratch Expo app with plain `stim start --json`. Verify no tunnel is requested or recorded. Stop it.
 
 **Step 3: Run remote iOS field proof**
 
-Confirm EAS Simulator access. Run `stim-cli start --remote --json`, then `stim-cli ios --remote eas --json`. Verify one session, a bundle request through the public origin, and an empty `logs --errors` result. Stop the workspace and confirm no live `stim-cli-` session remains.
+Confirm EAS Simulator access. Run `stim start --remote --json`, then `stim ios --remote eas --json`. Verify one session, a bundle request through the public origin, and an empty `logs --errors` result. Stop the workspace and confirm no live `stim-` session remains.
 
 **Step 4: Request full-diff review**
 

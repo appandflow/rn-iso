@@ -8,7 +8,7 @@ let project: string;
 let adapter: string;
 
 beforeEach(() => {
-  project = mkdtempSync(join(tmpdir(), 'stim-cli-expo-config-'));
+  project = mkdtempSync(join(tmpdir(), 'stim-expo-config-'));
   writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'adapter-test' }));
 
   const expo = join(project, 'node_modules', 'expo');
@@ -44,15 +44,15 @@ function run(extraEnv: Record<string, string> = {}) {
     env: {
       ...process.env,
       ADAPTER: adapter,
-      STIM_CLI_PROJECT_ROOT: project,
-      STIM_CLI_METRO_STORE: '/cache/adapter-test',
+      STIM_PROJECT_ROOT: project,
+      STIM_METRO_STORE: '/cache/adapter-test',
       ...extraEnv,
     },
   });
 }
 
 describe('the Expo Metro config adapter', () => {
-  test('ships with stim-cli and is discoverable from source builds', () => {
+  test('ships with Stim and is discoverable from source builds', () => {
     expect(adapter.endsWith(join('shim', 'expo-metro-config.cjs'))).toBe(true);
     expect(expoMetroConfigPath('file:///nowhere/at/all/x.js')).toBe(null);
   });
@@ -63,10 +63,10 @@ describe('the Expo Metro config adapter', () => {
     expect(JSON.parse(result.stdout)).toEqual({
       roots: ['/expo/default/store', '/cache/adapter-test'],
     });
-    expect(result.stderr.trim()).toBe('stim-cli-metro-store: sharing Metro transforms through /cache/adapter-test');
+    expect(result.stderr.trim()).toBe('stim-metro-store: sharing Metro transforms through /cache/adapter-test');
   });
 
-  test("keeps the project's config and cache stores, then appends stim-cli's", () => {
+  test("keeps the project's config and cache stores, then appends Stim's", () => {
     writeFileSync(
       join(project, 'metro.config.cjs'),
       `module.exports = {
@@ -85,7 +85,7 @@ describe('the Expo Metro config adapter', () => {
   test('composes a caller-provided Expo override', () => {
     const custom = join(project, 'custom-metro.cjs');
     writeFileSync(custom, `module.exports = { cacheStores: [{ _root: '/custom/store' }] };\n`);
-    const result = run({ STIM_CLI_EXPO_METRO_CONFIG: custom });
+    const result = run({ STIM_EXPO_METRO_CONFIG: custom });
     expect(result.status).toBe(0);
     expect(JSON.parse(result.stdout).roots).toEqual(['/custom/store', '/cache/adapter-test']);
   });
@@ -123,20 +123,18 @@ describe('the Expo Metro config adapter', () => {
       env: {
         ...process.env,
         ADAPTER: adapter,
-        STIM_CLI_PROJECT_ROOT: project,
-        STIM_CLI_METRO_STORE: '/cache/adapter-test',
+        STIM_PROJECT_ROOT: project,
+        STIM_METRO_STORE: '/cache/adapter-test',
       },
     });
     expect(result.status).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual(['/project/store']);
-    expect(result.stderr).toContain('warning: stim-cli could not share');
-    expect(result.stderr).not.toContain('stim-cli-metro-store:');
+    expect(result.stderr).toContain('warning: Stim could not share');
+    expect(result.stderr).not.toContain('stim-metro-store:');
   });
 
   test('the supervisor parser recognizes the adapter confirmation line', () => {
-    expect(metroStoreConfirmedRoot('stim-cli-metro-store: sharing Metro transforms through /cache/app')).toBe(
-      '/cache/app',
-    );
-    expect(metroStoreConfirmedRoot('stim-cli-metro-store: sharing Metro transforms through ')).toBe(null);
+    expect(metroStoreConfirmedRoot('stim-metro-store: sharing Metro transforms through /cache/app')).toBe('/cache/app');
+    expect(metroStoreConfirmedRoot('stim-metro-store: sharing Metro transforms through ')).toBe(null);
   });
 });

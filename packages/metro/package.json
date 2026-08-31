@@ -1,7 +1,7 @@
 {
   "name": "@stim-cli/metro",
   "version": "1.0.0-rc.4",
-  "description": "Metro integration for stim-cli: one transform cache shared by every worktree, plus an NDJSON reporter for structured logs.",
+  "description": "Metro integration for Stim: shared transforms across worktrees and structured logs.",
   "license": "MIT",
   "repository": {
     "type": "git",

@@ -9,7 +9,7 @@ import { androidHome } from '../sim/android.ts';
 import { capDiagnostics, type Diagnostic, extractGradleDiagnostics } from './errors-gradle.ts';
 import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat } from './xcode.ts';
 
-export const BUILD_ERROR = 'STIM_CLI_BUILD_FAILED';
+export const BUILD_ERROR = 'STIM_BUILD_FAILED';
 
 type SpawnFn = (cmd: string, args: string[], opts: Record<string, unknown>) => ChildProcess;
 
@@ -396,7 +396,7 @@ export async function buildAndroid(
       failed: true,
       code: BUILD_ERROR,
       reason: `\`./gradlew ${task}\` left ${located.candidates.length} debug APKs under ${apkOutputsDir(root)}, and nothing says which flavor to install.`,
-      remedy: `Set the android.variant setting to the variant to install -- e.g. {"android": {"variant": "${variantNameOf(relative(apkOutputsDir(root), located.candidates[0]!).split('/').slice(0, -1))}"}} in .stim-cli.json.`,
+      remedy: `Set the android.variant setting to the variant to install -- e.g. {"android": {"variant": "${variantNameOf(relative(apkOutputsDir(root), located.candidates[0]!).split('/').slice(0, -1))}"}} in .stim.json.`,
       diagnostics: [],
       truncated: 0,
       lastLines: located.candidates.map((c) => relative(androidDir(root), c)),

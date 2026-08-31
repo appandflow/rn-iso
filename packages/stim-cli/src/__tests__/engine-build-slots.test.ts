@@ -15,13 +15,13 @@ import {
 let tmpHome: string;
 
 beforeEach(() => {
-  tmpHome = mkdtempSync(join(tmpdir(), 'stim-cli-slots-'));
-  process.env.STIM_CLI_HOME = tmpHome;
+  tmpHome = mkdtempSync(join(tmpdir(), 'stim-slots-'));
+  process.env.STIM_HOME = tmpHome;
 });
 
 afterEach(() => {
   rmSync(tmpHome, { recursive: true, force: true });
-  delete process.env.STIM_CLI_HOME;
+  delete process.env.STIM_HOME;
 });
 
 const alwaysAlive = () => true;
@@ -121,7 +121,7 @@ describe('live: 2 slots, 3 processes', () => {
     const dir = tmpHome;
     const spawn = (id: string) =>
       new Promise<void>((resolve, reject) => {
-        execFile(process.execPath, [script, id, dir], { env: { ...process.env, STIM_CLI_HOME: tmpHome } }, (err) =>
+        execFile(process.execPath, [script, id, dir], { env: { ...process.env, STIM_HOME: tmpHome } }, (err) =>
           err ? reject(err) : resolve(),
         );
       });

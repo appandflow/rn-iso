@@ -6,18 +6,18 @@
 To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.13/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
 Daemon will be stopped at the end of the build
 > Task :app:compileJava FAILED
-/private/tmp/stim-cli-gradle-live/android/app/src/main/java/com/app/Broken.java:5: error: cannot find symbol
+/private/tmp/stim-gradle-live/android/app/src/main/java/com/app/Broken.java:5: error: cannot find symbol
         return Missing.value();
                ^
   symbol:   variable Missing
   location: class Broken
 1 error
-[Incubating] Problems report is available at: file:///private/tmp/stim-cli-gradle-live/android/build/reports/problems/problems-report.html
+[Incubating] Problems report is available at: file:///private/tmp/stim-gradle-live/android/build/reports/problems/problems-report.html
 FAILURE: Build failed with an exception.
 * What went wrong:
 Execution failed for task ':app:compileJava'.
 > Compilation failed; see the compiler output below.
-  /private/tmp/stim-cli-gradle-live/android/app/src/main/java/com/app/Broken.java:5: error: cannot find symbol
+  /private/tmp/stim-gradle-live/android/app/src/main/java/com/app/Broken.java:5: error: cannot find symbol
           return Missing.value();
                  ^
     symbol:   variable Missing

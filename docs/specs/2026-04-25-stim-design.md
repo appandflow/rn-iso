@@ -1,4 +1,4 @@
-# stim-cli — design
+# Stim — design
 
 Date: 2026-04-25
 Status: draft
@@ -23,17 +23,17 @@ Secondary motivator: a human jumping between several projects locally, without c
 
 ### Scenario A — multi-agent, multiple worktrees
 
-Janic spawns three Claude Code sessions in three worktrees of the same app. Each runs `stim-cli ios` once. Each gets:
+Janic spawns three Claude Code sessions in three worktrees of the same app. Each runs `stim ios` once. Each gets:
 
 - A unique Metro port (8082, 8083, 8084).
 - A dedicated booted iOS simulator (different UDIDs).
 - An installed copy of the app pointing to that worktree's port.
 
-Each agent calls `stim-cli device` to learn its UDID and uses it for `agent-device` calls. No locking required; no agent disturbs another.
+Each agent calls `stim device` to learn its UDID and uses it for `agent-device` calls. No locking required; no agent disturbs another.
 
 ### Scenario B — solo multi-project switching
 
-Janic works on app A in the morning and app B in the afternoon. Each project's first `stim-cli ios` invocation assigned it a sim. Going back to app A's directory and running `stim-cli ios` boots its sim if shut down and reuses everything else.
+Janic works on app A in the morning and app B in the afternoon. Each project's first `stim ios` invocation assigned it a sim. Going back to app A's directory and running `stim ios` boots its sim if shut down and reuses everything else.
 
 ### Scenario C — agent working alongside human
 
@@ -43,7 +43,7 @@ Agent owns sim X on port 8083. Human runs the same app from a different worktree
 
 ### Global config
 
-Stored at `~/.stim-cli/config.json`. Keyed by absolute project path (resolved via `realpath` to handle symlinks consistently).
+Stored at `~/.stim/config.json`. Keyed by absolute project path (resolved via `realpath` to handle symlinks consistently).
 
 ```json
 {
@@ -76,13 +76,13 @@ Notes:
 
 - Single Metro per project, shared across iOS and Android (same as `react-native run-*` defaults).
 - `metroPort` and `metroPid` live at the project level — one Metro serves both platforms.
-- `metroPid` is recorded when Metro is started detached, used by `stim-cli stop` and `stim-cli logs`.
+- `metroPid` is recorded when Metro is started detached, used by `stim stop` and `stim logs`.
 - The project path is the key — git worktrees produce different absolute paths, so they're naturally separate entries.
 - Schema is versioned to allow forward migrations.
 
 ### Project detection
 
-`stim-cli` resolves the "current project" by walking up from CWD until it finds a directory containing `package.json`. That directory is the canonical project root used as the config key.
+`Stim` resolves the "current project" by walking up from CWD until it finds a directory containing `package.json`. That directory is the canonical project root used as the config key.
 
 Inside that root, detection determines:
 
@@ -101,7 +101,7 @@ Both platforms in the same project share one Metro port.
 
 ### Device assignment
 
-Sticky and explicit. First `stim-cli ios` for a project picks a sim and writes it to config. Subsequent invocations reuse it.
+Sticky and explicit. First `stim ios` for a project picks a sim and writes it to config. Subsequent invocations reuse it.
 
 **Selection algorithm (iOS):**
 
@@ -131,7 +131,7 @@ iOS:
 
 - `expo run:ios --device <UDID> --port <PORT>` (Expo) or `react-native run-ios --simulator <name> --port <PORT>` (bare; note: bare RN takes a name, not UDID — translate via `simctl list`).
 - These build, install, and launch.
-- On reruns of `stim-cli ios` against the same project + sim, this is fast because the build is incremental.
+- On reruns of `stim ios` against the same project + sim, this is fast because the build is incremental.
 
 Android:
 
@@ -140,21 +140,21 @@ Android:
 
 ### Metro management
 
-`stim-cli ios` / `stim-cli android` ensure Metro is running on the project's assigned port:
+`stim ios` / `stim android` ensure Metro is running on the project's assigned port:
 
 - If a process is already responding to `/status` on that port, leave it alone.
-- Else spawn detached: `npx expo start --port <PORT>` or `npx react-native start --port <PORT>`. Record PID in config. Pipe stdout/stderr to `~/.stim-cli/logs/<project-hash>-metro.log`.
+- Else spawn detached: `npx expo start --port <PORT>` or `npx react-native start --port <PORT>`. Record PID in config. Pipe stdout/stderr to `~/.stim/logs/<project-hash>-metro.log`.
 
-`stim-cli start` is the standalone form: ensure Metro, do nothing else.
-`stim-cli logs` tails the log file.
-`stim-cli stop` kills Metro by PID.
-`stim-cli status` shows per-project state.
+`stim start` is the standalone form: ensure Metro, do nothing else.
+`stim logs` tails the log file.
+`stim stop` kills Metro by PID.
+`stim status` shows per-project state.
 
 ### Cleanup
 
-- `stim-cli release [--platform <p>]` — clear device assignment for the current project. Does not shut down the sim.
-- `stim-cli shutdown [--platform <p>]` — `simctl shutdown <UDID>` / kill emulator process for the current project. Releases assignment.
-- `stim-cli prune [--shutdown]` — scan config:
+- `stim release [--platform <p>]` — clear device assignment for the current project. Does not shut down the sim.
+- `stim shutdown [--platform <p>]` — `simctl shutdown <UDID>` / kill emulator process for the current project. Releases assignment.
+- `stim prune [--shutdown]` — scan config:
   - Drop projects whose path no longer exists.
   - Drop platform assignments whose UDID/AVD no longer exists.
   - With `--shutdown`: also shut down any sims/emulators referenced only by dropped entries.
@@ -162,16 +162,16 @@ Android:
 ## Command surface
 
 ```
-stim-cli ios       [--device-type <name>] [--detach] [--auto]
-stim-cli android   [--device-type <name>] [--detach] [--auto]
-stim-cli start     [--detach]                                # metro only
-stim-cli device    [--platform ios|android]                  # print UDID/serial; exit 0 if assigned, 1 if not
-stim-cli status                                              # all projects, current project highlighted
-stim-cli release   [--platform ios|android]                  # unbind device(s) for current project
-stim-cli shutdown  [--platform ios|android]                  # release + shut down sim(s)
-stim-cli prune     [--shutdown]                              # GC dead entries machine-wide
-stim-cli logs      [--platform ios|android]                  # tail metro logs
-stim-cli stop                                                # kill metro for current project
+stim ios       [--device-type <name>] [--detach] [--auto]
+stim android   [--device-type <name>] [--detach] [--auto]
+stim start     [--detach]                                # metro only
+stim device    [--platform ios|android]                  # print UDID/serial; exit 0 if assigned, 1 if not
+stim status                                              # all projects, current project highlighted
+stim release   [--platform ios|android]                  # unbind device(s) for current project
+stim shutdown  [--platform ios|android]                  # release + shut down sim(s)
+stim prune     [--shutdown]                              # GC dead entries machine-wide
+stim logs      [--platform ios|android]                  # tail metro logs
+stim stop                                                # kill metro for current project
 ```
 
 The "current project" is always the package.json root walking up from CWD. No flags to override.
@@ -209,16 +209,16 @@ Bare RN's `run-ios` takes a device _name_, not a UDID — we'll resolve UDID →
 
 ## Agent integration
 
-A skill (provisional name `stim-cli`) shipped with the CLI that teaches agents how to use it. Skill content covers:
+A skill (provisional name `Stim`) shipped with the CLI that teaches agents how to use it. Skill content covers:
 
-- Run `stim-cli ios` (or android) from the project root before any device interaction.
-- Use `stim-cli device --platform ios` to get the UDID, pass to `agent-device`'s `--device <UDID>` form (or whatever the platform-specific flag is).
+- Run `stim ios` (or android) from the project root before any device interaction.
+- Use `stim device --platform ios` to get the UDID, pass to `agent-device`'s `--device <UDID>` form (or whatever the platform-specific flag is).
 - Pass `--auto --device-type "iPhone 15 Pro"` (or similar) for non-interactive runs.
 - Always reuse — never call `release` or `shutdown` unless the user asks.
 
-The skill installs the same way as `react-native-worktree`'s skill (`curl ... -o ~/.claude/skills/stim-cli/SKILL.md`).
+The skill installs the same way as `react-native-worktree`'s skill (`curl ... -o ~/.claude/skills/stim/SKILL.md`).
 
-`stim-cli device` is the single point of integration. Output format:
+`stim device` is the single point of integration. Output format:
 
 - Success: `<UDID>` (or `<emulator-serial>`) on stdout, exit 0.
 - Not assigned: empty stdout, error message on stderr, exit 1.
@@ -227,15 +227,15 @@ The skill installs the same way as `react-native-worktree`'s skill (`curl ... -o
 
 ## Failure modes & error handling
 
-| Situation                                                             | Behavior                                                                                                           |
-| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| No `package.json` found walking up from CWD                           | Error: "Not in a React Native project (no package.json)"                                                           |
-| Bundle ID undetectable                                                | Error: "Could not detect bundle ID; provide via `--bundle-id <id>`" (later — v1 requires app.json)                 |
-| Assigned sim no longer exists                                         | Warn, drop assignment, run normal allocation                                                                       |
-| Assigned sim exists but won't boot                                    | Error with the simctl message; don't auto-fall-through                                                             |
-| Metro port collides with non-stim-cli process                         | Detect via probe; if `/status` doesn't return `packager-status:running`, error: "port X busy by non-Metro process" |
-| Two instances of `stim-cli ios` for the same project run concurrently | File-based lock on the project's config entry during mutation. Race-window only during allocation.                 |
-| Expo run hangs / fails                                                | Surface stderr; don't silently retry                                                                               |
+| Situation                                                         | Behavior                                                                                                           |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| No `package.json` found walking up from CWD                       | Error: "Not in a React Native project (no package.json)"                                                           |
+| Bundle ID undetectable                                            | Error: "Could not detect bundle ID; provide via `--bundle-id <id>`" (later — v1 requires app.json)                 |
+| Assigned sim no longer exists                                     | Warn, drop assignment, run normal allocation                                                                       |
+| Assigned sim exists but won't boot                                | Error with the simctl message; don't auto-fall-through                                                             |
+| Metro port collides with non-Stim process                         | Detect via probe; if `/status` doesn't return `packager-status:running`, error: "port X busy by non-Metro process" |
+| Two instances of `stim ios` for the same project run concurrently | File-based lock on the project's config entry during mutation. Race-window only during allocation.                 |
+| Expo run hangs / fails                                            | Surface stderr; don't silently retry                                                                               |
 
 ## Testing strategy
 
@@ -277,17 +277,17 @@ The skill installs the same way as `react-native-worktree`'s skill (`curl ... -o
 
 ## Open questions
 
-1. **Skill name.** `stim-cli` is fine for the CLI. The skill name visible to agents could be the same, or something more discoverable like `react-native-isolated-dev`. I'll default to `stim-cli` and we can rename later.
-2. **Coexistence with `react-native-worktree`.** A user might have both installed. They don't conflict (different config dirs), but the skill descriptions might both trigger and confuse agents. The skill description should be specific enough that agents only invoke `stim-cli` when the user has set it up.
+1. **Skill name.** `Stim` is fine for the CLI. The skill name visible to agents could be the same, or something more discoverable like `react-native-isolated-dev`. I'll default to `Stim` and we can rename later.
+2. **Coexistence with `react-native-worktree`.** A user might have both installed. They don't conflict (different config dirs), but the skill descriptions might both trigger and confuse agents. The skill description should be specific enough that agents only invoke `Stim` when the user has set it up.
 3. **Multi-app projects (one repo, multiple Expo apps via `expo prebuild --variant`).** Out of scope for v1. Treat each project path as a single app.
 4. **Windows / Linux support.** macOS-first. Android-on-Linux is plausible later. iOS is mac-only by definition.
 5. **Should `device --json` include the Metro port?** Yes for v1 — agents may want to verify Metro is up before kicking off a UI test.
-6. **AVD creation in `stim-cli android` first-run.** Defer to user; instruct them to use Android Studio. Revisit if it's a common pain point.
+6. **AVD creation in `stim android` first-run.** Defer to user; instruct them to use Android Studio. Revisit if it's a common pain point.
 
 ## Future / later
 
 - Build-slot semaphore (limit concurrent native builds).
 - Auto-shutdown sim after N hours of inactivity (opt-in).
-- Hot-rebind without rebuild via `RCT_jsLocation` / `debug_http_host` (the `react-native-worktree` trick) — exposed as `stim-cli rebind` for power users.
+- Hot-rebind without rebuild via `RCT_jsLocation` / `debug_http_host` (the `react-native-worktree` trick) — exposed as `stim rebind` for power users.
 - TUI dashboard.
 - Replace `commander` with a smaller arg parser if package size becomes a concern.

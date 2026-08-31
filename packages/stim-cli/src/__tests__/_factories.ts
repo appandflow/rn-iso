@@ -1,7 +1,7 @@
 import type { ChildProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 
-import type { StimCliConfig } from '../types.ts';
+import type { StimConfig } from '../types.ts';
 import type { CacheDescriptor } from '../caches.ts';
 import type { EnvironmentState } from '../status.ts';
 import type { IosSimRecord } from '../sim/ios.ts';
@@ -12,14 +12,14 @@ import type { MetroResolution } from '../metro.ts';
 import type { BuildLockInfo } from '../engine/build-lock.ts';
 import type { BuildSlotInfo } from '../engine/build-slots.ts';
 
-export function makeConfig(overrides: Partial<StimCliConfig> = {}): StimCliConfig {
+export function makeConfig(overrides: Partial<StimConfig> = {}): StimConfig {
   return { version: 2, projects: {}, repos: {}, ...overrides };
 }
 
 export function makeCacheDescriptor(overrides: Partial<CacheDescriptor> = {}): CacheDescriptor {
   return {
     name: 'test cache',
-    dir: '/tmp/stim-cli-test-cache',
+    dir: '/tmp/stim-test-cache',
     prune: 'entries',
     note: 'a test cache',
     ...overrides,
@@ -33,7 +33,7 @@ export function makeEnvironmentState(overrides: Partial<EnvironmentState> = {}):
 export function makeIosSim(overrides: Partial<IosSimRecord> = {}): IosSimRecord {
   return {
     udid: 'BF2A1C3D-4E5F-6071-8293-A4B5C6D7E8F9',
-    name: 'stim-cli-fixture',
+    name: 'stim-fixture',
     state: 'Booted',
     runtime: 'com.apple.CoreSimulator.SimRuntime.iOS-18-0',
     deviceTypeIdentifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-16',
@@ -54,7 +54,7 @@ export function makeBuildLock(overrides: Partial<BuildLockInfo> = {}): BuildLock
     pid: 4242,
     projectRoot: '/w/project',
     startedAt: '2026-01-01T00:00:00.000Z',
-    logFile: '/w/.stim-cli/logs/build.log',
+    logFile: '/w/.stim/logs/build.log',
     alive: true,
     ...overrides,
   };
@@ -68,7 +68,7 @@ export function makeBuildSlot(overrides: Partial<BuildSlotInfo> = {}): BuildSlot
     pid: 4242,
     projectRoot: '/w/project',
     startedAt: '2026-01-01T00:00:00.000Z',
-    logFile: '/w/.stim-cli/logs/build.log',
+    logFile: '/w/.stim/logs/build.log',
     alive: true,
     ...overrides,
   };
@@ -94,7 +94,7 @@ export const makeMetroResolution = {
 export function makeWriter(overrides: Partial<NdjsonWriter> = {}): NdjsonWriter {
   const records: unknown[] = [];
   const state = { written: 0, dropped: 0, lastError: null as Error | null };
-  const file = '/tmp/stim-cli-test.ndjson';
+  const file = '/tmp/stim-test.ndjson';
   const writer: NdjsonWriter = {
     file,
     write(record: unknown): boolean {

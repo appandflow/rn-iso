@@ -37,16 +37,16 @@ function caught(fn: () => unknown): Error & Record<string, unknown> {
 let root: string;
 let tmpHome: string;
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), 'stim-cli-bare-'));
+  root = mkdtempSync(join(tmpdir(), 'stim-bare-'));
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'bare' }));
-  tmpHome = mkdtempSync(join(tmpdir(), 'stim-cli-test-'));
-  process.env.STIM_CLI_HOME = tmpHome;
+  tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
+  process.env.STIM_HOME = tmpHome;
 });
 afterEach(() => {
   rmSync(root, { recursive: true, force: true });
   rmSync(tmpHome, { recursive: true, force: true });
-  delete process.env.STIM_CLI_HOME;
-  delete process.env.STIM_CLI_METRO_CACHE;
+  delete process.env.STIM_HOME;
+  delete process.env.STIM_METRO_CACHE;
 });
 
 function fakeRequire(
@@ -89,7 +89,7 @@ describe("resolving the project's own dev server packages", () => {
     delete modules['@react-native/dev-middleware'];
     delete modules['@react-native-community/cli-server-api'];
     const err = caught(() => resolveBareDeps(root, { requireFrom: fakeRequire(modules) }));
-    expect(err.code).toBe('STIM_CLI_BARE_DEPS');
+    expect(err.code).toBe('STIM_BARE_DEPS');
     expect(err.message).toMatch(/@react-native\/dev-middleware/);
     expect(err.message).toMatch(/@react-native-community\/cli-server-api/);
     expect(!err.message.includes(' metro,')).toBeTruthy();
@@ -104,7 +104,7 @@ describe("resolving the project's own dev server packages", () => {
         requireFrom: fakeRequire(OK_MODULES(), { throwOnLoad: { metro: 'Unexpected token' } }),
       }),
     );
-    expect(err.code).toBe('STIM_CLI_BARE_LOAD');
+    expect(err.code).toBe('STIM_BARE_LOAD');
     expect(err.message).toMatch(/metro is installed/);
     expect(err.message).toMatch(/Unexpected token/);
   });
@@ -113,7 +113,7 @@ describe("resolving the project's own dev server packages", () => {
     const modules = OK_MODULES();
     delete modules['metro'].runServer;
     const err = caught(() => resolveBareDeps(root, { requireFrom: fakeRequire(modules) }));
-    expect(err.code).toBe('STIM_CLI_BARE_API');
+    expect(err.code).toBe('STIM_BARE_API');
     expect(err.message).toMatch(/metro does not export runServer\(\)/);
     expect(!/undefined is not a function/.test(err.message)).toBeTruthy();
   });
@@ -216,7 +216,7 @@ describe('loadNdjsonReporter', () => {
     const factory = loadNdjsonReporter(root);
     expect(typeof factory).toBe('function');
     assert(factory);
-    const reporter = factory({ dir: join(root, '.stim-cli', 'logs') });
+    const reporter = factory({ dir: join(root, '.stim', 'logs') });
     expect(typeof reporter.update).toBe('function');
   });
 
@@ -310,7 +310,7 @@ describe('startBareServer wiring', () => {
     await startBareServer({
       root,
       port: 8099,
-      logsDir: join(root, '.stim-cli', 'logs'),
+      logsDir: join(root, '.stim', 'logs'),
       deps,
       reporterFactory: (opts) => {
         calls.reporterDir = opts.dir;
@@ -319,7 +319,7 @@ describe('startBareServer wiring', () => {
     });
     expect(calls.loadConfig).toEqual({ cwd: root, port: 8099 });
     expect(calls.runServer.config.reporter).toBe(reporter);
-    expect(calls.reporterDir).toBe(join(root, '.stim-cli', 'logs'));
+    expect(calls.reporterDir).toBe(join(root, '.stim', 'logs'));
     expect(calls.runServer.config.resolver.platforms).toEqual(['android', 'ios', 'native']);
   });
 
@@ -450,7 +450,7 @@ describe('the shared Metro cache store', () => {
     expect(hasStoreAt(undefined, '/cache/app')).toBe(false);
   });
 
-  test('a store with no public root is still recognized, by the tag stim-cli puts on it', () => {
+  test('a store with no public root is still recognized, by the tag Stim puts on it', () => {
     class PrivateRootStore {
       #root: string;
       constructor(options: { root: string }) {
@@ -490,7 +490,7 @@ describe('the shared Metro cache store', () => {
   test('the store root is the shared Metro cache root, partitioned by the package name', () => {
     expect(metroStoreName(root)).toBe('bare');
     expect(metroStoreRoot(root)).toBe(join(tmpHome, 'metro-cache', 'bare'));
-    const nameless = mkdtempSync(join(tmpdir(), 'stim-cli-bare-nameless-'));
+    const nameless = mkdtempSync(join(tmpdir(), 'stim-bare-nameless-'));
     try {
       writeFileSync(join(nameless, 'package.json'), '{}');
       expect(metroStoreName(nameless)).toBe('app');
@@ -501,7 +501,7 @@ describe('the shared Metro cache store', () => {
 
   test('the CLI replaces a legacy flat override registration with the named store', () => {
     const parent = join(tmpHome, 'overridden-metro');
-    process.env.STIM_CLI_METRO_CACHE = parent;
+    process.env.STIM_METRO_CACHE = parent;
     writeFileSync(
       join(tmpHome, 'caches.json'),
       JSON.stringify({

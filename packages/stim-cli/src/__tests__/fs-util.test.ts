@@ -31,7 +31,7 @@ test('isRealMount refuses to guess when either dev is missing', () => {
 });
 
 test('isOnMountedVolume resolves a symlinked ancestor instead of classifying the raw path text', () => {
-  const homeDir = mkdtempSync(join(tmpdir(), 'stim-cli-fsutil-'));
+  const homeDir = mkdtempSync(join(tmpdir(), 'stim-fsutil-'));
   try {
     const symlinkedAncestor = join(homeDir, 'Developer');
     symlinkSync('/Volumes/UnmountedTestVolume/Developer', symlinkedAncestor);
@@ -52,7 +52,7 @@ test('isOnMountedVolume confirms a plain boot-volume path', () => {
 test('isOnMountedVolume returns false for a path it cannot resolve', () => {
   expect(isOnMountedVolume('relative/path/app', ['/'])).toBe(false);
   expect(isOnMountedVolume('~/Developer/app', ['/'])).toBe(false);
-  expect(isOnMountedVolume('/Volumes/StimCliTestVolumeThatDoesNotExist/app', ['/'])).toBe(false);
+  expect(isOnMountedVolume('/Volumes/StimTestVolumeThatDoesNotExist/app', ['/'])).toBe(false);
 });
 
 test('directorySize forwards its optional timeout and contains a timeout failure', () => {
@@ -66,8 +66,8 @@ test('directorySize forwards its optional timeout and contains a timeout failure
     },
   });
   try {
-    expect(directorySize('/tmp/stim-cli-avd', { timeoutMs: 5000 })).toBe(0);
-    expect(seenArgs).toEqual(['-sk', '/tmp/stim-cli-avd']);
+    expect(directorySize('/tmp/stim-avd', { timeoutMs: 5000 })).toBe(0);
+    expect(seenArgs).toEqual(['-sk', '/tmp/stim-avd']);
     expect(seenTimeout).toBe(5000);
   } finally {
     resetExecutor();

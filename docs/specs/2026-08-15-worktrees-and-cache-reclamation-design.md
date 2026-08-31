@@ -1,16 +1,16 @@
-# stim-cli — worktree creation and cache reclamation
+# Stim — worktree creation and cache reclamation
 
 Date: 2026-08-15
 Status: draft
 
 ## Purpose
 
-Two additions to stim-cli:
+Two additions to Stim:
 
-1. **`stim-cli worktree create|remove|list`** — create a git worktree with its
+1. **`stim worktree create|remove|list`** — create a git worktree with its
    environment set up (carry-over files, dependency install, workspace package
    build) and tear it down completely.
-2. **`stim-cli gc`** — reclaim build artifacts that live _outside_ a worktree and
+2. **`stim gc`** — reclaim build artifacts that live _outside_ a worktree and
    are therefore orphaned when the worktree is deleted.
 
 The motivating workflow is Claude Code's `remote-control --spawn=worktree`,
@@ -18,7 +18,7 @@ which creates a worktree per session started from the phone. Today those
 worktrees arrive with no dependencies, and deleting them leaks several GB of
 DerivedData per worktree with nothing to reclaim it.
 
-This widens stim-cli's remit from "device and port broker" to "dev environment
+This widens Stim's remit from "device and port broker" to "dev environment
 manager". That is a deliberate widening, recorded here because `CLAUDE.md` asks
 that scope changes be raised rather than assumed.
 
@@ -103,9 +103,9 @@ has a new absolute path and therefore no config entry. Two new layers fix that:
 
 ```
 CLI flag
-  > per-project entry   ~/.stim-cli/config.json  projects[<abs path>].settings   (exists)
-  > per-repo local  (B) ~/.stim-cli/config.json  repos[<git-common-dir>].settings (new)
-  > committed       (A) <repo>/.stim-cli.json                                     (new)
+  > per-project entry   ~/.stim/config.json  projects[<abs path>].settings   (exists)
+  > per-repo local  (B) ~/.stim/config.json  repos[<git-common-dir>].settings (new)
+  > committed       (A) <repo>/.stim.json                                     (new)
   > auto-detected       detectPackageManager / detectIsExpo / ios script
 ```
 
@@ -118,7 +118,7 @@ disks, anything installation-specific.
 
 **Secrets never go in layer A.** The carry-over list names gitignored files
 (`.env`, tokens); the list itself is safe to commit, the files are not, and
-`.stim-cli.json` must not hold their contents.
+`.stim.json` must not hold their contents.
 
 ### Config schema v2
 
@@ -152,7 +152,7 @@ Metro's watch root, causing `jest-haste-map` naming collisions, and its
 `node_modules` gets walked by Metro, TypeScript and ESLint. Gitignoring does
 not help — those tools walk the filesystem, not git.
 
-**Not** `~/.stim-cli/worktrees/` either: on the reference machine `$HOME` is on a
+**Not** `~/.stim/worktrees/` either: on the reference machine `$HOME` is on a
 different, nearly-full volume, and a worktree must be on the same volume as its
 repository.
 
@@ -160,7 +160,7 @@ Overridable via the `worktreeDir` setting (layer B — it is machine-specific).
 
 Because Claude Code's built-in `--spawn=worktree` hardcodes
 `.claude/worktrees/`, placing worktrees elsewhere requires wiring
-`stim-cli worktree create` as a `WorktreeCreate` hook. The hook is therefore
+`stim worktree create` as a `WorktreeCreate` hook. The hook is therefore
 load-bearing for the phone-spawned workflow, not optional.
 
 Two behavioural consequences, from the Claude Code docs:
@@ -174,10 +174,10 @@ Two behavioural consequences, from the Claude Code docs:
 ## Command surface
 
 ```
-stim-cli worktree create <name> [--base <ref>] [--no-install] [--label <name>]
-stim-cli worktree remove <name|path> [--force] [-y]
-stim-cli worktree list
-stim-cli gc [--delete] [--older-than <days>]
+stim worktree create <name> [--base <ref>] [--no-install] [--label <name>]
+stim worktree remove <name|path> [--force] [-y]
+stim worktree list
+stim gc [--delete] [--older-than <days>]
 ```
 
 ### `worktree create <name>`
@@ -196,8 +196,8 @@ Step 6 is the `WorktreeCreate` hook contract — Claude Code reads stdout as the
 directory to use. Getting the stream split right is what lets one
 implementation serve both the CLI and the hook.
 
-`worktree create` does **not** register the project in `~/.stim-cli/config.json`.
-Registration stays where it is today: on first `stim-cli ios` / `android`.
+`worktree create` does **not** register the project in `~/.stim/config.json`.
+Registration stays where it is today: on first `stim ios` / `android`.
 Removal locates artifacts by path prefix and does not need an entry to exist.
 
 ### Carry-over
@@ -237,8 +237,8 @@ Default, when unset: a single detected install command via
 ```
 
 **Setup status is recorded in config.** Each command's exit status is stored on
-the project/worktree entry. If any failed, `stim-cli ios` / `android` prints a
-warning naming the failed command before building, and `stim-cli status` shows
+the project/worktree entry. If any failed, `stim ios` / `android` prints a
+warning naming the failed command before building, and `stim status` shows
 the worktree as `setup incomplete`. Silence is not acceptable: the failure mode
 we observed is an agent burning a full build cycle to rediscover it as a red
 box.
@@ -250,7 +250,7 @@ box.
 Without this, projects register under their directory basename. In a monorepo
 every worktree's app directory is `apps/tlon-mobile`, so every worktree
 registers as `tlon-mobile` and collides. Confirmed in testing:
-`stim-cli release wt-test` failed with "No registered project matches".
+`stim release wt-test` failed with "No registered project matches".
 
 ### `worktree remove <name|path>`
 
@@ -269,7 +269,7 @@ and phone-spawned sessions call it unattended.
 Then `git worktree remove`, then reclaim:
 
 - DerivedData directories whose `WorkspacePath` is under the worktree
-- the stim-cli project entry and its device claims
+- the Stim project entry and its device claims
 - its Metro port, and any Metro process still listening on it
 
 The last group is exactly what `prune` does today. Both call a shared
@@ -277,7 +277,7 @@ The last group is exactly what `prune` does today. Both call a shared
 
 ### `worktree list`
 
-Lists the current repository's stim-cli-created worktrees with, for each: path,
+Lists the current repository's stim-created worktrees with, for each: path,
 branch, label, setup status, and the size of its reclaimable external
 artifacts. Worktrees created by other means (Claude Code, raw `git worktree
 add`) are listed too, marked as unmanaged, since `remove` and `gc` handle them
@@ -289,7 +289,7 @@ Machine-wide sweep for everything left behind by worktrees that no longer
 exist, in one command:
 
 - DerivedData directories whose `WorkspacePath` no longer exists
-- dead stim-cli config entries, their device claims and Metro ports (the same
+- dead Stim config entries, their device claims and Metro ports (the same
   work `prune` does)
 
 **Reports by default. Acts only with `--delete`.** `--older-than <days>`
@@ -301,18 +301,18 @@ destructive command in the tool. Both call the same `reclaimProject(path)`, so
 `gc` is a superset rather than a reimplementation.
 
 Because `gc` works from `WorkspacePath` alone, it also cleans up after
-worktrees created by Claude Code's built-in `--spawn=worktree` without stim-cli
+worktrees created by Claude Code's built-in `--spawn=worktree` without Stim
 ever being involved.
 
-## Device occupancy beyond stim-cli claims
+## Device occupancy beyond Stim claims
 
-`allClaimedDevices()` only knows about stim-cli's own claims, so a simulator
-another tool is actively driving looks free. During testing stim-cli selected a
+`allClaimedDevices()` only knows about Stim's own claims, so a simulator
+another tool is actively driving looks free. During testing Stim selected a
 booted simulator that an `agent-device` XCUITest runner was driving, installed
 onto it, and later `release --shutdown` killed it out from under that session.
 
 `selectIosDevice` gains a third state alongside free and claimed:
-**occupied** — booted, unclaimed by stim-cli, but with a foreign runner process
+**occupied** — booted, unclaimed by Stim, but with a foreign runner process
 attached. Detection is a booted simulator with a running
 `*.xctrunner` (or otherwise non-project) app in `launchctl list`.
 
@@ -323,7 +323,7 @@ Behavior:
   the same confirm prompt as a take-over.
 - `release --shutdown` refuses to shut down a simulator that is occupied by a
   foreign runner, and says so, unless `--force` is passed. Releasing the
-  stim-cli claim still happens; only the shutdown is withheld.
+  Stim claim still happens; only the shutdown is withheld.
 
 Detection is a heuristic and must fail open: if the probe errors or returns
 nothing parseable, treat the device as free rather than blocking selection.
@@ -380,7 +380,7 @@ is what stops that leniency from becoming silence.
 
 ## Testing
 
-`node --test`, mock executor via `setExecutor`, `STIM_CLI_HOME` redirect.
+`node --test`, mock executor via `setExecutor`, `STIM_HOME` redirect.
 
 Pure and unit-tested:
 
@@ -400,7 +400,7 @@ Exec-mocked:
 - unpushed-commit detection, and that `worktree remove` refuses without
   `--force` and proceeds with it
 - that `release --shutdown` withholds shutdown for an occupied simulator but
-  still clears the stim-cli claim
+  still clears the Stim claim
 
 Config:
 
@@ -417,7 +417,7 @@ Per `CLAUDE.md` rule 1, `skill/SKILL.md` is updated in the same change:
   `create` over raw `git worktree add` so setup and labelling happen)
 - a `gc` section stating that agents must **never** run `gc --delete` without
   asking — it is the only destructive command in the tool
-- a note that "setup incomplete" in `stim-cli status` means the setup pipeline
+- a note that "setup incomplete" in `stim status` means the setup pipeline
   failed, and to read the recorded command rather than guessing
 
 `README.md` gets the command table entries and a `WorktreeCreate` hook example.
@@ -434,21 +434,21 @@ the baseline above is that fallback.
 With EAS cache working, a fresh worktree could skip the native build entirely
 and be ready in about a minute instead of eight. That is a large enough
 difference to the phone-spawned workflow that the setup docs must call it out,
-even though stim-cli cannot fix it: `stim-cli` does not manage EAS auth.
+even though Stim cannot fix it: `Stim` does not manage EAS auth.
 
 Note that EAS CLI holds one session at a time (`~/.expo/state.json`), but a
 single user can belong to many accounts, so the usual fix is account
 membership rather than a second login. Where two identities are genuinely
 needed, `EXPO_TOKEN` scoped per repository overrides the stored session — and
-being a secret, it belongs in a carried-over `.env`, never in `.stim-cli.json`.
+being a secret, it belongs in a carried-over `.env`, never in `.stim.json`.
 
 ## Review decisions
 
 Three questions were left open in the first draft and resolved on review
 (2026-08-16). All three are folded into the sections above:
 
-1. **Detect non-stim-cli device occupancy — yes.** See "Device occupancy beyond
-   stim-cli claims". Scoped into this work rather than deferred, because
+1. **Detect non-stim device occupancy — yes.** See "Device occupancy beyond
+   Stim claims". Scoped into this work rather than deferred, because
    `worktree remove` and `release --shutdown` are exactly the unattended paths
    that caused the problem.
 

@@ -2,7 +2,7 @@
 
 ## Goal
 
-Make the cache writes owned by stim-cli pluggable. The first version covers
+Make the cache writes owned by Stim pluggable. The first version covers
 Metro transforms and native build artifacts. It keeps the local filesystem as
 the fast first tier and permits one optional project provider as the second
 tier.
@@ -15,8 +15,8 @@ also works for bare React Native projects.
 The provider system covers:
 
 - Metro transform cache reads and writes from `@stim-cli/metro`.
-- Native `.app` and `.apk` cache reads and writes from `stim-cli ios` and
-  `stim-cli android`.
+- Native `.app` and `.apk` cache reads and writes from `stim ios` and
+  `stim android`.
 
 The first implementation supplies the filesystem provider and contract tests.
 It does not supply a network provider.
@@ -44,7 +44,7 @@ interface CacheProvider {
 }
 ```
 
-`@stim-cli/metro` keeps the Metro adapter. The stim-cli CLI keeps the native build
+`@stim-cli/metro` keeps the Metro adapter. The Stim CLI keeps the native build
 adapter. The existing filesystem code becomes the built-in first-tier
 provider. The refactor preserves existing paths, keys, APFS copies, pruning,
 and `gc` behavior.
@@ -83,9 +83,9 @@ writes keyed transform values. The composite adapter owns local backfill and
 the remote upload queue.
 
 The build capability works with local artifact paths. A build provider can
-download an artifact into a destination owned by stim-cli and can upload an
+download an artifact into a destination owned by Stim and can upload an
 `.app` directory or `.apk` file. The provider chooses its transport and archive
-format. stim-cli continues to own fingerprint generation and cache keys.
+format. Stim continues to own fingerprint generation and cache keys.
 
 Provider calls receive:
 
@@ -125,7 +125,7 @@ Native builds use this lookup order:
 5. Build when all cache levels miss.
 
 A provider hit is copied into the local cache before installation. A new build
-writes to the local cache first. stim-cli then starts uploads to the new provider
+writes to the local cache first. Stim then starts uploads to the new provider
 and the Expo provider independently.
 
 `--no-build-cache` skips every cache read. It still replaces the local entry
@@ -136,19 +136,19 @@ paths, or build-lock keys.
 
 ## Expo Compatibility
 
-Expo `buildCacheProvider` stays independent. stim-cli does not expose the Expo
+Expo `buildCacheProvider` stays independent. Stim does not expose the Expo
 provider contract through `@stim-cli/cache`.
 
 When both systems are configured, the new project provider runs before the
 Expo provider. A new build uploads to both providers. This order preserves the
-current Expo behavior while projects adopt the stim-cli provider API.
+current Expo behavior while projects adopt the Stim provider API.
 
 ## Failure Rules
 
 Cache failures never fail Metro, installation, launch, or a successful native
 build.
 
-stim-cli applies fixed time limits to:
+Stim applies fixed time limits to:
 
 - Metro reads;
 - Metro background uploads;
@@ -168,7 +168,7 @@ The provider runs as trusted project code. A provider must honor the supplied
 
 ## Cache Management
 
-The first version keeps remote lifecycle management outside `stim-cli gc`.
+The first version keeps remote lifecycle management outside `stim gc`.
 `gc` continues to report, trim, and clear only local caches. The provider
 contract has no remote deletion operation.
 
@@ -193,7 +193,7 @@ suite proves:
 - `gc` never calls a remote deletion method;
 - CommonJS and ESM provider modules load from the project root.
 
-A small end-to-end fixture loads a provider module from `.stim-cli.json`. It
+A small end-to-end fixture loads a provider module from `.stim.json`. It
 proves that Metro and native build adapters receive the same provider
 configuration.
 

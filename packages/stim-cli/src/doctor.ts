@@ -277,7 +277,7 @@ export function checkDevClient(pkg: AnyJson | null, isExpo: boolean = true): Fin
   return finding(
     'cost',
     'expo-dev-client is not installed',
-    'A Metro port reserved by stim-cli cannot reach the app without it: the port travels in the dev-client deep link `stim ios` opens, and without the dev client nothing handles that URL. The app falls back to port 8081 and shows "No script URL provided".',
+    'A Metro port reserved by Stim cannot reach the app without it: the port travels in the dev-client deep link `stim ios` opens, and without the dev client nothing handles that URL. The app falls back to port 8081 and shows "No script URL provided".',
     'npx expo install expo-dev-client, then rebuild with `stim ios` / `stim android`. It is a NATIVE dependency: an app already on the device will not pick it up, and the first build after installing it is a cache miss by design because the native fingerprint moved. Do not solve this by compiling the port in (RCT_METRO_PORT, or the dev client defaultLaunchURL) -- the build cache does not key on the port, so a binary built for one workspace would silently talk to another workspace bundler.',
   );
 }
@@ -291,8 +291,8 @@ export function checkMetroCache(metroConfigSource: string | null): Finding | nul
   return finding(
     'note',
     'metro.config.js mentions cacheStores, but not unconditionally',
-    `Every line naming it is inside a conditional, and doctor reads this file rather than executing it, so it cannot tell whether the store is installed. Under \`stim start\` this costs nothing -- stim-cli appends its own store whether the project's is on or off -- but outside stim-cli a cacheStores that is off by default costs exactly what having none costs: ${mentions.map((l) => l.trim()).join(' / ')}`,
-    'Only for Metro runs stim-cli does not host: confirm it applies without env vars -- a store behind an opt-in flag is not shared until every workspace sets the flag.',
+    `Every line naming it is inside a conditional, and doctor reads this file rather than executing it, so it cannot tell whether the store is installed. Under \`stim start\` this costs nothing -- Stim appends its own store whether the project's is on or off -- but outside Stim a cacheStores that is off by default costs exactly what having none costs: ${mentions.map((l) => l.trim()).join(' / ')}`,
+    'Only for Metro runs Stim does not host: confirm it applies without env vars -- a store behind an opt-in flag is not shared until every workspace sets the flag.',
   );
 }
 
@@ -322,8 +322,8 @@ export function checkCompilationCache(podfileSource: string | null, xcodeMajor: 
   return finding(
     'note',
     'The Podfile enables compilation caching but leaves the CAS at its default path',
-    'The default CAS lives at the DerivedData root, and DerivedData is per-workspace -- so nothing is actually shared between worktrees, which is the only reason to turn it on. Builds stim-cli drives are unaffected: they override COMPILATION_CACHE_CAS_PATH to a shared path on the xcodebuild command line, which wins over the project setting. This costs only the builds you run outside stim-cli.',
-    'Nothing to do for stim-cli. For builds outside it: set COMPILATION_CACHE_CAS_PATH to a fixed path outside DerivedData -- ~/.stim-cli/compilation-cache is where stim-cli puts its own, so the two share entries instead of filling two caches.',
+    'The default CAS lives at the DerivedData root, and DerivedData is per-workspace -- so nothing is actually shared between worktrees, which is the only reason to turn it on. Builds Stim drives are unaffected: they override COMPILATION_CACHE_CAS_PATH to a shared path on the xcodebuild command line, which wins over the project setting. This costs only the builds you run outside Stim.',
+    'Nothing to do for Stim. For builds outside it: set COMPILATION_CACHE_CAS_PATH to a fixed path outside DerivedData -- ~/.stim/compilation-cache is where Stim puts its own, so the two share entries instead of filling two caches.',
   );
 }
 
@@ -332,9 +332,9 @@ export function checkCcacheConflict(podfileSource: string | null, podfilePropert
   if (!ccacheEnabled(podfileProperties)) return null;
   return finding(
     'cost',
-    'ccache is enabled, so stim-cli leaves Xcode compilation caching off',
-    'The ccache launcher script is what disables explicitly built modules, which compilation caching requires -- so enabling both tends to mean neither works. stim-cli will not add its compilation-cache settings to a build whose project has apple.ccacheEnabled=true, and ccache itself keys on absolute paths, so it misses across worktrees anyway.',
-    'Pick one, and on Xcode 26 the compilation cache is the one that survives a different workspace path -- stim-cli supplies it on its own builds as soon as ccache is off. Turn it off where the value comes FROM: on Expo that is the expo-build-properties plugin in the app config (ios.ccacheEnabled), because prebuild rewrites ios/Podfile.properties.json from it; on a bare project edit ios/Podfile.properties.json directly. Then re-run pod install (or let `stim ios` do it).',
+    'ccache is enabled, so Stim leaves Xcode compilation caching off',
+    'The ccache launcher script is what disables explicitly built modules, which compilation caching requires -- so enabling both tends to mean neither works. Stim will not add its compilation-cache settings to a build whose project has apple.ccacheEnabled=true, and ccache itself keys on absolute paths, so it misses across worktrees anyway.',
+    'Pick one, and on Xcode 26 the compilation cache is the one that survives a different workspace path -- Stim supplies it on its own builds as soon as ccache is off. Turn it off where the value comes FROM: on Expo that is the expo-build-properties plugin in the app config (ios.ccacheEnabled), because prebuild rewrites ios/Podfile.properties.json from it; on a bare project edit ios/Podfile.properties.json directly. Then re-run pod install (or let `stim ios` do it).',
   );
 }
 
@@ -354,7 +354,7 @@ export function checkBuildCacheProvider(
         sdkMajor && sdkMajor <= 53
           ? `SDK ${sdkMajor} reads expo.experiments.buildCacheProvider and ignores the top-level key in silence.`
           : 'Use the top-level expo.buildCacheProvider; the experiments key still works as a fallback.'
-      } Run \`npx expo config --json\` and look for buildCacheProvider. If one is already set -- including "eas" -- that satisfies this; stim-cli never replaces it.`,
+      } Run \`npx expo config --json\` and look for buildCacheProvider. If one is already set -- including "eas" -- that satisfies this; Stim never replaces it.`,
     );
   }
   if (!appConfig) return null;
@@ -451,8 +451,8 @@ export function checkConcurrency({
   return finding(
     'note',
     'Concurrency limits are set',
-    `${caps}. Right now ${liveDevices} stim-cli device(s) are booted and ${activeBuilds} build slot(s) are in use on this machine. ` +
-      'At the device cap a new `stim ios`/`android` is refused with STIM_CLI_AT_CAPACITY (stop an environment or raise it); ' +
+    `${caps}. Right now ${liveDevices} Stim device(s) are booted and ${activeBuilds} build slot(s) are in use on this machine. ` +
+      'At the device cap a new `stim ios`/`android` is refused with STIM_AT_CAPACITY (stop an environment or raise it); ' +
       'at the build cap a compile waits for a free slot.',
     null,
   );
@@ -485,7 +485,7 @@ export function checkRemoteDevice({
       return finding(
         'note',
         'This project uses a remote proxy',
-        'The proxy backend connects through AGENT_DEVICE_DAEMON_BASE_URL and AGENT_DEVICE_DAEMON_AUTH_TOKEN. stim-cli does not create or stop the remote device.',
+        'The proxy backend connects through AGENT_DEVICE_DAEMON_BASE_URL and AGENT_DEVICE_DAEMON_AUTH_TOKEN. Stim does not create or stop the remote device.',
         null,
       );
     }
@@ -509,7 +509,7 @@ export function checkRemoteDevice({
   return finding(
     'note',
     'This project uses a remote device',
-    '`ios --remote eas` / `android --remote eas` create an EAS Simulator session named stim-cli-<label> and end it on `stop` and `worktree remove`. The build still runs on this machine; only the device is elsewhere. Native device logs are not captured on a remote device -- the Metro half of the timeline is unaffected.',
+    '`ios --remote eas` / `android --remote eas` create an EAS Simulator session named stim-<label> and end it on `stop` and `worktree remove`. The build still runs on this machine; only the device is elsewhere. Native device logs are not captured on a remote device -- the Metro half of the timeline is unaffected.',
     null,
   );
 }
@@ -752,7 +752,7 @@ export async function detectFingerprintParity(
       ? 'android'
       : undefined;
 
-  const base = mkdtempSync(join(tmpdir(), 'stim-cli-parity-'));
+  const base = mkdtempSync(join(tmpdir(), 'stim-parity-'));
   const worktree = join(base, 'head');
   const added = exec.runQuiet(`git -C ${quotedRoot} worktree add --detach ${JSON.stringify(worktree)} HEAD`, {
     timeoutMs: 60000,

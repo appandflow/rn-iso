@@ -11,8 +11,8 @@ import {
 } from '../status.ts';
 import { makeEnvironmentState } from './_factories.ts';
 
-const BOOTED = { udid: 'U1', name: 'stim-cli-app', state: 'Booted' };
-const SHUTDOWN = { udid: 'U1', name: 'stim-cli-app', state: 'Shutdown' };
+const BOOTED = { udid: 'U1', name: 'stim-app', state: 'Booted' };
+const SHUTDOWN = { udid: 'U1', name: 'stim-app', state: 'Shutdown' };
 
 function project(over = {}) {
   return {
@@ -155,9 +155,9 @@ test('no supervisor recorded reports null, not an absent field', () => {
 test('the log timeline is reported with the error count since the last marker', () => {
   const s = environmentState(project(), {
     metro: { missing: true },
-    logs: { dir: '/proj/a/.stim-cli/logs', errorsSinceMarker: 3 },
+    logs: { dir: '/proj/a/.stim/logs', errorsSinceMarker: 3 },
   });
-  expect(s.logs).toEqual({ dir: '/proj/a/.stim-cli/logs', errorsSinceMarker: 3 });
+  expect(s.logs).toEqual({ dir: '/proj/a/.stim/logs', errorsSinceMarker: 3 });
 });
 
 test('a workspace with no log directory reports logs as null', () => {
@@ -170,7 +170,7 @@ test('every pre-v3 field survives the extension', () => {
     simsByUdid: { U1: BOOTED },
     metro: { metro: { pid: 42 } },
     supervisor: { pid: 4242, mode: 'bare-inproc', startedAt: '5', alive: true, healthy: true },
-    logs: { dir: '/proj/a/.stim-cli/logs', errorsSinceMarker: 0 },
+    logs: { dir: '/proj/a/.stim/logs', errorsSinceMarker: 0 },
   });
   for (const key of ['path', 'live', 'memoryMb', 'warnings', 'ios', 'android', 'metro', 'worktree']) {
     expect(key in s).toBe(true);

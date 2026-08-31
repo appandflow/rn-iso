@@ -7,16 +7,16 @@ import {
 import type { Diagnostic } from '../engine/errors-xcode.ts';
 
 const REAL_COMPILE_FAILURE = [
-  "CompileC /tmp/stim-cli-xc/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Objects-normal/arm64/main.o /tmp/stim-cli-xc/Scratch/main.m normal arm64 objective-c com.apple.compilers.llvm.clang.1_0.compiler (in target 'Scratch' from project 'Scratch')",
-  '    cd /tmp/stim-cli-xc',
+  "CompileC /tmp/stim-xc/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Objects-normal/arm64/main.o /tmp/stim-xc/Scratch/main.m normal arm64 objective-c com.apple.compilers.llvm.clang.1_0.compiler (in target 'Scratch' from project 'Scratch')",
+  '    cd /tmp/stim-xc',
   '    ',
-  '    Using response file: /tmp/stim-cli-xc/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Objects-normal/arm64/e6072d4f65d7061329687fe24e3d63a7-common-args.resp',
+  '    Using response file: /tmp/stim-xc/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Objects-normal/arm64/e6072d4f65d7061329687fe24e3d63a7-common-args.resp',
   '    ',
   '    /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -x  [argv elided] cratch.build/Objects-normal/arm64/main.o',
-  "/tmp/stim-cli-xc/Scratch/main.m:5:18: error: use of undeclared identifier 'undefinedThing'",
+  "/tmp/stim-xc/Scratch/main.m:5:18: error: use of undeclared identifier 'undefinedThing'",
   '    5 |     NSLog(@"%@", undefinedThing);',
   '      |                  ^~~~~~~~~~~~~~',
-  "/tmp/stim-cli-xc/Scratch/main.m:6:19: error: implicit conversion of 'int' to 'NSString *' is disallowed with ARC",
+  "/tmp/stim-xc/Scratch/main.m:6:19: error: implicit conversion of 'int' to 'NSString *' is disallowed with ARC",
   '    6 |     NSString *s = 42;',
   '      |                   ^~',
   '2 errors generated.',
@@ -25,47 +25,47 @@ const REAL_COMPILE_FAILURE = [
   '',
   '',
   'The following build commands failed:',
-  "\tCompileC /tmp/stim-cli-xc/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Objects-normal/arm64/main.o /tmp/stim-cli-xc/Scratch/main.m normal arm64 objective-c com.apple.compilers.llvm.clang.1_0.compiler (in target 'Scratch' from project 'Scratch')",
+  "\tCompileC /tmp/stim-xc/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Objects-normal/arm64/main.o /tmp/stim-xc/Scratch/main.m normal arm64 objective-c com.apple.compilers.llvm.clang.1_0.compiler (in target 'Scratch' from project 'Scratch')",
   '\tBuilding project Scratch with scheme Scratch and configuration Debug',
   '(2 failures)',
 ].join('\n');
 
 const REAL_LINK_FAILURE = [
-  "Ld /tmp/stim-cli-xc/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Objects-normal/arm64/Binary/Scratch normal arm64 (in target 'Scratch' from project 'Scratch')",
-  '    cd /tmp/stim-cli-xc',
+  "Ld /tmp/stim-xc/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Objects-normal/arm64/Binary/Scratch normal arm64 (in target 'Scratch' from project 'Scratch')",
+  '    cd /tmp/stim-xc',
   '    /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -Xl [argv elided] uild/Objects-normal/arm64/Binary/Scratch',
   'Undefined symbols for architecture arm64:',
-  '  "_stimCliMissingFunction", referenced from:',
+  '  "_stimMissingFunction", referenced from:',
   '      _main in main.o',
   'ld: symbol(s) not found for architecture arm64',
-  '/tmp/stim-cli-xc/Scratch.xcodeproj: Scratch: clang: error: linker command failed with exit code 1 (use -v to see invocation)',
+  '/tmp/stim-xc/Scratch.xcodeproj: Scratch: clang: error: linker command failed with exit code 1 (use -v to see invocation)',
   '',
-  "Ld /tmp/stim-cli-xc/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Objects-normal/x86_64/Binary/Scratch normal x86_64 (in target 'Scratch' from project 'Scratch')",
-  '    cd /tmp/stim-cli-xc',
+  "Ld /tmp/stim-xc/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Objects-normal/x86_64/Binary/Scratch normal x86_64 (in target 'Scratch' from project 'Scratch')",
+  '    cd /tmp/stim-xc',
   '    /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -Xl [argv elided] ild/Objects-normal/x86_64/Binary/Scratch',
   'Undefined symbols for architecture x86_64:',
-  '  "_stimCliMissingFunction", referenced from:',
+  '  "_stimMissingFunction", referenced from:',
   '      _main in main.o',
   '',
   '** BUILD FAILED **',
   '',
   '',
   'The following build commands failed:',
-  "\tLd /tmp/stim-cli-xc/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Objects-normal/arm64/Binary/Scratch normal arm64 (in target 'Scratch' from project 'Scratch')",
+  "\tLd /tmp/stim-xc/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Objects-normal/arm64/Binary/Scratch normal arm64 (in target 'Scratch' from project 'Scratch')",
   '\tBuilding project Scratch with scheme Scratch and configuration Debug',
   '(2 failures)',
 ].join('\n');
 
 const REAL_PODS_FAILURE = [
   '',
-  "PhaseScriptExecution [CP]\\ Check\\ Pods\\ Manifest.lock /tmp/stim-cli-xc-pods/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Script-AA00000000000000000020.sh (in target 'Scratch' from project 'Scratch')",
-  '    cd /tmp/stim-cli-xc-pods',
-  '    /bin/sh -c /tmp/stim-cli-xc-pods/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Script-AA00000000000000000020.sh',
+  "PhaseScriptExecution [CP]\\ Check\\ Pods\\ Manifest.lock /tmp/stim-xc-pods/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Script-AA00000000000000000020.sh (in target 'Scratch' from project 'Scratch')",
+  '    cd /tmp/stim-xc-pods',
+  '    /bin/sh -c /tmp/stim-xc-pods/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Script-AA00000000000000000020.sh',
   "error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.",
   '',
-  "ProcessInfoPlistFile /tmp/stim-cli-xc-pods/dd/Build/Products/Debug-iphonesimulator/Scratch.app/Info.plist /tmp/stim-cli-xc-pods/Scratch/Info.plist (in target 'Scratch' from project 'Scratch')",
-  '    cd /tmp/stim-cli-xc-pods',
-  '    builtin-infoPlistUtility /tmp/stim-cli-xc-pods/Scratch/Info.plist -producttype com.apple.product-type.application -genpkginfo /tmp/stim-cli-xc-pods/dd/Build/Products/Debug-iphonesimulator/Scratch.app/PkgInfo -expandbuildsettings -format binary -platform iphonesimulator -o /tmp/stim-cli-xc-pods/dd/Build/Products/Debug-iphonesimulator/Scratch.app/Info.plist',
+  "ProcessInfoPlistFile /tmp/stim-xc-pods/dd/Build/Products/Debug-iphonesimulator/Scratch.app/Info.plist /tmp/stim-xc-pods/Scratch/Info.plist (in target 'Scratch' from project 'Scratch')",
+  '    cd /tmp/stim-xc-pods',
+  '    builtin-infoPlistUtility /tmp/stim-xc-pods/Scratch/Info.plist -producttype com.apple.product-type.application -genpkginfo /tmp/stim-xc-pods/dd/Build/Products/Debug-iphonesimulator/Scratch.app/PkgInfo -expandbuildsettings -format binary -platform iphonesimulator -o /tmp/stim-xc-pods/dd/Build/Products/Debug-iphonesimulator/Scratch.app/Info.plist',
   '',
   "warning: Run script build phase '[CP] Check Pods Manifest.lock' will be run during every build because it does not specify any outputs. To address this issue, either add output dependencies to the script phase, or configure it to run in every build by unchecking \"Based on dependency analysis\" in the script phase. (in target 'Scratch' from project 'Scratch')",
   '** BUILD FAILED **',
@@ -74,8 +74,8 @@ const REAL_PODS_FAILURE = [
 
 const REAL_SIGNING_FAILURE = [
   'Build description signature: 5aff88b39ca8e2b9798e399e4ba14334',
-  'Build description path: /tmp/stim-cli-xc/dd-dev/Build/Intermediates.noindex/XCBuildData/5aff88b39ca8e2b9798e399e4ba14334.xcbuilddata',
-  "/tmp/stim-cli-xc/Scratch.xcodeproj: error: No profiles for 'com.stimcli.scratch' were found: Xcode couldn't find any iOS App Development provisioning profiles matching 'com.stimcli.scratch'. Automatic signing is disabled and unable to generate a profile. To enable automatic signing, pass -allowProvisioningUpdates to xcodebuild. (in target 'Scratch' from project 'Scratch')",
+  'Build description path: /tmp/stim-xc/dd-dev/Build/Intermediates.noindex/XCBuildData/5aff88b39ca8e2b9798e399e4ba14334.xcbuilddata',
+  "/tmp/stim-xc/Scratch.xcodeproj: error: No profiles for 'com.stimcli.scratch' were found: Xcode couldn't find any iOS App Development provisioning profiles matching 'com.stimcli.scratch'. Automatic signing is disabled and unable to generate a profile. To enable automatic signing, pass -allowProvisioningUpdates to xcodebuild. (in target 'Scratch' from project 'Scratch')",
   '** BUILD FAILED **',
   '',
 ].join('\n');
@@ -93,17 +93,17 @@ const REAL_SCHEME_FAILURE = [
 ].join('\n');
 
 const REAL_SUCCESS_TAIL = [
-  "RegisterExecutionPolicyException /tmp/stim-cli-xc/dd/Build/Products/Debug-iphonesimulator/Scratch.app (in target 'Scratch' from project 'Scratch')",
-  '    cd /tmp/stim-cli-xc',
-  '    builtin-RegisterExecutionPolicyException /tmp/stim-cli-xc/dd/Build/Products/Debug-iphonesimulator/Scratch.app',
+  "RegisterExecutionPolicyException /tmp/stim-xc/dd/Build/Products/Debug-iphonesimulator/Scratch.app (in target 'Scratch' from project 'Scratch')",
+  '    cd /tmp/stim-xc',
+  '    builtin-RegisterExecutionPolicyException /tmp/stim-xc/dd/Build/Products/Debug-iphonesimulator/Scratch.app',
   '',
-  "Validate /tmp/stim-cli-xc/dd/Build/Products/Debug-iphonesimulator/Scratch.app (in target 'Scratch' from project 'Scratch')",
-  '    cd /tmp/stim-cli-xc',
-  '    builtin-validationUtility /tmp/stim-cli-xc/dd/Build/Products/Debug-iphonesimulator/Scratch.app -shallow-bundle -infoplist-subpath Info.plist',
+  "Validate /tmp/stim-xc/dd/Build/Products/Debug-iphonesimulator/Scratch.app (in target 'Scratch' from project 'Scratch')",
+  '    cd /tmp/stim-xc',
+  '    builtin-validationUtility /tmp/stim-xc/dd/Build/Products/Debug-iphonesimulator/Scratch.app -shallow-bundle -infoplist-subpath Info.plist',
   '',
-  "Touch /tmp/stim-cli-xc/dd/Build/Products/Debug-iphonesimulator/Scratch.app (in target 'Scratch' from project 'Scratch')",
-  '    cd /tmp/stim-cli-xc',
-  '    /usr/bin/touch -c /tmp/stim-cli-xc/dd/Build/Products/Debug-iphonesimulator/Scratch.app',
+  "Touch /tmp/stim-xc/dd/Build/Products/Debug-iphonesimulator/Scratch.app (in target 'Scratch' from project 'Scratch')",
+  '    cd /tmp/stim-xc',
+  '    /usr/bin/touch -c /tmp/stim-xc/dd/Build/Products/Debug-iphonesimulator/Scratch.app',
   '',
   '** BUILD SUCCEEDED **',
   '',
@@ -114,13 +114,13 @@ describe('real transcripts', () => {
     const found = extractXcodeDiagnostics(REAL_COMPILE_FAILURE);
     expect(found).toEqual([
       {
-        file: '/tmp/stim-cli-xc/Scratch/main.m',
+        file: '/tmp/stim-xc/Scratch/main.m',
         line: 5,
         column: 18,
         message: "use of undeclared identifier 'undefinedThing'",
       },
       {
-        file: '/tmp/stim-cli-xc/Scratch/main.m',
+        file: '/tmp/stim-xc/Scratch/main.m',
         line: 6,
         column: 19,
         message: "implicit conversion of 'int' to 'NSString *' is disallowed with ARC",
@@ -147,11 +147,11 @@ describe('real transcripts', () => {
   test('a link failure reports the missing symbol ONCE across both simulator slices', () => {
     const found = extractXcodeDiagnostics(REAL_LINK_FAILURE);
     expect(found.map((d) => d.message)).toEqual([
-      'Undefined symbol: _stimCliMissingFunction',
+      'Undefined symbol: _stimMissingFunction',
       'ld: symbol(s) not found for architecture arm64',
       'linker command failed with exit code 1 (use -v to see invocation)',
     ]);
-    expect(found[2]?.file).toBe('/tmp/stim-cli-xc/Scratch.xcodeproj');
+    expect(found[2]?.file).toBe('/tmp/stim-xc/Scratch.xcodeproj');
     expect(found[0]?.file).toBe(undefined);
   });
 
@@ -171,7 +171,7 @@ describe('real transcripts', () => {
   test('a signing failure is recognized as one, and told it should not be signing', () => {
     const found = extractXcodeDiagnostics(REAL_SIGNING_FAILURE);
     expect(found.length).toBe(1);
-    expect(found[0]?.file).toBe('/tmp/stim-cli-xc/Scratch.xcodeproj');
+    expect(found[0]?.file).toBe('/tmp/stim-xc/Scratch.xcodeproj');
     expect(found[0]?.message).toMatch(/No profiles for 'com\.stimcli\.scratch' were found/);
     expect(found[0]?.remedy).toMatch(/simulator, which needs no signing/);
   });

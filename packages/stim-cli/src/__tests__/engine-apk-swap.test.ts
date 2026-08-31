@@ -44,7 +44,7 @@ describe('hermesEnabledFromGradleProperties', () => {
   });
 
   test('readAndroidHermesEnabled defaults to enabled when gradle.properties is absent', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'stim-cli-apk-swap-'));
+    const dir = mkdtempSync(join(tmpdir(), 'stim-apk-swap-'));
     try {
       expect(readAndroidHermesEnabled(dir)).toBe(true);
     } finally {
@@ -242,8 +242,8 @@ const buildTools: BuildToolsEntry = {
 const apksigner = '/sdk/build-tools/36.0.0/apksigner';
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), 'stim-cli-apk-root-'));
-  tmp = mkdtempSync(join(tmpdir(), 'stim-cli-apk-tmp-'));
+  root = mkdtempSync(join(tmpdir(), 'stim-apk-root-'));
+  tmp = mkdtempSync(join(tmpdir(), 'stim-apk-tmp-'));
 });
 
 afterEach(() => {

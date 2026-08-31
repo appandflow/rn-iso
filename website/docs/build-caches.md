@@ -1,118 +1,60 @@
 ---
-title: 'Build caches'
-sidebar_position: 3
-description: 'Fingerprint-keyed native builds shared across worktrees, and single-flight compiles'
+title: 'Build speed and caches'
+sidebar_position: 1
+description: 'How Stim keeps worktree builds warm'
 ---
 
-import StimTabs from '@site/src/components/StimTabs';
+Stim shares four types of work across projects and git worktrees:
 
-Everything `gc` reclaims is _dead_: a project entry whose directory no longer
-exists belongs to nobody, and a `stim-cli-*` simulator nothing references is
-never coming back. Shared build caches are the opposite -- alive by design,
-shared by every project on the machine, and pruned by nothing:
+| Layer                    | What it avoids                                            |
+| ------------------------ | --------------------------------------------------------- |
+| Native artifact cache    | A complete iOS or Android build when native inputs match  |
+| Xcode compilation cache  | Recompiling unchanged native units on an artifact miss    |
+| Gradle caches and output | Repeating Android dependency and task work                |
+| Metro transform cache    | Transforming the same JavaScript modules in each worktree |
 
-- **Metro's `FileStore`** has no eviction logic whatsoever.
-- **Xcode's compilation cache** has no size cap.
-- **Metro file maps** accumulate one file per project root ever served.
+## Native artifact cache
 
-So every `gc` run reports them -- in their own bucket, tagged _registered_ or
-_detected_, and never counted in the reclaim total -- and a plain `gc --delete`
-_never_ touches them:
+Stim uses `@expo/fingerprint` to identify native inputs in both Expo and bare
+React Native projects. The cache key also includes the platform, target, and
+build configuration or variant.
 
-<StimTabs
-code={`stim gc                            # report everything, caches included
-stim gc --delete --older-than 30   # trim entries unused for 30 days
-stim gc --delete --all             # empty them completely`}
-/>
+`stim ios` and `stim android` first check the machine-wide artifact cache. A hit
+installs the saved `.app` or `.apk`. A miss runs the native build and stores the
+result. Two matching misses use one build through a single-flight lock.
 
-Prefer trimming. Most of these caches are a flat collection of independent
-entries -- one file per key for Metro's `FileStore`, one directory per
-fingerprint for a build cache -- so the ones nothing has touched in weeks
-can go while the rest keep working. "Unused" means neither read nor written: a
-cache hit reads an entry without rewriting it, so pruning on modification time
-alone would evict exactly the entries that are earning their keep.
+Release configurations use separate keys. Their embedded JavaScript and assets
+are regenerated for the current workspace before installation.
 
-Xcode's compilation cache is the exception. It is an LLVM CAS whose `v4.actions`
-index references its `v9.*.leaf` data files, so removing leaves individually
-would leave the index pointing at data that is gone. `--older-than` reports it
-as left alone; it can only be emptied whole, which is what `--all` does.
+## Keep the main checkout warm
 
-Emptying is a performance decision, not cleanup: the next build in every
-project pays to refill what you removed. The summary says so.
+Run `stim doctor` before native worktree work. It checks whether the main
+checkout has current dependencies and CocoaPods state. It also checks whether a
+fresh worktree produces the same native fingerprint.
 
-### Registering a cache stim-cli cannot detect
+When several native tasks are coming, build the main checkout once:
 
-A Metro `FileStore` root, a build-cache provider's artifact directory, a
-relocated `COMPILATION_CACHE_CAS_PATH` -- all come from a project's own config,
-so stim-cli cannot guess them. The cache names itself instead, once, from code:
-
-```js
-// A setup script, a build-cache provider -- anywhere that creates the cache.
-import { register } from 'stim-cli/cache-manifest';
-
-register({
-  dir: '~/.myapp-metro-cache',
-  name: 'Metro transforms',
-  entriesDepth: 2,
-});
-register({ dir: '~/.myapp-cas', prune: 'atomic' }); // index-backed: emptied whole or not at all
+```bash
+stim start
+stim ios                  # or: stim android
+stim stop
 ```
 
-`entriesDepth` says how far below the directory one entry sits, and it is
-what keeps trimming safe. The default, 1, is a flat store: every child of the
-root is an entry. A root with a layer of grouping _above_ the entries registers
-2 -- Metro's `FileStore` shards its keys across 256 directories, and a build
-cache is keyed `<platform>/<key>` -- so `gc --delete --older-than 30`
-trims one transform or one build instead of a 256th of every transform on the
-machine, or an entire platform's builds.
+Later worktrees can reuse that cache entry. `stim worktree create
+--carry-ignored` can also copy installed dependencies, Pods, and native output
+from the source checkout.
 
-Registration is idempotent and keyed on the directory, so a cache can call it on
-every build; `@stim-cli/metro` and `@stim-cli/expo-build-cache` both do (by writing
-the manifest directly, so they need no stim-cli installed at all).
+## Inspect and clean caches
 
-The `caches` setting is the no-code alternative and is still read: a list of
-paths under `caches` in a committed `.stim-cli.json` is reported alongside the
-registered ones. Every path in it is treated as a flat store, so register from
-code for anything that needs a depth or `atomic`.
-
-```json
-{ "caches": ["~/.myapp-metro-cache", "~/.myapp-build-cache"] }
+```bash
+stim gc
+stim gc --delete --older-than 30
+stim gc --delete --all
 ```
 
-## The cache packages
+The first command only reports sizes. Age-based cleanup removes unused entries.
+`--all` empties managed caches and makes future builds cold.
 
-Two optional packages ship alongside the CLI. Both register themselves with
-stim-cli the first time they run, so `gc` reports and trims them, and
-both work fine without stim-cli installed -- it is an optional peer.
-
-- **[`@stim-cli/metro`](https://www.npmjs.com/package/@stim-cli/metro)**
-  -- one Metro transform cache shared by every worktree, instead of Metro's
-  per-project default that makes each new workspace re-transform the whole
-  module graph. It also carries the NDJSON reporter stim-cli uses to capture a
-  dev server's logs, which is not a cache and is not wired up by `init`.
-- **[`@stim-cli/expo-build-cache`](https://www.npmjs.com/package/@stim-cli/expo-build-cache)**
-  -- a local Expo build cache provider. When no native input changed, the Expo
-  CLI installs a cached `.app` / `.apk` instead of compiling. Wire it to
-  `expo.buildCacheProvider` on SDK 54+, or `expo.experiments.buildCacheProvider`
-  on SDK 53, which reads only that key and ignores the top-level one in silence.
-
-Each package's README has the wiring. Neither is needed for `stim ios` /
-`stim android`, which address the build cache directly: the Expo provider is
-for builds run _outside_ stim-cli (`expo run:ios` by hand, or EAS), so that the two
-share artifacts instead of filling two caches with the same builds. Bare React
-Native has no provider hook at all and needs none.
-
-What every entry point does need is `@expo/fingerprint`, resolved from the
-project, to compute the key. It works on a project with no Expo in it at all.
-Without it `stim ios` refuses with `STIM_CLI_NO_FINGERPRINT` rather than
-compiling from scratch forever.
-
-Entries are keyed `<fingerprintHash>-<variant>-<target>`, identically by every
-entry point. The fingerprint covers what the project _is_, never how it was
-built, so the variant (the Xcode configuration on iOS, the gradle variant on
-Android; `debug` when unset) and the target class (`sim` unless the device
-selector says otherwise) are part of the key. Without them a Release build would
-answer a Debug lookup and a device build would answer a simulator one -- both
-silently, both producing a binary that cannot run. stim-cli builds Debug for a
-simulator and nothing else, so those fields are constant here; they exist
-because the Expo provider and any future release path share the same keyspace.
+Set `STIM_BUILD_CACHE` or `STIM_METRO_CACHE` to place the shared caches on a
+different volume. The same values can live in the machine config under
+`caches.buildCache` and `caches.metroCache`.

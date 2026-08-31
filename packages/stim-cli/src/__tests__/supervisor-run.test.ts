@@ -24,16 +24,16 @@ let tmpHome: string;
 let root: string;
 
 beforeEach(() => {
-  tmpHome = mkdtempSync(join(tmpdir(), 'stim-cli-test-'));
-  process.env.STIM_CLI_HOME = tmpHome;
-  root = mkdtempSync(join(tmpdir(), 'stim-cli-ws-'));
+  tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
+  process.env.STIM_HOME = tmpHome;
+  root = mkdtempSync(join(tmpdir(), 'stim-ws-'));
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'ws' }));
 });
 
 afterEach(() => {
   rmSync(tmpHome, { recursive: true, force: true });
   rmSync(root, { recursive: true, force: true });
-  delete process.env.STIM_CLI_HOME;
+  delete process.env.STIM_HOME;
 });
 
 function readMetroLog() {
@@ -78,9 +78,9 @@ describe('parseArgs', () => {
 
 describe('describeError', () => {
   test('renders a structured error as code, message and remedy', () => {
-    const err = supervisorError('STIM_CLI_BARE_DEPS', 'metro is not resolvable', 'Run `npm install`.');
+    const err = supervisorError('STIM_BARE_DEPS', 'metro is not resolvable', 'Run `npm install`.');
     const text = describeError(err);
-    expect(text).toMatch(/^STIM_CLI_BARE_DEPS: metro is not resolvable/);
+    expect(text).toMatch(/^STIM_BARE_DEPS: metro is not resolvable/);
     expect(text).toMatch(/Remedy: Run `npm install`\./);
   });
 
@@ -187,7 +187,7 @@ describe('state.json concurrent writers (Contract 2 lock)', () => {
               execFile(
                 process.execPath,
                 [script, root, key, String(startAt)],
-                { env: { ...process.env, STIM_CLI_HOME: tmpHome } },
+                { env: { ...process.env, STIM_HOME: tmpHome } },
                 (err) => (err ? reject(err) : resolve()),
               );
             }),
@@ -441,7 +441,7 @@ describe('runSupervisor', () => {
       onExit: (code) => exits.push(code),
       stderr: (line) => stderr.push(line),
       startBare: async () => {
-        throw supervisorError('STIM_CLI_BARE_DEPS', 'metro is not resolvable from the project', 'Run `npm install`.');
+        throw supervisorError('STIM_BARE_DEPS', 'metro is not resolvable from the project', 'Run `npm install`.');
       },
     });
 
@@ -455,8 +455,8 @@ describe('runSupervisor', () => {
     assert(last);
     expect(last.event).toBe('supervisor_failed');
     expect(last.level).toBe('fatal');
-    expect(last.msg).toMatch(/STIM_CLI_BARE_DEPS/);
+    expect(last.msg).toMatch(/STIM_BARE_DEPS/);
     expect(last.msg).toMatch(/Remedy: Run `npm install`\./);
-    expect(stderr.join('\n')).toMatch(/STIM_CLI_BARE_DEPS: metro is not resolvable/);
+    expect(stderr.join('\n')).toMatch(/STIM_BARE_DEPS: metro is not resolvable/);
   });
 });

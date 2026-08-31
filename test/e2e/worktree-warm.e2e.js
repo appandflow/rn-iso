@@ -12,8 +12,8 @@ const CLI = join(REPO, 'packages', 'stim-cli', 'bin', 'cli.ts');
 const ctx = {};
 
 before(() => {
-  ctx.home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-cli-warm-e2e-home-')));
-  ctx.tmp = realpathSync(mkdtempSync(join(tmpdir(), 'stim-cli-warm-e2e-')));
+  ctx.home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-warm-e2e-home-')));
+  ctx.tmp = realpathSync(mkdtempSync(join(tmpdir(), 'stim-warm-e2e-')));
   ctx.repo = join(ctx.tmp, 'app');
   mkdirSync(ctx.repo, { recursive: true });
   writeFileSync(join(ctx.repo, 'package.json'), '{"name":"warm-fixture","private":true}\n');
@@ -61,7 +61,7 @@ test('cold and warm worktree creation report different guidance', () => {
 function create(name, extra = []) {
   return spawnSync(process.execPath, [CLI, 'worktree', 'create', name, '--base', 'head', ...extra], {
     cwd: ctx.repo,
-    env: { ...process.env, STIM_CLI_HOME: ctx.home },
+    env: { ...process.env, STIM_HOME: ctx.home },
     encoding: 'utf-8',
   });
 }

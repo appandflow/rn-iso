@@ -25,7 +25,7 @@ export interface EasSessionLedgerRead {
 }
 
 export function easMachineStateRoot(): string {
-  return join(homedir(), '.stim-cli', 'machine', 'eas');
+  return join(homedir(), '.stim', 'machine', 'eas');
 }
 
 function easSessionLedgerFile(root: string = easMachineStateRoot()): string {
@@ -36,7 +36,7 @@ function validClaim(id: string, value: unknown): EasSessionClaim | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const claim = value as Partial<EasSessionClaim>;
   if (claim.sessionId !== id) return null;
-  if (typeof claim.name !== 'string' || !claim.name.startsWith('stim-cli-')) return null;
+  if (typeof claim.name !== 'string' || !claim.name.startsWith('stim-')) return null;
   if (claim.platform !== 'ios' && claim.platform !== 'android') return null;
   if (typeof claim.workspaceRoot !== 'string' || !isAbsolute(claim.workspaceRoot)) return null;
   if (typeof claim.workspaceHome !== 'string' || !isAbsolute(claim.workspaceHome)) return null;

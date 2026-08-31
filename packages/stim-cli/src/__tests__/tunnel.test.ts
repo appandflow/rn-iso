@@ -164,7 +164,7 @@ describe('startTunnel: the happy path', () => {
   });
 
   test('routes provider output to an owned file so the child is not attached to caller pipes', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'stim-cli-tunnel-log-test-'));
+    const dir = mkdtempSync(join(tmpdir(), 'stim-tunnel-log-test-'));
     const logFile = join(dir, 'cloudflared.log');
     const line = 'banner |  https://detached.trycloudflare.com  |\n';
     const child = makeChildProcess();
@@ -255,7 +255,7 @@ describe('startTunnel: the happy path', () => {
 
 describe('startTunnel: nothing here throws -- every failure is a returned value', () => {
   test('a binary that will not even start', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'stim-cli-tunnel-spawn-test-'));
+    const dir = mkdtempSync(join(tmpdir(), 'stim-tunnel-spawn-test-'));
     const logFile = join(dir, 'ngrok.log');
     writeFileSync(logFile, '');
     const result = await startVerified({
@@ -788,12 +788,12 @@ describe('stopTunnel: idempotent, never throws', () => {
   });
 
   test("a kill racing the process's own exit (ESRCH) reads as missing, not failed", async () => {
-    const previousHome = process.env.STIM_CLI_HOME;
-    const home = mkdtempSync(join(tmpdir(), 'stim-cli-tunnel-stop-test-'));
+    const previousHome = process.env.STIM_HOME;
+    const home = mkdtempSync(join(tmpdir(), 'stim-tunnel-stop-test-'));
     const logFile = join(home, 'tunnel-logs', 'cloudflared.log');
     mkdirSync(join(home, 'tunnel-logs'));
     writeFileSync(logFile, '');
-    process.env.STIM_CLI_HOME = home;
+    process.env.STIM_HOME = home;
     try {
       const result = await stopVerified(fixtureRecord({ logFile }), {
         isAlive: () => true,
@@ -805,8 +805,8 @@ describe('stopTunnel: idempotent, never throws', () => {
       expect(result).toEqual({ status: 'missing' });
       expect(existsSync(logFile)).toBe(false);
     } finally {
-      if (previousHome === undefined) delete process.env.STIM_CLI_HOME;
-      else process.env.STIM_CLI_HOME = previousHome;
+      if (previousHome === undefined) delete process.env.STIM_HOME;
+      else process.env.STIM_HOME = previousHome;
       rmSync(home, { recursive: true, force: true });
     }
   });

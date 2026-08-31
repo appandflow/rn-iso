@@ -3,8 +3,8 @@ import { join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
 import { parseNdjsonText, type NdjsonRecord } from '../ndjson.ts';
 
-export const INSTALL_ERROR = 'STIM_CLI_INSTALL_FAILED';
-export const LAUNCH_ERROR = 'STIM_CLI_LAUNCH_FAILED';
+export const INSTALL_ERROR = 'STIM_INSTALL_FAILED';
+export const LAUNCH_ERROR = 'STIM_LAUNCH_FAILED';
 
 export const DEFAULT_METRO_PORT = 8081;
 
@@ -353,7 +353,7 @@ export function debugHttpHostScript({
 }): string {
   const dir = dataDir || `/data/data/${packageName}`;
   const prefs = `shared_prefs/${packageName}_preferences.xml`;
-  const tmp = `${prefs}.stim-cli.tmp`;
+  const tmp = `${prefs}.stim.tmp`;
   return [
     `cd ${dir} || exit 1`,
     'mkdir -p shared_prefs || exit 1',

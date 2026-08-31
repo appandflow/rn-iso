@@ -31,7 +31,7 @@ guideCommand(program, pkg.version);
 try {
   await program.parseAsync();
 } catch (err) {
-  if ((err as { code?: string })?.code === 'STIM_CLI_CONFIG_CORRUPT') {
+  if ((err as { code?: string })?.code === 'STIM_CONFIG_CORRUPT') {
     console.error((err as Error).message);
     process.exit(1);
   }

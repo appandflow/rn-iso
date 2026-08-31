@@ -25,8 +25,8 @@ describe('the connection profile', () => {
 
   test('carries the tenant and runId connect refuses to run without', () => {
     const profile = remoteProfile({ daemon: DAEMON, platform: 'ios', label: 'wt' });
-    expect(profile.tenant).toBe('stim-cli-wt');
-    expect(profile.runId).toBe('stim-cli-wt');
+    expect(profile.tenant).toBe('stim-wt');
+    expect(profile.runId).toBe('stim-wt');
     expect(profile.sessionIsolation).toBe('tenant');
   });
 
@@ -59,15 +59,15 @@ describe('the connection profile', () => {
   });
 
   test('lives in global workspace storage, never in the project directory', () => {
-    const previous = process.env.STIM_CLI_HOME;
-    process.env.STIM_CLI_HOME = '/stim-cli-home';
+    const previous = process.env.STIM_HOME;
+    process.env.STIM_HOME = '/stim-home';
     try {
       expect(remoteProfilePath('/work/app')).toMatch(
-        /^\/stim-cli-home\/workspaces\/app--[a-f0-9]{16}\/agent-device\.remote\.json$/,
+        /^\/stim-home\/workspaces\/app--[a-f0-9]{16}\/agent-device\.remote\.json$/,
       );
     } finally {
-      if (previous === undefined) delete process.env.STIM_CLI_HOME;
-      else process.env.STIM_CLI_HOME = previous;
+      if (previous === undefined) delete process.env.STIM_HOME;
+      else process.env.STIM_HOME = previous;
     }
   });
 });
@@ -80,7 +80,7 @@ describe('the token travels as an environment variable', () => {
 });
 
 describe('argv', () => {
-  const profilePath = '/work/app/.stim-cli/agent-device.remote.json';
+  const profilePath = '/work/app/.stim/agent-device.remote.json';
 
   test('every command carries the profile, so none of them guess a connection', () => {
     for (const args of [
@@ -143,7 +143,7 @@ describe('isLoopbackDaemon', () => {
 });
 
 describe('the bare-RN Metro hint', () => {
-  const profilePath = '/w/.stim-cli/agent-device.remote.json';
+  const profilePath = '/w/.stim/agent-device.remote.json';
 
   test('open carries the host and port a bare RN app reads', () => {
     const args = openArgs(profilePath, 'com.example.app', null, { host: 'localhost', port: '8085' });
@@ -171,8 +171,8 @@ describe('the bare-RN Metro hint', () => {
 
 describe('closeArgs', () => {
   test('closes through the profile, so it targets this workspace session', () => {
-    const args = closeArgs('/w/.stim-cli/agent-device.remote.json');
+    const args = closeArgs('/w/.stim/agent-device.remote.json');
     expect(args[0]).toBe('close');
-    expect(args[args.indexOf('--remote-config') + 1]).toBe('/w/.stim-cli/agent-device.remote.json');
+    expect(args[args.indexOf('--remote-config') + 1]).toBe('/w/.stim/agent-device.remote.json');
   });
 });

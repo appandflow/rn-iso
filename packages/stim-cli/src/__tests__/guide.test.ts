@@ -122,8 +122,8 @@ test('the guide keeps Metro intent separate from the explicit device backend', (
   expect(lifecycle).toMatch(/android\s+[^\n]*--remote <proxy\|eas>/);
   expect(settings).toMatch(/ios\.remote[^\n]*"proxy" or "eas"/);
   expect(settings).toMatch(/android\.remote[^\n]*"proxy" or "eas"/);
-  expect(errors).toContain('STIM_CLI_REMOTE_PROXY_CONFIG');
-  expect(errors).toContain('STIM_CLI_REMOTE_EAS_UNAVAILABLE');
+  expect(errors).toContain('STIM_REMOTE_PROXY_CONFIG');
+  expect(errors).toContain('STIM_REMOTE_EAS_UNAVAILABLE');
 });
 
 test('the guide documents Android AVD disk-space diagnosis and cleanup', () => {
@@ -173,13 +173,13 @@ test('the cleanup guide documents fail-closed EAS orphan recovery', () => {
   assert(cleanup);
 
   expect(cleanup).toMatch(/plain `stim gc`[^.]*dry run/i);
-  expect(cleanup).toMatch(/gc --delete[\s\S]*active stim-cli-\* EAS\s+sessions/i);
+  expect(cleanup).toMatch(/gc --delete[\s\S]*active stim-\* EAS\s+sessions/i);
   expect(cleanup).toMatch(/workspace state[^.]*missing/i);
   for (const proof of ['project', 'name', 'platform', 'status']) {
     expect(cleanup).toMatch(new RegExp(`verified[^.]*${proof}`, 'i'));
   }
   expect(cleanup).toMatch(/registered root[^.]*missing[^.]*unreadable[^.]*fails closed/i);
-  expect(cleanup).toMatch(/fixed[^.]*~\/\.stim-cli\/machine\/eas[^.]*independent of STIM_CLI_HOME/i);
+  expect(cleanup).toMatch(/fixed[^.]*~\/\.stim\/machine\/eas[^.]*independent of STIM_HOME/i);
   expect(cleanup).toMatch(/unclaimed[^.]*never stopped/i);
   expect(cleanup).toMatch(/missing config\.json[^.]*does not authorize/i);
   expect(cleanup).toMatch(/exact recorded workspace state path/i);
@@ -235,7 +235,7 @@ test('no topic teaches a command this binary does not have', () => {
     }
     expect(body).not.toMatch(/stim config (--repo|<key>|[a-z]+\.[a-z]+)/i);
   }
-  expect(renderTopic('errors')).not.toMatch(/Installed stim-cli skill/);
+  expect(renderTopic('errors')).not.toMatch(/Installed Stim skill/);
   expect(renderTopic('settings')).toMatch(/no `stim config` command/);
 });
 
@@ -245,10 +245,10 @@ test('the errors topic documents every code the build commands can emit', () => 
   const sources = ['ios.ts', 'android.ts', 'start.ts']
     .map((f) => readFileSync(new URL(`../commands/${f}`, import.meta.url), 'utf-8'))
     .join('\n');
-  const codes = new Set([...sources.matchAll(/STIM_CLI_[A-Z_]+/g)].map((m) => m[0]));
+  const codes = new Set([...sources.matchAll(/STIM_[A-Z_]+/g)].map((m) => m[0]));
   expect(codes.size >= 8).toBeTruthy();
   for (const code of codes) {
-    if (code === 'STIM_CLI_CONFIG_CORRUPT') continue;
+    if (code === 'STIM_CONFIG_CORRUPT') continue;
     expect(body.includes(code)).toBeTruthy();
   }
 });
@@ -256,7 +256,7 @@ test('the errors topic documents every code the build commands can emit', () => 
 test('the remote start remedy covers existing bare and Expo servers', () => {
   const body = renderTopic('errors');
   assert(body);
-  const section = body.slice(body.indexOf('STIM_CLI_REMOTE_START_REQUIRED'), body.indexOf('STIM_CLI_BARE_DEPS'));
+  const section = body.slice(body.indexOf('STIM_REMOTE_START_REQUIRED'), body.indexOf('STIM_BARE_DEPS'));
   expect(section).toContain('bare');
   expect(section).toContain('Expo');
 });
@@ -280,8 +280,8 @@ test('the settings topic lists exactly the keys settings.js honours', () => {
 test('the safe Android AVD override contract is consistent across user guidance', () => {
   const guide = renderTopic('settings');
   assert(guide);
-  const readme = readFileSync(new URL('../../README.md', import.meta.url), 'utf-8');
-  for (const body of [guide, readme]) {
+  const website = readFileSync(new URL('../../../../website/docs/settings.md', import.meta.url), 'utf-8');
+  for (const body of [guide, website]) {
     expect(body).toMatch(/android\.avdConfigFile/);
     expect(body).toMatch(/android\.avdConfig/);
     expect(body).toMatch(/config\.ini/);
@@ -390,9 +390,9 @@ test('the skill still carries the rules an agent must not have to look up', () =
   for (const must of [
     'gc --delete',
     '--force',
-    'STIM_CLI_NO_METRO',
+    'STIM_NO_METRO',
     'booted',
-    'stim-cli-',
+    'stim-',
     'registry.npmjs.org',
     '20.19.4',
     'worktree remove',
@@ -407,7 +407,7 @@ test('advanced contracts stay in guide topics instead of the skill', () => {
     ['AGENT_DEVICE_DAEMON_AUTH_TOKEN', 'metro'],
     ['metro.ngrokUrl', 'settings'],
     ['waitedForBuild', 'facts'],
-    ['STIM_CLI_AT_CAPACITY', 'errors'],
+    ['STIM_AT_CAPACITY', 'errors'],
     ['.fingerprintignore', 'lifecycle'],
     ['CoreSimulatorBridge', 'facts'],
     ['~/.android/avd', 'cleanup'],
@@ -429,7 +429,7 @@ test('the package exposes only the stim binary', () => {
 
   const cli = readFileSync(new URL('../../bin/cli.ts', import.meta.url), 'utf-8');
   expect(cli).toContain(".name('stim')");
-  expect(cli).not.toContain(".name('stim-cli')");
+  expect(cli).not.toContain(".name('Stim')");
 });
 
 test('the binary command surface remains intentional', () => {

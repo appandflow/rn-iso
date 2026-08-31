@@ -8,7 +8,7 @@ import type { Config, ConcurrencyLimits, DeviceRecord, ProjectRecord, RepoRecord
 export type { Config, ConcurrencyLimits, DeviceRecord, ProjectRecord, RepoRecord, SupervisorRecord };
 
 export function getConfigDir(): string {
-  return process.env.STIM_CLI_HOME || join(homedir(), '.stim-cli');
+  return process.env.STIM_HOME || join(homedir(), '.stim');
 }
 
 function getConfigPath() {
@@ -38,11 +38,11 @@ export function loadConfig(): Config | null {
     return JSON.parse(raw) as Config;
   } catch (err) {
     const corrupt = new Error(
-      `stim-cli config at ${p} is not valid JSON: ${(err as Error).message}\n` +
-        'It holds the records of the simulators and emulators stim-cli owns, so it is never reset automatically.\n' +
+      `Stim config at ${p} is not valid JSON: ${(err as Error).message}\n` +
+        'It holds the records of the simulators and emulators Stim owns, so it is never reset automatically.\n' +
         `Repair the file, or move it aside to start over: mv "${p}" "${p}.broken"`,
     );
-    (corrupt as Error & { code?: string }).code = 'STIM_CLI_CONFIG_CORRUPT';
+    (corrupt as Error & { code?: string }).code = 'STIM_CONFIG_CORRUPT';
     throw corrupt;
   }
 }
@@ -177,8 +177,8 @@ export function getConcurrencyLimits({ env = process.env }: { env?: NodeJS.Proce
   const cfg = loadConfig();
   const c = cfg?.concurrency || {};
   return {
-    maxBuilds: resolveLimit(env.STIM_CLI_MAX_BUILDS, c.maxBuilds),
-    maxDevices: resolveLimit(env.STIM_CLI_MAX_DEVICES, c.maxDevices),
+    maxBuilds: resolveLimit(env.STIM_MAX_BUILDS, c.maxBuilds),
+    maxDevices: resolveLimit(env.STIM_MAX_DEVICES, c.maxDevices),
   };
 }
 

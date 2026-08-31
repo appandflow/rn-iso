@@ -95,7 +95,7 @@ export function expoMetroConfigPath(fromUrl: string = import.meta.url): string |
   return null;
 }
 
-const STORE_OK_PREFIX = 'stim-cli-metro-store: sharing Metro transforms through ';
+const STORE_OK_PREFIX = 'stim-metro-store: sharing Metro transforms through ';
 
 export function metroStoreConfirmedRoot(line: string): string | null {
   if (!line.startsWith(STORE_OK_PREFIX)) return null;
@@ -116,8 +116,8 @@ export function expoMetroStoreEnv({
 }): Record<string, string> {
   return {
     EXPO_OVERRIDE_METRO_CONFIG: adapterPath,
-    STIM_CLI_METRO_STORE: storeRoot,
-    STIM_CLI_PROJECT_ROOT: root,
-    ...(existingOverride ? { STIM_CLI_EXPO_METRO_CONFIG: existingOverride } : {}),
+    STIM_METRO_STORE: storeRoot,
+    STIM_PROJECT_ROOT: root,
+    ...(existingOverride ? { STIM_EXPO_METRO_CONFIG: existingOverride } : {}),
   };
 }

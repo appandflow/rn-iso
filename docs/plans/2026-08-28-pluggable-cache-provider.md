@@ -4,7 +4,7 @@
 
 **Goal:** Add one project-selected cache provider for Metro transforms and native build artifacts while preserving the local filesystem as tier one.
 
-**Architecture:** A new `@stim-cli/cache` package owns the public capability contract, provider loading, bounded calls, and tier helpers. `@stim-cli/metro` adapts the Metro capability, while the stim-cli CLI adapts the build capability and keeps Expo `buildCacheProvider` as a later independent tier.
+**Architecture:** A new `@stim-cli/cache` package owns the public capability contract, provider loading, bounded calls, and tier helpers. `@stim-cli/metro` adapts the Metro capability, while the Stim CLI adapts the build capability and keeps Expo `buildCacheProvider` as a later independent tier.
 
 **Tech Stack:** TypeScript, Node.js 22, Metro `CacheStore`, Commander, Vitest, Node test runner
 
@@ -76,7 +76,7 @@ Use this package shape:
 {
   "name": "@stim-cli/cache",
   "version": "1.2.0",
-  "description": "Cache provider contract and tier coordination for stim-cli",
+  "description": "Cache provider contract and tier coordination for Stim",
   "license": "MIT",
   "files": ["dist", "README.md", "LICENSE"],
   "main": "dist/index.js",
@@ -213,7 +213,7 @@ Add tests that prove:
 - Repository settings override committed settings.
 - Provider options use the current nested merge rules.
 - The returned `baseDir` belongs to the layer that supplied `cache.provider`.
-- A relative committed provider resolves from the directory containing `.stim-cli.json`.
+- A relative committed provider resolves from the directory containing `.stim.json`.
 
 Use this target helper:
 
@@ -256,7 +256,7 @@ Implement `resolveCacheProviderConfig()` beside `resolveSettings()`. Inspect the
 In `@stim-cli/cache`, export a private-looking but public transport constant and helpers:
 
 ```ts
-export const CACHE_PROVIDER_ENV = 'STIM_CLI_CACHE_PROVIDER_CONFIG';
+export const CACHE_PROVIDER_ENV = 'STIM_CACHE_PROVIDER_CONFIG';
 export function cacheProviderEnv(config: CacheProviderConfig): string;
 export function cacheProviderConfigFromEnv(env?: NodeJS.ProcessEnv): CacheProviderConfig | null;
 ```
@@ -380,8 +380,8 @@ Add `@stim-cli/cache` as a workspace dependency.
 
 Keep `sharedCacheStores(name, options)` synchronous. Construct the existing `FileStore` first. Read provider configuration in this order:
 
-1. `STIM_CLI_CACHE_PROVIDER_CONFIG` from the supervisor.
-2. The nearest committed `.stim-cli.json` when Metro runs outside stim-cli.
+1. `STIM_CACHE_PROVIDER_CONFIG` from the supervisor.
+2. The nearest committed `.stim.json` when Metro runs outside Stim.
 3. No second tier.
 
 Pass a lazy provider loader to `createTieredMetroStore()`. Return one composite store in the array. Preserve `cacheRoot(name)` and cache registration unchanged.
@@ -701,7 +701,7 @@ git commit -m "docs(cache): document provider API"
 
 Create a temporary bare React Native project with:
 
-- `.stim-cli.json` containing one relative provider module;
+- `.stim.json` containing one relative provider module;
 - a provider that records factory input and capability calls as NDJSON;
 - a fake local Metro store;
 - a synthetic `.app` or `.apk` artifact.
@@ -710,7 +710,7 @@ The test must prove:
 
 1. `@stim-cli/metro` loads the committed provider and passes its options.
 2. A provider Metro hit backfills the fake local store.
-3. stim-cli settings resolve the same provider reference and options.
+3. Stim settings resolve the same provider reference and options.
 4. The build coordinator uses the provider artifact and backfills the real temporary filesystem cache.
 5. The provider record contains the same project root for both capabilities.
 6. No provider deletion call exists.
@@ -794,7 +794,7 @@ Run:
 npm run build
 ```
 
-Expected: `@stim-cli/cache`, `@stim-cli/metro`, `@stim-cli/expo-build-cache`, and `stim-cli` build successfully with declarations.
+Expected: `@stim-cli/cache`, `@stim-cli/metro`, `@stim-cli/expo-build-cache`, and `Stim` build successfully with declarations.
 
 **Step 5: Inspect the final diff**
 

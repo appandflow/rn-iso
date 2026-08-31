@@ -600,12 +600,12 @@ describe('watchAppPid', () => {
   });
 
   test('the interval is 3s unless a test redirects it', () => {
-    delete process.env.STIM_CLI_PID_WATCH_MS;
+    delete process.env.STIM_PID_WATCH_MS;
     expect(pidWatchInterval()).toBe(3000);
-    process.env.STIM_CLI_PID_WATCH_MS = '100';
+    process.env.STIM_PID_WATCH_MS = '100';
     expect(pidWatchInterval()).toBe(100);
-    process.env.STIM_CLI_PID_WATCH_MS = 'nonsense';
+    process.env.STIM_PID_WATCH_MS = 'nonsense';
     expect(pidWatchInterval()).toBe(3000);
-    delete process.env.STIM_CLI_PID_WATCH_MS;
+    delete process.env.STIM_PID_WATCH_MS;
   });
 });

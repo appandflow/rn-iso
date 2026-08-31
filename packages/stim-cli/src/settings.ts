@@ -347,7 +347,7 @@ export function unknownSettingKeys(settings: unknown, prefix = ''): string[] {
 
 export function readCommittedSettings(repoRoot?: string | null): SettingsObject {
   if (!repoRoot) return {};
-  const p = join(repoRoot, '.stim-cli.json');
+  const p = join(repoRoot, '.stim.json');
   if (!existsSync(p)) return {};
   try {
     const parsed = JSON.parse(readFileSync(p, 'utf-8'));

@@ -35,10 +35,8 @@ const VARIANT = `${FRAMEWORK}-${PLATFORM}`;
 const EXPECTED_MODE = FRAMEWORK === 'expo' ? 'expo-child' : 'bare-inproc';
 const ARTIFACT_EXT = PLATFORM === 'ios' ? '.app' : '.apk';
 
-const HOME_DIR = args.dryRun
-  ? '<dry-run>'
-  : args.home || mkdtempSync(join(tmpdir(), `stim-cli-cache-${VARIANT}-home-`));
-const WORK_DIR = args.dryRun ? '<dry-run>' : mkdtempSync(join(tmpdir(), `stim-cli-cache-${VARIANT}-`));
+const HOME_DIR = args.dryRun ? '<dry-run>' : args.home || mkdtempSync(join(tmpdir(), `stim-cache-${VARIANT}-home-`));
+const WORK_DIR = args.dryRun ? '<dry-run>' : mkdtempSync(join(tmpdir(), `stim-cache-${VARIANT}-`));
 
 const BUILD_CACHE_ROOT = args.dryRun ? '<dry-run>' : join(HOME_DIR, 'build-cache');
 const METRO_CACHE_ROOT = args.dryRun ? '<dry-run>' : join(HOME_DIR, 'metro-cache');
@@ -47,13 +45,13 @@ const CAS_DIR = join(HOME_DIR, 'compilation-cache');
 if (!args.dryRun) mkdirSync(CACHE_TMP_DIR, { recursive: true });
 const ENV = {
   ...process.env,
-  STIM_CLI_HOME: HOME_DIR,
-  STIM_CLI_BUILD_CACHE: BUILD_CACHE_ROOT,
-  STIM_CLI_METRO_CACHE: METRO_CACHE_ROOT,
+  STIM_HOME: HOME_DIR,
+  STIM_BUILD_CACHE: BUILD_CACHE_ROOT,
+  STIM_METRO_CACHE: METRO_CACHE_ROOT,
   TMPDIR: CACHE_TMP_DIR,
   CI: '1',
 };
-process.env.STIM_CLI_HOME = HOME_DIR;
+process.env.STIM_HOME = HOME_DIR;
 const GRADLE_CACHE_DIR = join(process.env.GRADLE_USER_HOME || join(homedir(), '.gradle'), 'caches', 'build-cache-1');
 const RACE_CACHE_ROOT = args.dryRun ? '<dry-run>' : join(WORK_DIR, 'race-build-cache');
 
@@ -432,8 +430,8 @@ async function main() {
     startAndAssertMode(wt4);
     const casBeforeRace = dirStats(CAS_DIR);
     banner('racing two workspaces at ONE uncached fingerprint');
-    log(`both address an empty build cache at ${RACE_CACHE_ROOT}; the build LOCK is shared through STIM_CLI_HOME`);
-    const raceEnv = { ...ENV, STIM_CLI_BUILD_CACHE: RACE_CACHE_ROOT };
+    log(`both address an empty build cache at ${RACE_CACHE_ROOT}; the build LOCK is shared through STIM_HOME`);
+    const raceEnv = { ...ENV, STIM_BUILD_CACHE: RACE_CACHE_ROOT };
     const [r3, r4] = await Promise.all([
       cliAsync([PLATFORM, '--json'], { cwd: wt3, env: raceEnv }),
       cliAsync([PLATFORM, '--json'], { cwd: wt4, env: raceEnv }),
@@ -884,17 +882,17 @@ function parseArgs(argv) {
 
 function plan() {
   log(`framework=${FRAMEWORK} platform=${PLATFORM} expectedMode=${EXPECTED_MODE} artifact=*${ARTIFACT_EXT}`);
-  log(`STIM_CLI_HOME=${HOME_DIR}`);
+  log(`STIM_HOME=${HOME_DIR}`);
   log(`work dir=${WORK_DIR}`);
-  log(`build cache=${BUILD_CACHE_ROOT} (forced; any inherited STIM_CLI_BUILD_CACHE is ignored)`);
-  log(`metro cache=${METRO_CACHE_ROOT} (forced; any inherited STIM_CLI_METRO_CACHE is ignored)`);
+  log(`build cache=${BUILD_CACHE_ROOT} (forced; any inherited STIM_BUILD_CACHE is ignored)`);
+  log(`metro cache=${METRO_CACHE_ROOT} (forced; any inherited STIM_METRO_CACHE is ignored)`);
   log(`temp dir=${CACHE_TMP_DIR} (forced so Metro's default store cannot hide shared-store writes)`);
   log(PLATFORM === 'ios' ? `xcode CAS=${CAS_DIR}` : `gradle build cache=${GRADLE_CACHE_DIR}`);
   log(`race build cache=${RACE_CACHE_ROOT}`);
   log(
     args.appDir
       ? `using existing app: ${resolve(args.appDir)}`
-      : `fixture: ${FIXTURE_COMMANDS[FRAMEWORK]('<appDir>').map(quote).join(' ')} (runtime state stays under STIM_CLI_HOME)`,
+      : `fixture: ${FIXTURE_COMMANDS[FRAMEWORK]('<appDir>').map(quote).join(' ')} (runtime state stays under STIM_HOME)`,
   );
   log(`checks: ${Object.keys(CHECK_TITLES).join(', ')}`);
 }

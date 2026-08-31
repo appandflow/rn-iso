@@ -75,17 +75,17 @@ let tmp: string;
 let stateHome: string;
 let previousStateHome: string | undefined;
 beforeEach(() => {
-  tmp = mkdtempSync(join(tmpdir(), 'stim-cli-xcode-'));
-  stateHome = mkdtempSync(join(tmpdir(), 'stim-cli-xcode-state-'));
-  previousStateHome = process.env.STIM_CLI_HOME;
-  process.env.STIM_CLI_HOME = stateHome;
+  tmp = mkdtempSync(join(tmpdir(), 'stim-xcode-'));
+  stateHome = mkdtempSync(join(tmpdir(), 'stim-xcode-state-'));
+  previousStateHome = process.env.STIM_HOME;
+  process.env.STIM_HOME = stateHome;
 });
 afterEach(() => {
   resetExecutor();
   rmSync(tmp, { recursive: true, force: true });
   rmSync(stateHome, { recursive: true, force: true });
-  if (previousStateHome === undefined) delete process.env.STIM_CLI_HOME;
-  else process.env.STIM_CLI_HOME = previousStateHome;
+  if (previousStateHome === undefined) delete process.env.STIM_HOME;
+  else process.env.STIM_HOME = previousStateHome;
 });
 
 function recordingWriter(file = '/dev/null/not-used'): NdjsonWriter & { records: NdjsonRecord[] } {
@@ -212,7 +212,7 @@ describe('discoverXcodeProject', () => {
   test('no ios/ directory is an error naming prebuild, not an exception', () => {
     const { error } = discoverXcodeProject(tmp);
     assert(error);
-    expect(error.code).toBe('STIM_CLI_BUILD_FAILED');
+    expect(error.code).toBe('STIM_BUILD_FAILED');
     expect(error.message).toMatch(/No ios\/ directory/);
     expect(error.remedy).toMatch(/expo prebuild -p ios/);
   });
@@ -222,7 +222,7 @@ describe('discoverXcodeProject', () => {
     writeFileSync(join(tmp, 'ios', 'Podfile'), 'platform :ios');
     const { error } = discoverXcodeProject(tmp);
     assert(error);
-    expect(error.code).toBe('STIM_CLI_BUILD_FAILED');
+    expect(error.code).toBe('STIM_BUILD_FAILED');
     expect(error.message).toMatch(/contains no \.xcworkspace and no \.xcodeproj/);
     expect(error.remedy).toMatch(/prebuild/);
   });
@@ -327,7 +327,7 @@ describe('listSchemes and resolveScheme', () => {
     expect(listSchemes(project)).toBe(null);
   });
 
-  test('resolveScheme maps a failed listing to STIM_CLI_NO_SCHEME with the command to run', () => {
+  test('resolveScheme maps a failed listing to STIM_NO_SCHEME with the command to run', () => {
     setExecutor({
       run: () => '',
       runQuiet: () => null,
@@ -338,7 +338,7 @@ describe('listSchemes and resolveScheme', () => {
     });
     const { error } = resolveScheme(project);
     assert(error);
-    expect(error.code).toBe('STIM_CLI_NO_SCHEME');
+    expect(error.code).toBe('STIM_NO_SCHEME');
     expect(error.message).toMatch(/Could not list schemes/);
     expect(error.remedy).toMatch(/-list/);
   });
@@ -352,7 +352,7 @@ describe('listSchemes and resolveScheme', () => {
     });
     const { error } = resolveScheme(project);
     assert(error);
-    expect(error.code).toBe('STIM_CLI_NO_SCHEME');
+    expect(error.code).toBe('STIM_NO_SCHEME');
     expect(error.message).toMatch(/schemes: one, two/);
     expect(error.remedy).toMatch(/Shared/);
   });
@@ -376,7 +376,7 @@ describe('xcodebuildArgs', () => {
 
   test('is exactly the invocation the plan specifies, in order', () => {
     expect(
-      xcodebuildArgs({ project, scheme: 'App', udid: 'BF2A-1234', derivedDataPath: '/p/.stim-cli/derived-data' }),
+      xcodebuildArgs({ project, scheme: 'App', udid: 'BF2A-1234', derivedDataPath: '/p/.stim/derived-data' }),
     ).toEqual([
       '-workspace',
       '/p/ios/App.xcworkspace',
@@ -389,7 +389,7 @@ describe('xcodebuildArgs', () => {
       '-destination',
       'id=BF2A-1234',
       '-derivedDataPath',
-      '/p/.stim-cli/derived-data',
+      '/p/.stim/derived-data',
       'build',
     ]);
   });
@@ -428,7 +428,7 @@ describe('xcodebuildArgs', () => {
     expect(args.slice(-4)).toEqual(['-quiet', 'build', 'A=1', 'B=2']);
   });
 
-  test('no build settings is exactly the argv stim-cli composed before they existed', () => {
+  test('no build settings is exactly the argv Stim composed before they existed', () => {
     const base = { project, scheme: 'App', udid: 'u', derivedDataPath: '/dd' };
     expect(xcodebuildArgs(base)).toEqual(xcodebuildArgs({ ...base, buildSettings: [] }));
   });
@@ -437,17 +437,17 @@ describe('xcodebuildArgs', () => {
 describe('compilationCacheSettings', () => {
   const base = {
     workspaceRoot: '/w/app-412',
-    derivedDataPath: '/home/.stim-cli/workspaces/app-412--abc/derived-data',
-    casPath: '/home/.stim-cli/compilation-cache',
+    derivedDataPath: '/home/.stim/workspaces/app-412--abc/derived-data',
+    casPath: '/home/.stim/compilation-cache',
   };
 
   test('names the CAS, the prefix mapping and the Swift opt-out on an Xcode that has the cache', () => {
     expect(compilationCacheSettings({ ...base, xcodeMajor: 26 })).toEqual([
       'COMPILATION_CACHE_ENABLE_CACHING=YES',
-      'COMPILATION_CACHE_CAS_PATH=/home/.stim-cli/compilation-cache',
+      'COMPILATION_CACHE_CAS_PATH=/home/.stim/compilation-cache',
       'SWIFT_ENABLE_COMPILE_CACHE=NO',
       'CLANG_ENABLE_PREFIX_MAPPING=YES',
-      'CLANG_OTHER_PREFIX_MAPPINGS=/w/app-412=/^src /home/.stim-cli/workspaces/app-412--abc/derived-data=/^derived-data',
+      'CLANG_OTHER_PREFIX_MAPPINGS=/w/app-412=/^src /home/.stim/workspaces/app-412--abc/derived-data=/^derived-data',
     ]);
   });
 
@@ -489,7 +489,7 @@ describe('the ccache detection both the build and doctor read', () => {
   });
 
   test('an absent or unreadable Podfile.properties.json reads as no ccache', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'stim-cli-podprops-'));
+    const dir = mkdtempSync(join(tmpdir(), 'stim-podprops-'));
     try {
       expect(readPodfileProperties(dir)).toBe(null);
       mkdirSync(join(dir, 'ios'), { recursive: true });
@@ -505,9 +505,7 @@ describe('the ccache detection both the build and doctor read', () => {
 
 describe('locating the product', () => {
   test('productsDir mirrors the layout xcodebuild writes under -derivedDataPath', () => {
-    expect(productsDir('/p/.stim-cli/derived-data')).toBe(
-      '/p/.stim-cli/derived-data/Build/Products/Debug-iphonesimulator',
-    );
+    expect(productsDir('/p/.stim/derived-data')).toBe('/p/.stim/derived-data/Build/Products/Debug-iphonesimulator');
     expect(productsDir('/dd', { configuration: 'Release', sdk: 'iphoneos' })).toBe(
       '/dd/Build/Products/Release-iphoneos',
     );
@@ -919,7 +917,7 @@ describe('buildIos with a mocked executor', () => {
     const result = asResult(await promise);
 
     expect(result.failed).toBe(true);
-    expect(result.code).toBe('STIM_CLI_BUILD_FAILED');
+    expect(result.code).toBe('STIM_BUILD_FAILED');
     expect(result.exitCode).toBe(65);
     expect(result.diagnostics).toEqual([
       { file: '/src/App/AppDelegate.m', line: 42, column: 8, message: "cannot find 'Foo' in scope" },
@@ -965,18 +963,18 @@ describe('buildIos with a mocked executor', () => {
     const writer = recordingWriter();
     const result = asResult(await buildIos({ root: join(tmp, 'nothing-here'), udid: 'u', logWriter: writer }));
     expect(result.failed).toBe(true);
-    expect(result.code).toBe('STIM_CLI_BUILD_FAILED');
+    expect(result.code).toBe('STIM_BUILD_FAILED');
     expect(result.diagnostics[0]?.remedy).toMatch(/prebuild/);
     expect(spawnCalls).toEqual([]);
     expect(writer.records.filter((r) => r.level === 'error').length).toBe(1);
   });
 
-  test('an unresolvable scheme fails as STIM_CLI_NO_SCHEME before anything is spawned', async () => {
+  test('an unresolvable scheme fails as STIM_NO_SCHEME before anything is spawned', async () => {
     const child = fakeChild();
     const spawnCalls = harness(tmp, { child, listing: '{"project":{"name":"App","schemes":["one","two"]}}' });
     const result = asResult(await buildIos({ root: tmp, udid: 'u', logWriter: recordingWriter() }));
     expect(result.failed).toBe(true);
-    expect(result.code).toBe('STIM_CLI_NO_SCHEME');
+    expect(result.code).toBe('STIM_NO_SCHEME');
     expect(spawnCalls).toEqual([]);
   });
 
@@ -1322,7 +1320,7 @@ const BROKEN_MAIN = `#import <Foundation/Foundation.h>
 
 int main(int argc, char *argv[]) {
   @autoreleasepool {
-    NSLog(@"%@", stimCliDeliberatelyUndefined);
+    NSLog(@"%@", stimDeliberatelyUndefined);
   }
   return 0;
 }
@@ -1419,7 +1417,7 @@ describe('buildIos against a real xcodebuild', { skip: LIVE as unknown as boolea
     writer.close();
 
     expect(result.failed).toBe(true);
-    expect(result.code).toBe('STIM_CLI_BUILD_FAILED');
+    expect(result.code).toBe('STIM_BUILD_FAILED');
     expect(result.exitCode).toBe(65);
     expect(result.diagnostics.length).toBe(1);
     const [diagnostic] = result.diagnostics;
@@ -1427,7 +1425,7 @@ describe('buildIos against a real xcodebuild', { skip: LIVE as unknown as boolea
     expect(diagnostic.file).toBe(join(tmp, 'ios', 'Scratch', 'main.m'));
     expect(diagnostic.line).toBe(5);
     expect(diagnostic.column).toBe(18);
-    expect(diagnostic.message).toMatch(/use of undeclared identifier 'stimCliDeliberatelyUndefined'/);
+    expect(diagnostic.message).toMatch(/use of undeclared identifier 'stimDeliberatelyUndefined'/);
     expect(diagnostic.remedy).toBe(undefined);
     expect(result.truncated).toBe(0);
     expect(result.tail.length).toBe(5);

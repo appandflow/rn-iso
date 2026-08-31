@@ -182,7 +182,7 @@ test('killMetroTree reports false when nothing could be signalled', () => {
 test.skipIf(!CAN_READ_CWD)(
   'resolveProjectMetro identifies and kills a REAL listening process from the project dir',
   async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'stim-cli-metro-'));
+    const dir = mkdtempSync(join(tmpdir(), 'stim-metro-'));
     const script = join(dir, 'fake-metro.js');
     writeFileSync(
       script,

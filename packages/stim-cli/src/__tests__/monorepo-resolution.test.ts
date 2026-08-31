@@ -19,9 +19,9 @@ function write(path: string, text: string, { exec = false } = {}) {
 }
 
 beforeEach(() => {
-  home = mkdtempSync(join(tmpdir(), 'stim-cli-home-'));
-  process.env.STIM_CLI_HOME = home;
-  ws = realpathSync(mkdtempSync(join(tmpdir(), 'stim-cli-mono-')));
+  home = mkdtempSync(join(tmpdir(), 'stim-home-'));
+  process.env.STIM_HOME = home;
+  ws = realpathSync(mkdtempSync(join(tmpdir(), 'stim-mono-')));
   app = join(ws, 'packages', 'app');
 
   write(join(ws, 'package.json'), JSON.stringify({ name: 'ws', private: true, workspaces: ['packages/*'] }));
@@ -57,7 +57,7 @@ beforeEach(() => {
 afterEach(() => {
   rmSync(home, { recursive: true, force: true });
   rmSync(ws, { recursive: true, force: true });
-  delete process.env.STIM_CLI_HOME;
+  delete process.env.STIM_HOME;
 });
 
 describe("finding the project's expo binary", () => {
@@ -87,7 +87,7 @@ describe("finding the project's expo binary", () => {
   });
 
   test('a project that really has no expo resolves to null, so the caller can say so honestly', () => {
-    const bare = realpathSync(mkdtempSync(join(tmpdir(), 'stim-cli-bare-')));
+    const bare = realpathSync(mkdtempSync(join(tmpdir(), 'stim-bare-')));
     try {
       write(join(bare, 'package.json'), JSON.stringify({ name: 'bare' }));
       expect(expoBinPath(bare)).toBe(null);
@@ -104,7 +104,7 @@ describe('detectIsExpo on a hoisted workspace', () => {
   });
 
   test('the app.json shape alone carries it when nothing is installed yet', () => {
-    const fresh = realpathSync(mkdtempSync(join(tmpdir(), 'stim-cli-fresh-')));
+    const fresh = realpathSync(mkdtempSync(join(tmpdir(), 'stim-fresh-')));
     try {
       write(join(fresh, 'package.json'), JSON.stringify({ name: 'app', dependencies: { expo: '^57.0.0' } }));
       write(
@@ -119,7 +119,7 @@ describe('detectIsExpo on a hoisted workspace', () => {
   });
 
   test('a committed native project says so through use_expo_modules!', () => {
-    const native = realpathSync(mkdtempSync(join(tmpdir(), 'stim-cli-native-')));
+    const native = realpathSync(mkdtempSync(join(tmpdir(), 'stim-native-')));
     try {
       write(join(native, 'package.json'), JSON.stringify({ name: 'app', dependencies: { expo: '^57.0.0' } }));
       write(join(native, 'ios', 'Podfile'), "require 'json'\ntarget 'App' do\n  use_expo_modules!\nend\n");
@@ -177,7 +177,7 @@ describe('detectIsExpo is the single source', () => {
   });
 
   test('and a bare project gets the bare server and none of the Expo findings', async () => {
-    const bare = realpathSync(mkdtempSync(join(tmpdir(), 'stim-cli-bare-')));
+    const bare = realpathSync(mkdtempSync(join(tmpdir(), 'stim-bare-')));
     try {
       write(join(bare, 'package.json'), JSON.stringify({ name: 'bare', dependencies: { 'react-native': '0.81.0' } }));
       let startedBare = false;

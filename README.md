@@ -1,76 +1,66 @@
-# stim-cli
+# Stim
 
-[![CI](https://github.com/appandflow/stim/actions/workflows/ci.yml/badge.svg)](https://github.com/appandflow/stim/actions/workflows/ci.yml)
+Fast, isolated React Native environments for coding agents.
 
-The React Native / Expo CLI for AI agents. Humans never run it — your agent
-does. Each agent gets an isolated dev environment: its own Metro port, its own
-simulator or emulator, native builds that install from a shared cache, and a
-queryable log timeline — so several agents can build the same app on one
-machine at the same time without stepping on each other.
+Stim gives each project or git worktree its own Metro port and owned simulator
+or emulator. It shares native artifacts, Xcode compilation data, Gradle output,
+and Metro transforms across worktrees. Agents can work in parallel without
+sharing live resources, then clean up every resource Stim created.
 
-**stim-cli needs no project changes to run.** Point it at a clean checkout and
-the whole loop works, caches included — the Xcode compilation cache, Gradle's
-build cache and a shared Metro transform cache all ride on the command lines
-stim-cli composes itself, not on files your repo has to commit. Trying it out
-costs no PR.
+Stim supports React Native Community CLI and Expo projects. Builds run locally.
+Apps can launch on local or configured remote simulators.
 
-## Getting started
+## Install
 
-Install the agent skill:
+The npm package is named `stim-cli`. It installs the `stim` command.
 
 ```bash
+npm install --global stim-cli
 npx skills add appandflow/stim
 ```
 
-The package exports only `stim`. Run it without installing, or install it once:
+Then ask your coding agent to build and run the app. The normal loop is:
 
 ```bash
-npx stim-cli <command>
-npm install --global stim-cli
+stim doctor
+stim start
+stim ios                  # or: stim android
+stim logs --errors
+stim stop
 ```
 
-Later examples use `stim`. If it is not installed globally, replace `stim`
-with the `npx` form above.
+Stim needs no project initialization. Runtime state stays under `~/.stim` by
+default.
 
-Then tell your agent what you want:
+## Documentation
 
-```
-Build and run the app on the iOS simulator and fix anything that breaks.
-```
+Read the [Stim documentation](https://appandflow.github.io/stim/) for the
+motivation, setup, concepts, command reference, and settings reference.
 
-That's it. The agent drives the whole loop through stim-cli — a supervised dev
-server on a reserved port, an owned simulator, a build that installs from a
-shared cache when nothing native changed, and `logs --errors` to check its own
-work — in about ten lines of output per cycle, `--json` everywhere.
-
-If a build is ever blocked or slower than it should be, `stim doctor` says why,
-read-only.
-
-## What's in the box
-
-| Package                                                     | What it is                                                                                                                                                                                                                                                             |
-| ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`stim-cli`](./packages/stim-cli)                           | The CLI the agent runs: `start` (supervised dev server), `ios` / `android` (owned device, cached build, launch), `logs --errors` (what broke, symbolicated), `worktree` / `stop` / `gc` (isolation and cleanup). Never prompts, prints ~10 lines, `--json` everywhere. |
-| [`@stim-cli/metro`](./packages/metro)                       | One Metro transform cache shared by every worktree, instead of Metro's per-project default that makes each new workspace re-transform the whole module graph. Plus the NDJSON reporter behind the log timeline.                                                        |
-| [`@stim-cli/expo-build-cache`](./packages/expo-build-cache) | A local Expo build cache provider. When no native input changed, the Expo CLI installs a cached `.app` / `.apk` instead of compiling.                                                                                                                                  |
-
-How it works — the ownership model, the command surface, worktrees, settings,
-cache housekeeping — is documented on the
-**[website](https://appandflow.github.io/stim/)** and in the
-[`stim-cli` package README](./packages/stim-cli/README.md).
-
-## Working in this repo
+The installed version also includes its own reference:
 
 ```bash
-pnpm install                      # one-time, from the workspace root
-pnpm test                         # runs the stim-cli suite
-cd packages/stim-cli && npm link    # put the dev CLI on your PATH
+stim guide
+stim guide lifecycle
+stim guide settings
 ```
 
-[`CLAUDE.md`](./CLAUDE.md) is the orientation for anyone (human or agent)
-changing the code. [`RELEASE.md`](./RELEASE.md) is the publish workflow: all
-four packages carry the same version and go out together.
+## Packages
 
-## License
+- [`stim-cli`](./packages/stim-cli) provides the `stim` command.
+- [`@stim-cli/metro`](./packages/metro) shares Metro transforms and records logs.
+- [`@stim-cli/expo-build-cache`](./packages/expo-build-cache) lets direct Expo
+  builds share native artifacts with Stim.
+- [`@stim-cli/core`](./packages/core) contains shared internal cache contracts.
 
-MIT
+## Development
+
+```bash
+pnpm install
+pnpm build
+pnpm test
+pnpm typecheck
+pnpm lint
+```
+
+Stim is licensed under the MIT License.

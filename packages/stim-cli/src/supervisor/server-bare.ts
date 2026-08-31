@@ -74,7 +74,7 @@ export function resolveBareDeps(
       modules[name] = normalizeModule(localRequire(resolved), REQUIRED_EXPORTS[name] ?? []);
     } catch (err) {
       throw supervisorError(
-        'STIM_CLI_BARE_LOAD',
+        'STIM_BARE_LOAD',
         `${name} is installed in ${root} but failed to load: ${(err as Error)?.message || err}`,
         `Check that ${name} matches this project's React Native version, then reinstall node_modules.`,
       );
@@ -82,7 +82,7 @@ export function resolveBareDeps(
   }
   if (missing.length > 0) {
     throw supervisorError(
-      'STIM_CLI_BARE_DEPS',
+      'STIM_BARE_DEPS',
       `Cannot host a bare React Native dev server for ${root}: ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} not resolvable from the project.`,
       'Run `npm install` in the project. If this is an Expo project that was detected as bare, check that `expo` is in its dependencies and that it has an Expo config.',
     );
@@ -90,8 +90,8 @@ export function resolveBareDeps(
   const problems = checkBareApi(modules);
   if (problems.length > 0) {
     throw supervisorError(
-      'STIM_CLI_BARE_API',
-      `The dev server packages in ${root} are not the API stim-cli expects: ${problems.join('; ')}.`,
+      'STIM_BARE_API',
+      `The dev server packages in ${root} are not the API Stim expects: ${problems.join('; ')}.`,
       "Upgrade or reinstall the project's React Native toolchain so metro, @react-native/dev-middleware and @react-native-community/cli-server-api match.",
     );
   }
@@ -145,7 +145,7 @@ function installSharedCacheStore({
       src: 'metro',
       level: 'debug',
       event: 'cache_store_skipped',
-      msg: 'the shared Metro transform store is off (caches.injectMetroStore is false in ~/.stim-cli/config.json)',
+      msg: 'the shared Metro transform store is off (caches.injectMetroStore is false in ~/.stim/config.json)',
     });
     return false;
   }
@@ -300,7 +300,7 @@ export async function startBareServer({
       src: 'metro',
       level: 'warn',
       event: 'reporter_missing',
-      msg: '@stim-cli/metro is not installed in this project or beside stim-cli, so bundler and client logs will not be captured. Install it as a devDependency to get them.',
+      msg: '@stim-cli/metro is not installed in this project or beside Stim, so bundler and client logs will not be captured. Install it as a devDependency to get them.',
     });
     reporter = { update() {} };
   }

@@ -27,13 +27,13 @@ interface CommandStub {
 let tmpHome: string;
 
 beforeEach(() => {
-  tmpHome = mkdtempSync(join(tmpdir(), 'stim-cli-test-'));
-  process.env.STIM_CLI_HOME = tmpHome;
+  tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
+  process.env.STIM_HOME = tmpHome;
 });
 
 afterEach(() => {
   rmSync(tmpHome, { recursive: true, force: true });
-  delete process.env.STIM_CLI_HOME;
+  delete process.env.STIM_HOME;
 });
 
 test('findEnclosingWorktreeRoot uses a real path-segment prefix, not a bare startsWith', async () => {
@@ -120,7 +120,7 @@ async function runCreateInRepo(repo: string, name: string, opts: Record<string, 
 
 test('create action: success path writes exactly one stdout line, the worktree path', async () => {
   resetExecutor();
-  const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-create-ok-')));
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-ok-')));
   const repo = join(base, 'repo');
   try {
     initScratchRepo(repo);
@@ -143,7 +143,7 @@ test('create action: success path writes exactly one stdout line, the worktree p
 
 test('create action: a nested create records the repository main checkout', async () => {
   resetExecutor();
-  const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-create-nested-')));
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-nested-')));
   const repo = join(base, 'repo');
   const parent = join(base, 'parent');
   try {
@@ -162,7 +162,7 @@ test('create action: a nested create records the repository main checkout', asyn
 
 test('create action: defaults to the source checkout HEAD when origin/HEAD differs', async () => {
   resetExecutor();
-  const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-create-default-head-')));
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-default-head-')));
   const repo = join(base, 'repo');
   try {
     const git = initScratchRepo(repo);
@@ -187,7 +187,7 @@ test('create action: defaults to the source checkout HEAD when origin/HEAD diffe
 
 test('create action: --base fresh selects origin/HEAD when it differs from the source checkout', async () => {
   resetExecutor();
-  const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-create-explicit-fresh-')));
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-explicit-fresh-')));
   const repo = join(base, 'repo');
   try {
     const git = initScratchRepo(repo);
@@ -210,7 +210,7 @@ test('create action: --base fresh selects origin/HEAD when it differs from the s
 
 test('create action: configured worktree.baseRef overrides the default', async () => {
   resetExecutor();
-  const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-create-configured-fresh-')));
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-configured-fresh-')));
   const repo = join(base, 'repo');
   try {
     const git = initScratchRepo(repo);
@@ -220,7 +220,7 @@ test('create action: configured worktree.baseRef overrides the default', async (
     writeFileSync(join(repo, 'CURRENT'), 'current checkout');
     git('git add CURRENT');
     git('git commit -q -m current');
-    writeFileSync(join(repo, '.stim-cli.json'), JSON.stringify({ worktree: { baseRef: 'fresh' } }));
+    writeFileSync(join(repo, '.stim.json'), JSON.stringify({ worktree: { baseRef: 'fresh' } }));
 
     await runCreateInRepo(repo, 'feat-configured-fresh', {});
     const target = join(defaultWorktreeDir(repo), 'feat-configured-fresh');
@@ -234,7 +234,7 @@ test('create action: configured worktree.baseRef overrides the default', async (
 
 test('create action: rejects a --base this repo cannot resolve, before creating anything, on stderr, exit 1', async () => {
   resetExecutor();
-  const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-create-badbase-')));
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-badbase-')));
   const repo = join(base, 'repo');
   try {
     initScratchRepo(repo);
@@ -253,7 +253,7 @@ test('create action: rejects a --base this repo cannot resolve, before creating 
 
 test('create action: --base takes any ref this repo resolves, and branches from it', async () => {
   resetExecutor();
-  const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-create-ref-')));
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-ref-')));
   const repo = join(base, 'repo');
   try {
     const git = initScratchRepo(repo);
@@ -288,7 +288,7 @@ test('create action: --base takes any ref this repo resolves, and branches from 
 
 test('create action: an existing branch is reported as attached, not as branched from --base', async () => {
   resetExecutor();
-  const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-create-reuse-')));
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-reuse-')));
   const repo = join(base, 'repo');
   try {
     const git = initScratchRepo(repo);
@@ -312,7 +312,7 @@ test('create action: an existing branch is reported as attached, not as branched
 
 test('create action: accepts --base head and --base fresh', async () => {
   resetExecutor();
-  const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-create-goodbase-')));
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-goodbase-')));
   const repo = join(base, 'repo');
   try {
     initScratchRepo(repo);
@@ -334,7 +334,7 @@ test('create action: accepts --base head and --base fresh', async () => {
 
 test('create action: refuses when a leftover branch would void an explicit --base', async () => {
   resetExecutor();
-  const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-create-stale-')));
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-stale-')));
   const repo = join(base, 'repo');
   try {
     const git = initScratchRepo(repo);
@@ -361,7 +361,7 @@ test('create action: refuses when a leftover branch would void an explicit --bas
 
 test('create action: a leftover branch already AT the base is attached to, not refused', async () => {
   resetExecutor();
-  const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-create-samesha-')));
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-samesha-')));
   const repo = join(base, 'repo');
   try {
     const git = initScratchRepo(repo);
@@ -381,7 +381,7 @@ test('create action: a leftover branch already AT the base is attached to, not r
 
 test('create action: with no --base a leftover branch is still attached to', async () => {
   resetExecutor();
-  const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-create-nobase-')));
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-nobase-')));
   const repo = join(base, 'repo');
   try {
     const git = initScratchRepo(repo);
@@ -414,7 +414,7 @@ test('carriedChangesLine and carryConflictWarning cap at three files and count t
 
 test('create action: --carry-ignored applies the source uncommitted changes when they fit the base', async () => {
   resetExecutor();
-  const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-create-carrydiff-')));
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-carrydiff-')));
   const repo = join(base, 'repo');
   try {
     const git = initScratchRepo(repo);
@@ -444,7 +444,7 @@ test('create action: --carry-ignored applies the source uncommitted changes when
 
 test('create action: --carry-ignored warns and applies NOTHING when the base diverges from the source HEAD', async () => {
   resetExecutor();
-  const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-create-carryconflict-')));
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-carryconflict-')));
   const repo = join(base, 'repo');
   try {
     const git = initScratchRepo(repo);
@@ -475,7 +475,7 @@ test('create action: --carry-ignored warns and applies NOTHING when the base div
 
 test('create action: a plain create (no --carry-ignored) is pure HEAD -- no diff carry, no warning', async () => {
   resetExecutor();
-  const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-create-nocarry-')));
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-nocarry-')));
   const repo = join(base, 'repo');
   try {
     const git = initScratchRepo(repo);
@@ -516,7 +516,7 @@ test('dependencyInstallCommand shell-quotes repository paths', () => {
 });
 
 test('warmCarryCategories inspects a collapsed ignored directory', () => {
-  const root = mkdtempSync(join(tmpdir(), 'stim-cli-test-warm-categories-'));
+  const root = mkdtempSync(join(tmpdir(), 'stim-test-warm-categories-'));
   try {
     for (const rel of ['ios/Pods', 'ios/build']) mkdirSync(join(root, rel), { recursive: true });
     expect(warmCarryCategories(['ios'], root)).toEqual({ dependencies: false, pods: true, nativeOutput: true });
@@ -526,7 +526,7 @@ test('warmCarryCategories inspects a collapsed ignored directory', () => {
 });
 
 test('warmCarryCategories ignores native build paths that contain a node_modules directory', () => {
-  const root = mkdtempSync(join(tmpdir(), 'stim-cli-test-warm-native-node-modules-'));
+  const root = mkdtempSync(join(tmpdir(), 'stim-test-warm-native-node-modules-'));
   try {
     const nativeOutput = 'android/app/.cxx/debug/Users/example/app/node_modules/react-native-screens';
     mkdirSync(join(root, nativeOutput), { recursive: true });
@@ -547,7 +547,7 @@ test('warmCarryCategories ignores native build paths that contain a node_modules
 
 test('create action: a plain create reports the exact warm-worktree command when warm state exists', async () => {
   resetExecutor();
-  const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-create-warm-hint-')));
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-warm-hint-')));
   const repo = join(base, 'repo');
   try {
     const git = initScratchRepo(repo);
@@ -576,7 +576,7 @@ test('create action: a plain create reports the exact warm-worktree command when
 
 test('create action: --carry-ignored reports warm categories and the copy mode', async () => {
   resetExecutor();
-  const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-create-warm-summary-')));
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-warm-summary-')));
   const repo = join(base, 'repo');
   try {
     const git = initScratchRepo(repo);
@@ -606,7 +606,7 @@ test('create action: --carry-ignored reports warm categories and the copy mode',
 
 test('create action: a cold plain create does not recommend --carry-ignored', async () => {
   resetExecutor();
-  const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-create-cold-hint-')));
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-cold-hint-')));
   const repo = join(base, 'repo');
   try {
     initScratchRepo(repo);
@@ -622,7 +622,7 @@ test('create action: a cold plain create does not recommend --carry-ignored', as
 
 test('create action: a cold --carry-ignored create prints one exact dependency remedy', async () => {
   resetExecutor();
-  const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-create-cold-carry-')));
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-cold-carry-')));
   const repo = join(base, 'repo');
   try {
     const git = initScratchRepo(repo);
@@ -644,7 +644,7 @@ test('create action: a cold --carry-ignored create prints one exact dependency r
 
 test('create action: a cold nested package prints its package manager and directory', async () => {
   resetExecutor();
-  const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-create-cold-nested-')));
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-cold-nested-')));
   const repo = join(base, 'repo');
   try {
     const git = initScratchRepo(repo);
@@ -665,7 +665,7 @@ test('create action: a cold nested package prints its package manager and direct
 
 test('create action: stale nested dependencies use the nested package manager', async () => {
   resetExecutor();
-  const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-create-nested-stale-')));
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-nested-stale-')));
   const repo = join(base, 'repo');
   try {
     const git = initScratchRepo(repo);

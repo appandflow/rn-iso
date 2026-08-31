@@ -1,54 +1,68 @@
 ---
-title: 'Why stim-cli exists'
+title: 'Why Stim'
 sidebar_position: 1
-description: 'What breaks when coding agents share one machine, and what stim-cli does about it'
+description: 'Fast, isolated React Native environments for coding agents'
 ---
 
-The React Native / Expo CLI for AI agents. One isolated dev environment per project or worktree: `stim start` runs the dev server on a reserved, collision-free Metro port under a detached supervisor; `stim ios` / `stim android` boot a dedicated, **owned** simulator/emulator, install a build from a shared fingerprint cache when nothing native changed, and launch the app wired to that port; `stim logs --errors` answers "did that work" from a captured timeline instead of a scraped terminal. Multiple worktrees or coding agents can each get their own environment and build the same app in parallel without port or device collisions.
+Stim gives each coding agent a complete React Native environment. Each project
+or git worktree gets a reserved Metro port and an owned simulator or emulator.
+The agent can build, install, launch, inspect errors, and clean up through one
+small command surface.
 
-It never prompts, prints on the order of ten lines, takes `--json` everywhere, and reports a failing build as the _extracted_ compiler diagnostic plus a log path rather than four thousand lines of transcript.
+Stim supports React Native Community CLI and Expo projects. Builds run on the
+local machine. Apps can run on local or configured remote simulators.
 
-> **Experimental.** APIs, flags, and on-disk state may change. [File issues](https://github.com/appandflow/stim/issues) if anything breaks.
+> Stim is a release candidate. Commands and on-disk state can change before the
+> stable release. [Report an issue](https://github.com/appandflow/stim/issues)
+> when a workflow does not behave as documented.
 
-## The problem
+## Fast builds across worktrees
 
-Coding agents are moving to the cloud, and React Native is one of the places
-that goes badly. A cloud agent needs macOS, a matching Xcode, a booted
-simulator, a signing identity, and every MCP server re-authenticated -- on
-runners that cost several times a Linux box and lag Xcode releases by months.
-Physical devices are simply out of reach.
+Stim fingerprints native inputs. A matching app installs from a shared artifact
+cache instead of compiling again. Xcode compilation data, Gradle output, and
+Metro transforms also use shared cache locations.
 
-Locally, none of that is a problem. The environment is already set up, the
-Mac is already paid for, simulators work, you are already logged into
-everything, and the agent harness already provides the isolation that a cloud
-sandbox is there to provide.
+The cache works across different worktree paths. If two workspaces miss the
+same artifact at the same time, Stim runs one native build. The other workspace
+waits for that result.
 
-What breaks locally is that agents share one machine. Two of them reach for
-port 8081, or the same booted simulator, and both end up talking to the wrong
-bundler -- silently, because nothing tells you a build attached to somebody
-else's Metro. When an agent is killed mid-run it leaves a simulator booted, a
-Metro squatting on a port, and an `xcodebuild` test runner pinning a device
-nothing can now delete.
+## Parallel work without collisions
 
-That is the first job of this tool: arbitrate the contended resources, and
-reclaim them when the agent that owned them dies badly. The second is the dev
-server, which every agent otherwise backgrounds by hand and then scrapes a log
-file for: `start` runs it on the reserved port and captures its output as
-structured records, so `logs --errors` replaces the scraping. What stays out is
-the build -- which command, which flags, when to install -- because that is
-judgment a coding agent already has from reading the repo, and stim-cli
-deliberately does not take it back.
+Normal React Native tools assume one developer controls one port and one device.
+That assumption fails when several coding agents share a machine.
 
-### Where local honestly loses
+Stim gives every workspace a separate port and device. An agent can create a
+worktree, run the app, and verify a change without using another agent's Metro
+server or simulator. Parallel tasks remain independent while they share the
+expensive caches.
 
-- **CPU and memory are finite.** Two or three live environments on a 16 GB
-  machine, not ten. Cloud wins this outright.
-- **Paths are not stable.** CI checks out to the same path every run, so
-  path-keyed caches (ccache, Xcode's compilation cache, a CocoaPods sandbox)
-  just work. Locally every worktree sits somewhere different, and those caches
-  quietly miss everything -- measured on one project as 0 ccache hits out of
-  1094 across two workspaces. It is fixable, but it is a tax cloud does not pay.
-- **Disk grows without bound.** Simulators and the shared caches that make any
-  of this fast all accumulate. `gc` exists for that reason.
+## An interface designed for agents
 
-State lives in `~/.stim-cli/config.json`, keyed by absolute project path. Worktrees count as separate projects. There is no shared mutex -- each project gets its own port and its own device.
+Stim never prompts. Plain output streams the current phase and ends with the
+device, app, Metro, cache, launch, and log facts. Build failures show the useful
+compiler diagnostic and a log path. They do not place a full build transcript
+in the agent context.
+
+Every command also supports structured output where it is useful. The agent can
+query `stim logs --errors` after a change instead of scraping a terminal. Less
+noise means less waiting and fewer tokens.
+
+## Owned resources and cleanup
+
+Stim records the ports, processes, build output, devices, and remote sessions it
+creates. It does not operate on physical devices or user-created simulators.
+
+`stim stop` releases a live environment without deleting its local device.
+`stim worktree remove` reclaims the worktree environment. `stim gc --delete`
+removes orphaned resources. This ownership model makes cleanup safe after an
+agent exits early.
+
+## Why run locally
+
+A local Mac already has Xcode, Android tools, simulator runtimes, credentials,
+and access to private development services. Stim lets coding agents use that
+existing setup with worktree isolation.
+
+Local CPU, memory, and disk are finite. `stim doctor`, `stim status`, and
+`stim gc` make those limits visible. Remote devices remain available when a
+local simulator is not the right target.

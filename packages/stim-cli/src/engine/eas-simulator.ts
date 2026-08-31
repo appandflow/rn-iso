@@ -1,6 +1,6 @@
 import { sanitizeDeviceLabel } from '../sim/ios.ts';
 
-const OWNED_PREFIX = 'stim-cli-';
+const OWNED_PREFIX = 'stim-';
 
 const LIVE_STATUSES = ['new', 'in-progress'] as const;
 
@@ -156,7 +156,7 @@ export function inspectSessionForTeardown(stdout: string, sessionId: string): Se
   if (!isOwnedSessionName(name)) {
     return {
       action: 'refused',
-      reason: `Session ${sessionId} is not owned by stim-cli (name: ${name ?? 'missing'}).`,
+      reason: `Session ${sessionId} is not owned by Stim (name: ${name ?? 'missing'}).`,
     };
   }
   if (TERMINAL_SESSION_STATUSES.has(status)) return { action: 'already-stopped', name, status };
@@ -278,7 +278,7 @@ export function findOrphanedOwnedSessions({
     if (!name) {
       blocked.add(id);
       candidates.delete(id);
-      notices.push(`EAS session ${id} has no name and cannot be classified as stim-cli-owned.`);
+      notices.push(`EAS session ${id} has no name and cannot be classified as Stim-owned.`);
       continue;
     }
     if (!isOwnedSessionName(name)) continue;

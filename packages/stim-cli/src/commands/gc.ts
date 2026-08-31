@@ -180,7 +180,7 @@ export function findOrphanedDevices({
   const kept: KeptDevice[] = [];
 
   for (const sim of sims) {
-    if (!sim?.name?.startsWith('stim-cli-')) continue;
+    if (!sim?.name?.startsWith('stim-')) continue;
     const ref = referenced.get(sim.udid);
     if (!ref) {
       orphaned.push({ kind: 'ios', id: sim.udid, name: sim.name });
@@ -190,7 +190,7 @@ export function findOrphanedDevices({
   }
 
   for (const avdName of avds) {
-    if (!avdName?.startsWith('stim-cli-')) continue;
+    if (!avdName?.startsWith('stim-')) continue;
     const ref = referenced.get(avdName);
     if (!ref) {
       orphaned.push({ kind: 'android', id: avdName, name: avdName });
@@ -224,9 +224,9 @@ export function findStaleProjectDevices({
   const dead = new Set(deadProjects);
 
   const liveSims = new Map<string, string>(
-    sims.filter((s) => s?.name?.startsWith('stim-cli-')).map((s) => [s.udid, s.name] as [string, string]),
+    sims.filter((s) => s?.name?.startsWith('stim-')).map((s) => [s.udid, s.name] as [string, string]),
   );
-  const liveAvds = new Set(avds.filter((a) => typeof a === 'string' && a.startsWith('stim-cli-')));
+  const liveAvds = new Set(avds.filter((a) => typeof a === 'string' && a.startsWith('stim-')));
 
   const stale: StaleProjectDevice[] = [];
   for (const [path, proj] of Object.entries(config?.projects || {})) {
@@ -291,12 +291,12 @@ export function findStaleDeviceRecords({
 export function describeUnverifiableDevices(
   simNames: string[] = [],
   avdNames: string[] = [],
-  { reason = 'no stim-cli config found' }: { reason?: string } = {},
+  { reason = 'no Stim config found' }: { reason?: string } = {},
 ): string[] {
-  const ours = [...simNames, ...avdNames].filter((n) => typeof n === 'string' && n.startsWith('stim-cli-'));
+  const ours = [...simNames, ...avdNames].filter((n) => typeof n === 'string' && n.startsWith('stim-'));
   if (ours.length === 0) return [`${reason}; device sweep skipped`];
   return [
-    `${reason}, so ${ours.length} stim-cli-created device(s) cannot be verified as orphaned: ${ours.join(', ')}`,
+    `${reason}, so ${ours.length} stim-created device(s) cannot be verified as orphaned: ${ours.join(', ')}`,
     'they were NOT touched. If they are stale, delete them with `xcrun simctl delete <udid>` or `avdmanager delete avd -n <name>`',
   ];
 }
@@ -768,11 +768,11 @@ function projectLastTouched(path: string): number {
 }
 
 function deviceSweepIsScoped(unsafeAllowScopedDeviceSweep?: boolean) {
-  return Boolean(process.env.STIM_CLI_HOME) && !unsafeAllowScopedDeviceSweep;
+  return Boolean(process.env.STIM_HOME) && !unsafeAllowScopedDeviceSweep;
 }
 
 function cacheSweepIsScoped() {
-  return Boolean(process.env.STIM_CLI_HOME);
+  return Boolean(process.env.STIM_HOME);
 }
 
 function canonicalPath(p: string): string {
@@ -794,7 +794,7 @@ function machineGlobalReason(cache: CacheDescriptor): string | null {
   if (!cacheSweepIsScoped()) return null;
   if (cache.source === 'registered') return null;
   if (isInsideConfigDir(cache.dir)) return null;
-  return `STIM_CLI_HOME scopes this config, but ${cache.dir} is outside it and therefore machine-global`;
+  return `STIM_HOME scopes this config, but ${cache.dir} is outside it and therefore machine-global`;
 }
 
 function planCacheEmptying(caches: CacheDescriptor[], all: boolean): GcCache[] {
@@ -804,7 +804,7 @@ function planCacheEmptying(caches: CacheDescriptor[], all: boolean): GcCache[] {
     if (c.prune === 'report-only') {
       return Object.assign({}, c, {
         willEmpty: false,
-        emptySkipped: 'report-only shared cache; stim-cli never deletes it',
+        emptySkipped: 'report-only shared cache; Stim never deletes it',
       });
     }
     if (c.machineGlobal) {
@@ -839,7 +839,7 @@ function emptyCache(cache: CacheDescriptor): {
   failed?: number;
 } {
   if (cache.prune === 'report-only') {
-    return { removed: 0, bytes: 0, skipped: 'report-only shared cache; stim-cli never deletes it' };
+    return { removed: 0, bytes: 0, skipped: 'report-only shared cache; Stim never deletes it' };
   }
   if (cache.prune !== 'atomic') {
     return pruneCache(cache, { olderThanDays: 0, now: Date.now() + DAY_MS });
@@ -910,9 +910,9 @@ export async function collectGcReport(
 
   const unsweepableReason =
     cfg === null
-      ? 'no stim-cli config found'
+      ? 'no Stim config found'
       : deviceSweepIsScoped(unsafeAllowScopedDeviceSweep)
-        ? 'STIM_CLI_HOME scopes this config, but simulators and AVDs are machine-global'
+        ? 'STIM_HOME scopes this config, but simulators and AVDs are machine-global'
         : null;
 
   if (unsweepableReason) {
@@ -1432,7 +1432,7 @@ export default function gcCommand(program: Command): void {
   program
     .command('gc')
     .description(
-      'Report what stim-cli has left behind: dead project entries, orphaned owned devices and EAS sessions, records of devices that no longer exist, build locks whose builder is gone, and the shared build caches. Reports by default; pass --delete to act.',
+      'Report what Stim has left behind: dead project entries, orphaned owned devices and EAS sessions, records of devices that no longer exist, build locks whose builder is gone, and the shared build caches. Reports by default; pass --delete to act.',
     )
     .option('--delete', 'actually prune the reported entries and reap the reported devices')
     .option(
@@ -1448,7 +1448,7 @@ export default function gcCommand(program: Command): void {
     )
     .option(
       '--all',
-      'with --delete, empty every shared cache whole rather than trimming it by age -- the only way to clear an index-backed cache. Reaches caches only, never devices or project entries. Caches outside the config dir are refused while STIM_CLI_HOME is set.',
+      'with --delete, empty every shared cache whole rather than trimming it by age -- the only way to clear an index-backed cache. Reaches caches only, never devices or project entries. Caches outside the config dir are refused while STIM_HOME is set.',
     )
     .action(async (opts: RunGcOptions) => {
       await runGc(opts);

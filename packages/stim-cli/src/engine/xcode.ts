@@ -33,7 +33,7 @@ interface SchemeResult {
 }
 
 function buildFailure(message: string, remedy: string | null): XcodeProject {
-  return { error: { code: 'STIM_CLI_BUILD_FAILED', message, remedy } };
+  return { error: { code: 'STIM_BUILD_FAILED', message, remedy } };
 }
 
 export function pickXcodeProject(entries: unknown): { kind: string; flag: string; file: string; name: string } | null {
@@ -134,7 +134,7 @@ export function resolveScheme(project: XcodeProject, { exec = null }: { exec?: E
   if (listing === null) {
     return {
       error: {
-        code: 'STIM_CLI_NO_SCHEME',
+        code: 'STIM_NO_SCHEME',
         message: `Could not list schemes for ${project.path}.`,
         remedy: `Run \`xcodebuild ${project.flag} ${project.path} -list\` to see what it reports.`,
       },
@@ -145,7 +145,7 @@ export function resolveScheme(project: XcodeProject, { exec = null }: { exec?: E
     const found = listing.schemes.length ? listing.schemes.join(', ') : 'none';
     return {
       error: {
-        code: 'STIM_CLI_NO_SCHEME',
+        code: 'STIM_NO_SCHEME',
         message: `No buildable scheme found in ${project.path} (schemes: ${found}).`,
         remedy:
           'Share the app scheme in Xcode (Product > Scheme > Manage Schemes, tick Shared) so xcodebuild can see it.',
@@ -255,7 +255,7 @@ function resolveCompilationCacheSettings({
     });
     onNote(
       chalk.dim(
-        `compilation cache on for this build: CAS at ${casPath} (stim-cli sets it on its own xcodebuild; the Podfile is not touched)`,
+        `compilation cache on for this build: CAS at ${casPath} (Stim sets it on its own xcodebuild; the Podfile is not touched)`,
       ),
     );
   }
@@ -636,7 +636,7 @@ export async function buildIos({
     const message = `Could not run xcodebuild: ${(err as Error).message}`;
     const remedy = 'Install Xcode and select it with `sudo xcode-select -s /Applications/Xcode.app`.';
     reportError(message, remedy);
-    return failedResult({ code: 'STIM_CLI_BUILD_FAILED', diagnostics: [{ message, remedy }], durationMs: elapsed() });
+    return failedResult({ code: 'STIM_BUILD_FAILED', diagnostics: [{ message, remedy }], durationMs: elapsed() });
   }
 
   const outReader = createLineReader(onLine);
@@ -677,7 +677,7 @@ export async function buildIos({
     const remedy = 'Install Xcode and select it with `sudo xcode-select -s /Applications/Xcode.app`.';
     reportError(message, remedy);
     return failedResult({
-      code: 'STIM_CLI_BUILD_FAILED',
+      code: 'STIM_BUILD_FAILED',
       diagnostics: [{ message, remedy }],
       durationMs,
       transcriptLines: transcript.length,
@@ -696,7 +696,7 @@ export async function buildIos({
       );
     }
     return failedResult({
-      code: 'STIM_CLI_BUILD_FAILED',
+      code: 'STIM_BUILD_FAILED',
       diagnostics,
       durationMs,
       exitCode: outcome.code,
@@ -712,7 +712,7 @@ export async function buildIos({
     const remedy = 'Check that the scheme builds an application target, not a library or a test bundle.';
     reportError(message, remedy);
     return failedResult({
-      code: 'STIM_CLI_BUILD_FAILED',
+      code: 'STIM_BUILD_FAILED',
       diagnostics: [{ message, remedy }],
       durationMs,
       exitCode: 0,
@@ -727,7 +727,7 @@ export async function buildIos({
     const remedy = "Check PRODUCT_BUNDLE_IDENTIFIER in the target's Debug configuration.";
     reportError(message, remedy);
     return failedResult({
-      code: 'STIM_CLI_BUILD_FAILED',
+      code: 'STIM_BUILD_FAILED',
       diagnostics: [{ message, remedy }],
       durationMs,
       exitCode: 0,

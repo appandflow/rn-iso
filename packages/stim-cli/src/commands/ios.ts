@@ -437,7 +437,7 @@ export async function ensureWorkspaceStorageSafely(
   try {
     return ensureWorkspaceStorage(root);
   } catch (err) {
-    note(chalk.dim(`Could not prepare this workspace's stim-cli state: ${(err as Error)?.message || err}`));
+    note(chalk.dim(`Could not prepare this workspace's Stim state: ${(err as Error)?.message || err}`));
     throw err;
   }
 }
@@ -1143,7 +1143,7 @@ async function finishIosRun({
     bundleId = d.readBundleId(appPath) || d.detectBundleId(root);
     if (!bundleId) {
       return fail({
-        code: 'STIM_CLI_INSTALL_FAILED',
+        code: 'STIM_INSTALL_FAILED',
         message: `Could not read a bundle identifier from the cached app at ${appPath}.`,
         remedy: 'Remove the cache entry (`stim gc`) and run again to rebuild it.',
         build: { ...buildFailure, appPath },
@@ -1156,7 +1156,7 @@ async function finishIosRun({
   const booted = await bootPromise;
   if (!booted?.ok) {
     return fail({
-      code: booted?.code || 'STIM_CLI_NO_DEVICE',
+      code: booted?.code || 'STIM_NO_DEVICE',
       message: booted?.reason || 'The owned simulator could not be booted.',
       remedy: booted?.remedy || 'Run `stim ios` again to re-establish an owned simulator for this workspace.',
     });
@@ -1168,7 +1168,7 @@ async function finishIosRun({
   const installed = d.installIosApp({ udid, appPath: appPath!, bundleId, devClientScheme: scheme });
   if (installed?.failed) {
     return fail({
-      code: installed.code || 'STIM_CLI_INSTALL_FAILED',
+      code: installed.code || 'STIM_INSTALL_FAILED',
       message: installed.reason,
       remedy: 'Check that the simulator is booted and that the app was built for the simulator SDK.',
       build: { ...buildFailure, appPath, bundleId },
@@ -1187,7 +1187,7 @@ async function finishIosRun({
   const launched = d.launchIosApp({ udid, bundleId: bundleId!, metroPort, devClientScheme: scheme });
   if (launched?.failed) {
     return fail({
-      code: launched.code || 'STIM_CLI_LAUNCH_FAILED',
+      code: launched.code || 'STIM_LAUNCH_FAILED',
       message: launched.reason,
       remedy: `Run \`xcrun simctl launch --console ${udid} ${bundleId}\` to see what the app reports, and check ${logFile}.`,
       build: { ...buildFailure, appPath, bundleId },
@@ -1228,7 +1228,7 @@ async function finishIosRun({
   });
   if (launchState === LAUNCH_FATAL) {
     return fail({
-      code: 'STIM_CLI_LAUNCH_FAILED',
+      code: 'STIM_LAUNCH_FAILED',
       message: 'The app failed its launch readiness check.',
       remedy: `Read the launch error above or run \`stim logs --errors\`. The full timeline is in ${logsDir}.`,
       logPath: logsDir,
@@ -1292,14 +1292,12 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   try {
     await d.ensureWorkspaceStorage(root, { note });
   } catch (error) {
-    const code = (error as Error & { code?: string })?.code || 'STIM_CLI_WORKSPACE_STATE';
-    const message = `Could not prepare this workspace's stim-cli state: ${(error as Error)?.message || error}`;
+    const code = (error as Error & { code?: string })?.code || 'STIM_WORKSPACE_STATE';
+    const message = `Could not prepare this workspace's Stim state: ${(error as Error)?.message || error}`;
     note(chalk.red(`${code}: ${message}`));
-    note(chalk.dim('Check that STIM_CLI_HOME is writable and has free space.'));
+    note(chalk.dim('Check that STIM_HOME is writable and has free space.'));
     if (json)
-      console.log(
-        JSON.stringify({ code, message, remedy: 'Check that STIM_CLI_HOME is writable and has free space.' }),
-      );
+      console.log(JSON.stringify({ code, message, remedy: 'Check that STIM_HOME is writable and has free space.' }));
     process.exitCode = 1;
     return null;
   }
@@ -1360,12 +1358,12 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     repoRoot: settingsRepoRoot,
   });
   for (const key of unknownSettingKeys(settings)) {
-    note(chalk.yellow(`Warning: setting "${key}" is not read by stim-cli and will be ignored.`));
+    note(chalk.yellow(`Warning: setting "${key}" is not read by Stim and will be ignored.`));
   }
   const remoteSettingError = remoteDeviceSettingError(settings);
   if (remoteSettingError) {
     return fail({
-      code: 'STIM_CLI_BAD_ARG',
+      code: 'STIM_BAD_ARG',
       message: remoteSettingError,
       remedy: `Set ios.remote and android.remote to one of: ${REMOTE_DEVICE_BACKENDS.join(', ')}.`,
     });
@@ -1430,7 +1428,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     });
   } catch (e) {
     return fail({
-      code: 'STIM_CLI_NO_DEVICE',
+      code: 'STIM_NO_DEVICE',
       message: `Could not ensure an owned iOS simulator: ${(e as Error)?.message || e}`,
       remedy: 'Run `stim doctor` to check the simulator toolchain, then try again.',
     });
@@ -1463,7 +1461,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     } else if (metroCheck) {
       if (!metroPort) {
         fail({
-          code: 'STIM_CLI_NO_METRO',
+          code: 'STIM_NO_METRO',
           message: 'No Metro port is reserved for this workspace, so there is no dev server to build against.',
           remedy: 'Run `stim start` first, or pass --no-metro-check.',
         });
@@ -1484,7 +1482,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
         const supervisor = (d.readWorkspaceState(root)?.supervisor ?? null) as SupervisorLike | null;
         const supervisorAlive = Boolean(supervisor?.pid && d.isPidAlive(supervisor.pid));
         fail({
-          code: 'STIM_CLI_NO_METRO',
+          code: 'STIM_NO_METRO',
           message: noMetroMessage({ port: metroPort, resolution, supervisor, supervisorAlive }),
           remedy: noMetroRemedy({ port: metroPort, supervisor, supervisorAlive }),
         });
@@ -1559,7 +1557,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     }
     if (!computedFingerprint) {
       fail({
-        code: 'STIM_CLI_NO_FINGERPRINT',
+        code: 'STIM_NO_FINGERPRINT',
         message: `Could not fingerprint ${root}: @expo/fingerprint produced no hash for it.`,
         remedy: 'Check the project native inputs and the @expo/fingerprint error above, then retry.',
       });
@@ -1694,9 +1692,9 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
           waited = await d.waitForBuild({ platform: PLATFORM, key: cacheKey, out: note });
         } catch (e) {
           const err = e as Error & { code?: string; lockPath?: string };
-          if (err?.code !== 'STIM_CLI_BUILD_WAIT_TIMEOUT') throw e;
+          if (err?.code !== 'STIM_BUILD_WAIT_TIMEOUT') throw e;
           fail({
-            code: 'STIM_CLI_BUILD_WAIT_TIMEOUT',
+            code: 'STIM_BUILD_WAIT_TIMEOUT',
             message: err.message,
             remedy: `Check pid ${held.pid}; if it is not really building, remove ${err.lockPath} and run \`stim ios\` again.`,
             build: { fingerprint, cacheKey, cacheHit, cacheSkipped: !useBuildCache },
@@ -1786,7 +1784,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
           if (result?.failed) {
             phase('prebuild', 'FAILED');
             fail({
-              code: result.code || 'STIM_CLI_PREBUILD_FAILED',
+              code: result.code || 'STIM_PREBUILD_FAILED',
               message: result.reason || 'expo prebuild failed.',
               remedy: result.remedy || `See ${logFile} for the transcript.`,
               lines: (result.lastLines || []).slice(-5),
@@ -1806,7 +1804,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
           if (result?.failed) {
             phase('pods', 'FAILED');
             fail({
-              code: result.code || 'STIM_CLI_DEPS_FAILED',
+              code: result.code || 'STIM_DEPS_FAILED',
               message: result.reason || '`pod install` failed.',
               remedy: result.remedy || `See ${logFile} for the transcript.`,
               lines: result.diagnosticLines?.length ? result.diagnosticLines : (result.lastLines || []).slice(-5),
@@ -1868,7 +1866,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
             printDiagnostics(note, result);
             const report = xcodeFailureReport(result, logFile);
             fail({
-              code: result.code || 'STIM_CLI_BUILD_FAILED',
+              code: result.code || 'STIM_BUILD_FAILED',
               message: report.message,
               remedy: report.remedy,
               logPath: logFile,

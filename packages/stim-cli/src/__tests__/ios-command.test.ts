@@ -58,16 +58,16 @@ let tmpHome: string;
 let root: string;
 
 beforeEach(() => {
-  tmpHome = mkdtempSync(join(tmpdir(), 'stim-cli-test-'));
-  process.env.STIM_CLI_HOME = tmpHome;
-  root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-cli-ws-')));
+  tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
+  process.env.STIM_HOME = tmpHome;
+  root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ws-')));
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'fixture' }));
 });
 
 afterEach(() => {
   rmSync(tmpHome, { recursive: true, force: true });
   rmSync(root, { recursive: true, force: true });
-  delete process.env.STIM_CLI_HOME;
+  delete process.env.STIM_HOME;
 });
 
 function captureAction(register: typeof registerIos, deps: LooseDeps) {
@@ -149,7 +149,7 @@ function harness(overrides: LooseDeps = {}) {
 
     ensureOwnedDevice: async (args) => {
       record('ensureOwnedDevice', args);
-      return { deviceUdid: UDID, deviceName: 'stim-cli-fixture', owned: true };
+      return { deviceUdid: UDID, deviceName: 'stim-fixture', owned: true };
     },
     ensureBooted: async (args) => {
       record('ensureBooted', args);
@@ -308,7 +308,7 @@ describe('the Metro gate', () => {
     expect(!calls.order.includes('ensureBooted')).toBeTruthy();
     expect(!calls.order.includes('fingerprintProject')).toBeTruthy();
     expect(!calls.order.includes('buildIos')).toBeTruthy();
-    expect(errs.join('\n')).toMatch(/STIM_CLI_NO_METRO/);
+    expect(errs.join('\n')).toMatch(/STIM_NO_METRO/);
     expect(errs.join('\n')).toMatch(/stim start/);
   });
 
@@ -322,13 +322,13 @@ describe('the Metro gate', () => {
     );
     expect(exitCode).toBe(1);
     expect(errs.join('\n')).toMatch(/NOT this workspace's dev server/);
-    expect(errs.join('\n')).toMatch(/STIM_CLI_NO_METRO/);
+    expect(errs.join('\n')).toMatch(/STIM_NO_METRO/);
   });
 
   test('no reservation at all is the same failure', async () => {
     const { errs, exitCode } = await run({});
     expect(exitCode).toBe(1);
-    expect(errs.join('\n')).toMatch(/STIM_CLI_NO_METRO/);
+    expect(errs.join('\n')).toMatch(/STIM_NO_METRO/);
   });
 
   test('--no-metro-check proceeds without probing the port at all', async () => {
@@ -365,7 +365,7 @@ describe('the simulator boot gate', () => {
       {
         ensureOwnedDevice: async () => ({
           deviceUdid: UDID,
-          deviceName: 'stim-cli-fixture',
+          deviceName: 'stim-fixture',
           owned: true,
           created: true,
         }),
@@ -566,7 +566,7 @@ describe('global workspace storage', () => {
     const project = '/definitely/not/a/checkout';
     const result = await ensureWorkspaceStorageSafely(project, { note: (l) => notes.push(l) });
     expect(typeof result).toBe('string');
-    expect(existsSync(join(project, '.stim-cli'))).toBe(false);
+    expect(existsSync(join(project, '.stim'))).toBe(false);
     expect(notes).toEqual([]);
   });
 });
@@ -643,12 +643,12 @@ describe('the cache', () => {
     expect(calls.args.storeBuild.platform).toBe('ios');
   });
 
-  test('an unresolvable fingerprint is STIM_CLI_NO_FINGERPRINT, never an unkeyed build', async () => {
+  test('an unresolvable fingerprint is STIM_NO_FINGERPRINT, never an unkeyed build', async () => {
     reserve();
     const { errs, exitCode, calls } = await run({}, { fingerprintProject: async () => null });
     expect(exitCode).toBe(1);
     expect(!calls.order.includes('buildIos')).toBeTruthy();
-    expect(errs.join('\n')).toMatch(/STIM_CLI_NO_FINGERPRINT/);
+    expect(errs.join('\n')).toMatch(/STIM_NO_FINGERPRINT/);
   });
 
   test('--no-build-cache looks nothing up: not the local cache, not the provider', async () => {
@@ -1021,7 +1021,7 @@ describe('single-flight builds', () => {
       pid,
       projectRoot,
       startedAt: '2026-08-25T10:00:00.000Z',
-      logFile: `${projectRoot}/.stim-cli/logs/build-ios.ndjson`,
+      logFile: `${projectRoot}/.stim/logs/build-ios.ndjson`,
     },
     path: '/home/build-locks/ios-key.lock',
   });
@@ -1195,7 +1195,7 @@ describe('single-flight builds', () => {
     const { exitCode, calls } = await run(
       {},
       {
-        buildIos: async () => ({ failed: true, code: 'STIM_CLI_BUILD_FAILED', durationMs: 90000, diagnostics: [] }),
+        buildIos: async () => ({ failed: true, code: 'STIM_BUILD_FAILED', durationMs: 90000, diagnostics: [] }),
       },
     );
     expect(exitCode).toBe(1);
@@ -1231,7 +1231,7 @@ describe('single-flight builds', () => {
       {
         detectIsExpo: () => true,
         needsPrebuild: () => true,
-        runPrebuild: async () => ({ failed: true, code: 'STIM_CLI_PREBUILD_FAILED', reason: 'no' }),
+        runPrebuild: async () => ({ failed: true, code: 'STIM_PREBUILD_FAILED', reason: 'no' }),
       },
     );
     expect(exitCode).toBe(1);
@@ -1247,7 +1247,7 @@ describe('single-flight builds', () => {
         acquireBuildLock: () => heldBy(),
         waitForBuild: async () => {
           throw makeError('Waited 90m ... The lock is /home/build-locks/ios-key.lock', {
-            code: 'STIM_CLI_BUILD_WAIT_TIMEOUT',
+            code: 'STIM_BUILD_WAIT_TIMEOUT',
             lockPath: '/home/build-locks/ios-key.lock',
           });
         },
@@ -1255,8 +1255,8 @@ describe('single-flight builds', () => {
     );
     expect(exitCode).toBe(1);
     expect(!calls.order.includes('buildIos')).toBeTruthy();
-    expect(errs.join('\n')).toMatch(/STIM_CLI_BUILD_WAIT_TIMEOUT/);
-    expect(parseFirst(logs).code).toBe('STIM_CLI_BUILD_WAIT_TIMEOUT');
+    expect(errs.join('\n')).toMatch(/STIM_BUILD_WAIT_TIMEOUT/);
+    expect(parseFirst(logs).code).toBe('STIM_BUILD_WAIT_TIMEOUT');
   });
 
   test('a lock that cannot be created is a note, and the build proceeds', async () => {
@@ -1312,7 +1312,7 @@ describe('pods', () => {
     expect(!/^pods/m.test(errs.join('\n'))).toBeTruthy();
   });
 
-  test('a failed pod install stops the run with STIM_CLI_DEPS_FAILED', async () => {
+  test('a failed pod install stops the run with STIM_DEPS_FAILED', async () => {
     reserve();
     const { errs, exitCode, calls } = await run(
       {},
@@ -1320,7 +1320,7 @@ describe('pods', () => {
         readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'B' }),
         runPodInstall: async () => ({
           failed: true,
-          code: 'STIM_CLI_DEPS_FAILED',
+          code: 'STIM_DEPS_FAILED',
           reason: '`pod install` failed (exit code 1).',
           lastLines: ['[!] CocoaPods could not find compatible versions'],
         }),
@@ -1328,7 +1328,7 @@ describe('pods', () => {
     );
     expect(exitCode).toBe(1);
     expect(!calls.order.includes('buildIos')).toBeTruthy();
-    expect(errs.join('\n')).toMatch(/STIM_CLI_DEPS_FAILED/);
+    expect(errs.join('\n')).toMatch(/STIM_DEPS_FAILED/);
     expect(errs.join('\n')).toMatch(/could not find compatible versions/);
   });
 });
@@ -1341,7 +1341,7 @@ describe('failure output', () => {
       {
         buildIos: async () => ({
           failed: true,
-          code: 'STIM_CLI_BUILD_FAILED',
+          code: 'STIM_BUILD_FAILED',
           durationMs: 161000,
           truncated: 3,
           exitCode: 65,
@@ -1359,7 +1359,7 @@ describe('failure output', () => {
     expect(exitCode).toBe(1);
     expect(logs.length).toBe(1);
     const payload = parseFirst(logs);
-    expect(payload.code).toBe('STIM_CLI_BUILD_FAILED');
+    expect(payload.code).toBe('STIM_BUILD_FAILED');
     expect(payload.message).toMatch(/xcodebuild` failed/);
     expect(payload.message).toMatch(/exit code 65/);
     expect(payload.remedy).toBeTruthy();
@@ -1370,7 +1370,7 @@ describe('failure output', () => {
     expect(text).toMatch(/The sandbox is not in sync/);
     expect(text).toMatch(/and 3 more diagnostics in the log/);
     expect(text).toMatch(new RegExp(`^  log {9}${buildLogFile(root).replace(/[/\\^$*+?.()|[\]{}]/g, '\\$&')}`, 'm'));
-    expect(text).toMatch(/^  failed {6}STIM_CLI_BUILD_FAILED/m);
+    expect(text).toMatch(/^  failed {6}STIM_BUILD_FAILED/m);
   });
 
   test('--json puts one parseable {code, message, remedy} line on stdout when the gate refuses', async () => {
@@ -1378,7 +1378,7 @@ describe('failure output', () => {
     expect(exitCode).toBe(1);
     expect(logs.length).toBe(1);
     const payload = parseFirst(logs);
-    expect(payload.code).toBe('STIM_CLI_NO_METRO');
+    expect(payload.code).toBe('STIM_NO_METRO');
     expect(payload.message).toMatch(/no dev server/);
     expect(payload.remedy).toMatch(/stim start/);
   });
@@ -1396,7 +1396,7 @@ describe('failure output', () => {
       {
         buildIos: async () => ({
           failed: true,
-          code: 'STIM_CLI_BUILD_FAILED',
+          code: 'STIM_BUILD_FAILED',
           durationMs: 1000,
           truncated: 0,
           diagnostics: [],
@@ -1415,7 +1415,7 @@ describe('failure output', () => {
       {
         buildIos: async () => ({
           failed: true,
-          code: 'STIM_CLI_BUILD_FAILED',
+          code: 'STIM_BUILD_FAILED',
           durationMs: 5000,
           diagnostics: [],
           tail: [],
@@ -1426,7 +1426,7 @@ describe('failure output', () => {
     assert(stateAfterFail?.lastBuild);
     const { lastBuild } = stateAfterFail;
     expect(lastBuild.status).toBe('failed');
-    expect(lastBuild.errorCode).toBe('STIM_CLI_BUILD_FAILED');
+    expect(lastBuild.errorCode).toBe('STIM_BUILD_FAILED');
     expect(lastBuild.platform).toBe('ios');
     expect(lastBuild.fingerprint).toBe(FINGERPRINT);
     expect(lastBuild.cacheHit).toBe(false);
@@ -1445,7 +1445,7 @@ describe('failure output', () => {
     expect(calls.order.includes('buildIos')).toBeTruthy();
     expect(!calls.order.includes('installIosApp')).toBeTruthy();
     expect(errs.join('\n')).toMatch(/no longer exists/);
-    expect(errs.join('\n')).toMatch(/STIM_CLI_NO_DEVICE/);
+    expect(errs.join('\n')).toMatch(/STIM_NO_DEVICE/);
   });
 
   test('a failed install is reported with its own code and a failed record', async () => {
@@ -1453,14 +1453,14 @@ describe('failure output', () => {
     const { errs, exitCode } = await run(
       {},
       {
-        installIosApp: () => ({ failed: true, code: 'STIM_CLI_INSTALL_FAILED', reason: 'simctl install failed' }),
+        installIosApp: () => ({ failed: true, code: 'STIM_INSTALL_FAILED', reason: 'simctl install failed' }),
       },
     );
     expect(exitCode).toBe(1);
-    expect(errs.join('\n')).toMatch(/STIM_CLI_INSTALL_FAILED/);
+    expect(errs.join('\n')).toMatch(/STIM_INSTALL_FAILED/);
     const stateAfterInstall = readWorkspaceState(root);
     assert(stateAfterInstall?.lastBuild);
-    expect(stateAfterInstall.lastBuild.errorCode).toBe('STIM_CLI_INSTALL_FAILED');
+    expect(stateAfterInstall.lastBuild.errorCode).toBe('STIM_INSTALL_FAILED');
   });
 });
 
@@ -1470,19 +1470,19 @@ describe('success output', () => {
     const { logs, errs, exitCode } = await run({});
     expect(exitCode).toBe(null);
     expect(logs.length).toBe(1);
-    expect(logs[0]).toMatch(/^OK: com\.example\.app on stim-cli-fixture \(BF2A\.\.\), Metro port 8082/);
-    expect(logs[0]).toContain(phaseLine('device', `stim-cli-fixture (${UDID})`));
+    expect(logs[0]).toMatch(/^OK: com\.example\.app on stim-fixture \(BF2A\.\.\), Metro port 8082/);
+    expect(logs[0]).toContain(phaseLine('device', `stim-fixture (${UDID})`));
     expect(logs[0]).toContain(phaseLine('app', 'com.example.app'));
     expect(logs[0]).toContain(phaseLine('metro', 'running on port 8082'));
     expect(logs[0]).toContain(phaseLine('cache', 'built'));
     expect(logs[0]).toContain(phaseLine('compilation cache', 'unavailable; Xcode did not report reliable statistics'));
     expect(logs[0]).toContain(phaseLine('logs', workspaceLogsDir(root)));
     const text = errs.join('\n');
-    expect(text).toMatch(/^  device {6}stim-cli-fixture \(BF2A\.\.\) booted \(\d+ms\)$/m);
+    expect(text).toMatch(/^  device {6}stim-fixture \(BF2A\.\.\) booted \(\d+ms\)$/m);
     expect(text).toMatch(/^  fingerprint a3f9b1\.\. miss \(\d+ms\)$/m);
     expect(text).toMatch(/^  build {7}compiling Debug with xcodebuild$/m);
     expect(text).toMatch(/^  build {7}ok \(2m41s\)$/m);
-    expect(text).toMatch(/^  install {5}-> stim-cli-fixture \(BF2A\.\.\) \(\d+ms\)$/m);
+    expect(text).toMatch(/^  install {5}-> stim-fixture \(BF2A\.\.\) \(\d+ms\)$/m);
     expect(text).toMatch(/^  launch {6}com\.example\.app \(\d+ms\)$/m);
   });
 
@@ -1493,7 +1493,7 @@ describe('success output', () => {
     const facts = parseFirst(logs);
     expect(facts.platform).toBe('ios');
     expect(facts.udid).toBe(UDID);
-    expect(facts.deviceName).toBe('stim-cli-fixture');
+    expect(facts.deviceName).toBe('stim-fixture');
     expect(facts.fingerprint).toBe(FINGERPRINT);
     expect(facts.cacheKey).toMatch(new RegExp(`^${FINGERPRINT}-debug-sim$`));
     expect(facts.cacheHit).toBe(false);
@@ -1696,7 +1696,7 @@ describe('formatting', () => {
     expect(shortHash('a3f9b1c2d3')).toBe('a3f9b1..');
     expect(shortHash('abc')).toBe('abc');
     expect(shortUdid(UDID)).toBe('BF2A..');
-    expect(deviceLabel({ deviceName: 'stim-cli-x' }, UDID)).toBe('stim-cli-x (BF2A..)');
+    expect(deviceLabel({ deviceName: 'stim-x' }, UDID)).toBe('stim-x (BF2A..)');
     expect(deviceLabel(null, UDID)).toBe('BF2A..');
   });
 
@@ -1742,7 +1742,7 @@ describe('devClientScheme', () => {
   });
 
   function project(app: unknown, pkg?: unknown) {
-    const dir = mkdtempSync(join(tmpdir(), 'stim-cli-scheme-'));
+    const dir = mkdtempSync(join(tmpdir(), 'stim-scheme-'));
     dirs.push(dir);
     if (app) writeFileSync(join(dir, 'app.json'), JSON.stringify(app));
     writeFileSync(join(dir, 'package.json'), JSON.stringify(pkg || { name: 'x' }));
@@ -1848,20 +1848,20 @@ describe('iosFacts', () => {
     expect(
       iosFacts({
         udid: UDID,
-        deviceName: 'stim-cli-x',
+        deviceName: 'stim-x',
         fingerprint: 'abc',
         cacheKey: 'abc-debug-sim',
         cacheHit: 'local',
         appPath: '/a/b.app',
         bundleId: 'com.x',
         metroPort: 8082,
-        logsDir: '/w/.stim-cli/logs',
+        logsDir: '/w/.stim/logs',
         durationMs: 1234,
       }),
     ).toEqual({
       platform: 'ios',
       udid: UDID,
-      deviceName: 'stim-cli-x',
+      deviceName: 'stim-x',
       fingerprint: 'abc',
       configuration: null,
       cacheKey: 'abc-debug-sim',
@@ -1873,7 +1873,7 @@ describe('iosFacts', () => {
       bundleId: 'com.x',
       launched: true,
       metroPort: 8082,
-      logs: { dir: '/w/.stim-cli/logs' },
+      logs: { dir: '/w/.stim/logs' },
       durationMs: 1234,
     });
   });
@@ -1931,7 +1931,7 @@ test('--json says so when a build failed with no recognizable diagnostic', async
     {
       buildIos: async () => ({
         failed: true,
-        code: 'STIM_CLI_BUILD_FAILED',
+        code: 'STIM_BUILD_FAILED',
         durationMs: 1000,
         truncated: 0,
         exitCode: 70,
@@ -1965,7 +1965,7 @@ describe('concurrency limits', () => {
     expect(calls.order.includes('buildIos')).toBeTruthy();
   });
 
-  test('maxDevices at capacity refuses with STIM_CLI_AT_CAPACITY, before ensuring a device', async () => {
+  test('maxDevices at capacity refuses with STIM_AT_CAPACITY, before ensuring a device', async () => {
     reserve();
     const capacity: { args?: CheckDeviceCapacityArgs } = {};
     const { errs, exitCode, calls } = await run(
@@ -1975,7 +1975,7 @@ describe('concurrency limits', () => {
         checkDeviceCapacity: (args) => {
           capacity.args = args;
           return {
-            code: 'STIM_CLI_AT_CAPACITY',
+            code: 'STIM_AT_CAPACITY',
             message: 'at capacity',
             remedy: 'stop an environment (stim stop) or raise concurrency.maxDevices',
           };
@@ -1985,7 +1985,7 @@ describe('concurrency limits', () => {
     expect(exitCode).toBe(1);
     assert(capacity.args);
     expect(capacity.args.max).toBe(2);
-    expect(errs.join('\n')).toMatch(/STIM_CLI_AT_CAPACITY/);
+    expect(errs.join('\n')).toMatch(/STIM_AT_CAPACITY/);
     expect(errs.join('\n')).toMatch(/stim stop/);
     expect(!calls.order.includes('ensureOwnedDevice')).toBeTruthy();
   });
@@ -2228,7 +2228,7 @@ describe('--remote', () => {
     );
     expect(asked).toBe(false);
     expect(exitCode).toBe(1);
-    expect(stderr).toContain('STIM_CLI_BAD_ARG');
+    expect(stderr).toContain('STIM_BAD_ARG');
     expect(stderr).toContain('Invalid ios.remote setting');
   });
 
@@ -2373,7 +2373,7 @@ describe('release skips Metro entirely', () => {
     const { exitCode, calls, errs } = await run({ configuration: 'Release' });
     expect(exitCode).toBe(null);
     expect(!calls.order.includes('resolveProjectMetro')).toBeTruthy();
-    expect(errs.join('\n')).not.toMatch(/STIM_CLI_NO_METRO/);
+    expect(errs.join('\n')).not.toMatch(/STIM_NO_METRO/);
     expect(errs.join('\n')).toMatch(/skipped \(Release: the JS bundle is embedded/);
     expect(calls.args.launchIosApp.metroPort).toBe(null);
     expect(calls.args.launchIosApp.devClientScheme).toBeUndefined();
@@ -2400,7 +2400,7 @@ describe('release skips Metro entirely', () => {
       },
     );
     expect(exitCode).toBe(1);
-    expect(parseFirst(logs).code).toBe('STIM_CLI_LAUNCH_FAILED');
+    expect(parseFirst(logs).code).toBe('STIM_LAUNCH_FAILED');
     expect(errs.join('\n')).toMatch(/process exited within/);
     expect(errs.join('\n')).toMatch(/stim logs --errors/);
   });
@@ -2412,7 +2412,7 @@ describe('release skips Metro entirely', () => {
     expect(first.calls.args.launchIosApp.metroPort).toBe(null);
     const second = await run({ configuration: 'Debug' }, { resolveSettings: () => settings });
     expect(second.exitCode).toBe(1);
-    expect(second.stderr).toMatch(/STIM_CLI_NO_METRO/);
+    expect(second.stderr).toMatch(/STIM_NO_METRO/);
   });
 });
 
@@ -2771,7 +2771,7 @@ describe('single-flight takeover says the previous build failed', () => {
             pid: 4242,
             projectRoot: '/w/other',
             startedAt: new Date(Date.now() - 120000).toISOString(),
-            logFile: '/w/other/.stim-cli/logs/build-ios.ndjson',
+            logFile: '/w/other/.stim/logs/build-ios.ndjson',
           },
         }),
       },

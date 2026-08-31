@@ -132,7 +132,7 @@ export async function swapJsBundle({
   logWriter = null,
   exec = null,
   spawnFn = null,
-  mkdtemp = () => mkdtempSync(join(tmpdir(), 'stim-cli-js-swap-')),
+  mkdtemp = () => mkdtempSync(join(tmpdir(), 'stim-js-swap-')),
   exists = existsSync,
   hermesEnabled = null,
   now = Date.now,

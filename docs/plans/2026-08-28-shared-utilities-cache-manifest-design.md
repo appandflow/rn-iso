@@ -30,7 +30,7 @@ The cache manifest has two read-modify-write implementations. Neither locks the 
 
 Add a synchronous cache manifest update primitive to `@stim-cli/core`. The primitive takes a directory lock, reads the current manifest, applies one mutation, and writes through a temporary file and atomic rename. The lock path is derived from the manifest path.
 
-`@stim-cli/core` cache registration uses the primitive and keeps its non-throwing contract. The stim-cli cache manifest API uses the same primitive and keeps its current validation and error behavior.
+`@stim-cli/core` cache registration uses the primitive and keeps its non-throwing contract. The Stim cache manifest API uses the same primitive and keeps its current validation and error behavior.
 
 ## Tests
 

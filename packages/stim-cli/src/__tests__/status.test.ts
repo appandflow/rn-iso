@@ -15,13 +15,13 @@ import { ensureWorkspaceStorage, workspaceLogsDir, workspaceStateFile } from '..
 let tmpHome: string;
 
 beforeEach(() => {
-  tmpHome = mkdtempSync(join(tmpdir(), 'stim-cli-test-'));
-  process.env.STIM_CLI_HOME = tmpHome;
+  tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
+  process.env.STIM_HOME = tmpHome;
 
   const listJson = JSON.stringify({
     devices: {
       'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
-        { udid: 'UDID-ABC', name: 'stim-cli-projA', state: 'Shutdown', isAvailable: true },
+        { udid: 'UDID-ABC', name: 'stim-projA', state: 'Shutdown', isAvailable: true },
       ],
     },
   });
@@ -43,7 +43,7 @@ beforeEach(() => {
 afterEach(() => {
   resetExecutor();
   rmSync(tmpHome, { recursive: true, force: true });
-  delete process.env.STIM_CLI_HOME;
+  delete process.env.STIM_HOME;
 });
 
 async function runStatus() {
@@ -181,7 +181,7 @@ function writeState(root: string, supervisor: { pid: number; port: number; mode:
 }
 
 test('status reports a supervisor whose port answers as this project as healthy', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'stim-cli-proj-'));
+  const root = mkdtempSync(join(tmpdir(), 'stim-proj-'));
   const server = createServer((_req, res) => res.end('packager-status:running'));
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
   const port = (server.address() as AddressInfo).port;
@@ -237,7 +237,7 @@ test('status reports a supervisor whose port answers as this project as healthy'
 });
 
 test('status counts a device-only noise storm as zero errors', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'stim-cli-proj-'));
+  const root = mkdtempSync(join(tmpdir(), 'stim-proj-'));
   try {
     mkdirSync(workspaceLogsDir(root), { recursive: true });
     const storm = [];
@@ -266,7 +266,7 @@ test('status counts a device-only noise storm as zero errors', async () => {
 });
 
 test('status warns about a supervisor record whose process is gone', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'stim-cli-proj-'));
+  const root = mkdtempSync(join(tmpdir(), 'stim-proj-'));
   try {
     writeState(root, { pid: 999999, port: 8083, mode: 'expo-child', startedAt: 5 });
     saveConfig(
@@ -289,7 +289,7 @@ test('status warns about a supervisor record whose process is gone', async () =>
 });
 
 test('a workspace with no supervisor and no logs reports both as null', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'stim-cli-proj-'));
+  const root = mkdtempSync(join(tmpdir(), 'stim-proj-'));
   try {
     saveConfig(makeConfig({ version: 2, projects: { [root]: { label: 'agent-1', platforms: {} } } }));
     const payload = await runStatusJson();
@@ -301,7 +301,7 @@ test('a workspace with no supervisor and no logs reports both as null', async ()
 });
 
 test('the printed lines name the supervisor and the error count', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'stim-cli-proj-'));
+  const root = mkdtempSync(join(tmpdir(), 'stim-proj-'));
   try {
     writeState(root, { pid: 999999, port: 8083, mode: 'expo-child', startedAt: 5 });
     writeLogs(root, [{ ts: 3, src: 'metro', level: 'error', msg: 'boom' }]);
@@ -415,9 +415,9 @@ test('a project on another volume reports that volume alongside the boot one', a
   expect(v1.disk.availableMb).toBe(1536 * 1024);
 });
 
-test('an STIM_CLI_HOME on another volume is reported even when the project is on the boot volume', () => {
-  const previousHome = process.env.STIM_CLI_HOME;
-  process.env.STIM_CLI_HOME = '/Volumes/StateSSD/stim-cli';
+test('an STIM_HOME on another volume is reported even when the project is on the boot volume', () => {
+  const previousHome = process.env.STIM_HOME;
+  process.env.STIM_HOME = '/Volumes/StateSSD/Stim';
   try {
     const asked = dfExecutor({
       '/': dfOutput({ totalKb: 926 * 1024 * 1024, availableKb: 38 * 1024 * 1024 }),
@@ -427,8 +427,8 @@ test('an STIM_CLI_HOME on another volume is reported even when the project is on
     expect(asked).toEqual(['/', '/Volumes/StateSSD']);
     expect(volumes.map((v) => v.volume)).toEqual(['/', '/Volumes/StateSSD']);
   } finally {
-    if (previousHome === undefined) delete process.env.STIM_CLI_HOME;
-    else process.env.STIM_CLI_HOME = previousHome;
+    if (previousHome === undefined) delete process.env.STIM_HOME;
+    else process.env.STIM_HOME = previousHome;
   }
 });
 

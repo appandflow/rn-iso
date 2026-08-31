@@ -43,7 +43,7 @@ function gradleBuildCache(): CacheDescriptor | null {
     name: 'Gradle build cache',
     dir,
     prune: 'report-only',
-    note: 'shared with every Gradle build; report only, never pruned or emptied by stim-cli',
+    note: 'shared with every Gradle build; report only, never pruned or emptied by Stim',
   };
 }
 
@@ -193,7 +193,7 @@ function protectGradleCache(cache: CacheDescriptor, gradleDir: string | null): C
   if (!gradleDir || !cachePathsOverlap(canonicalCacheDir(cache.dir), gradleDir)) return cache;
   return Object.assign({}, cache, {
     prune: 'report-only' as const,
-    note: 'shared with every Gradle build; report only, never pruned or emptied by stim-cli',
+    note: 'shared with every Gradle build; report only, never pruned or emptied by Stim',
   });
 }
 
@@ -239,7 +239,7 @@ export function pruneCache(
   const cutoff = now - (olderThanDays as number) * 24 * 60 * 60 * 1000;
 
   if (cache.prune === 'report-only') {
-    return { removed: 0, bytes: 0, skipped: 'report-only shared cache; stim-cli never deletes it' };
+    return { removed: 0, bytes: 0, skipped: 'report-only shared cache; Stim never deletes it' };
   }
 
   if (cache.prune === 'atomic') {

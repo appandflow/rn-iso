@@ -3,8 +3,8 @@ import type { Config } from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 
 const config: Config = {
-  title: 'stim-cli',
-  tagline: 'The React Native / Expo CLI for AI agents',
+  title: 'Stim',
+  tagline: 'Fast, isolated React Native environments for coding agents',
   favicon: 'img/favicon.svg',
 
   future: {
@@ -19,7 +19,12 @@ const config: Config = {
   trailingSlash: false,
 
   onBrokenLinks: 'throw',
-  onBrokenMarkdownLinks: 'throw',
+
+  markdown: {
+    hooks: {
+      onBrokenMarkdownLinks: 'throw',
+    },
+  },
 
   i18n: {
     defaultLocale: 'en',
@@ -48,7 +53,7 @@ const config: Config = {
       respectPrefersColorScheme: true,
     },
     navbar: {
-      title: 'stim-cli',
+      title: 'Stim',
       items: [
         {
           type: 'docSidebar',

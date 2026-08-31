@@ -182,9 +182,9 @@ describe('logs command', () => {
   let origExit: typeof process.exit;
 
   beforeEach(() => {
-    tmpHome = mkdtempSync(join(tmpdir(), 'stim-cli-logscmd-home-'));
-    process.env.STIM_CLI_HOME = tmpHome;
-    project = realpathSync(mkdtempSync(join(tmpdir(), 'stim-cli-logscmd-')));
+    tmpHome = mkdtempSync(join(tmpdir(), 'stim-logscmd-home-'));
+    process.env.STIM_HOME = tmpHome;
+    project = realpathSync(mkdtempSync(join(tmpdir(), 'stim-logscmd-')));
     writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'demo' }));
     logsDir = workspaceLogsDir(project);
     mkdirSync(logsDir, { recursive: true });
@@ -212,7 +212,7 @@ describe('logs command', () => {
     process.chdir(cwd);
     rmSync(tmpHome, { recursive: true, force: true });
     rmSync(project, { recursive: true, force: true });
-    delete process.env.STIM_CLI_HOME;
+    delete process.env.STIM_HOME;
   });
 
   function writeLog(name: string, records: unknown[]) {
@@ -316,7 +316,7 @@ describe('logs command', () => {
   });
 
   test('outside a project it exits 1 and says so', () => {
-    const bare = mkdtempSync(join(tmpdir(), 'stim-cli-logscmd-bare-'));
+    const bare = mkdtempSync(join(tmpdir(), 'stim-logscmd-bare-'));
     process.chdir(bare);
     try {
       run({});

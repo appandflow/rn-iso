@@ -24,15 +24,15 @@ import {
 describe('workspace paths', () => {
   let tmpHome: string;
   beforeEach(() => {
-    tmpHome = mkdtempSync(join(tmpdir(), 'stim-cli-test-'));
-    process.env.STIM_CLI_HOME = tmpHome;
+    tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
+    process.env.STIM_HOME = tmpHome;
   });
   afterEach(() => {
     rmSync(tmpHome, { recursive: true, force: true });
-    delete process.env.STIM_CLI_HOME;
+    delete process.env.STIM_HOME;
   });
 
-  test('workspace state lives under STIM_CLI_HOME with a readable collision-safe name', () => {
+  test('workspace state lives under STIM_HOME with a readable collision-safe name', () => {
     const root = '/repo/My App';
     const dir = join(tmpHome, 'workspaces', workspaceName(root));
     expect(workspaceSlug(root)).toBe('my-app');
@@ -48,7 +48,7 @@ describe('workspace paths', () => {
   });
 
   test('path calculation is pure: no directory is created as a side effect', () => {
-    const root = join(tmpdir(), 'stim-cli-nonexistent-xyz');
+    const root = join(tmpdir(), 'stim-nonexistent-xyz');
     workspaceDir(root);
     workspaceLogsDir(root);
     workspaceDerivedData(root);
@@ -57,7 +57,7 @@ describe('workspace paths', () => {
     workspaceStateFile(root);
     emulatorLogFile(root);
     expect(existsSync(workspaceDir(root))).toBe(false);
-    expect(existsSync(join(root, '.stim-cli'))).toBe(false);
+    expect(existsSync(join(root, '.stim'))).toBe(false);
   });
 
   test('same basename at different paths is readable and collision-safe', () => {
@@ -83,15 +83,15 @@ describe('workspace paths', () => {
 describe('shared paths', () => {
   let tmpHome: string;
   beforeEach(() => {
-    tmpHome = mkdtempSync(join(tmpdir(), 'stim-cli-test-'));
-    process.env.STIM_CLI_HOME = tmpHome;
+    tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
+    process.env.STIM_HOME = tmpHome;
   });
   afterEach(() => {
     rmSync(tmpHome, { recursive: true, force: true });
-    delete process.env.STIM_CLI_HOME;
+    delete process.env.STIM_HOME;
   });
 
-  test('shared caches honour STIM_CLI_HOME', () => {
+  test('shared caches honour STIM_HOME', () => {
     expect(sharedMetroCache()).toBe(join(tmpHome, 'metro-cache'));
     expect(sharedBuildCache()).toBe(join(tmpHome, 'build-cache'));
     expect(sharedCompilationCache()).toBe(join(tmpHome, 'compilation-cache'));
@@ -113,21 +113,21 @@ describe('shared paths', () => {
 describe('shared cache roots', () => {
   let tmpHome: string;
   beforeEach(() => {
-    tmpHome = mkdtempSync(join(tmpdir(), 'stim-cli-test-'));
-    process.env.STIM_CLI_HOME = tmpHome;
+    tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
+    process.env.STIM_HOME = tmpHome;
   });
   afterEach(() => {
     rmSync(tmpHome, { recursive: true, force: true });
-    delete process.env.STIM_CLI_HOME;
-    delete process.env.STIM_CLI_BUILD_CACHE;
-    delete process.env.STIM_CLI_METRO_CACHE;
+    delete process.env.STIM_HOME;
+    delete process.env.STIM_BUILD_CACHE;
+    delete process.env.STIM_METRO_CACHE;
   });
 
   test('explicit cache env overrides win and remain parent roots', () => {
-    process.env.STIM_CLI_BUILD_CACHE = '/tmp/custom-build';
+    process.env.STIM_BUILD_CACHE = '/tmp/custom-build';
     expect(sharedBuildCache()).toBe('/tmp/custom-build');
 
-    process.env.STIM_CLI_METRO_CACHE = '/tmp/custom-metro';
+    process.env.STIM_METRO_CACHE = '/tmp/custom-metro';
     expect(sharedMetroCache()).toBe('/tmp/custom-metro');
     expect(sharedMetroCache('demo')).toBe('/tmp/custom-metro/demo');
     expect(sharedMetroCache('@scope/app')).toBe('/tmp/custom-metro/-scope-app');

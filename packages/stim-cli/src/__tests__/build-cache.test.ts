@@ -29,15 +29,15 @@ import { buildCacheKey as providerKey } from '../../../expo-build-cache/index.js
 let root: string;
 let tmpHome: string;
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), 'stim-cli-bc-'));
-  tmpHome = mkdtempSync(join(tmpdir(), 'stim-cli-bc-home-'));
-  process.env.STIM_CLI_HOME = tmpHome;
+  root = mkdtempSync(join(tmpdir(), 'stim-bc-'));
+  tmpHome = mkdtempSync(join(tmpdir(), 'stim-bc-home-'));
+  process.env.STIM_HOME = tmpHome;
 });
 afterEach(() => {
   resetExecutor();
   rmSync(root, { recursive: true, force: true });
   rmSync(tmpHome, { recursive: true, force: true });
-  delete process.env.STIM_CLI_HOME;
+  delete process.env.STIM_HOME;
 });
 
 function seedEntry(platform: string, hash: string, name = 'MyApp.app') {
@@ -257,7 +257,7 @@ test('storing a build registers the cache root at the depth its entries actually
   expect(record.entriesDepth).toBe(2);
 });
 
-test('@expo/fingerprint is a declared dependency of the stim-cli package', () => {
+test('@expo/fingerprint is a declared dependency of the Stim package', () => {
   const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf-8')) as {
     dependencies?: Record<string, string>;
   };

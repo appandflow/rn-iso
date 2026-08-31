@@ -30,15 +30,15 @@ type ExpoExitInfo = { code: number | null; signal: NodeJS.Signals | null; error?
 let root: string;
 let tmpHome: string;
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), 'stim-cli-expo-'));
+  root = mkdtempSync(join(tmpdir(), 'stim-expo-'));
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app' }));
-  tmpHome = mkdtempSync(join(tmpdir(), 'stim-cli-test-'));
-  process.env.STIM_CLI_HOME = tmpHome;
+  tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
+  process.env.STIM_HOME = tmpHome;
 });
 afterEach(() => {
   rmSync(root, { recursive: true, force: true });
   rmSync(tmpHome, { recursive: true, force: true });
-  delete process.env.STIM_CLI_HOME;
+  delete process.env.STIM_HOME;
   delete process.env.NODE_OPTIONS;
   delete process.env.EXPO_OVERRIDE_METRO_CONFIG;
 });
@@ -93,7 +93,7 @@ describe('line parsing', () => {
 
   const NAVIGATE_ERROR = `ERROR  The action 'NAVIGATE' with payload {"name":"expo-development-client","params":{"url":"http://10.0.2.2:8082"}} was not handled by any navigator.`;
 
-  test('the dev-client NAVIGATE record is demoted: stim-cli own deep link is not an app error', () => {
+  test('the dev-client NAVIGATE record is demoted: Stim own deep link is not an app error', () => {
     expect(inferLevel(NAVIGATE_ERROR)).toBe('info');
     const record = recordFromLine(NAVIGATE_ERROR);
     assert(record);
@@ -149,7 +149,7 @@ describe('startExpoServer', () => {
       () => null,
       (e) => e,
     );
-    expect(err.code).toBe('STIM_CLI_EXPO_BIN');
+    expect(err.code).toBe('STIM_EXPO_BIN');
     expect(err.message).toMatch(/not resolvable/);
     expect(err.remedy).toMatch(/workspace root/);
   });
@@ -178,7 +178,7 @@ describe('startExpoServer', () => {
   test('an identical line arriving on both streams within a second is written once', async () => {
     fakeBin();
     const child = fakeChild();
-    const logsDir = join(root, '.stim-cli', 'logs');
+    const logsDir = join(root, '.stim', 'logs');
     await startExpoServer({ root, port: 8114, logsDir, spawnFn: () => child });
     child.stdout!.emit('data', 'PluginError: Failed to resolve plugin\n');
     child.stderr!.emit('data', 'PluginError: Failed to resolve plugin\n');
@@ -191,7 +191,7 @@ describe('startExpoServer', () => {
 
   test('the child inherits the supervisor process environment (#33)', async () => {
     fakeBin();
-    process.env.STIM_CLI_TEST_SENTINEL = 'through';
+    process.env.STIM_TEST_SENTINEL = 'through';
     const calls: { opts: SpawnOptions }[] = [];
     try {
       await startExpoServer({
@@ -204,17 +204,17 @@ describe('startExpoServer', () => {
         },
       });
     } finally {
-      delete process.env.STIM_CLI_TEST_SENTINEL;
+      delete process.env.STIM_TEST_SENTINEL;
     }
     const env = calls[0]?.opts.env as Record<string, string>;
-    expect(env.STIM_CLI_TEST_SENTINEL).toBe('through');
+    expect(env.STIM_TEST_SENTINEL).toBe('through');
     expect(env.FORCE_COLOR).toBe('0');
   });
 
   test('stdout and stderr lines land in metro.ndjson as Contract-1 records', async () => {
     fakeBin();
     const child = fakeChild();
-    const logsDir = join(root, '.stim-cli', 'logs');
+    const logsDir = join(root, '.stim', 'logs');
     const handle = await startExpoServer({
       root,
       port: 8112,
@@ -240,7 +240,7 @@ describe('startExpoServer', () => {
   test('a child that dies flushes its last partial line and reports the exit', async () => {
     fakeBin();
     const child = fakeChild();
-    const logsDir = join(root, '.stim-cli', 'logs');
+    const logsDir = join(root, '.stim', 'logs');
     const handle = await startExpoServer({ root, port: 8113, logsDir, spawnFn: () => child });
     const exits: (ExpoExitInfo | null)[] = [];
     handle.onExit((info) => exits.push(info));
@@ -366,13 +366,13 @@ test('a workspace with no public URL sets nothing', () => {
 });
 
 test('the public URL becomes EXPO_PACKAGER_PROXY_URL', () => {
-  expect(expoProxyEnv({ STIM_CLI_METRO_PUBLIC_URL: 'https://abc.trycloudflare.com' })).toEqual({
+  expect(expoProxyEnv({ STIM_METRO_PUBLIC_URL: 'https://abc.trycloudflare.com' })).toEqual({
     EXPO_PACKAGER_PROXY_URL: 'https://abc.trycloudflare.com',
   });
 });
 
 test('a trailing slash is dropped', () => {
-  expect(expoProxyEnv({ STIM_CLI_METRO_PUBLIC_URL: 'https://abc.trycloudflare.com/' })).toEqual({
+  expect(expoProxyEnv({ STIM_METRO_PUBLIC_URL: 'https://abc.trycloudflare.com/' })).toEqual({
     EXPO_PACKAGER_PROXY_URL: 'https://abc.trycloudflare.com',
   });
 });
@@ -381,7 +381,7 @@ test('an explicit EXPO_PACKAGER_PROXY_URL is never overridden', () => {
   expect(
     expoProxyEnv({
       EXPO_PACKAGER_PROXY_URL: 'https://chosen.example.com',
-      STIM_CLI_METRO_PUBLIC_URL: 'https://abc.trycloudflare.com',
+      STIM_METRO_PUBLIC_URL: 'https://abc.trycloudflare.com',
     }),
   ).toEqual({});
 });
@@ -478,7 +478,7 @@ describe('starting a tunnel', () => {
   });
 });
 describe('the Metro store injected into an Expo child', () => {
-  const adapter = '/pkg/stim-cli/shim/expo-metro-config.cjs';
+  const adapter = '/pkg/Stim/shim/expo-metro-config.cjs';
 
   test('the env additions point Expo at the adapter and preserve an existing override', () => {
     expect(
@@ -490,9 +490,9 @@ describe('the Metro store injected into an Expo child', () => {
       }),
     ).toEqual({
       EXPO_OVERRIDE_METRO_CONFIG: adapter,
-      STIM_CLI_METRO_STORE: '/cache/app',
-      STIM_CLI_PROJECT_ROOT: '/w/app',
-      STIM_CLI_EXPO_METRO_CONFIG: '/w/app/custom-metro.cjs',
+      STIM_METRO_STORE: '/cache/app',
+      STIM_PROJECT_ROOT: '/w/app',
+      STIM_EXPO_METRO_CONFIG: '/w/app/custom-metro.cjs',
     });
   });
 
@@ -512,7 +512,7 @@ describe('the Metro store injected into an Expo child', () => {
     await startExpoServer({
       root,
       port: 8120,
-      logsDir: join(root, '.stim-cli', 'logs'),
+      logsDir: join(root, '.stim', 'logs'),
       spawnFn: (_cmd, _args, opts) => {
         calls.push({ opts });
         return fakeChild();
@@ -521,16 +521,16 @@ describe('the Metro store injected into an Expo child', () => {
     const env = calls[0]?.opts.env as Record<string, string>;
     expect(env.NODE_OPTIONS).toBe('--max-old-space-size=8192');
     expect(env.EXPO_OVERRIDE_METRO_CONFIG).toContain('expo-metro-config.cjs');
-    expect(env.STIM_CLI_EXPO_METRO_CONFIG).toBe('/w/app/custom-metro.cjs');
-    expect(env.STIM_CLI_METRO_STORE).toBe(metroStoreRoot(root));
-    expect(env.STIM_CLI_PROJECT_ROOT).toBe(root);
+    expect(env.STIM_EXPO_METRO_CONFIG).toBe('/w/app/custom-metro.cjs');
+    expect(env.STIM_METRO_STORE).toBe(metroStoreRoot(root));
+    expect(env.STIM_PROJECT_ROOT).toBe(root);
     expect(env.FORCE_COLOR).toBe('0');
     delete process.env.EXPO_OVERRIDE_METRO_CONFIG;
   });
 
-  test('Expo SDK 53 runs normally without stim-cli Metro cache env', async () => {
+  test('Expo SDK 53 runs normally without Stim Metro cache env', async () => {
     fakeBin(root, 53);
-    const logsDir = join(root, '.stim-cli', 'logs');
+    const logsDir = join(root, '.stim', 'logs');
     const calls: { opts: SpawnOptions }[] = [];
     await startExpoServer({
       root,
@@ -544,7 +544,7 @@ describe('the Metro store injected into an Expo child', () => {
     const env = calls[0]?.opts.env as Record<string, string>;
     expect(expoSdkMajor(root)).toBe(53);
     expect(env.EXPO_OVERRIDE_METRO_CONFIG).toBe(undefined);
-    expect(env.STIM_CLI_METRO_STORE).toBe(undefined);
+    expect(env.STIM_METRO_STORE).toBe(undefined);
     const records = parseNdjsonText(readFileSync(join(logsDir, 'metro.ndjson'), 'utf-8'));
     expect(String(records.find((record) => record.event === 'cache_store_skipped')?.msg)).toContain('predates');
   });
@@ -556,7 +556,7 @@ describe('the Metro store injected into an Expo child', () => {
     );
     fakeBin();
     process.env.NODE_OPTIONS = '--enable-source-maps';
-    const logsDir = join(root, '.stim-cli', 'logs');
+    const logsDir = join(root, '.stim', 'logs');
     const calls: { opts: SpawnOptions }[] = [];
     await startExpoServer({
       root,
@@ -569,16 +569,16 @@ describe('the Metro store injected into an Expo child', () => {
     });
     const env = calls[0]?.opts.env as Record<string, string>;
     expect(env.NODE_OPTIONS).toBe('--enable-source-maps');
-    expect(env.STIM_CLI_METRO_STORE).toBe(undefined);
+    expect(env.STIM_METRO_STORE).toBe(undefined);
     const records = parseNdjsonText(readFileSync(join(logsDir, 'metro.ndjson'), 'utf-8'));
     expect(records.some((r) => r.event === 'cache_store_skipped')).toBe(true);
   });
 });
 
 describe('the honest record of the Metro store injection', () => {
-  test('what stim-cli writes on the way in is the request, not a claim of success', async () => {
+  test('what Stim writes on the way in is the request, not a claim of success', async () => {
     fakeBin();
-    const logsDir = join(root, '.stim-cli', 'logs');
+    const logsDir = join(root, '.stim', 'logs');
     await startExpoServer({ root, port: 8122, logsDir, spawnFn: () => fakeChild() });
     const records = parseNdjsonText(readFileSync(join(logsDir, 'metro.ndjson'), 'utf-8'));
     const requested = records.filter((r) => r.event === 'cache_store_requested');
@@ -590,7 +590,7 @@ describe('the honest record of the Metro store injection', () => {
   });
 
   test("the adapter's own line is what becomes the confirming record", () => {
-    const record = recordFromLine('stim-cli-metro-store: sharing Metro transforms through /cache/app');
+    const record = recordFromLine('stim-metro-store: sharing Metro transforms through /cache/app');
     assert(record);
     expect(record.event).toBe('cache_store_added');
     expect(record.level).toBe('debug');
@@ -599,23 +599,21 @@ describe('the honest record of the Metro store injection', () => {
   });
 
   test('the confirmation parser only matches the adapter, and only with a root', () => {
-    expect(metroStoreConfirmedRoot('stim-cli-metro-store: sharing Metro transforms through /cache/app')).toBe(
-      '/cache/app',
-    );
-    expect(metroStoreConfirmedRoot('stim-cli-metro-store: sharing Metro transforms through ')).toBe(null);
-    expect(metroStoreConfirmedRoot('warning: stim-cli could not share this project')).toBe(null);
+    expect(metroStoreConfirmedRoot('stim-metro-store: sharing Metro transforms through /cache/app')).toBe('/cache/app');
+    expect(metroStoreConfirmedRoot('stim-metro-store: sharing Metro transforms through ')).toBe(null);
+    expect(metroStoreConfirmedRoot('warning: Stim could not share this project')).toBe(null);
     expect(metroStoreConfirmedRoot('iOS Bundled 812ms index.js (1150 modules)')).toBe(null);
   });
 
   test('the confirmation is promoted on either stream', () => {
-    const line = 'stim-cli-metro-store: sharing Metro transforms through /cache/app';
+    const line = 'stim-metro-store: sharing Metro transforms through /cache/app';
     expect(recordFromLine(line, { stream: 'stderr' })?.event).toBe('cache_store_added');
     expect(recordFromLine(line, { stream: 'stdout' })?.event).toBe('cache_store_added');
   });
 
   test("the adapter's failure line is still an ordinary warn record", () => {
     const record = recordFromLine(
-      "warning: stim-cli could not share this project's Metro transform cache (metro-cache exports no FileStore); the dev server is running with the cache it would have had anyway.",
+      "warning: Stim could not share this project's Metro transform cache (metro-cache exports no FileStore); the dev server is running with the cache it would have had anyway.",
     );
     assert(record);
     expect(record.level).toBe('warn');

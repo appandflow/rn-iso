@@ -92,27 +92,27 @@ test('the cache report says which caches were registered and which were detected
   expect(lines).toMatch(/Xcode compilation cache.*detected/);
 });
 
-test('findOrphanedDevices proposes only stim-cli devices absent from config', () => {
+test('findOrphanedDevices proposes only Stim devices absent from config', () => {
   const result = findOrphanedDevices({
     sims: [
-      makeIosSim({ udid: 'U1', name: 'stim-cli-gone' }),
-      makeIosSim({ udid: 'U2', name: 'stim-cli-live' }),
+      makeIosSim({ udid: 'U1', name: 'stim-gone' }),
+      makeIosSim({ udid: 'U2', name: 'stim-live' }),
       makeIosSim({ udid: 'U3', name: 'iPhone 17 Pro' }),
     ],
-    avds: ['stim-cli-old', 'Pixel_7'],
+    avds: ['stim-old', 'Pixel_7'],
     config: makeConfig({
       projects: {
         '/p': {
           platforms: {
             ios: { deviceUdid: 'U2', owned: true },
-            android: { avdName: 'stim-cli-kept', owned: true },
+            android: { avdName: 'stim-kept', owned: true },
           },
         },
       },
     }),
     isMounted: () => true,
   });
-  expect(result.orphaned.map((o) => o.id).toSorted()).toEqual(['U1', 'stim-cli-old']);
+  expect(result.orphaned.map((o) => o.id).toSorted()).toEqual(['U1', 'stim-old']);
 });
 
 test('gc sizes only listed owned Android AVDs after ownership classification', async () => {
@@ -122,7 +122,7 @@ test('gc sizes only listed owned Android AVDs after ownership classification', a
   saveConfig({
     version: 2,
     projects: {
-      [project]: { platforms: { android: { avdName: 'stim-cli-stale', owned: true } } },
+      [project]: { platforms: { android: { avdName: 'stim-stale', owned: true } } },
     },
     repos: {},
   });
@@ -132,7 +132,7 @@ test('gc sizes only listed owned Android AVDs after ownership classification', a
     run(cmd) {
       if (cmd.includes('simctl list devices --json')) return JSON.stringify({ devices: {} });
       if (cmd.endsWith(' -list-avds')) {
-        return 'stim-cli-orphan\nstim-cli-stale\nstim-cli-unreadable\nPixel_7\n';
+        return 'stim-orphan\nstim-stale\nstim-unreadable\nPixel_7\n';
       }
       throw new Error(`unexpected run: ${cmd}`);
     },
@@ -166,36 +166,36 @@ test('gc sizes only listed owned Android AVDs after ownership classification', a
 
   expect(report.orphanedDevices).toContainEqual({
     kind: 'android',
-    id: 'stim-cli-orphan',
-    name: 'stim-cli-orphan',
+    id: 'stim-orphan',
+    name: 'stim-orphan',
     bytes: 5 * 1024 ** 3,
   });
   expect(report.staleDevices).toContainEqual({
     kind: 'android',
-    id: 'stim-cli-stale',
-    name: 'stim-cli-stale',
+    id: 'stim-stale',
+    name: 'stim-stale',
     project,
     idleDays: 90,
     bytes: 2 * 1024 ** 3,
   });
   expect(report.orphanedDevices).toContainEqual({
     kind: 'android',
-    id: 'stim-cli-unreadable',
-    name: 'stim-cli-unreadable',
+    id: 'stim-unreadable',
+    name: 'stim-unreadable',
   });
-  expect(sized).toEqual(['/avds/stim-cli-orphan.avd', '/avds/stim-cli-unreadable.avd', '/avds/stim-cli-stale.avd']);
+  expect(sized).toEqual(['/avds/stim-orphan.avd', '/avds/stim-unreadable.avd', '/avds/stim-stale.avd']);
   expect(sizeTimeouts).toEqual([5000, 5000, 5000]);
 
   const output = formatGcReport(report).join('\n');
-  expect(output).toMatch(/stim-cli-orphan.*5\.0G on disk/);
-  expect(output).toMatch(/stim-cli-stale.*2\.0G on disk/);
-  expect(output).not.toMatch(/stim-cli-unreadable.*on disk/);
+  expect(output).toMatch(/stim-orphan.*5\.0G on disk/);
+  expect(output).toMatch(/stim-stale.*2\.0G on disk/);
+  expect(output).not.toMatch(/stim-unreadable.*on disk/);
   expect(output).not.toMatch(/Pixel_7/);
 });
 
 test('devices referenced by a project on an unmounted volume are kept', () => {
   const result = findOrphanedDevices({
-    sims: [makeIosSim({ udid: 'U1', name: 'stim-cli-ext' })],
+    sims: [makeIosSim({ udid: 'U1', name: 'stim-ext' })],
     avds: [],
     config: makeConfig({ projects: { '/Volumes/Ext/p': { platforms: { ios: { deviceUdid: 'U1', owned: true } } } } }),
     isMounted: () => false,
@@ -206,14 +206,14 @@ test('devices referenced by a project on an unmounted volume are kept', () => {
 
 test('a device named by a non-owned (legacy/stale) record is still counted as referenced, not orphaned', () => {
   const result = findOrphanedDevices({
-    sims: [makeIosSim({ udid: 'U1', name: 'stim-cli-stale-record' })],
-    avds: ['stim-cli-stale-avd'],
+    sims: [makeIosSim({ udid: 'U1', name: 'stim-stale-record' })],
+    avds: ['stim-stale-avd'],
     config: makeConfig({
       projects: {
         '/p': {
           platforms: {
             ios: { deviceUdid: 'U1' },
-            android: { avdName: 'stim-cli-stale-avd' },
+            android: { avdName: 'stim-stale-avd' },
           },
         },
       },
@@ -225,7 +225,7 @@ test('a device named by a non-owned (legacy/stale) record is still counted as re
 
 test('a device owned only by a dead project is orphaned when that project is passed as deadProjects', () => {
   const result = findOrphanedDevices({
-    sims: [makeIosSim({ udid: 'U1', name: 'stim-cli-dead' })],
+    sims: [makeIosSim({ udid: 'U1', name: 'stim-dead' })],
     avds: [],
     config: makeConfig({ projects: { '/gone/p': { platforms: { ios: { deviceUdid: 'U1', owned: true } } } } }),
     isMounted: () => true,
@@ -234,7 +234,7 @@ test('a device owned only by a dead project is orphaned when that project is pas
   expect(result.orphaned.map((o) => o.id)).toEqual(['U1']);
 });
 
-const staleSims = [makeIosSim({ udid: 'U-STALE', name: 'stim-cli-stale' })];
+const staleSims = [makeIosSim({ udid: 'U-STALE', name: 'stim-stale' })];
 
 function staleConfig(extra = {}) {
   return makeConfig({
@@ -251,23 +251,23 @@ test('findStaleDeviceRecords reports a live project pointing at a device that is
       projects: {
         '/a': { platforms: { ios: { deviceUdid: 'GONE', owned: true } } },
         '/b': { platforms: { ios: { deviceUdid: 'HERE', owned: true } } },
-        '/c': { platforms: { android: { avdName: 'stim-cli-gone', owned: true } } },
-        '/d': { platforms: { android: { avdName: 'stim-cli-here', owned: true } } },
+        '/c': { platforms: { android: { avdName: 'stim-gone', owned: true } } },
+        '/d': { platforms: { android: { avdName: 'stim-here', owned: true } } },
       },
     }),
-    sims: [makeIosSim({ udid: 'HERE', name: 'stim-cli-b' })],
-    avds: ['stim-cli-here'],
+    sims: [makeIosSim({ udid: 'HERE', name: 'stim-b' })],
+    avds: ['stim-here'],
   });
   expect(stale.map((r) => [r.kind, r.id, r.project])).toEqual([
     ['ios', 'GONE', '/a'],
-    ['android', 'stim-cli-gone', '/c'],
+    ['android', 'stim-gone', '/c'],
   ]);
 });
 
 test('findStaleDeviceRecords proposes nothing for a platform whose listing failed', () => {
   const config = makeConfig({
     projects: {
-      '/a': { platforms: { ios: { deviceUdid: 'GONE' }, android: { avdName: 'stim-cli-gone' } } },
+      '/a': { platforms: { ios: { deviceUdid: 'GONE' }, android: { avdName: 'stim-gone' } } },
     },
   });
   expect(findStaleDeviceRecords({ config, sims: [], avds: [], simsChecked: false }).map((r) => r.kind)).toEqual([
@@ -356,7 +356,7 @@ test('findStaleProjectDevices fails closed when a project timestamp cannot be re
   expect(stale.length).toBe(0);
 });
 
-test('findStaleProjectDevices ignores devices stim-cli does not own', () => {
+test('findStaleProjectDevices ignores devices Stim does not own', () => {
   const now = Date.now();
   const stale = findStaleProjectDevices({
     config: makeConfig({ projects: { '/live/p': { platforms: { ios: { deviceUdid: 'U-STALE' } } } } }),
@@ -562,11 +562,11 @@ function claimEasSessions(
 }
 
 beforeEach(() => {
-  tmpHome = mkdtempSync(join(tmpdir(), 'stim-cli-test-'));
-  process.env.STIM_CLI_HOME = tmpHome;
+  tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
+  process.env.STIM_HOME = tmpHome;
 
   originalHome = process.env.HOME;
-  fakeHome = mkdtempSync(join(tmpdir(), 'stim-cli-fakehome-'));
+  fakeHome = mkdtempSync(join(tmpdir(), 'stim-fakehome-'));
   process.env.HOME = fakeHome;
 
   originalTmpdir = process.env.TMPDIR;
@@ -579,13 +579,13 @@ afterEach(() => {
   else process.env.TMPDIR = originalTmpdir;
   rmSync(tmpHome, { recursive: true, force: true });
   rmSync(fakeHome, { recursive: true, force: true });
-  delete process.env.STIM_CLI_HOME;
+  delete process.env.STIM_HOME;
   if (originalHome === undefined) delete process.env.HOME;
   else process.env.HOME = originalHome;
 });
 
 describe('EAS orphan session sweep', () => {
-  test('a session claimed from another STIM_CLI_HOME is never stopped', async () => {
+  test('a session claimed from another STIM_HOME is never stopped', async () => {
     const project = join(fakeHome, 'expo-app');
     const clone = join(fakeHome, 'expo-app-clone');
     const homeA = join(fakeHome, 'home-a');
@@ -594,20 +594,20 @@ describe('EAS orphan session sweep', () => {
     mkdirSync(project, { recursive: true });
     mkdirSync(clone, { recursive: true });
 
-    process.env.STIM_CLI_HOME = homeB;
+    process.env.STIM_HOME = homeB;
     writeRemoteState(clone, { remoteDevice: { platform: 'ios', sessionId: 'drs_home_b' } });
     const stateFile = workspaceStateFile(clone);
     writeEasLedger(ledgerRoot, [
-      { sessionId: 'drs_home_b', name: 'stim-cli-home-b', platform: 'ios', workspaceRoot: clone, stateFile },
+      { sessionId: 'drs_home_b', name: 'stim-home-b', platform: 'ios', workspaceRoot: clone, stateFile },
     ]);
 
-    process.env.STIM_CLI_HOME = homeA;
+    process.env.STIM_HOME = homeA;
     saveConfig({ version: 2, projects: { [project]: { isExpo: true } }, repos: {} });
     installExecutor();
     const harness = easGcHarness({
       project,
-      list: easList([{ id: 'drs_home_b', name: 'stim-cli-home-b', status: 'IN_PROGRESS', platform: 'IOS' }]),
-      get: { drs_home_b: JSON.stringify({ id: 'drs_home_b', name: 'stim-cli-home-b', status: 'IN_PROGRESS' }) },
+      list: easList([{ id: 'drs_home_b', name: 'stim-home-b', status: 'IN_PROGRESS', platform: 'IOS' }]),
+      get: { drs_home_b: JSON.stringify({ id: 'drs_home_b', name: 'stim-home-b', status: 'IN_PROGRESS' }) },
       stop: { drs_home_b: JSON.stringify({ id: 'drs_home_b', status: 'STOPPED' }) },
     });
 
@@ -624,9 +624,9 @@ describe('EAS orphan session sweep', () => {
     const ledgerRoot = join(fakeHome, 'machine-eas');
     const harness = easGcHarness({
       project,
-      list: easList([{ id: 'drs_unclaimed', name: 'stim-cli-unclaimed', status: 'IN_PROGRESS', platform: 'IOS' }]),
+      list: easList([{ id: 'drs_unclaimed', name: 'stim-unclaimed', status: 'IN_PROGRESS', platform: 'IOS' }]),
       get: {
-        drs_unclaimed: JSON.stringify({ id: 'drs_unclaimed', name: 'stim-cli-unclaimed', status: 'IN_PROGRESS' }),
+        drs_unclaimed: JSON.stringify({ id: 'drs_unclaimed', name: 'stim-unclaimed', status: 'IN_PROGRESS' }),
       },
       stop: { drs_unclaimed: JSON.stringify({ id: 'drs_unclaimed', status: 'STOPPED' }) },
     });
@@ -644,13 +644,13 @@ describe('EAS orphan session sweep', () => {
     ensureWorkspaceStorage(project);
     const stateFile = workspaceStateFile(project);
     writeEasLedger(ledgerRoot, [
-      { sessionId: 'drs_claimed', name: 'stim-cli-claimed', platform: 'ios', workspaceRoot: project, stateFile },
+      { sessionId: 'drs_claimed', name: 'stim-claimed', platform: 'ios', workspaceRoot: project, stateFile },
     ]);
     installExecutor();
     const harness = easGcHarness({
       project,
-      list: easList([{ id: 'drs_claimed', name: 'stim-cli-claimed', status: 'IN_PROGRESS', platform: 'IOS' }]),
-      get: { drs_claimed: JSON.stringify({ id: 'drs_claimed', name: 'stim-cli-claimed', status: 'IN_PROGRESS' }) },
+      list: easList([{ id: 'drs_claimed', name: 'stim-claimed', status: 'IN_PROGRESS', platform: 'IOS' }]),
+      get: { drs_claimed: JSON.stringify({ id: 'drs_claimed', name: 'stim-claimed', status: 'IN_PROGRESS' }) },
       stop: { drs_claimed: JSON.stringify({ id: 'drs_claimed', status: 'STOPPED' }) },
     });
 
@@ -673,7 +673,7 @@ describe('EAS orphan session sweep', () => {
         writeEasLedger(ledgerRoot, [
           {
             sessionId: 'drs_target',
-            name: 'stim-cli-different',
+            name: 'stim-different',
             platform: 'ios',
             workspaceRoot: project,
             stateFile: workspaceStateFile(project),
@@ -685,7 +685,7 @@ describe('EAS orphan session sweep', () => {
         writeEasLedger(ledgerRoot, [
           {
             sessionId: 'drs_target',
-            name: 'stim-cli-target',
+            name: 'stim-target',
             platform: 'ios',
             workspaceRoot: project,
             stateFile,
@@ -695,8 +695,8 @@ describe('EAS orphan session sweep', () => {
       installExecutor();
       const harness = easGcHarness({
         project,
-        list: easList([{ id: 'drs_target', name: 'stim-cli-target', status: 'IN_PROGRESS', platform: 'IOS' }]),
-        get: { drs_target: JSON.stringify({ id: 'drs_target', name: 'stim-cli-target', status: 'IN_PROGRESS' }) },
+        list: easList([{ id: 'drs_target', name: 'stim-target', status: 'IN_PROGRESS', platform: 'IOS' }]),
+        get: { drs_target: JSON.stringify({ id: 'drs_target', name: 'stim-target', status: 'IN_PROGRESS' }) },
         stop: { drs_target: JSON.stringify({ id: 'drs_target', status: 'STOPPED' }) },
       });
 
@@ -746,18 +746,18 @@ describe('EAS orphan session sweep', () => {
   test('dry run reports a project-scoped orphan and performs no lookup or stop', async () => {
     const project = join(fakeHome, 'expo-app');
     registerExpoProject(project);
-    claimEasSessions(project, [{ id: 'drs_orphan', name: 'stim-cli-old', platform: 'ios' }]);
+    claimEasSessions(project, [{ id: 'drs_orphan', name: 'stim-old', platform: 'ios' }]);
     installExecutor();
     const harness = easGcHarness({
       project,
-      list: easList([{ id: 'drs_orphan', name: 'stim-cli-old', status: 'IN_PROGRESS', platform: 'IOS' }]),
+      list: easList([{ id: 'drs_orphan', name: 'stim-old', status: 'IN_PROGRESS', platform: 'IOS' }]),
     });
 
     const output = await captureLog(() => runGc({}, harness.deps));
 
     expect(output).toMatch(/Orphaned EAS sessions \(1\)/);
     expect(output).toContain('drs_orphan');
-    expect(output).toContain('stim-cli-old');
+    expect(output).toContain('stim-old');
     expect(output).toContain(project);
     expect(output).toMatch(/eas simulator:stop --id drs_orphan/);
     expect(harness.calls.map((call) => call.args[0])).toEqual(['simulator:list']);
@@ -777,14 +777,14 @@ describe('EAS orphan session sweep', () => {
       projects: { [project]: { isExpo: true }, [otherWorkspace]: { isExpo: true } },
       repos: {},
     });
-    claimEasSessions(project, [{ id: 'drs_orphan', name: 'stim-cli-old', platform: 'ios' }]);
+    claimEasSessions(project, [{ id: 'drs_orphan', name: 'stim-old', platform: 'ios' }]);
     writeRemoteState(otherWorkspace, { remoteDevice: { platform: 'ios', sessionId: 'drs_recorded' } });
     installExecutor();
     const harness = easGcHarness({
       project,
       list: easList([
-        { id: 'drs_recorded', name: 'stim-cli-live', status: 'IN_PROGRESS', platform: 'IOS' },
-        { id: 'drs_orphan', name: 'stim-cli-old', status: 'IN_PROGRESS', platform: 'IOS' },
+        { id: 'drs_recorded', name: 'stim-live', status: 'IN_PROGRESS', platform: 'IOS' },
+        { id: 'drs_orphan', name: 'stim-old', status: 'IN_PROGRESS', platform: 'IOS' },
       ]),
     });
 
@@ -819,8 +819,8 @@ describe('EAS orphan session sweep', () => {
     installExecutor();
     const harness = easGcHarness({
       project,
-      list: easList([{ id: 'drs_orphan', name: 'stim-cli-old', status: 'IN_PROGRESS', platform: 'IOS' }]),
-      get: { drs_orphan: JSON.stringify({ id: 'drs_orphan', name: 'stim-cli-old', status: 'IN_PROGRESS' }) },
+      list: easList([{ id: 'drs_orphan', name: 'stim-old', status: 'IN_PROGRESS', platform: 'IOS' }]),
+      get: { drs_orphan: JSON.stringify({ id: 'drs_orphan', name: 'stim-old', status: 'IN_PROGRESS' }) },
       stop: { drs_orphan: JSON.stringify({ id: 'drs_orphan', status: 'STOPPED' }) },
     });
 
@@ -843,12 +843,12 @@ describe('EAS orphan session sweep', () => {
       repos: {},
     });
     ensureWorkspaceStorage(emptyWorkspace);
-    claimEasSessions(emptyWorkspace, [{ id: 'drs_orphan', name: 'stim-cli-old', platform: 'ios' }]);
+    claimEasSessions(emptyWorkspace, [{ id: 'drs_orphan', name: 'stim-old', platform: 'ios' }]);
     installExecutor();
     const harness = easGcHarness({
       project,
-      list: easList([{ id: 'drs_orphan', name: 'stim-cli-old', status: 'IN_PROGRESS', platform: 'IOS' }]),
-      get: { drs_orphan: JSON.stringify({ id: 'drs_orphan', name: 'stim-cli-old', status: 'IN_PROGRESS' }) },
+      list: easList([{ id: 'drs_orphan', name: 'stim-old', status: 'IN_PROGRESS', platform: 'IOS' }]),
+      get: { drs_orphan: JSON.stringify({ id: 'drs_orphan', name: 'stim-old', status: 'IN_PROGRESS' }) },
       stop: { drs_orphan: JSON.stringify({ id: 'drs_orphan', status: 'STOPPED' }) },
     });
 
@@ -864,9 +864,9 @@ describe('EAS orphan session sweep', () => {
     const staleLock = writeLock({ pid: 999999 });
     const harness = easGcHarness({
       project,
-      list: easList([{ id: 'drs_creating', name: 'stim-cli-creating', status: 'IN_PROGRESS', platform: 'IOS' }]),
+      list: easList([{ id: 'drs_creating', name: 'stim-creating', status: 'IN_PROGRESS', platform: 'IOS' }]),
       get: {
-        drs_creating: JSON.stringify({ id: 'drs_creating', name: 'stim-cli-creating', status: 'IN_PROGRESS' }),
+        drs_creating: JSON.stringify({ id: 'drs_creating', name: 'stim-creating', status: 'IN_PROGRESS' }),
       },
       stop: { drs_creating: JSON.stringify({ id: 'drs_creating', status: 'STOPPED' }) },
     });
@@ -889,7 +889,7 @@ describe('EAS orphan session sweep', () => {
     const staleLock = writeLock({ pid: 999999 });
     const harness = easGcHarness({
       project,
-      list: easList([{ id: 'drs_hidden', name: 'stim-cli-hidden', status: 'IN_PROGRESS', platform: 'IOS' }]),
+      list: easList([{ id: 'drs_hidden', name: 'stim-hidden', status: 'IN_PROGRESS', platform: 'IOS' }]),
     });
 
     const output = await withEasProjectLock(project, () => captureLog(() => runGc({ delete: true }, harness.deps)), {
@@ -908,9 +908,9 @@ describe('EAS orphan session sweep', () => {
     const staleLock = writeLock({ pid: 999999 });
     const harness = easGcHarness({
       project,
-      list: easList([{ id: 'drs_race', name: 'stim-cli-race', status: 'IN_PROGRESS', platform: 'IOS' }]),
+      list: easList([{ id: 'drs_race', name: 'stim-race', status: 'IN_PROGRESS', platform: 'IOS' }]),
       get: {
-        drs_race: JSON.stringify({ id: 'drs_race', name: 'stim-cli-race', status: 'IN_PROGRESS' }),
+        drs_race: JSON.stringify({ id: 'drs_race', name: 'stim-race', status: 'IN_PROGRESS' }),
       },
       stop: { drs_race: JSON.stringify({ id: 'drs_race', status: 'STOPPED' }) },
     });
@@ -937,7 +937,7 @@ describe('EAS orphan session sweep', () => {
     installExecutor();
     const harness = easGcHarness({
       project,
-      list: easList([{ id: 'drs_creating', name: 'stim-cli-creating', status: 'IN_PROGRESS', platform: 'IOS' }]),
+      list: easList([{ id: 'drs_creating', name: 'stim-creating', status: 'IN_PROGRESS', platform: 'IOS' }]),
     });
     const startedAt = Date.now();
 
@@ -959,7 +959,7 @@ describe('EAS orphan session sweep', () => {
     utimesSync(lockDir, old, old);
     const harness = easGcHarness({
       project,
-      list: easList([{ id: 'drs_hidden', name: 'stim-cli-hidden', status: 'IN_PROGRESS', platform: 'IOS' }]),
+      list: easList([{ id: 'drs_hidden', name: 'stim-hidden', status: 'IN_PROGRESS', platform: 'IOS' }]),
     });
 
     const output = await captureLog(() => runGc({ delete: true }, harness.deps));
@@ -1058,14 +1058,12 @@ describe('EAS orphan session sweep', () => {
           projects: { [project]: { isExpo: true }, [added]: { isExpo: true } },
           repos: {},
         });
-        return easList([
-          { id: 'drs_registering', name: 'stim-cli-registering', status: 'IN_PROGRESS', platform: 'IOS' },
-        ]);
+        return easList([{ id: 'drs_registering', name: 'stim-registering', status: 'IN_PROGRESS', platform: 'IOS' }]);
       },
       get: {
         drs_registering: JSON.stringify({
           id: 'drs_registering',
-          name: 'stim-cli-registering',
+          name: 'stim-registering',
           status: 'IN_PROGRESS',
         }),
       },
@@ -1083,7 +1081,7 @@ describe('EAS orphan session sweep', () => {
     const project = join(fakeHome, 'expo-app');
     const added = join(fakeHome, 'late-expo-workspace');
     registerExpoProject(project);
-    claimEasSessions(project, [{ id: 'drs_registering', name: 'stim-cli-registering', platform: 'ios' }]);
+    claimEasSessions(project, [{ id: 'drs_registering', name: 'stim-registering', platform: 'ios' }]);
     mkdirSync(added, { recursive: true });
     installExecutor();
     const harness = easGcHarness({
@@ -1097,14 +1095,12 @@ describe('EAS orphan session sweep', () => {
           });
           writeRemoteState(added, { remoteDevice: { platform: 'ios', sessionId: 'drs_registering' } });
         });
-        return easList([
-          { id: 'drs_registering', name: 'stim-cli-registering', status: 'IN_PROGRESS', platform: 'IOS' },
-        ]);
+        return easList([{ id: 'drs_registering', name: 'stim-registering', status: 'IN_PROGRESS', platform: 'IOS' }]);
       },
       get: {
         drs_registering: JSON.stringify({
           id: 'drs_registering',
-          name: 'stim-cli-registering',
+          name: 'stim-registering',
           status: 'IN_PROGRESS',
         }),
       },
@@ -1132,7 +1128,7 @@ describe('EAS orphan session sweep', () => {
       join(otherWorkspace, 'app.config.js'),
       "module.exports = { extra: { eas: { projectId: 'shared-eas-project' } } };\n",
     );
-    claimEasSessions(project, [{ id: 'drs_old', name: 'stim-cli-old', platform: 'ios' }]);
+    claimEasSessions(project, [{ id: 'drs_old', name: 'stim-old', platform: 'ios' }]);
     setExecutor({
       run(cmd) {
         throw new Error(`unexpected run: ${cmd}`);
@@ -1149,14 +1145,14 @@ describe('EAS orphan session sweep', () => {
     let startPromise: Promise<unknown> | null = null;
     const harness = easGcHarness({
       project,
-      list: easList([{ id: 'drs_old', name: 'stim-cli-old', status: 'IN_PROGRESS', platform: 'IOS' }]),
+      list: easList([{ id: 'drs_old', name: 'stim-old', status: 'IN_PROGRESS', platform: 'IOS' }]),
       get: {
         drs_old: () => {
           order.push('get');
           startPromise = ensureRemoteBootOwned({
             root: otherWorkspace,
             platform: 'ios',
-            sessionName: 'stim-cli-new',
+            sessionName: 'stim-new',
             startedAt: '2026-08-28T00:00:00.000Z',
             register: () => {
               order.push('register');
@@ -1178,7 +1174,7 @@ describe('EAS orphan session sweep', () => {
             },
             ledgerRoot: join(fakeHome, 'machine-eas'),
           });
-          return JSON.stringify({ id: 'drs_old', name: 'stim-cli-old', status: 'IN_PROGRESS' });
+          return JSON.stringify({ id: 'drs_old', name: 'stim-old', status: 'IN_PROGRESS' });
         },
       },
       stop: {
@@ -1199,18 +1195,18 @@ describe('EAS orphan session sweep', () => {
     const project = join(fakeHome, 'expo-app');
     registerExpoProject(project);
     claimEasSessions(project, [
-      { id: 'drs_page_1', name: 'stim-cli-one', platform: 'ios' },
-      { id: 'drs_page_2', name: 'stim-cli-two', platform: 'android' },
+      { id: 'drs_page_1', name: 'stim-one', platform: 'ios' },
+      { id: 'drs_page_2', name: 'stim-two', platform: 'android' },
     ]);
     installExecutor();
     const harness = easGcHarness({
       project,
       list: {
-        first: easList([{ id: 'drs_page_1', name: 'stim-cli-one', status: 'IN_PROGRESS', platform: 'IOS' }], {
+        first: easList([{ id: 'drs_page_1', name: 'stim-one', status: 'IN_PROGRESS', platform: 'IOS' }], {
           hasNextPage: true,
           endCursor: 'cursor-2',
         }),
-        'cursor-2': easList([{ id: 'drs_page_2', name: 'stim-cli-two', status: 'NEW', platform: 'ANDROID' }], {
+        'cursor-2': easList([{ id: 'drs_page_2', name: 'stim-two', status: 'NEW', platform: 'ANDROID' }], {
           hasNextPage: false,
           endCursor: 'cursor-2-end',
         }),
@@ -1270,12 +1266,12 @@ describe('EAS orphan session sweep', () => {
       list: (_after, page) => {
         clock += 40_000;
         return easList(
-          page === 2 ? [{ id: 'drs_too_late', name: 'stim-cli-too-late', status: 'IN_PROGRESS', platform: 'IOS' }] : [],
+          page === 2 ? [{ id: 'drs_too_late', name: 'stim-too-late', status: 'IN_PROGRESS', platform: 'IOS' }] : [],
           { hasNextPage: page < 2, endCursor: `cursor-${page + 1}` },
         );
       },
       get: {
-        drs_too_late: JSON.stringify({ id: 'drs_too_late', name: 'stim-cli-too-late', status: 'IN_PROGRESS' }),
+        drs_too_late: JSON.stringify({ id: 'drs_too_late', name: 'stim-too-late', status: 'IN_PROGRESS' }),
       },
       stop: { drs_too_late: JSON.stringify({ id: 'drs_too_late', status: 'STOPPED' }) },
     });
@@ -1342,8 +1338,8 @@ describe('EAS orphan session sweep', () => {
     installExecutor();
     const harness = easGcHarness({
       project,
-      list: easList([{ id: 'drs_bad', name: 'stim-cli-bad', status: 'IN_PROGRESS', platform }]),
-      get: { drs_bad: JSON.stringify({ id: 'drs_bad', name: 'stim-cli-bad', status: 'IN_PROGRESS' }) },
+      list: easList([{ id: 'drs_bad', name: 'stim-bad', status: 'IN_PROGRESS', platform }]),
+      get: { drs_bad: JSON.stringify({ id: 'drs_bad', name: 'stim-bad', status: 'IN_PROGRESS' }) },
     });
 
     const output = await captureLog(() => runGc({ delete: true }, harness.deps));
@@ -1356,12 +1352,12 @@ describe('EAS orphan session sweep', () => {
   test('delete stops an orphan only after a matching active owned lookup', async () => {
     const project = join(fakeHome, 'expo-app');
     registerExpoProject(project);
-    claimEasSessions(project, [{ id: 'drs_orphan', name: 'stim-cli-old', platform: 'ios' }]);
+    claimEasSessions(project, [{ id: 'drs_orphan', name: 'stim-old', platform: 'ios' }]);
     installExecutor();
     const harness = easGcHarness({
       project,
-      list: easList([{ id: 'drs_orphan', name: 'stim-cli-old', status: 'IN_PROGRESS', platform: 'IOS' }]),
-      get: { drs_orphan: JSON.stringify({ id: 'drs_orphan', name: 'stim-cli-old', status: 'IN_PROGRESS' }) },
+      list: easList([{ id: 'drs_orphan', name: 'stim-old', status: 'IN_PROGRESS', platform: 'IOS' }]),
+      get: { drs_orphan: JSON.stringify({ id: 'drs_orphan', name: 'stim-old', status: 'IN_PROGRESS' }) },
       stop: { drs_orphan: JSON.stringify({ id: 'drs_orphan', status: 'STOPPED' }) },
     });
 
@@ -1374,7 +1370,7 @@ describe('EAS orphan session sweep', () => {
   test.each([
     {
       label: 'terminal',
-      get: JSON.stringify({ id: 'drs_old', name: 'stim-cli-old', status: 'STOPPED' }),
+      get: JSON.stringify({ id: 'drs_old', name: 'stim-old', status: 'STOPPED' }),
       expected: /already stopped/i,
     },
     {
@@ -1385,11 +1381,11 @@ describe('EAS orphan session sweep', () => {
   ])('treats a $label candidate as resolved without a stop', async ({ get, expected }) => {
     const project = join(fakeHome, 'expo-app');
     registerExpoProject(project);
-    claimEasSessions(project, [{ id: 'drs_old', name: 'stim-cli-old', platform: 'ios' }]);
+    claimEasSessions(project, [{ id: 'drs_old', name: 'stim-old', platform: 'ios' }]);
     installExecutor();
     const harness = easGcHarness({
       project,
-      list: easList([{ id: 'drs_old', name: 'stim-cli-old', status: 'IN_PROGRESS', platform: 'IOS' }]),
+      list: easList([{ id: 'drs_old', name: 'stim-old', status: 'IN_PROGRESS', platform: 'IOS' }]),
       get: { drs_old: get },
     });
 
@@ -1423,8 +1419,8 @@ describe('EAS orphan session sweep', () => {
     installExecutor();
     const harness = easGcHarness({
       project,
-      list: easList([{ id: 'drs_orphan', name: 'stim-cli-old', status: 'IN_PROGRESS', platform: 'IOS' }]),
-      get: { drs_orphan: JSON.stringify({ id: 'drs_orphan', name: 'stim-cli-old', status: 'IN_PROGRESS' }) },
+      list: easList([{ id: 'drs_orphan', name: 'stim-old', status: 'IN_PROGRESS', platform: 'IOS' }]),
+      get: { drs_orphan: JSON.stringify({ id: 'drs_orphan', name: 'stim-old', status: 'IN_PROGRESS' }) },
       stop: { drs_orphan: JSON.stringify({ id: 'drs_orphan', status: 'STOPPED' }) },
     });
 
@@ -1437,13 +1433,13 @@ describe('EAS orphan session sweep', () => {
   test('a listed state entry that cannot be read fails closed for remote deletion', async () => {
     const project = join(fakeHome, 'expo-app');
     registerExpoProject(project);
-    claimEasSessions(project, [{ id: 'drs_unreadable', name: 'stim-cli-old', platform: 'ios' }]);
+    claimEasSessions(project, [{ id: 'drs_unreadable', name: 'stim-old', platform: 'ios' }]);
     symlinkSync(join(fakeHome, 'missing-state-target'), workspaceStateFile(project));
     installExecutor();
     const harness = easGcHarness({
       project,
-      list: easList([{ id: 'drs_unreadable', name: 'stim-cli-old', status: 'IN_PROGRESS', platform: 'IOS' }]),
-      get: { drs_unreadable: JSON.stringify({ id: 'drs_unreadable', name: 'stim-cli-old', status: 'IN_PROGRESS' }) },
+      list: easList([{ id: 'drs_unreadable', name: 'stim-old', status: 'IN_PROGRESS', platform: 'IOS' }]),
+      get: { drs_unreadable: JSON.stringify({ id: 'drs_unreadable', name: 'stim-old', status: 'IN_PROGRESS' }) },
       stop: { drs_unreadable: JSON.stringify({ id: 'drs_unreadable', status: 'STOPPED' }) },
     });
 
@@ -1456,17 +1452,17 @@ describe('EAS orphan session sweep', () => {
   test('a candidate changed to an unowned name is never stopped', async () => {
     const project = join(fakeHome, 'expo-app');
     registerExpoProject(project);
-    claimEasSessions(project, [{ id: 'drs_reused', name: 'stim-cli-old', platform: 'ios' }]);
+    claimEasSessions(project, [{ id: 'drs_reused', name: 'stim-old', platform: 'ios' }]);
     installExecutor();
     const harness = easGcHarness({
       project,
-      list: easList([{ id: 'drs_reused', name: 'stim-cli-old', status: 'IN_PROGRESS', platform: 'IOS' }]),
+      list: easList([{ id: 'drs_reused', name: 'stim-old', status: 'IN_PROGRESS', platform: 'IOS' }]),
       get: { drs_reused: JSON.stringify({ id: 'drs_reused', name: 'manual-session', status: 'IN_PROGRESS' }) },
     });
 
     const output = await captureLog(() => runGc({ delete: true }, harness.deps));
 
-    expect(output).toMatch(/not owned by stim-cli/i);
+    expect(output).toMatch(/not owned by Stim/i);
     expect(harness.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(false);
     expect(output).toMatch(/could not be deleted/i);
   });
@@ -1475,23 +1471,23 @@ describe('EAS orphan session sweep', () => {
     const project = join(fakeHome, 'expo-app');
     registerExpoProject(project);
     claimEasSessions(project, [
-      { id: 'drs_lookup_fail', name: 'stim-cli-one', platform: 'ios' },
-      { id: 'drs_stop_fail', name: 'stim-cli-two', platform: 'android' },
-      { id: 'drs_ok', name: 'stim-cli-three', platform: 'ios' },
+      { id: 'drs_lookup_fail', name: 'stim-one', platform: 'ios' },
+      { id: 'drs_stop_fail', name: 'stim-two', platform: 'android' },
+      { id: 'drs_ok', name: 'stim-three', platform: 'ios' },
     ]);
     installExecutor();
     const staleLock = writeLock({ pid: 999999 });
     const harness = easGcHarness({
       project,
       list: easList([
-        { id: 'drs_lookup_fail', name: 'stim-cli-one', status: 'IN_PROGRESS', platform: 'IOS' },
-        { id: 'drs_stop_fail', name: 'stim-cli-two', status: 'IN_PROGRESS', platform: 'ANDROID' },
-        { id: 'drs_ok', name: 'stim-cli-three', status: 'IN_PROGRESS', platform: 'IOS' },
+        { id: 'drs_lookup_fail', name: 'stim-one', status: 'IN_PROGRESS', platform: 'IOS' },
+        { id: 'drs_stop_fail', name: 'stim-two', status: 'IN_PROGRESS', platform: 'ANDROID' },
+        { id: 'drs_ok', name: 'stim-three', status: 'IN_PROGRESS', platform: 'IOS' },
       ]),
       get: {
         drs_lookup_fail: new Error('lookup timed out'),
-        drs_stop_fail: JSON.stringify({ id: 'drs_stop_fail', name: 'stim-cli-two', status: 'IN_PROGRESS' }),
-        drs_ok: JSON.stringify({ id: 'drs_ok', name: 'stim-cli-three', status: 'IN_PROGRESS' }),
+        drs_stop_fail: JSON.stringify({ id: 'drs_stop_fail', name: 'stim-two', status: 'IN_PROGRESS' }),
+        drs_ok: JSON.stringify({ id: 'drs_ok', name: 'stim-three', status: 'IN_PROGRESS' }),
       },
       stop: {
         drs_stop_fail: new Error('stop failed'),
@@ -1512,20 +1508,20 @@ describe('EAS orphan session sweep', () => {
     const project = join(fakeHome, 'expo-app');
     registerExpoProject(project);
     claimEasSessions(project, [
-      { id: 'drs_first', name: 'stim-cli-first', platform: 'ios' },
-      { id: 'drs_second', name: 'stim-cli-second', platform: 'android' },
+      { id: 'drs_first', name: 'stim-first', platform: 'ios' },
+      { id: 'drs_second', name: 'stim-second', platform: 'android' },
     ]);
     installExecutor();
     const staleLock = writeLock({ pid: 999999 });
     const harness = easGcHarness({
       project,
       list: easList([
-        { id: 'drs_first', name: 'stim-cli-first', status: 'IN_PROGRESS', platform: 'IOS' },
-        { id: 'drs_second', name: 'stim-cli-second', status: 'IN_PROGRESS', platform: 'ANDROID' },
+        { id: 'drs_first', name: 'stim-first', status: 'IN_PROGRESS', platform: 'IOS' },
+        { id: 'drs_second', name: 'stim-second', status: 'IN_PROGRESS', platform: 'ANDROID' },
       ]),
       get: {
-        drs_first: JSON.stringify({ id: 'drs_first', name: 'stim-cli-first', status: 'IN_PROGRESS' }),
-        drs_second: JSON.stringify({ id: 'drs_second', name: 'stim-cli-second', status: 'IN_PROGRESS' }),
+        drs_first: JSON.stringify({ id: 'drs_first', name: 'stim-first', status: 'IN_PROGRESS' }),
+        drs_second: JSON.stringify({ id: 'drs_second', name: 'stim-second', status: 'IN_PROGRESS' }),
       },
       stop: {
         drs_first: JSON.stringify({ id: 'drs_first', status: 'STOPPED' }),
@@ -1558,13 +1554,13 @@ describe('EAS orphan session sweep', () => {
   test('a false claim removal reports the stopped session and retained claim', async () => {
     const project = join(fakeHome, 'expo-app');
     registerExpoProject(project);
-    claimEasSessions(project, [{ id: 'drs_resolved', name: 'stim-cli-resolved', platform: 'ios' }]);
+    claimEasSessions(project, [{ id: 'drs_resolved', name: 'stim-resolved', platform: 'ios' }]);
     installExecutor();
     const harness = easGcHarness({
       project,
-      list: easList([{ id: 'drs_resolved', name: 'stim-cli-resolved', status: 'IN_PROGRESS', platform: 'IOS' }]),
+      list: easList([{ id: 'drs_resolved', name: 'stim-resolved', status: 'IN_PROGRESS', platform: 'IOS' }]),
       get: {
-        drs_resolved: JSON.stringify({ id: 'drs_resolved', name: 'stim-cli-resolved', status: 'IN_PROGRESS' }),
+        drs_resolved: JSON.stringify({ id: 'drs_resolved', name: 'stim-resolved', status: 'IN_PROGRESS' }),
       },
       stop: { drs_resolved: JSON.stringify({ id: 'drs_resolved', status: 'STOPPED' }) },
     });
@@ -1583,11 +1579,11 @@ describe('EAS orphan session sweep', () => {
   test('the report states that the EAS sweep covers only the current project', async () => {
     const project = join(fakeHome, 'expo-app');
     registerExpoProject(project);
-    claimEasSessions(project, [{ id: 'drs_old', name: 'stim-cli-old', platform: 'ios' }]);
+    claimEasSessions(project, [{ id: 'drs_old', name: 'stim-old', platform: 'ios' }]);
     installExecutor();
     const harness = easGcHarness({
       project,
-      list: easList([{ id: 'drs_old', name: 'stim-cli-old', status: 'IN_PROGRESS', platform: 'IOS' }]),
+      list: easList([{ id: 'drs_old', name: 'stim-old', status: 'IN_PROGRESS', platform: 'IOS' }]),
     });
 
     const output = await captureLog(() => runGc({}, harness.deps));
@@ -1626,7 +1622,7 @@ test('gc reports the three things that still orphan, and no DerivedData', async 
 });
 
 test('a dead project on an unmounted volume is not unregistered', async () => {
-  const unmountedPath = '/Volumes/StimCliTestVolumeThatDoesNotExist/proj/gone';
+  const unmountedPath = '/Volumes/StimTestVolumeThatDoesNotExist/proj/gone';
   const localDeadPath = join(fakeHome, 'no-longer-here');
 
   saveConfig({
@@ -1709,8 +1705,8 @@ test('--delete re-verifies ownership before shutdown, shuts down before delete, 
   const execCalls: string[] = [];
   installDeviceExecutor({
     devices: [
-      { udid: 'UDID-1', name: 'stim-cli-orphan-1' },
-      { udid: 'UDID-2', name: 'stim-cli-orphan-2' },
+      { udid: 'UDID-1', name: 'stim-orphan-1' },
+      { udid: 'UDID-2', name: 'stim-orphan-2' },
     ],
     execCalls,
     throwOnShutdownFor: new Set(['UDID-1']),
@@ -1734,14 +1730,14 @@ test('--delete re-verifies ownership before shutdown, shuts down before delete, 
 test('report-mode gc lists a seeded orphaned ios sim but issues no shutdown or delete command', async () => {
   const execCalls: string[] = [];
   installDeviceExecutor({
-    devices: [{ udid: 'UDID-9', name: 'stim-cli-report-orphan' }],
+    devices: [{ udid: 'UDID-9', name: 'stim-report-orphan' }],
     execCalls,
   });
   saveConfig({ version: 2, projects: {}, repos: {} });
 
   const output = await captureLog(() => sweepingGc({ delete: false }));
 
-  expect(output).toMatch(/stim-cli-report-orphan/);
+  expect(output).toMatch(/stim-report-orphan/);
   expect(execCalls.some((c) => c.startsWith('xcrun simctl shutdown'))).toBe(false);
   expect(execCalls.some((c) => c.startsWith('xcrun simctl delete'))).toBe(false);
 });
@@ -1760,7 +1756,7 @@ test("--delete reaps a dead project's owned orphan device in the same run it pru
   });
   const execCalls: string[] = [];
   installDeviceExecutor({
-    devices: [{ udid: 'UDID-DEAD', name: 'stim-cli-dead-owner' }],
+    devices: [{ udid: 'UDID-DEAD', name: 'stim-dead-owner' }],
     execCalls,
   });
 
@@ -1772,29 +1768,29 @@ test("--delete reaps a dead project's owned orphan device in the same run it pru
   expect(execCalls.some((c) => c.startsWith('xcrun simctl delete UDID-DEAD'))).toBeTruthy();
 });
 
-test('gc with no config names stim-cli devices it cannot verify, but never touches them', async () => {
+test('gc with no config names Stim devices it cannot verify, but never touches them', async () => {
   const execCalls: string[] = [];
   installDeviceExecutor({
-    devices: [{ udid: 'UDID-LIVE', name: 'stim-cli-someones-live-env', state: 'Booted' }],
+    devices: [{ udid: 'UDID-LIVE', name: 'stim-someones-live-env', state: 'Booted' }],
     execCalls,
   });
 
   const output = await captureLog(() => sweepingGc({ delete: true }));
 
-  expect(output).toMatch(/stim-cli-someones-live-env/);
-  expect(output).toMatch(/no stim-cli config found/i);
+  expect(output).toMatch(/stim-someones-live-env/);
+  expect(output).toMatch(/no Stim config found/i);
   expect(output).toMatch(/cannot be verified as orphaned/i);
   expect(output).not.toMatch(/Orphaned devices/i);
   expect(execCalls.some((c) => c.startsWith('xcrun simctl shutdown'))).toBe(false);
   expect(execCalls.some((c) => c.startsWith('xcrun simctl delete'))).toBe(false);
 });
 
-test('a config scoped by STIM_CLI_HOME never sweeps machine-global devices', async () => {
+test('a config scoped by STIM_HOME never sweeps machine-global devices', async () => {
   const execCalls: string[] = [];
   installDeviceExecutor({
     devices: [
-      { udid: 'UDID-REAL-1', name: 'stim-cli-real-env-1', state: 'Booted' },
-      { udid: 'UDID-REAL-2', name: 'stim-cli-real-env-2' },
+      { udid: 'UDID-REAL-1', name: 'stim-real-env-1', state: 'Booted' },
+      { udid: 'UDID-REAL-2', name: 'stim-real-env-2' },
     ],
     execCalls,
   });
@@ -1809,13 +1805,13 @@ test('a config scoped by STIM_CLI_HOME never sweeps machine-global devices', asy
   const output = await captureLog(() => cli(['--delete']));
 
   expect(output).not.toMatch(/Orphaned devices/i);
-  expect(output).toMatch(/STIM_CLI_HOME/);
-  expect(output).toMatch(/stim-cli-real-env-1/);
+  expect(output).toMatch(/STIM_HOME/);
+  expect(output).toMatch(/stim-real-env-1/);
   expect(execCalls.some((c) => c.startsWith('xcrun simctl shutdown'))).toBe(false);
   expect(execCalls.some((c) => c.startsWith('xcrun simctl delete'))).toBe(false);
 });
 
-test('the STIM_CLI_HOME guard does not disable dead-entry pruning', async () => {
+test('the STIM_HOME guard does not disable dead-entry pruning', async () => {
   const localDeadPath = join(fakeHome, 'no-longer-here');
   saveConfig({ version: 2, projects: { [localDeadPath]: { metroPort: 8100 } }, repos: {} });
   installExecutor();
@@ -1835,7 +1831,7 @@ test('--delete --older-than reaps an owned device whose project went untouched, 
   });
   const execCalls: string[] = [];
   installDeviceExecutor({
-    devices: [{ udid: 'UDID-STALE', name: 'stim-cli-abandoned' }],
+    devices: [{ udid: 'UDID-STALE', name: 'stim-abandoned' }],
     execCalls,
   });
 
@@ -1881,7 +1877,7 @@ test('a recorded sim that IS on the machine is not a stale record', async () => 
     projects: { [livePath]: { metroPort: 8100, platforms: { ios: { deviceUdid: 'UDID-HERE', owned: true } } } },
     repos: {},
   });
-  installDeviceExecutor({ devices: [{ udid: 'UDID-HERE', name: 'stim-cli-live' }], execCalls: [] });
+  installDeviceExecutor({ devices: [{ udid: 'UDID-HERE', name: 'stim-live' }], execCalls: [] });
 
   const output = await captureLog(() => sweepingGc({ delete: true }));
   expect(output).not.toMatch(/Stale device records/);
@@ -1898,13 +1894,13 @@ test('--older-than without --delete only reports the stale device', async () => 
   });
   const execCalls: string[] = [];
   installDeviceExecutor({
-    devices: [{ udid: 'UDID-STALE', name: 'stim-cli-abandoned' }],
+    devices: [{ udid: 'UDID-STALE', name: 'stim-abandoned' }],
     execCalls,
   });
 
   const output = await captureLog(() => sweepingGc({ delete: false, olderThan: 30 }));
 
-  expect(output).toMatch(/stim-cli-abandoned/);
+  expect(output).toMatch(/stim-abandoned/);
   expect(execCalls.some((c) => c.startsWith('xcrun simctl shutdown'))).toBe(false);
   expect(execCalls.some((c) => c.startsWith('xcrun simctl delete'))).toBe(false);
   expect(currentConfig().projects[stalePath]?.platforms?.ios).toBeTruthy();
@@ -1920,7 +1916,7 @@ test('a device whose project is still being worked in is never reaped by --older
   });
   const execCalls: string[] = [];
   installDeviceExecutor({
-    devices: [{ udid: 'UDID-LIVE', name: 'stim-cli-live' }],
+    devices: [{ udid: 'UDID-LIVE', name: 'stim-live' }],
     execCalls,
   });
 
@@ -2172,7 +2168,7 @@ test('--delete --all under a scoped home refuses machine-global caches', async (
   const output = await captureLog(() => cli(['--delete', '--all']));
 
   expect(existsSync(leaf)).toBeTruthy();
-  expect(output).toMatch(/STIM_CLI_HOME/);
+  expect(output).toMatch(/STIM_HOME/);
 });
 
 test('--delete --older-than under a scoped home refuses machine-global caches', async () => {
@@ -2203,7 +2199,7 @@ test('--all reaches caches only: never a device, never a project entry', async (
   writeFileSync(join(entry, 'blob'), 'x'.repeat(1000));
   register({ dir: cacheDir, name: 'My cache' });
   const execCalls: string[] = [];
-  installDeviceExecutor({ devices: [{ udid: 'UDID-LIVE', name: 'stim-cli-live' }], execCalls });
+  installDeviceExecutor({ devices: [{ udid: 'UDID-LIVE', name: 'stim-live' }], execCalls });
 
   await captureLog(() => sweepingGc({ delete: true, all: true }));
 
@@ -2224,11 +2220,11 @@ test('rejects a non-numeric --older-than instead of silently skipping every entr
   );
 });
 
-test('describeUnverifiableDevices names stim-cli devices it cannot verify', () => {
-  const notices = describeUnverifiableDevices(['stim-cli-alpha', 'iPhone 17 Pro'], ['stim-cli-beta', 'Pixel_6_API_34']);
+test('describeUnverifiableDevices names Stim devices it cannot verify', () => {
+  const notices = describeUnverifiableDevices(['stim-alpha', 'iPhone 17 Pro'], ['stim-beta', 'Pixel_6_API_34']);
   const joined = notices.join('\n');
-  expect(joined).toMatch(/stim-cli-alpha/);
-  expect(joined).toMatch(/stim-cli-beta/);
+  expect(joined).toMatch(/stim-alpha/);
+  expect(joined).toMatch(/stim-beta/);
   expect(joined).not.toMatch(/iPhone 17 Pro/);
   expect(joined).not.toMatch(/Pixel_6/);
 });
@@ -2244,10 +2240,10 @@ test('describeUnverifiableDevices tolerates empty listings', () => {
 });
 
 test('describeUnverifiableDevices carries the reason it was given', () => {
-  const notices = describeUnverifiableDevices(['stim-cli-alpha'], [], {
-    reason: 'STIM_CLI_HOME scopes this config while simulators are machine-global',
+  const notices = describeUnverifiableDevices(['stim-alpha'], [], {
+    reason: 'STIM_HOME scopes this config while simulators are machine-global',
   });
-  expect(notices.join('\n')).toMatch(/STIM_CLI_HOME/);
+  expect(notices.join('\n')).toMatch(/STIM_HOME/);
 });
 
 function writeLock({
@@ -2269,7 +2265,7 @@ function writeLock({
       pid,
       projectRoot,
       startedAt: new Date().toISOString(),
-      logFile: `${projectRoot}/.stim-cli/logs/build-${platform}.ndjson`,
+      logFile: `${projectRoot}/.stim/logs/build-${platform}.ndjson`,
     }),
   );
   return path;

@@ -6,12 +6,12 @@ const path = require('node:path');
 const { createRequire } = require('node:module');
 const { pathToFileURL } = require('node:url');
 
-const projectRoot = process.env.STIM_CLI_PROJECT_ROOT;
-const storeRoot = process.env.STIM_CLI_METRO_STORE;
-const priorOverride = process.env.STIM_CLI_EXPO_METRO_CONFIG;
+const projectRoot = process.env.STIM_PROJECT_ROOT;
+const storeRoot = process.env.STIM_METRO_STORE;
+const priorOverride = process.env.STIM_EXPO_METRO_CONFIG;
 const adapterPath = __filename;
-const STORE_ROOT_TAG = 'stimCliStoreRoot';
-const OK_PREFIX = 'stim-cli-metro-store: sharing Metro transforms through ';
+const STORE_ROOT_TAG = 'stimStoreRoot';
+const OK_PREFIX = 'stim-metro-store: sharing Metro transforms through ';
 
 let announced = false;
 let warned = false;
@@ -20,7 +20,7 @@ function warn(reason) {
   if (warned) return;
   warned = true;
   process.stderr.write(
-    `warning: stim-cli could not share this project's Metro transform cache (${String(reason).replace(/\s+/g, ' ')}); ` +
+    `warning: Stim could not share this project's Metro transform cache (${String(reason).replace(/\s+/g, ' ')}); ` +
       'the dev server is running with its normal cache.\n',
   );
 }

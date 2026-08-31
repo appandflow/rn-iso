@@ -1,6 +1,6 @@
 import type { NdjsonRecord } from '../ndjson.ts';
 
-export const REMOTE_METRO_WRONG = 'STIM_CLI_REMOTE_METRO_WRONG';
+export const REMOTE_METRO_WRONG = 'STIM_REMOTE_METRO_WRONG';
 
 const GATE_TIMEOUT_MS = 25_000;
 const POLL_MS = 250;

@@ -211,14 +211,12 @@ function sanitizeAvdLabel(label: string): string {
 
 export function ownedAvdName(label: string): string {
   const clean = sanitizeAvdLabel(label);
-  return `stim-cli-${clean.startsWith('stim-cli-') ? clean.slice('stim-cli-'.length) : clean}`;
+  return `stim-${clean.startsWith('stim-') ? clean.slice('stim-'.length) : clean}`;
 }
 
 export function deleteAvd(avdName: string): void {
-  if (!avdName?.startsWith('stim-cli-')) {
-    throw new Error(
-      `Refusing to delete AVD "${avdName}": not an stim-cli-owned AVD (name must start with "stim-cli-").`,
-    );
+  if (!avdName?.startsWith('stim-')) {
+    throw new Error(`Refusing to delete AVD "${avdName}": not a Stim-owned AVD (name must start with "stim-").`);
   }
   getExecutor().run(`${androidTool('avdmanager')} delete avd -n "${avdName}"`);
 }
@@ -317,7 +315,7 @@ export function ownedAvdDirectory(
     isDirectory?: (path: string) => boolean;
   } = {},
 ): string | null {
-  if (!/^stim-cli-[A-Za-z0-9._-]+$/.test(avdName)) return null;
+  if (!/^stim-[A-Za-z0-9._-]+$/.test(avdName)) return null;
   const roots = [
     env.ANDROID_AVD_HOME,
     env.ANDROID_SDK_HOME ? join(env.ANDROID_SDK_HOME, 'avd') : null,
@@ -403,7 +401,7 @@ export function configureNewOwnedAvd(
   const original = readFile(configPath);
   const expected = { ...avdConfig, 'disk.dataPartition.size': String(sizeBytes) };
   const updated = withAvdConfigOverrides(original, expected);
-  const tempPath = join(directory, `.config.ini.stim-cli-${process.pid}-${++avdConfigWriteSequence}.tmp`);
+  const tempPath = join(directory, `.config.ini.stim-${process.pid}-${++avdConfigWriteSequence}.tmp`);
   try {
     writeFile(tempPath, updated);
     rename(tempPath, configPath);
@@ -546,7 +544,7 @@ function getAvdNameForSerial(serial: string): string | null {
 
 export function resolveOwnedAvdSerial(avdName: string): ResolvedAvdSerial {
   if (!listAvds().includes(avdName)) return { missing: true };
-  if (!avdName?.startsWith('stim-cli-')) return { notOwned: true };
+  if (!avdName?.startsWith('stim-')) return { notOwned: true };
   const adb = listAdbDevices();
   const match = adb.emulators.find((e) => getAvdNameForSerial(e.serial) === avdName);
   if (match) return { serial: match.serial };

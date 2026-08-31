@@ -607,9 +607,9 @@ function shutDownDevices(
         status: 'skipped',
         kind: 'not-owned',
         label: iosUdid,
-        reason: 'stim-cli does not own this device',
+        reason: 'Stim does not own this device',
       };
-      report(chalk.dim(`ios: ${iosUdid} is not stim-cli-owned, leaving it running`));
+      report(chalk.dim(`ios: ${iosUdid} is not Stim-owned, leaving it running`));
     } else {
       device.ios = reportDevice('ios', iosUdid, teardownIos(iosUdid, { del: false, label: iosName }), report);
     }
@@ -622,9 +622,9 @@ function shutDownDevices(
         status: 'skipped',
         kind: 'not-owned',
         label: android.avdName,
-        reason: 'stim-cli does not own this device',
+        reason: 'Stim does not own this device',
       };
-      report(chalk.dim(`android: ${android.avdName} is not stim-cli-owned, leaving it running`));
+      report(chalk.dim(`android: ${android.avdName} is not Stim-owned, leaving it running`));
     } else {
       device.android = reportDevice('android', android.avdName, teardownAvd(android.avdName, { del: false }), report);
     }

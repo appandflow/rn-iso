@@ -29,7 +29,7 @@ let sdk: string;
 let savedAndroidHome: string | undefined;
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), 'stim-cli-gradle-'));
+  root = mkdtempSync(join(tmpdir(), 'stim-gradle-'));
   sdk = join(root, 'fake-sdk');
   mkdirSync(sdk, { recursive: true });
   savedAndroidHome = process.env.ANDROID_HOME;

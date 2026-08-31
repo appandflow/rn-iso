@@ -34,9 +34,7 @@ test('no blockers for a clean worktree', async () => {
 });
 
 test('removalPath canonicalizes a missing path through its nearest existing parent', () => {
-  expect(removalPath('/tmp/stim-cli-missing/worktree')).toBe(
-    join(realpathSync('/tmp'), 'stim-cli-missing', 'worktree'),
-  );
+  expect(removalPath('/tmp/stim-missing/worktree')).toBe(join(realpathSync('/tmp'), 'stim-missing', 'worktree'));
 });
 
 test('reports uncommitted changes', async () => {
@@ -303,10 +301,10 @@ function writeRemoteSession(root: string, sessionId: string): void {
 }
 
 beforeEach(() => {
-  tmpHome = mkdtempSync(join(tmpdir(), 'stim-cli-test-home-'));
-  process.env.STIM_CLI_HOME = tmpHome;
-  mainDir = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-main-')));
-  wtDir = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-wt-')));
+  tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-home-'));
+  process.env.STIM_HOME = tmpHome;
+  mainDir = canon(mkdtempSync(join(tmpdir(), 'stim-test-main-')));
+  wtDir = canon(mkdtempSync(join(tmpdir(), 'stim-test-wt-')));
   liveProcesses = [];
 });
 
@@ -317,22 +315,22 @@ afterEach(() => {
   rmSync(tmpHome, { recursive: true, force: true });
   rmSync(mainDir, { recursive: true, force: true });
   rmSync(wtDir, { recursive: true, force: true });
-  delete process.env.STIM_CLI_HOME;
+  delete process.env.STIM_HOME;
 });
 
 test('action: on the main checkout, reclaims the environment with the owned device deleted and the tree untouched', async () => {
   upsertProject(mainDir, {
     metroPort: 8081,
-    platforms: { ios: { deviceUdid: 'U9', owned: true, deviceName: 'stim-cli-main' } },
+    platforms: { ios: { deviceUdid: 'U9', owned: true, deviceName: 'stim-main' } },
   });
   writeFileSync(join(mainDir, 'keep.txt'), 'source file');
-  mkdirSync(join(mainDir, '.stim-cli', 'logs'), { recursive: true });
-  writeFileSync(join(mainDir, '.stim-cli', 'state.json'), '{}');
+  mkdirSync(join(mainDir, '.stim', 'logs'), { recursive: true });
+  writeFileSync(join(mainDir, '.stim', 'state.json'), '{}');
   ensureWorkspaceStorage(mainDir);
   writeFileSync(join(workspaceDir(mainDir), 'state.json'), '{}');
   const exec = makeExecutor({
     worktrees: porcelain([{ path: mainDir, branch: 'main' }]),
-    simctlList: simctlJson([{ udid: 'U9', name: 'stim-cli-main', state: 'Shutdown', isAvailable: true }]),
+    simctlList: simctlJson([{ udid: 'U9', name: 'stim-main', state: 'Shutdown', isAvailable: true }]),
     mainTrees: [mainDir],
   });
   setExecutor(exec);
@@ -350,7 +348,7 @@ test('action: on the main checkout, reclaims the environment with the owned devi
   expect(process.exitCode).not.toBe(1);
   expect(exec.calls.run.some((c) => /xcrun simctl delete U9/.test(c))).toBeTruthy();
   expect(getProject(mainDir)).toBe(null);
-  expect(existsSync(join(mainDir, '.stim-cli'))).toBe(true);
+  expect(existsSync(join(mainDir, '.stim'))).toBe(true);
   expect(existsSync(workspaceDir(mainDir))).toBe(false);
   expect(readFileSync(join(mainDir, 'keep.txt'), 'utf-8')).toBe('source file');
   expect(![...exec.calls.run, ...exec.calls.runQuiet].some((c) => /worktree remove/.test(c))).toBeTruthy();
@@ -416,11 +414,11 @@ test('action: --force changes nothing on the main checkout -- reclaim only, tree
 test('action: a failed device teardown on the main checkout keeps the record and exits 1', async () => {
   upsertProject(mainDir, {
     metroPort: 8086,
-    platforms: { ios: { deviceUdid: 'U7', owned: true, deviceName: 'stim-cli-held' } },
+    platforms: { ios: { deviceUdid: 'U7', owned: true, deviceName: 'stim-held' } },
   });
   const exec = makeExecutor({
     worktrees: porcelain([{ path: mainDir, branch: 'main' }]),
-    simctlList: simctlJson([{ udid: 'U7', name: 'stim-cli-held', state: 'Shutdown', isAvailable: true }]),
+    simctlList: simctlJson([{ udid: 'U7', name: 'stim-held', state: 'Shutdown', isAvailable: true }]),
     mainTrees: [mainDir],
   });
   const originalRun = exec.run.bind(exec);
@@ -513,14 +511,14 @@ test('action: main-checkout artifact deletion blocks a concurrent replacement tu
 test('action: a registered project directory that is not a git repo gets the same environment reclaim', async () => {
   upsertProject(wtDir, {
     metroPort: 8087,
-    platforms: { ios: { deviceUdid: 'U8', owned: true, deviceName: 'stim-cli-plain' } },
+    platforms: { ios: { deviceUdid: 'U8', owned: true, deviceName: 'stim-plain' } },
   });
   writeFileSync(join(wtDir, 'keep.txt'), 'source file');
-  mkdirSync(join(wtDir, '.stim-cli'), { recursive: true });
-  writeFileSync(join(wtDir, '.stim-cli', 'state.json'), '{}');
+  mkdirSync(join(wtDir, '.stim'), { recursive: true });
+  writeFileSync(join(wtDir, '.stim', 'state.json'), '{}');
   const exec = makeExecutor({
     worktrees: null,
-    simctlList: simctlJson([{ udid: 'U8', name: 'stim-cli-plain', state: 'Shutdown', isAvailable: true }]),
+    simctlList: simctlJson([{ udid: 'U8', name: 'stim-plain', state: 'Shutdown', isAvailable: true }]),
   });
   setExecutor(exec);
 
@@ -537,7 +535,7 @@ test('action: a registered project directory that is not a git repo gets the sam
   expect(process.exitCode).not.toBe(1);
   expect(exec.calls.run.some((c) => /xcrun simctl delete U8/.test(c))).toBeTruthy();
   expect(getProject(wtDir)).toBe(null);
-  expect(existsSync(join(wtDir, '.stim-cli'))).toBe(true);
+  expect(existsSync(join(wtDir, '.stim'))).toBe(true);
   expect(readFileSync(join(wtDir, 'keep.txt'), 'utf-8')).toBe('source file');
   expect(errs.join('\n')).toMatch(/working tree stays \(it is not a git repository\)/);
 });
@@ -589,7 +587,7 @@ test('action: on success, ownership state stays until removeWorktree succeeds', 
   expect(exec.calls.run.some((c) => /worktree remove/.test(c))).toBeTruthy();
 });
 
-test('action: removes the branch that stim-cli created when it has no unique commits', async () => {
+test('action: removes the branch that Stim created when it has no unique commits', async () => {
   upsertProject(wtDir, {
     worktreeRoot: true,
     worktreeBranch: 'worktree-feat-x',
@@ -612,7 +610,7 @@ test('action: removes the branch that stim-cli created when it has no unique com
   expect(exec.calls.run.some((call) => /update-ref -d refs\/heads\/worktree-feat-x abc123/.test(call))).toBe(true);
 });
 
-test('action: keeps a branch that existed before stim-cli attached the worktree', async () => {
+test('action: keeps a branch that existed before Stim attached the worktree', async () => {
   upsertProject(wtDir, {
     worktreeRoot: true,
     worktreeBranch: 'worktree-feat-x',
@@ -895,14 +893,14 @@ test('action: reclaims a nested monorepo app-dir project registered under the wo
 test('action: on success, deletes an owned iOS sim via simctl', async () => {
   upsertProject(wtDir, {
     metroPort: 8090,
-    platforms: { ios: { deviceUdid: 'U1', owned: true, deviceName: 'stim-cli-x' } },
+    platforms: { ios: { deviceUdid: 'U1', owned: true, deviceName: 'stim-x' } },
   });
   const exec = makeExecutor({
     worktrees: porcelain([
       { path: mainDir, branch: 'main' },
       { path: wtDir, branch: 'feat-x' },
     ]),
-    simctlList: simctlJson([{ udid: 'U1', name: 'stim-cli-x', state: 'Shutdown', isAvailable: true }]),
+    simctlList: simctlJson([{ udid: 'U1', name: 'stim-x', state: 'Shutdown', isAvailable: true }]),
   });
   setExecutor(exec);
 
@@ -920,11 +918,11 @@ test('action: reaps owned sims under two nested monorepo app-dir keys, both of t
   upsertProject(wtDir, { metroPort: null, worktreeRoot: true });
   upsertProject(nestedDir1, {
     metroPort: 8092,
-    platforms: { ios: { deviceUdid: 'U3', owned: true, deviceName: 'stim-cli-a' } },
+    platforms: { ios: { deviceUdid: 'U3', owned: true, deviceName: 'stim-a' } },
   });
   upsertProject(nestedDir2, {
     metroPort: 8093,
-    platforms: { ios: { deviceUdid: 'U4', owned: true, deviceName: 'stim-cli-b' } },
+    platforms: { ios: { deviceUdid: 'U4', owned: true, deviceName: 'stim-b' } },
   });
   const exec = makeExecutor({
     worktrees: porcelain([
@@ -932,8 +930,8 @@ test('action: reaps owned sims under two nested monorepo app-dir keys, both of t
       { path: wtDir, branch: 'feat-x' },
     ]),
     simctlList: simctlJson([
-      { udid: 'U3', name: 'stim-cli-a', state: 'Shutdown', isAvailable: true },
-      { udid: 'U4', name: 'stim-cli-b', state: 'Shutdown', isAvailable: true },
+      { udid: 'U3', name: 'stim-a', state: 'Shutdown', isAvailable: true },
+      { udid: 'U4', name: 'stim-b', state: 'Shutdown', isAvailable: true },
     ]),
   });
   setExecutor(exec);
@@ -954,11 +952,11 @@ test('action: an occupied owned sim is deleted with the rest -- the environment 
   upsertProject(wtDir, { metroPort: null, worktreeRoot: true });
   upsertProject(nestedDir1, {
     metroPort: 8094,
-    platforms: { ios: { deviceUdid: 'U5', owned: true, deviceName: 'stim-cli-c' } },
+    platforms: { ios: { deviceUdid: 'U5', owned: true, deviceName: 'stim-c' } },
   });
   upsertProject(nestedDir2, {
     metroPort: 8095,
-    platforms: { ios: { deviceUdid: 'U6', owned: true, deviceName: 'stim-cli-d' } },
+    platforms: { ios: { deviceUdid: 'U6', owned: true, deviceName: 'stim-d' } },
   });
   const exec = makeExecutor({
     worktrees: porcelain([
@@ -966,8 +964,8 @@ test('action: an occupied owned sim is deleted with the rest -- the environment 
       { path: wtDir, branch: 'feat-x' },
     ]),
     simctlList: simctlJson([
-      { udid: 'U5', name: 'stim-cli-c', state: 'Booted', isAvailable: true },
-      { udid: 'U6', name: 'stim-cli-d', state: 'Shutdown', isAvailable: true },
+      { udid: 'U5', name: 'stim-c', state: 'Booted', isAvailable: true },
+      { udid: 'U6', name: 'stim-d', state: 'Shutdown', isAvailable: true },
     ]),
     occupied: { U5: true },
   });
@@ -995,10 +993,10 @@ test('action: an occupied owned sim is deleted with the rest -- the environment 
   expect(!logs.some((l) => /kept .*device|kept .*sim/i.test(l))).toBeTruthy();
 });
 
-test('action: a project-local .stim-cli directory is ordinary dirt and refuses removal', async () => {
+test('action: a project-local .stim directory is ordinary dirt and refuses removal', async () => {
   upsertProject(wtDir, { metroPort: 8090 });
   const exec = makeExecutor({
-    dirty: '?? .stim-cli/\n',
+    dirty: '?? .stim/\n',
     worktrees: porcelain([
       { path: mainDir, branch: 'main' },
       { path: wtDir, branch: 'feat-x' },
@@ -1014,10 +1012,10 @@ test('action: a project-local .stim-cli directory is ordinary dirt and refuses r
   expect(getProject(wtDir)).not.toBe(null);
 });
 
-test('action: real work beside .stim-cli/ refuses and names every dirty path', async () => {
+test('action: real work beside .stim/ refuses and names every dirty path', async () => {
   upsertProject(wtDir, { metroPort: 8091 });
   const exec = makeExecutor({
-    dirty: '?? .stim-cli/\n M src/app.js\n?? scratch.txt\n',
+    dirty: '?? .stim/\n M src/app.js\n?? scratch.txt\n',
     worktrees: porcelain([
       { path: mainDir, branch: 'main' },
       { path: wtDir, branch: 'feat-x' },
@@ -1040,15 +1038,15 @@ test('action: real work beside .stim-cli/ refuses and names every dirty path', a
   const text = errs.join('\n');
   expect(text).toMatch(/checkout --/);
   expect(text).toMatch(/clean -fd/);
-  expect(text.includes('.stim-cli/')).toBeTruthy();
+  expect(text.includes('.stim/')).toBeTruthy();
 });
 
-test('action: stim-cli never deletes a project-local .stim-cli directory', async () => {
+test('action: Stim never deletes a project-local .stim directory', async () => {
   upsertProject(wtDir, { metroPort: 8092 });
-  mkdirSync(join(wtDir, '.stim-cli', 'logs'), { recursive: true });
-  writeFileSync(join(wtDir, '.stim-cli', 'state.json'), '{}');
+  mkdirSync(join(wtDir, '.stim', 'logs'), { recursive: true });
+  writeFileSync(join(wtDir, '.stim', 'state.json'), '{}');
   const exec = makeExecutor({
-    dirty: '?? .stim-cli/\n',
+    dirty: '?? .stim/\n',
     worktrees: porcelain([
       { path: mainDir, branch: 'main' },
       { path: wtDir, branch: 'feat-x' },
@@ -1059,7 +1057,7 @@ test('action: stim-cli never deletes a project-local .stim-cli directory', async
   const run = captureAction(registerRemove);
   await run(wtDir, {});
 
-  expect(existsSync(join(wtDir, '.stim-cli'))).toBe(true);
+  expect(existsSync(join(wtDir, '.stim'))).toBe(true);
   expect(process.exitCode).toBe(1);
 });
 
@@ -1172,11 +1170,11 @@ test('action: an unregistered nested remote start cannot bypass the worktree rem
 
 test('action: a dirty path escaping the worktree is never removed', async () => {
   upsertProject(wtDir, { metroPort: 8093 });
-  const outside = join(mainDir, '.stim-cli');
+  const outside = join(mainDir, '.stim');
   mkdirSync(outside, { recursive: true });
   setExecutor(
     makeExecutor({
-      dirty: '?? ../stim-cli-test-main-escape/.stim-cli/\n',
+      dirty: '?? ../stim-test-main-escape/.stim/\n',
       worktrees: porcelain([
         { path: mainDir, branch: 'main' },
         { path: wtDir, branch: 'feat-x' },
@@ -1284,7 +1282,7 @@ test('action: the dirty-tree remedy names the real worktree, not a placeholder',
 
 test('against a real repo: remove on the main checkout reclaims the environment and leaves the repo intact', async () => {
   resetExecutor();
-  const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-remove-main-')));
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-main-')));
   const repo = join(base, 'repo');
   const errs: string[] = [];
   const originalError = console.error;
@@ -1301,8 +1299,8 @@ test('against a real repo: remove on the main checkout reclaims the environment 
     writeFileSync(join(repo, 'marker.txt'), 'still here');
 
     upsertProject(repo, { metroPort: null });
-    mkdirSync(join(repo, '.stim-cli', 'logs'), { recursive: true });
-    writeFileSync(join(repo, '.stim-cli', 'state.json'), '{}');
+    mkdirSync(join(repo, '.stim', 'logs'), { recursive: true });
+    writeFileSync(join(repo, '.stim', 'state.json'), '{}');
 
     console.error = (m) => errs.push(String(m));
     console.log = () => {};
@@ -1315,7 +1313,7 @@ test('against a real repo: remove on the main checkout reclaims the environment 
     expect(readFileSync(join(repo, 'package.json'), 'utf-8')).toBe('{}');
     expect(readFileSync(join(repo, 'marker.txt'), 'utf-8')).toBe('still here');
     expect(execSync('git rev-parse --is-inside-work-tree', { cwd: repo, encoding: 'utf-8' }).trim()).toBe('true');
-    expect(existsSync(join(repo, '.stim-cli'))).toBe(true);
+    expect(existsSync(join(repo, '.stim'))).toBe(true);
     expect(getProject(repo)).toBe(null);
     expect(errs.join('\n')).toMatch(/working tree stays \(it is the main checkout\)/);
   } finally {
@@ -1390,7 +1388,7 @@ function podChurnRepo(base: string, { extraDirt = false }: { extraDirt?: boolean
   git('git config user.email test@example.com');
   git('git config user.name test');
   git(`git remote add origin "${bareRemote}"`);
-  writeFileSync(join(repo, '.gitignore'), '.stim-cli/\n');
+  writeFileSync(join(repo, '.gitignore'), '.stim/\n');
   writeFileSync(join(repo, 'apps', 'app', 'ios', 'Podfile.lock'), 'PODS:\n  - hermes-engine\n');
   writeFileSync(join(repo, 'apps', 'app', 'ios', 'Tlon.xcodeproj', 'project.pbxproj'), '// !$*UTF8*$!\n');
   writeFileSync(join(repo, 'apps', 'app', 'App.tsx'), 'export default 1;\n');
@@ -1411,7 +1409,7 @@ function podChurnRepo(base: string, { extraDirt = false }: { extraDirt?: boolean
 
 test('against a real repo: a worktree dirty only with pod-install churn is restored and removed', async () => {
   resetExecutor();
-  const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-remove-pods-')));
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-pods-')));
   const originalCwd = process.cwd();
   const errs: string[] = [];
   const originalError = console.error;
@@ -1445,7 +1443,7 @@ test('against a real repo: a worktree dirty only with pod-install churn is resto
 
 test('against a real repo: pod churn PLUS a modified source file is refused exactly as before', async () => {
   resetExecutor();
-  const base = canon(mkdtempSync(join(tmpdir(), 'stim-cli-test-remove-pods-dirty-')));
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-pods-dirty-')));
   const originalCwd = process.cwd();
   const errs: string[] = [];
   const originalError = console.error;

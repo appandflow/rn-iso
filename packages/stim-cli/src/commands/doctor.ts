@@ -44,7 +44,7 @@ export default function doctorCommand(program: Command): void {
         );
         console.log(
           chalk.dim(
-            'Nothing to flag means nothing stim-cli cannot handle itself: it supplies the Metro transform store, the Xcode compilation cache and the Gradle build cache on its own command lines, so a project that configures none of them is clean here.',
+            'Nothing to flag means nothing Stim cannot handle itself: it supplies the Metro transform store, the Xcode compilation cache and the Gradle build cache on its own command lines, so a project that configures none of them is clean here.',
           ),
         );
         return;

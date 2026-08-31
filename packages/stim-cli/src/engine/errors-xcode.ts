@@ -46,7 +46,7 @@ function remedyFor(message: string): string | null {
   }
   for (const pattern of SIGNING) {
     if (pattern.test(message)) {
-      return "stim-cli builds Debug for the simulator, which needs no signing. Check CODE_SIGNING_REQUIRED / DEVELOPMENT_TEAM in the target's Debug configuration.";
+      return "Stim builds Debug for the simulator, which needs no signing. Check CODE_SIGNING_REQUIRED / DEVELOPMENT_TEAM in the target's Debug configuration.";
     }
   }
   return null;

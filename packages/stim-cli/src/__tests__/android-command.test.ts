@@ -56,9 +56,9 @@ let home: string;
 let root: string;
 
 beforeEach(() => {
-  home = mkdtempSync(join(tmpdir(), 'stim-cli-home-'));
-  process.env.STIM_CLI_HOME = home;
-  root = mkdtempSync(join(tmpdir(), 'stim-cli-android-'));
+  home = mkdtempSync(join(tmpdir(), 'stim-home-'));
+  process.env.STIM_HOME = home;
+  root = mkdtempSync(join(tmpdir(), 'stim-android-'));
   writeFileSync(
     join(root, 'package.json'),
     JSON.stringify({ name: 'app', scripts: { android: 'react-native run-android' } }),
@@ -71,7 +71,7 @@ beforeEach(() => {
 afterEach(() => {
   rmSync(home, { recursive: true, force: true });
   rmSync(root, { recursive: true, force: true });
-  delete process.env.STIM_CLI_HOME;
+  delete process.env.STIM_HOME;
 });
 
 function parseRemoteOption(args: string[]): unknown {
@@ -235,7 +235,7 @@ function harness(overrides = {}) {
     root,
     ensureDevice: async (args: unknown = {}) => {
       calls.ensureDevice.push(args);
-      return { avdName: 'stim-cli-app-412', consolePort: 5584, owned: true };
+      return { avdName: 'stim-app-412', consolePort: 5584, owned: true };
     },
     ensureDeviceBooted: async (args: unknown = {}) => {
       calls.booted.push(args);
@@ -511,7 +511,7 @@ describe('explicit remote backend behavior', () => {
     });
     const result = await h.run();
     expect(result.ok).toBe(false);
-    expect(result.error?.code).toBe('STIM_CLI_BAD_ARG');
+    expect(result.error?.code).toBe('STIM_BAD_ARG');
     expect(result.error?.message).toContain('Invalid android.remote setting');
     expect(resolved).toBe(false);
   });
@@ -523,7 +523,7 @@ describe('explicit remote backend behavior', () => {
     });
     const result = await h.run();
     expect(result.ok).toBe(false);
-    expect(result.error?.code).toBe('STIM_CLI_BAD_ARG');
+    expect(result.error?.code).toBe('STIM_BAD_ARG');
     expect(result.error?.message).toContain('Invalid android.dataPartitionSizeGb setting');
     expect(result.error?.remedy).toContain('whole number of GiB');
     expect(h.calls.ensureDevice).toEqual([]);
@@ -536,7 +536,7 @@ describe('explicit remote backend behavior', () => {
     });
     const result = await h.run();
     expect(result.ok).toBe(false);
-    expect(result.error?.code).toBe('STIM_CLI_BAD_ARG');
+    expect(result.error?.code).toBe('STIM_BAD_ARG');
     expect(result.error?.message).toContain('Unsupported android.avdConfig key');
     expect(result.error?.remedy).toContain('documented android.avdConfig keys');
     expect(h.calls.ensureDevice).toEqual([]);
@@ -618,7 +618,7 @@ describe('explicit remote backend behavior', () => {
       ensureMetroReachable: async () => ({
         failed: 'The public Metro origin is unavailable.',
         remedy: 'Run `stim start --remote`.',
-        code: 'STIM_CLI_REMOTE_METRO_UNREACHABLE',
+        code: 'STIM_REMOTE_METRO_UNREACHABLE',
       }),
       remoteDeviceDeps: () => ({
         ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
@@ -648,7 +648,7 @@ describe('explicit remote backend behavior', () => {
 
     const result = await h.run();
     expect(result.ok).toBe(false);
-    expect(result.error?.code).toBe('STIM_CLI_REMOTE_METRO_UNREACHABLE');
+    expect(result.error?.code).toBe('STIM_REMOTE_METRO_UNREACHABLE');
     expect(remoteCalls).toEqual([]);
     expect(existsSync(workspaceStateFile(root)) ? readState().remoteDevice : undefined).toBeUndefined();
   });
@@ -729,7 +729,7 @@ describe('explicit remote backend behavior', () => {
     const result = await h.run();
 
     expect(result.ok).toBe(false);
-    expect(result.error?.code).toBe('STIM_CLI_REMOTE_SESSION_STATE');
+    expect(result.error?.code).toBe('STIM_REMOTE_SESSION_STATE');
     expect(result.error?.message).toContain('drs_42');
     expect(result.error?.message).toContain('stopped');
     expect(abandoned).toEqual(['drs_42']);
@@ -752,7 +752,7 @@ describe('explicit remote backend behavior', () => {
         createdSessionId: () => 'drs_unmanaged',
         abandonCreatedSession: () => ({
           failed: true as const,
-          code: 'STIM_CLI_REMOTE_SESSION_CLEANUP',
+          code: 'STIM_REMOTE_SESSION_CLEANUP',
           reason: 'Session drs_unmanaged still bills.',
           remedy: 'Run `eas simulator:stop --id drs_unmanaged`.',
           sessionId: 'drs_unmanaged',
@@ -770,7 +770,7 @@ describe('explicit remote backend behavior', () => {
 
     expect(result.ok).toBe(false);
     expect(result.error).toEqual({
-      code: 'STIM_CLI_REMOTE_SESSION_CLEANUP',
+      code: 'STIM_REMOTE_SESSION_CLEANUP',
       message: expect.stringContaining('drs_unmanaged'),
       remedy: 'Run `eas simulator:stop --id drs_unmanaged`.',
     });
@@ -938,7 +938,7 @@ describe('a cache hit', () => {
     const h = harness({ resolveCached: () => '/cache/app-debug.apk', build: never('the build') });
     await h.run();
 
-    expect(labelled(h.stderr, 'device')[0]).toMatch(/stim-cli-app-412 \(emulator-5584\) booted/);
+    expect(labelled(h.stderr, 'device')[0]).toMatch(/stim-app-412 \(emulator-5584\) booted/);
     expect(labelled(h.stderr, 'metro')[0]).toMatch(/port 8082 \(pid 41233\)/);
     expect(labelled(h.stderr, 'launch')[0]).toMatch(/com\.example\.app/);
     expect(labelled(h.stderr, 'logs')[0]).toMatch(/collector pid 9001/);
@@ -948,7 +948,7 @@ describe('a cache hit', () => {
     expect(labelled(h.stderr, 'launch')[0]).toMatch(/\(\d+m?\d*s\)$/);
     expect(h.stdout.length).toBe(1);
     expect(h.stdout[0]).toMatch(/OK: com\.example\.app launched on emulator-5584/);
-    expect(h.stdout[0]).toContain(phaseLine('device', 'stim-cli-app-412 (emulator-5584)'));
+    expect(h.stdout[0]).toContain(phaseLine('device', 'stim-app-412 (emulator-5584)'));
     expect(h.stdout[0]).toContain(phaseLine('app', 'com.example.app'));
     expect(h.stdout[0]).toContain(phaseLine('metro', 'running on port 8082'));
     expect(h.stdout[0]).toContain(phaseLine('cache', 'cache hit'));
@@ -965,8 +965,8 @@ describe('a cache hit', () => {
     expect(JSON.parse(stdout0)).toEqual({
       platform: 'android',
       serial: 'emulator-5584',
-      avdName: 'stim-cli-app-412',
-      deviceName: 'stim-cli-app-412',
+      avdName: 'stim-app-412',
+      deviceName: 'stim-app-412',
       fingerprint: FINGERPRINT,
       cacheKey: CACHE_KEY,
       variant: null,
@@ -1136,7 +1136,7 @@ describe('the applicationId comes from the built APK', () => {
 });
 
 describe('metro is verified before any build work', () => {
-  test('an unhealthy reserved port fails fast with STIM_CLI_NO_METRO', async () => {
+  test('an unhealthy reserved port fails fast with STIM_NO_METRO', async () => {
     const h = harness({
       resolveMetro: async () => ({ missing: true }),
       fingerprint: never('the fingerprint'),
@@ -1152,7 +1152,7 @@ describe('metro is verified before any build work', () => {
     expect(result.error.message).toMatch(/port 8082/);
     expect(result.error.remedy).toMatch(/stim start/);
     expect(result.error.remedy).toMatch(/--no-metro-check/);
-    expect(h.stderr.at(-2)).toMatch(/STIM_CLI_NO_METRO/);
+    expect(h.stderr.at(-2)).toMatch(/STIM_NO_METRO/);
     expect(existsSync(workspaceStateFile(root))).toBe(false);
   });
 
@@ -1255,9 +1255,9 @@ describe('the other refusals', () => {
     expect(result.error.message).toMatch(/bad app\.json/);
   });
 
-  test('a device that cannot be booted refuses with STIM_CLI_NO_DEVICE, after the build', async () => {
+  test('a device that cannot be booted refuses with STIM_NO_DEVICE, after the build', async () => {
     const h = harness({
-      ensureDeviceBooted: async () => ({ failed: true, reason: 'AVD stim-cli-app-412 no longer exists.' }),
+      ensureDeviceBooted: async () => ({ failed: true, reason: 'AVD stim-app-412 no longer exists.' }),
       install: never('the install'),
     });
     const result = await h.run();
@@ -1326,12 +1326,12 @@ describe('the other refusals', () => {
   test('the generic remedy stands when emulator.log has no severity markers', async () => {
     writeEmulatorLog(['INFO    | Android emulator version 35.2.10.0', 'WARNING | System image is out of date']);
     const h = harness({
-      ensureDeviceBooted: async () => ({ failed: true, reason: 'AVD stim-cli-app-412 no longer exists.' }),
+      ensureDeviceBooted: async () => ({ failed: true, reason: 'AVD stim-app-412 no longer exists.' }),
       install: never('the install'),
     });
     const result = await h.run();
     assert(result.error);
-    expect(result.error.message).toBe('AVD stim-cli-app-412 no longer exists.');
+    expect(result.error.message).toBe('AVD stim-app-412 no longer exists.');
     expect(result.error.remedy).toMatch(/stim status/);
     expect(h.stderr.some((l) => l.includes(emulatorLogFile(root)))).toBeTruthy();
   });
@@ -1369,23 +1369,23 @@ describe('the other refusals', () => {
     const h = harness({
       install: () => ({
         failed: true,
-        code: 'STIM_CLI_INSTALL_FAILED',
+        code: 'STIM_INSTALL_FAILED',
         reason: 'adb install failed: INSTALL_FAILED_INSUFFICIENT_STORAGE',
       }),
       launch: never('the launch'),
     });
     const result = await h.run();
     assert(result.error);
-    expect(result.error.code).toBe('STIM_CLI_INSTALL_FAILED');
+    expect(result.error.code).toBe('STIM_INSTALL_FAILED');
     expect(result.error.remedy).toMatch(/emulator-5584/);
-    expect(readState().lastBuild.errorCode).toBe('STIM_CLI_INSTALL_FAILED');
+    expect(readState().lastBuild.errorCode).toBe('STIM_INSTALL_FAILED');
   });
 
   test('a launch failure is reported after a successful install', async () => {
-    const h = harness({ launch: () => ({ failed: true, code: 'STIM_CLI_LAUNCH_FAILED', reason: 'am start failed' }) });
+    const h = harness({ launch: () => ({ failed: true, code: 'STIM_LAUNCH_FAILED', reason: 'am start failed' }) });
     const result = await h.run();
     assert(result.error);
-    expect(result.error.code).toBe('STIM_CLI_LAUNCH_FAILED');
+    expect(result.error.code).toBe('STIM_LAUNCH_FAILED');
     expect(readState().lastBuild.status).toBe('failed');
   });
 });
@@ -1704,7 +1704,7 @@ describe('single-flight builds', () => {
       pid,
       projectRoot,
       startedAt: '2026-08-25T10:00:00.000Z',
-      logFile: `${projectRoot}/.stim-cli/logs/build-android.ndjson`,
+      logFile: `${projectRoot}/.stim/logs/build-android.ndjson`,
     },
     path: '/home/build-locks/android-key.lock',
   });
@@ -1848,7 +1848,7 @@ describe('single-flight builds', () => {
       acquireLock: () => heldBy(),
       waitForBuild: async () => {
         throw makeError('Waited 90m ... The lock is /home/build-locks/android-key.lock', {
-          code: 'STIM_CLI_BUILD_WAIT_TIMEOUT',
+          code: 'STIM_BUILD_WAIT_TIMEOUT',
           lockPath: '/home/build-locks/android-key.lock',
         });
       },
@@ -1856,7 +1856,7 @@ describe('single-flight builds', () => {
     const result = await h.run();
     expect(result.ok).toBe(false);
     assert(result.error);
-    expect(result.error.code).toBe('STIM_CLI_BUILD_WAIT_TIMEOUT');
+    expect(result.error.code).toBe('STIM_BUILD_WAIT_TIMEOUT');
     expect(h.calls.build.length).toBe(0);
   });
 
@@ -1987,29 +1987,29 @@ describe('the pure parts', () => {
     const fatal = 'FATAL | Not enough space to create userdata partition. Available: 1 MB, need 2 MB';
     const lifted = noDeviceDiagnostic({
       reason: 'The emulator exited.',
-      logFile: '/ws/.stim-cli/logs/emulator.log',
+      logFile: '/ws/.stim/logs/emulator.log',
       remedy: 'Check JAVA_HOME.',
       readLog: () => `INFO | starting\n${fatal}\nFATAL | giving up`,
     });
     expect(lifted.message).toBe(`The emulator exited. The emulator reported: ${fatal}`);
     expect(lifted.remedy).toMatch(/Free disk space/);
     expect(lifted.lines).toEqual(['FATAL | giving up']);
-    expect(lifted.logPath).toBe('/ws/.stim-cli/logs/emulator.log');
+    expect(lifted.logPath).toBe('/ws/.stim/logs/emulator.log');
 
     const unrecognized = noDeviceDiagnostic({
       reason: 'The emulator exited.',
-      logFile: '/ws/.stim-cli/logs/emulator.log',
+      logFile: '/ws/.stim/logs/emulator.log',
       remedy: 'Check JAVA_HOME.',
       readLog: () => 'INFO | nothing to see',
     });
     expect(unrecognized.message).toBe('The emulator exited.');
     expect(unrecognized.remedy).toBe('Check JAVA_HOME.');
     expect(unrecognized.lines).toEqual([]);
-    expect(unrecognized.logPath).toBe('/ws/.stim-cli/logs/emulator.log');
+    expect(unrecognized.logPath).toBe('/ws/.stim/logs/emulator.log');
 
     const noLog = noDeviceDiagnostic({
       reason: 'The emulator exited.',
-      logFile: '/ws/.stim-cli/logs/emulator.log',
+      logFile: '/ws/.stim/logs/emulator.log',
       remedy: 'Check JAVA_HOME.',
       readLog: () => '',
     });
@@ -2018,7 +2018,7 @@ describe('the pure parts', () => {
 
     const noSpace = noDeviceDiagnostic({
       reason: 'ENOSPC: no space left on device, write',
-      logFile: '/ws/.stim-cli/logs/emulator.log',
+      logFile: '/ws/.stim/logs/emulator.log',
       remedy: 'Check JAVA_HOME.',
       readLog: () => '',
     });
@@ -2028,7 +2028,7 @@ describe('the pure parts', () => {
 
     const noSpaceWithUnrelatedFatal = noDeviceDiagnostic({
       reason: 'ENOSPC: no space left on device, write',
-      logFile: '/ws/.stim-cli/logs/emulator.log',
+      logFile: '/ws/.stim/logs/emulator.log',
       remedy: 'Check JAVA_HOME.',
       readLog: () => "PANIC: Missing emulator engine program for 'arm64' CPU.",
     });
@@ -2037,7 +2037,7 @@ describe('the pure parts', () => {
 
     const remoteNoSpace = noDeviceDiagnostic({
       reason: 'ENOSPC: remote profile write failed',
-      logFile: '/ws/.stim-cli/logs/emulator.log',
+      logFile: '/ws/.stim/logs/emulator.log',
       remedy: 'Inspect the remote device.',
       localEmulator: false,
       readLog: () => 'FATAL | Not enough space to create userdata partition.',
@@ -2052,7 +2052,7 @@ describe('the pure parts', () => {
   });
 
   test('displayPath shortens a workspace path and leaves a foreign one alone', () => {
-    expect(displayPath(root, join(root, '.stim-cli', 'logs'))).toBe('.stim-cli/logs');
+    expect(displayPath(root, join(root, '.stim', 'logs'))).toBe('.stim/logs');
     expect(displayPath(root, '/elsewhere/build.ndjson')).toBe('/elsewhere/build.ndjson');
   });
 
@@ -2096,9 +2096,9 @@ describe('the pure parts', () => {
       `${FINGERPRINT}-productionrelease-sim`,
     );
     expect({
-      avdName: androidFacts({ avdName: 'stim-cli-app-412' }).avdName,
-      deviceName: androidFacts({ avdName: 'stim-cli-app-412' }).deviceName,
-    }).toEqual({ avdName: 'stim-cli-app-412', deviceName: 'stim-cli-app-412' });
+      avdName: androidFacts({ avdName: 'stim-app-412' }).avdName,
+      deviceName: androidFacts({ avdName: 'stim-app-412' }).deviceName,
+    }).toEqual({ avdName: 'stim-app-412', deviceName: 'stim-app-412' });
     expect(androidFacts({ cacheHit: 'remote' }).cacheHit).toBe('remote');
     expect(androidFacts({ cacheHit: true }).cacheHit).toBe(false);
     expect(androidFacts({ cacheHit: 'local', waitedForBuild: { pid: 41233, ms: 761000 } }).waitedForBuild).toEqual({
@@ -2326,19 +2326,19 @@ describe('the device identity is recorded', () => {
     const h = harness();
     const result = await h.run();
     assert(result.facts);
-    expect(result.facts.avdName).toBe('stim-cli-app-412');
-    expect(result.facts.deviceName).toBe('stim-cli-app-412');
+    expect(result.facts.avdName).toBe('stim-app-412');
+    expect(result.facts.deviceName).toBe('stim-app-412');
     expect(result.facts.serial).toBe('emulator-5584');
     const lastBuild = readState().lastBuild;
-    expect(lastBuild.avdName).toBe('stim-cli-app-412');
-    expect(lastBuild.deviceName).toBe('stim-cli-app-412');
+    expect(lastBuild.avdName).toBe('stim-app-412');
+    expect(lastBuild.deviceName).toBe('stim-app-412');
   });
 
   test('a failure after the device is resolved still records which emulator it was', async () => {
     const h = harness({ install: () => ({ failed: true, reason: 'adb install failed' }) });
     const result = await h.run();
     expect(result.ok).toBe(false);
-    expect(readState().lastBuild.avdName).toBe('stim-cli-app-412');
+    expect(readState().lastBuild.avdName).toBe('stim-app-412');
   });
 });
 
@@ -2488,14 +2488,14 @@ describe('concurrency limits', () => {
     expect(slotAcquired).toBe(0);
   });
 
-  test('maxDevices at capacity refuses with STIM_CLI_AT_CAPACITY, before ensuring a device', async () => {
+  test('maxDevices at capacity refuses with STIM_AT_CAPACITY, before ensuring a device', async () => {
     const capacityCalls: Record<string, unknown>[] = [];
     const h = harness({
       getLimits: () => ({ maxBuilds: 0, maxDevices: 3 }),
       checkCapacity: (args: Record<string, unknown>) => {
         capacityCalls.push(args);
         return {
-          code: 'STIM_CLI_AT_CAPACITY',
+          code: 'STIM_AT_CAPACITY',
           message: 'at capacity',
           remedy: 'stop an environment (stim stop) or raise concurrency.maxDevices',
         };
@@ -2504,7 +2504,7 @@ describe('concurrency limits', () => {
     const result = await h.run();
     expect(result.ok).toBe(false);
     assert(result.error);
-    expect(result.error.code).toBe('STIM_CLI_AT_CAPACITY');
+    expect(result.error.code).toBe('STIM_AT_CAPACITY');
     const capacityArgs = capacityCalls[0];
     assert(capacityArgs);
     expect(capacityArgs.max).toBe(3);
@@ -2602,7 +2602,7 @@ describe('release skips Metro entirely', () => {
     const result = await h.run();
     expect(result.ok).toBe(true);
     expect(h.calls.metro.length).toBe(0);
-    expect(h.stderr.join('\n')).not.toMatch(/STIM_CLI_NO_METRO/);
+    expect(h.stderr.join('\n')).not.toMatch(/STIM_NO_METRO/);
     expect(labelled(h.stderr, 'metro')[0]).toMatch(/skipped \(productionRelease: the JS bundle is embedded/);
     expect(h.calls.launch.length).toBe(0);
     expect(h.calls.launchRelease[0]?.packageName).toBe('com.example.app');
@@ -2645,7 +2645,7 @@ describe('release skips Metro entirely', () => {
     });
     const result = await h.run();
     expect(result.ok).toBe(false);
-    expect(result.error?.code).toBe('STIM_CLI_LAUNCH_FAILED');
+    expect(result.error?.code).toBe('STIM_LAUNCH_FAILED');
     expect(h.stderr.join('\n')).toMatch(/UNVERIFIED: no com\.example\.app process/);
     expect(h.stderr.join('\n')).toMatch(/stim logs --errors/);
   });
@@ -3098,7 +3098,7 @@ test('taking the build lock over from a dead holder says this run repeats its in
         pid: 4242,
         projectRoot: '/w/other',
         startedAt: new Date(Date.now() - 60000).toISOString(),
-        logFile: '/w/other/.stim-cli/logs/build-android.ndjson',
+        logFile: '/w/other/.stim/logs/build-android.ndjson',
       },
     }),
   });

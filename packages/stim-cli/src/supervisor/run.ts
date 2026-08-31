@@ -134,7 +134,7 @@ export async function runSupervisor({
       event: 'supervisor_registration_failed',
       msg: `Could not record the supervisor in the global config: ${describeError(err)}`,
     });
-    stderr(`stim-cli supervisor: global registration failed: ${describeError(err)}`);
+    stderr(`Stim supervisor: global registration failed: ${describeError(err)}`);
   }
 
   writer.write({
@@ -159,7 +159,7 @@ export async function runSupervisor({
     const closed = writer.close();
     if (closed.dropped > 0) {
       stderr(
-        `stim-cli supervisor: dropped ${closed.dropped} log record(s); last error: ${describeError(closed.lastError)}`,
+        `Stim supervisor: dropped ${closed.dropped} log record(s); last error: ${describeError(closed.lastError)}`,
       );
     }
     onExit(code);
@@ -181,13 +181,13 @@ export async function runSupervisor({
         try {
           writeWorkspaceState(root, { metroTunnel: { kind: 'expo', url } });
         } catch (err) {
-          stderr(`stim-cli supervisor: could not record the Expo tunnel URL: ${describeError(err)}`);
+          stderr(`Stim supervisor: could not record the Expo tunnel URL: ${describeError(err)}`);
         }
         writer.write({ src: 'metro', level: 'info', event: 'expo_tunnel_ready', msg: `Expo tunnel ready: ${url}` });
       },
     });
   } catch (err) {
-    stderr(`stim-cli supervisor: failed to start the ${mode} dev server: ${describeError(err)}`);
+    stderr(`Stim supervisor: failed to start the ${mode} dev server: ${describeError(err)}`);
     finish(1, 'supervisor_failed', 'fatal', `failed to start the ${mode} dev server: ${describeError(err)}`);
     return null;
   }
@@ -239,20 +239,20 @@ export async function runSupervisor({
 export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
   const parsed = parseArgs(argv);
   if (parsed.error) {
-    console.error(`stim-cli supervisor: ${parsed.error}`);
+    console.error(`Stim supervisor: ${parsed.error}`);
     process.exit(2);
     return;
   }
   const root = parsed.root as string;
   if (!existsSync(root)) {
-    console.error(`stim-cli supervisor: --root ${root} does not exist.`);
+    console.error(`Stim supervisor: --root ${root} does not exist.`);
     process.exit(2);
     return;
   }
   try {
     process.chdir(root);
   } catch {}
-  process.title = 'stim-cli-supervisor';
+  process.title = 'stim-supervisor';
   await runSupervisor({ root, port: parsed.port as number, tunnel: parsed.tunnel ?? false });
 }
 
@@ -268,7 +268,7 @@ function invokedDirectly(): boolean {
 
 if (invokedDirectly()) {
   main().catch((err) => {
-    console.error(`stim-cli supervisor: ${describeError(err)}`);
+    console.error(`Stim supervisor: ${describeError(err)}`);
     process.exit(1);
   });
 }

@@ -41,8 +41,8 @@ import {
 } from './eas-session-ledger.ts';
 import { getConfigDir } from '../config.ts';
 
-export const REMOTE_SESSION_ERROR = 'STIM_CLI_NO_REMOTE_SESSION';
-const REMOTE_METRO_ERROR = 'STIM_CLI_REMOTE_METRO_UNREACHABLE';
+export const REMOTE_SESSION_ERROR = 'STIM_NO_REMOTE_SESSION';
+const REMOTE_METRO_ERROR = 'STIM_REMOTE_METRO_UNREACHABLE';
 
 export { PUBLIC_METRO_ENV } from './metro-reach.ts';
 
@@ -64,7 +64,7 @@ export function resolveMetroOrigin({
   if ('failed' in plan) return plan;
   return {
     failed: 'Metro has no address the device can reach yet.',
-    remedy: 'This is an stim-cli bug: the tunnel step did not run before the launch.',
+    remedy: 'This is a Stim bug: the tunnel step did not run before the launch.',
   };
 }
 
@@ -205,7 +205,7 @@ function remoteDeviceDeps(ctx: RemoteContext) {
         if (recorded && recorded.platform !== (ctx.platform ?? 'ios')) {
           return {
             failed: true,
-            code: 'STIM_CLI_REMOTE_PLATFORM_MISMATCH',
+            code: 'STIM_REMOTE_PLATFORM_MISMATCH',
             reason: `Session ${recorded.sessionId} belongs to ${recorded.platform ?? 'an unknown platform'}, not ${ctx.platform ?? 'ios'}.`,
             remedy: 'Run `stim stop` for this workspace before selecting a different remote platform.',
           };
@@ -222,7 +222,7 @@ function remoteDeviceDeps(ctx: RemoteContext) {
             if (cleanup.status === 'failed' || cleanup.reason) {
               return {
                 failed: true,
-                code: 'STIM_CLI_REMOTE_SESSION_CLEANUP',
+                code: 'STIM_REMOTE_SESSION_CLEANUP',
                 reason: cleanup.reason ?? `Could not verify recorded EAS session ${recorded.sessionId}.`,
                 remedy: 'Inspect the recorded session, then run `stim stop` again.',
               };
@@ -430,21 +430,21 @@ export async function resolveRemoteContext({
         failed: 'The proxy backend requires AGENT_DEVICE_DAEMON_BASE_URL and AGENT_DEVICE_DAEMON_AUTH_TOKEN.',
         remedy:
           'Export AGENT_DEVICE_DAEMON_BASE_URL and AGENT_DEVICE_DAEMON_AUTH_TOKEN, then run the device command with `--remote proxy` again.',
-        code: 'STIM_CLI_REMOTE_PROXY_CONFIG',
+        code: 'STIM_REMOTE_PROXY_CONFIG',
       };
     }
     if (!baseUrl) {
       return {
         failed: 'The proxy backend requires AGENT_DEVICE_DAEMON_BASE_URL.',
         remedy: 'Export AGENT_DEVICE_DAEMON_BASE_URL, then run the device command with `--remote proxy` again.',
-        code: 'STIM_CLI_REMOTE_PROXY_CONFIG',
+        code: 'STIM_REMOTE_PROXY_CONFIG',
       };
     }
     if (!token) {
       return {
         failed: 'The proxy backend requires AGENT_DEVICE_DAEMON_AUTH_TOKEN.',
         remedy: 'Export AGENT_DEVICE_DAEMON_AUTH_TOKEN, then run the device command with `--remote proxy` again.',
-        code: 'STIM_CLI_REMOTE_PROXY_CONFIG',
+        code: 'STIM_REMOTE_PROXY_CONFIG',
       };
     }
     existingDaemon = { baseUrl, token };
@@ -452,7 +452,7 @@ export async function resolveRemoteContext({
     return {
       failed: 'The eas backend requires eas-cli.',
       remedy: 'Install eas-cli, then run the device command with `--remote eas` again.',
-      code: 'STIM_CLI_REMOTE_EAS_UNAVAILABLE',
+      code: 'STIM_REMOTE_EAS_UNAVAILABLE',
     };
   }
 
@@ -516,8 +516,8 @@ function stopCreatedSession(ctx: RemoteContext, sessionId: string): AbandonCreat
   } catch (err) {
     return {
       failed: true,
-      code: 'STIM_CLI_REMOTE_SESSION_CLEANUP',
-      reason: `stim-cli could not stop session ${sessionId} (${describe(err)}). The session bills until its cap.`,
+      code: 'STIM_REMOTE_SESSION_CLEANUP',
+      reason: `Stim could not stop session ${sessionId} (${describe(err)}). The session bills until its cap.`,
       remedy: `Run \`eas simulator:stop --id ${sessionId}\`.`,
       sessionId,
     };
@@ -526,8 +526,8 @@ function stopCreatedSession(ctx: RemoteContext, sessionId: string): AbandonCreat
   if (!verified.ok) {
     return {
       failed: true,
-      code: 'STIM_CLI_REMOTE_SESSION_CLEANUP',
-      reason: `stim-cli could not verify that session ${sessionId} stopped (${verified.reason}). The session bills until its cap.`,
+      code: 'STIM_REMOTE_SESSION_CLEANUP',
+      reason: `Stim could not verify that session ${sessionId} stopped (${verified.reason}). The session bills until its cap.`,
       remedy: `Run \`eas simulator:stop --id ${sessionId}\`.`,
       sessionId,
     };
@@ -625,7 +625,7 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
                 if (removeClaim(sessionId, ledgerRoot)) {
                   return {
                     failed: true,
-                    code: 'STIM_CLI_REMOTE_SESSION_STATE',
+                    code: 'STIM_REMOTE_SESSION_STATE',
                     reason: `Could not record EAS session ${sessionId}: ${describe(err)}. The session was stopped.`,
                     remedy: 'Fix workspace state storage, then retry the remote command.',
                   };
@@ -635,14 +635,14 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
               }
               return {
                 failed: true,
-                code: 'STIM_CLI_REMOTE_SESSION_CLEANUP',
+                code: 'STIM_REMOTE_SESSION_CLEANUP',
                 reason: `Could not record EAS session ${sessionId}: ${describe(err)}. The session was stopped, but its ownership claim could not be removed: ${removalFailure}.`,
                 remedy: `The stopped session claim remains under ${ledgerRoot}. Repair that ownership ledger before retrying the remote command.`,
               };
             }
             return {
               failed: true,
-              code: cleanup.code ?? 'STIM_CLI_REMOTE_SESSION_CLEANUP',
+              code: cleanup.code ?? 'STIM_REMOTE_SESSION_CLEANUP',
               reason: `Could not record EAS session ${sessionId}: ${describe(err)}. ${cleanup.reason ?? ''}`.trim(),
               remedy: cleanup.remedy ?? `Run \`eas simulator:stop --id ${sessionId}\`.`,
             };

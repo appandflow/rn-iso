@@ -48,7 +48,7 @@ describe('hermesEnabledFromProperties', () => {
   });
 
   test('readHermesEnabled defaults to enabled when ios/Podfile.properties.json is absent', () => {
-    const root = mkdtempSync(join(tmpdir(), 'stim-cli-swap-'));
+    const root = mkdtempSync(join(tmpdir(), 'stim-swap-'));
     try {
       expect(readHermesEnabled(root)).toBe(true);
     } finally {
@@ -141,8 +141,8 @@ let tmp: string;
 const cachedApp = '/cache/ios/k-release-sim/Fixture.app';
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), 'stim-cli-swap-root-'));
-  tmp = mkdtempSync(join(tmpdir(), 'stim-cli-swap-tmp-'));
+  root = mkdtempSync(join(tmpdir(), 'stim-swap-root-'));
+  tmp = mkdtempSync(join(tmpdir(), 'stim-swap-tmp-'));
 });
 
 afterEach(() => {

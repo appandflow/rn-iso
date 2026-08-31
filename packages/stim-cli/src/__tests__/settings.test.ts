@@ -35,13 +35,13 @@ type SettingsView = {
 let tmpHome: string;
 
 beforeEach(() => {
-  tmpHome = mkdtempSync(join(tmpdir(), 'stim-cli-test-'));
-  process.env.STIM_CLI_HOME = tmpHome;
+  tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
+  process.env.STIM_HOME = tmpHome;
 });
 
 afterEach(() => {
   rmSync(tmpHome, { recursive: true, force: true });
-  delete process.env.STIM_CLI_HOME;
+  delete process.env.STIM_HOME;
 });
 
 test('earlier layers win over later ones', () => {
@@ -80,20 +80,20 @@ test('an array value is replaced wholesale, not concatenated', () => {
   expect(merged.worktree.install).toEqual(['a']);
 });
 
-test('readCommittedSettings reads .stim-cli.json', () => {
-  writeFileSync(join(tmpHome, '.stim-cli.json'), JSON.stringify({ packageManager: 'yarn' }));
+test('readCommittedSettings reads .stim.json', () => {
+  writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ packageManager: 'yarn' }));
   expect(readCommittedSettings(tmpHome)).toEqual({ packageManager: 'yarn' });
 });
 
 test('readCommittedSettings returns empty for missing or malformed files', () => {
   expect(readCommittedSettings(tmpHome)).toEqual({});
-  writeFileSync(join(tmpHome, '.stim-cli.json'), '{ not json');
+  writeFileSync(join(tmpHome, '.stim.json'), '{ not json');
   expect(readCommittedSettings(tmpHome)).toEqual({});
 });
 
 test('resolveSettings orders project over repo over committed', () => {
   writeFileSync(
-    join(tmpHome, '.stim-cli.json'),
+    join(tmpHome, '.stim.json'),
     JSON.stringify({ packageManager: 'yarn', worktree: { baseRef: 'fresh' } }),
   );
   setRepoSetting('/repo/.git', 'packageManager', 'pnpm');
@@ -110,7 +110,7 @@ test('resolveSettings orders project over repo over committed', () => {
   expect(merged.worktree.baseRef).toBe('fresh');
 });
 
-test('unknownSettingKeys reports keys stim-cli no longer reads', () => {
+test('unknownSettingKeys reports keys Stim no longer reads', () => {
   expect(unknownSettingKeys({ packageManager: 'pnpm' })).toEqual(['packageManager']);
   expect(unknownSettingKeys({ worktree: { install: ['pnpm i'] } })).toEqual(['worktree.install']);
 });
@@ -127,7 +127,7 @@ test('unknownSettingKeys accepts every key that is still honoured', () => {
       android: {
         systemImage: 'pkg',
         dataPartitionSizeGb: 8,
-        avdConfigFile: '.stim-cli/android-avd.ini',
+        avdConfigFile: '.stim/android-avd.ini',
         avdConfig: { 'hw.ramSize': 3072, 'hw.keyboard': true },
         variant: 'productionDebug',
       },
@@ -147,7 +147,7 @@ describe('iOS SimSlim profile settings', () => {
   });
 
   test('rejects invalid paths, missing profiles, and symlink escapes', () => {
-    const outside = mkdtempSync(join(tmpdir(), 'stim-cli-simslim-outside-'));
+    const outside = mkdtempSync(join(tmpdir(), 'stim-simslim-outside-'));
     try {
       writeFileSync(join(outside, 'profile.json'), '{}\n');
       symlinkSync(join(outside, 'profile.json'), join(tmpHome, 'linked.json'));
@@ -223,7 +223,7 @@ describe('Android AVD config settings', () => {
   });
 
   test('rejects absolute paths, traversal, symlink escapes, and oversized fragments', () => {
-    const outside = mkdtempSync(join(tmpdir(), 'stim-cli-outside-'));
+    const outside = mkdtempSync(join(tmpdir(), 'stim-outside-'));
     try {
       writeFileSync(join(outside, 'outside.ini'), 'hw.keyboard=yes\n');
       symlinkSync(join(outside, 'outside.ini'), join(tmpHome, 'linked.ini'));
@@ -299,10 +299,10 @@ test('unknownSettingKeys tolerates empty and malformed input', () => {
 });
 
 test('committed caches and device settings resolve with their JSON types intact', () => {
-  const repo = mkdtempSync(join(tmpdir(), 'stim-cli-repo-'));
+  const repo = mkdtempSync(join(tmpdir(), 'stim-repo-'));
   try {
     writeFileSync(
-      join(repo, '.stim-cli.json'),
+      join(repo, '.stim.json'),
       JSON.stringify({
         caches: ['~/.myapp-metro-cache', '/tmp/build-cache'],
         ios: { deviceType: 'iPhone 17 Pro', runtime: '26.2' },

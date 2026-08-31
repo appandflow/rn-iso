@@ -1,25 +1,92 @@
 ---
-title: 'Settings'
-sidebar_position: 1
-description: 'The layered settings files and every key stim-cli reads'
+title: 'Settings reference'
+sidebar_position: 2
+description: 'Project, repository, machine, and environment settings'
 ---
 
-`worktree create`, `start`, `ios` and `android` resolve settings from three layers, merged with the first match winning (nested objects merge key by key; arrays -- like `worktree.include` -- are replaced wholesale, never concatenated):
+Most projects need no settings. Use `stim guide settings` for descriptions that
+match the installed version.
 
-1. **Project settings** -- per absolute project path, stored in `~/.stim-cli/config.json`. Highest precedence.
-2. **Repo settings** -- shared by every worktree of the same repository (keyed by the repo's git common dir), also stored in `~/.stim-cli/config.json`. Local to this machine.
-3. **Committed settings** -- `.stim-cli.json` at the repo root, checked into git and shared with everyone who clones the repo. Lowest precedence, but the only layer that travels with the repo -- and, with the `config` command gone, normally the one you want.
+## Settings layers
 
-The keys stim-cli reads are `ios.deviceType`, `ios.runtime`, `android.systemImage`, `worktreeDir`, `caches`, and, under `worktree`: `baseRef` (`"fresh"` or `"head"`), `include` (carry-over patterns, same role as `.worktreeinclude`) and `exclude` (the `--carry-ignored` skip list, same role as `.worktreeexclude`). **Anything else is ignored, and stim-cli warns about it by name on every run that resolves settings** -- a `worktree.install` pipeline, for instance, is not a key stim-cli reads. Example `.stim-cli.json`:
+Stim reads the first value found in this order:
+
+1. Project settings in `~/.stim/config.json`, keyed by absolute path.
+2. Repository settings in the same machine file, keyed by the git common dir.
+3. Committed `.stim.json` at the repository root.
+4. The Stim default.
+
+Nested objects merge by key. Arrays replace lower-precedence arrays. Unknown
+keys produce a warning.
+
+## Committed settings
+
+`.stim.json` supports these keys:
+
+| Key                           | Purpose                                              |
+| ----------------------------- | ---------------------------------------------------- |
+| `ios.deviceType`              | iOS Simulator device type                            |
+| `ios.runtime`                 | iOS Simulator runtime                                |
+| `ios.configuration`           | Xcode configuration, such as `Debug` or `Release`    |
+| `ios.remote`                  | Default remote backend, `proxy` or `eas`             |
+| `ios.simslimProfile`          | SimSlim profile for local iOS devices                |
+| `android.systemImage`         | Android SDK system image                             |
+| `android.dataPartitionSizeGb` | AVD data partition size                              |
+| `android.avdConfigFile`       | Additional AVD config file                           |
+| `android.avdConfig`           | Validated AVD config values                          |
+| `android.variant`             | Gradle build variant                                 |
+| `android.keystore`            | Release keystore path                                |
+| `android.keystorePassword`    | Release keystore password source                     |
+| `android.remote`              | Default remote backend, `proxy` or `eas`             |
+| `metro.tunnel`                | Remote tunnel mode                                   |
+| `metro.ngrokUrl`              | Existing ngrok URL                                   |
+| `metro.publicUrl`             | Existing public Metro URL                            |
+| `worktreeDir`                 | Parent directory for created worktrees               |
+| `worktree.baseRef`            | Default worktree base: `head`, `fresh`, or a git ref |
+| `worktree.include`            | Explicit ignored paths to carry                      |
+| `worktree.exclude`            | Ignored paths skipped by `--carry-ignored`           |
+| `caches`                      | Additional cache paths reported by `gc`              |
+
+Do not put secrets in a committed `.stim.json`. Keep secrets in ignored files
+and carry those files into a worktree.
+
+### Android AVD overrides
+
+`android.avdConfigFile` reads an Android `config.ini` file. `android.avdConfig`
+provides the same safe keys as JSON. Stim applies these values only when it
+creates a new owned AVD. It never rewrites an existing AVD or changes generated
+identity and storage paths.
+
+The validated keys cover CPU count, RAM, heap size, screen density, graphics,
+orientation, network conditions, and common hardware switches. On displayless Linux,
+Stim also launches the emulator with `-no-window -noaudio -no-boot-anim`.
+Run `stim guide settings` for the complete key and value list.
+
+## Machine settings
+
+`~/.stim/config.json` also supports:
 
 ```json
 {
-  "ios": { "deviceType": "iPhone 17 Pro" },
-  "worktree": {
-    "baseRef": "head",
-    "include": [".env", ".env.*"]
+  "concurrency": { "maxBuilds": 2, "maxDevices": 3 },
+  "caches": {
+    "buildCache": "/Volumes/Cache/stim/build-cache",
+    "metroCache": "/Volumes/Cache/stim/metro-cache"
   }
 }
 ```
 
-**Never put secrets in `.stim-cli.json`.** It's committed to git and readable by anyone with repo access. Secrets belong in gitignored files (`.env` and friends) that `worktree create`'s carry-over feature copies into each new worktree -- that mechanism exists specifically so gitignored, secret-bearing files reach a fresh worktree without ever being committed to `.stim-cli.json` or anywhere else in git history.
+## Environment variables
+
+| Variable                | Purpose                                |
+| ----------------------- | -------------------------------------- |
+| `STIM_HOME`             | Runtime state root. Default: `~/.stim` |
+| `STIM_BUILD_CACHE`      | Native artifact cache root             |
+| `STIM_METRO_CACHE`      | Metro transform cache root             |
+| `STIM_MAX_BUILDS`       | Maximum concurrent native builds       |
+| `STIM_MAX_DEVICES`      | Maximum booted owned devices           |
+| `STIM_METRO_PUBLIC_URL` | Public Metro URL for remote use        |
+
+Proxy remote devices also use `AGENT_DEVICE_DAEMON_BASE_URL` and
+`AGENT_DEVICE_DAEMON_AUTH_TOKEN`. Those variables belong to the optional proxy
+service, not to Stim.

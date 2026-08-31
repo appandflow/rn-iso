@@ -21,10 +21,10 @@ async function waitForRegistration(dir: string, timeoutMs = 5000) {
 }
 
 test('the Expo build cache provider registers itself on this Node, at the right depth', async () => {
-  const home = mkdtempSync(join(tmpdir(), 'stim-cli-pkg-home-'));
-  const cacheRoot = mkdtempSync(join(tmpdir(), 'stim-cli-pkg-bc-'));
-  process.env.STIM_CLI_HOME = home;
-  process.env.STIM_CLI_BUILD_CACHE = cacheRoot;
+  const home = mkdtempSync(join(tmpdir(), 'stim-pkg-home-'));
+  const cacheRoot = mkdtempSync(join(tmpdir(), 'stim-pkg-bc-'));
+  process.env.STIM_HOME = home;
+  process.env.STIM_BUILD_CACHE = cacheRoot;
   try {
     const provider = await import('@stim-cli/expo-build-cache');
     expect(provider.cacheRoot()).toBe(cacheRoot);
@@ -39,18 +39,18 @@ test('the Expo build cache provider registers itself on this Node, at the right 
   } finally {
     rmSync(home, { recursive: true, force: true });
     rmSync(cacheRoot, { recursive: true, force: true });
-    delete process.env.STIM_CLI_HOME;
-    delete process.env.STIM_CLI_BUILD_CACHE;
+    delete process.env.STIM_HOME;
+    delete process.env.STIM_BUILD_CACHE;
   }
 });
 
 test('the Metro cache store registers itself on this Node, at the shard depth', async () => {
-  const home = mkdtempSync(join(tmpdir(), 'stim-cli-pkg-home2-'));
-  const cacheRoot = join(tmpdir(), `stim-cli-pkg-metro-${process.pid}`);
+  const home = mkdtempSync(join(tmpdir(), 'stim-pkg-home2-'));
+  const cacheRoot = join(tmpdir(), `stim-pkg-metro-${process.pid}`);
   const namedRoot = join(cacheRoot, 'demo');
   mkdirSync(cacheRoot, { recursive: true });
-  process.env.STIM_CLI_HOME = home;
-  process.env.STIM_CLI_METRO_CACHE = cacheRoot;
+  process.env.STIM_HOME = home;
+  process.env.STIM_METRO_CACHE = cacheRoot;
   writeFileSync(
     join(home, 'caches.json'),
     JSON.stringify({
@@ -100,26 +100,26 @@ test('the Metro cache store registers itself on this Node, at the shard depth', 
   } finally {
     rmSync(home, { recursive: true, force: true });
     rmSync(cacheRoot, { recursive: true, force: true });
-    delete process.env.STIM_CLI_HOME;
-    delete process.env.STIM_CLI_METRO_CACHE;
+    delete process.env.STIM_HOME;
+    delete process.env.STIM_METRO_CACHE;
   }
 });
 
-test('neither package reaches stim-cli as a module; the shared primitives live in @stim-cli/core', () => {
+test('neither package reaches Stim as a module; the shared primitives live in @stim-cli/core', () => {
   for (const pkg of ['expo-build-cache', 'metro']) {
     const source = readFileSync(join(PACKAGES, pkg, 'index.ts'), 'utf-8');
-    expect(source).not.toMatch(/require\(\s*['"]stim-cli/);
-    expect(source).not.toMatch(/import\(\s*['"]stim-cli/);
+    expect(source).not.toMatch(/require\(\s*['"]Stim/);
+    expect(source).not.toMatch(/import\(\s*['"]Stim/);
     expect(source).toMatch(/@stim-cli\/core/);
   }
   const core = readFileSync(join(PACKAGES, 'core', 'index.ts'), 'utf-8');
   expect(core).toMatch(/caches\.json/);
-  expect(core).not.toMatch(/require\(\s*['"]stim-cli/);
+  expect(core).not.toMatch(/require\(\s*['"]Stim/);
 });
 
 test('both packages resolve the same cache roots the CLI does', async () => {
-  const home = mkdtempSync(join(tmpdir(), 'stim-cli-pkg-home3-'));
-  process.env.STIM_CLI_HOME = home;
+  const home = mkdtempSync(join(tmpdir(), 'stim-pkg-home3-'));
+  process.env.STIM_HOME = home;
   try {
     const provider = await import('@stim-cli/expo-build-cache');
     const metro = await import('@stim-cli/metro');
@@ -141,16 +141,16 @@ test('both packages resolve the same cache roots the CLI does', async () => {
     expect(metro.cacheRoot('demo')).toBe(join(home, 'cfg-metro', 'demo'));
     expect(metro.cacheRoot('@scope/app')).toBe(join(home, 'cfg-metro', '-scope-app'));
 
-    process.env.STIM_CLI_BUILD_CACHE = join(home, 'elsewhere-build');
-    process.env.STIM_CLI_METRO_CACHE = join(home, 'elsewhere-metro');
+    process.env.STIM_BUILD_CACHE = join(home, 'elsewhere-build');
+    process.env.STIM_METRO_CACHE = join(home, 'elsewhere-metro');
     expect(provider.cacheRoot()).toBe(sharedBuildCache());
     expect(provider.cacheRoot()).toBe(join(home, 'elsewhere-build'));
     expect(metro.cacheRoot()).toBe(join(home, 'elsewhere-metro'));
     expect(metro.cacheRoot('demo')).toBe(sharedMetroCache('demo'));
     expect(metro.cacheRoot('demo')).toBe(join(home, 'elsewhere-metro', 'demo'));
 
-    delete process.env.STIM_CLI_BUILD_CACHE;
-    delete process.env.STIM_CLI_METRO_CACHE;
+    delete process.env.STIM_BUILD_CACHE;
+    delete process.env.STIM_METRO_CACHE;
     writeFileSync(
       join(home, 'config.json'),
       JSON.stringify({ caches: { buildCache: 'relative/nope', metroCache: 'relative/nope' } }),
@@ -160,8 +160,8 @@ test('both packages resolve the same cache roots the CLI does', async () => {
     expect(metro.cacheRoot('demo')).toBe(join(home, 'metro-cache', 'demo'));
   } finally {
     rmSync(home, { recursive: true, force: true });
-    delete process.env.STIM_CLI_HOME;
-    delete process.env.STIM_CLI_BUILD_CACHE;
-    delete process.env.STIM_CLI_METRO_CACHE;
+    delete process.env.STIM_HOME;
+    delete process.env.STIM_BUILD_CACHE;
+    delete process.env.STIM_METRO_CACHE;
   }
 });

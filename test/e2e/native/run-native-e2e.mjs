@@ -32,13 +32,11 @@ const ARTIFACT_EXT = PLATFORM === 'ios' ? '.app' : '.apk';
 const COMPILE_SIGNS =
   PLATFORM === 'ios' ? [/xcodebuild/i, /CompileC\b/i, /Ld /] : [/gradlew/i, /:app:compile/i, /Task :app:/i];
 
-const HOME_DIR = args.dryRun
-  ? '<dry-run>'
-  : args.home || mkdtempSync(join(tmpdir(), `stim-cli-native-${VARIANT}-home-`));
-const WORK_DIR = args.dryRun ? '<dry-run>' : mkdtempSync(join(tmpdir(), `stim-cli-native-${VARIANT}-`));
-const ENV = { ...process.env, STIM_CLI_HOME: HOME_DIR, CI: '1' };
-process.env.STIM_CLI_HOME = HOME_DIR;
-const WARM_CACHE = process.env.STIM_CLI_E2E_WARM_CACHE === '1';
+const HOME_DIR = args.dryRun ? '<dry-run>' : args.home || mkdtempSync(join(tmpdir(), `stim-native-${VARIANT}-home-`));
+const WORK_DIR = args.dryRun ? '<dry-run>' : mkdtempSync(join(tmpdir(), `stim-native-${VARIANT}-`));
+const ENV = { ...process.env, STIM_HOME: HOME_DIR, CI: '1' };
+process.env.STIM_HOME = HOME_DIR;
+const WARM_CACHE = process.env.STIM_E2E_WARM_CACHE === '1';
 
 const h = createHarness({ env: ENV, cliPath: CLI, label: `native-e2e ${VARIANT}` });
 const { cli, cliJson, sh, log, banner, die } = h;
@@ -186,7 +184,7 @@ function parseArgs(argv) {
 
 function plan() {
   log(`framework=${FRAMEWORK} platform=${PLATFORM} expectedMode=${EXPECTED_MODE} artifact=*${ARTIFACT_EXT}`);
-  log(`STIM_CLI_HOME=${HOME_DIR}`);
+  log(`STIM_HOME=${HOME_DIR}`);
   log(`work dir=${WORK_DIR}`);
   log(
     args.appDir

@@ -20,7 +20,7 @@ export interface RemoteProfile {
 }
 
 export function sessionNameFor(label: string): string {
-  return `stim-cli-${sanitizeDeviceLabel(label)}`;
+  return `stim-${sanitizeDeviceLabel(label)}`;
 }
 
 export function remoteProfilePath(root: string): string {

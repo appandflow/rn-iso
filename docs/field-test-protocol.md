@@ -1,6 +1,6 @@
-# stim-cli field-test protocol
+# Stim field-test protocol
 
-A handoff document for an AI agent testing stim-cli end to end on a real
+A handoff document for an AI agent testing Stim end to end on a real
 repository. The deliverable is equal parts "does it work" and a **friction
 log** — every rough edge, confusing output, wrong default, or extra step you
 needed, however small. You are the target user: an agent doing a dev loop.
@@ -11,7 +11,7 @@ Be adversarial. **A PASS you did not actually observe is worse than a FAIL.**
 Choose exactly one CLI under test and use the `stim` function for every command
 in this protocol.
 
-For a pre-tag release gate, run from the stim-cli repository root after the
+For a pre-tag release gate, run from the Stim repository root after the
 build step:
 
 ```bash
@@ -37,10 +37,10 @@ stim guide lifecycle
 stim guide settings
 ```
 
-If this machine ran an earlier build of stim-cli: BEFORE anything else, run
+If this machine ran an earlier build of Stim: BEFORE anything else, run
 `stim status` and `stim gc` (report-only) and read both skeptically — compatibility
 against state an earlier build wrote is not guaranteed. Old cache dirs
-(`~/.stim-cli-build-cache`, `~/.<name>-metro-cache`) are dead and ignored;
+(`~/.stim-build-cache`, `~/.<name>-metro-cache`) are dead and ignored;
 stale device records should surface in `gc`, not crash anything. Anything
 odd here is a HIGH-severity finding.
 
@@ -67,7 +67,7 @@ cold/warm split deliberately only when it is the behavior under test.
 - NEVER modify the target repo's main checkout. Worktrees only.
 - NEVER run `gc --delete` or `gc --delete --all` without the user's explicit
   approval in this session. Bare `gc` (report) is always fine.
-- Touch no simulator/emulator except `stim-cli-*` ones YOUR runs created.
+- Touch no simulator/emulator except `stim-*` ones YOUR runs created.
 - No raw `simctl recordVideo` (it can wedge a machine with a global lock);
   record only through your device tool's own mechanism, prefer screenshots.
 - No commits or pushes in the user's repos. Clean up everything you create.
@@ -86,13 +86,13 @@ Deviate when reality demands it — and log why as a friction.
 3. **Dev server.** `stim start --json`. Assert: correct mode
    (`expo-child` for Expo apps, `bare-inproc` for bare RN — a wrong detection
    here is CRITICAL), the global readable workspace directory created under
-   `~/.stim-cli/workspaces/<project>--<digest>/`, second
+   `~/.stim/workspaces/<project>--<digest>/`, second
    `start` a no-op, `status` shows the supervisor healthy.
 4. **Build.** `stim ios` (and/or `android`). Cold: watch the phase
    lines; on failure judge the extracted diagnostic against the raw log in
-   `~/.stim-cli/workspaces/<project>--<digest>/logs/build-*.ndjson` — was it enough to act on? Assert the
+   `~/.stim/workspaces/<project>--<digest>/logs/build-*.ndjson` — was it enough to act on? Assert the
    `--json` payload against the launch-status table below. `"unverified"` is
-   not automatically a failure, but it requires following stim-cli's own
+   not automatically a failure, but it requires following Stim's own
    remedy and recording what the device actually did.
 5. **Interact.** Drive the app with your device tool (snapshot, screenshot,
    a few taps), targeting YOUR sim by udid, never "booted". No real logins.
@@ -110,9 +110,9 @@ Deviate when reality demands it — and log why as a friction.
    `--force` and NO manual `rm`. A refusal you cannot resolve by following
    the message's own remedy is a HIGH finding.
 9. **Verify cleanup**, all five:
-   - `xcrun simctl list devices | grep stim-cli` → none of yours remain
+   - `xcrun simctl list devices | grep Stim` → none of yours remain
      (`emulator -list-avds` likewise on Android)
-   - `ps aux | grep -E 'stim-cli|supervisor'` → no supervisors or collectors
+   - `ps aux | grep -E 'Stim|supervisor'` → no supervisors or collectors
    - `stim status` → your workspaces gone from the registry
    - `git -C <repo> status --porcelain` and `git worktree list` → main
      checkout byte-identical to before you started (capture a baseline!)
@@ -145,7 +145,7 @@ a changed asset set refuses the swap and falls back to a full build.
 | `true`         | A bundle request from this workspace was proven, or a release process was observed alive.      | Pass.                                                                                              |
 | `"bundling"`   | This workspace's Metro port has positive, non-error evidence and the bundle is still building. | Pass for wiring; record that JS completion was not observed.                                       |
 | `"unverified"` | No positive launch evidence was observed.                                                      | Follow the emitted remedy and inspect the owned device; report both the value and the observed UI. |
-| `false`        | Reserved; stim-cli does not produce it today.                                                  | Treat its appearance as a contract regression.                                                     |
+| `false`        | Reserved; Stim does not produce it today.                                                      | Treat its appearance as a contract regression.                                                     |
 
 ## The friction log (the primary deliverable)
 
@@ -153,7 +153,7 @@ Number every finding. For each: **severity** (critical / high / med / low),
 the **verbatim evidence** (the exact output line, not a paraphrase), and a
 **one-line suggested fix**. Classify honestly:
 
-- CRITICAL: the documented loop cannot complete unassisted, or stim-cli
+- CRITICAL: the documented loop cannot complete unassisted, or Stim
   reported success for something that failed, or wrong-workspace
   cross-contamination of any kind.
 - HIGH: a wrong or unactionable error message; a query that hides real

@@ -69,11 +69,11 @@ output in the coordinator report.
    Calculate the iOS native fingerprint in the main checkout and both validation
    worktrees with the exact Stim candidate. All three fingerprints must match the
    prepared fingerprint from step 6. Also confirm that the benchmark
-   `STIM_CLI_HOME` contains a complete iOS artifact for that fingerprint. Remove
+   `STIM_HOME` contains a complete iOS artifact for that fingerprint. Remove
    both validation worktrees. A mismatch blocks timing.
 9. Run `stim stop`. Confirm that the main checkout is still clean.
 10. Record available disk space on every volume used by the checkout, Xcode,
-    CoreSimulator, the results root, and `STIM_CLI_HOME`. Record this preflight
+    CoreSimulator, the results root, and `STIM_HOME`. Record this preflight
     again immediately before each arm. Do not start an arm unless each volume
     has enough space for a native build and its retained evidence.
 
@@ -101,7 +101,7 @@ skill catalog and every canonical `SKILL.md` path. In each isolated config:
 - Disable plugins with `features.plugins = false`.
 - Add an `enabled = false` path rule for every discovered `SKILL.md`.
 - For the control arm, set `skills.include_instructions = false`.
-- For the Stim arm, copy the merged candidate's `stim-cli` skill into its
+- For the Stim arm, copy the merged candidate's `Stim` skill into its
   isolated home. Add a later `enabled = true` path rule for that copied
   `SKILL.md` file. The Stim skill must not reference Agent Device.
 - Enable the `agent-device` skill independently only when the run also measures
@@ -111,7 +111,7 @@ skill catalog and every canonical `SKILL.md` path. In each isolated config:
 Run `codex login status` against each isolated home before timing. Then run
 `codex debug prompt-input` with that home and retain the JSON. The control
 prompt input must contain no skills block. A launch-only Stim prompt must list
-exactly `stim-cli`. An evidence run can also list `agent-device` as an
+exactly `Stim`. An evidence run can also list `agent-device` as an
 independent skill. Any other result blocks the run.
 
 Launch both agents with the same explicit runtime flags. The approval and
@@ -141,7 +141,7 @@ The validated local run requires `danger-full-access`. The `workspace-write`
 sandbox blocked Git worktree metadata, loopback and process access, and
 CoreSimulator services. Get explicit coordinator approval for this local
 permission profile before dispatch. Do not export the benchmark-specific
-`STIM_CLI_HOME` to the control arm or mention its path in the control prompt.
+`STIM_HOME` to the control arm or mention its path in the control prompt.
 The permission profile does not enforce that separation, so audit the control
 transcript for access to that home.
 
@@ -156,7 +156,7 @@ but no skill appears in its prompt.
 
 Before the control arm, move the installed `stim` and `agent-device` command
 links and their global package directories into a coordinator-owned quarantine.
-Also move the `stim-cli` and `agent-device` skill directories, including any
+Also move the `Stim` and `agent-device` skill directories, including any
 skill symlinks. Use recoverable same-volume moves and install a cleanup trap
 that restores every path if the coordinator exits early. Do not delete the
 installations.
@@ -200,7 +200,7 @@ this arm at [DISPATCHED_AT]. Use that exact UTC timestamp as startedAt. Do not
 replace it with a timestamp that you record later. You are in the clean
 Trailhead main checkout. Do not modify the main checkout.
 
-For the launch-only profile, only the stim-cli skill is enabled. Read and use
+For the launch-only profile, only the Stim skill is enabled. Read and use
 that skill. Treat every other skill as disabled. For the visual-evidence
 profile, the agent-device skill is also enabled independently. Do not read or
 use it until the successful Stim launch finishes. Do not read or use any Expo

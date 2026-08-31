@@ -25,11 +25,11 @@ let shimDir: string;
 let running: ChildProcess[] = [];
 
 beforeEach(() => {
-  tmpHome = mkdtempSync(join(tmpdir(), 'stim-cli-test-'));
-  process.env.STIM_CLI_HOME = tmpHome;
-  root = mkdtempSync(join(tmpdir(), 'stim-cli-ws-'));
+  tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
+  process.env.STIM_HOME = tmpHome;
+  root = mkdtempSync(join(tmpdir(), 'stim-ws-'));
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'ws' }));
-  shimDir = mkdtempSync(join(tmpdir(), 'stim-cli-shim-'));
+  shimDir = mkdtempSync(join(tmpdir(), 'stim-shim-'));
   running = [];
 });
 
@@ -42,7 +42,7 @@ afterEach(() => {
   rmSync(tmpHome, { recursive: true, force: true });
   rmSync(root, { recursive: true, force: true });
   rmSync(shimDir, { recursive: true, force: true });
-  delete process.env.STIM_CLI_HOME;
+  delete process.env.STIM_HOME;
 });
 
 function writeShim(name: string, body: string) {
@@ -54,7 +54,7 @@ function writeShim(name: string, body: string) {
 
 function spawnCollector(args: string[], env: Record<string, string> = {}) {
   const child = spawn(process.execPath, [ENTRY, ...args], {
-    env: { ...process.env, PATH: `${shimDir}${delimiter}${process.env.PATH}`, STIM_CLI_HOME: tmpHome, ...env },
+    env: { ...process.env, PATH: `${shimDir}${delimiter}${process.env.PATH}`, STIM_HOME: tmpHome, ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   running.push(child);
@@ -448,7 +448,7 @@ describe('the android collector follows the app across a restart', () => {
     restartingShim();
     const child = spawnCollector(
       ['--platform', 'android', '--root', root, '--serial', 'emulator-5554', '--package', 'com.example.app'],
-      { STIM_CLI_PID_WATCH_MS: '100' },
+      { STIM_PID_WATCH_MS: '100' },
     );
     await until(() => deviceLog().some((r) => /before the restart/.test(r.msg || '')), { label: 'the first stream' });
 
@@ -484,7 +484,7 @@ describe('the android collector follows the app across a restart', () => {
     );
     const child = spawnCollector(
       ['--platform', 'android', '--root', root, '--serial', 'emulator-5554', '--package', 'com.example.app'],
-      { STIM_CLI_PID_WATCH_MS: '50' },
+      { STIM_PID_WATCH_MS: '50' },
     );
     await until(() => deviceLog().some((r) => /steady/.test(r.msg || '')), { label: 'the stream' });
     await new Promise((r) => setTimeout(r, 400));

@@ -66,9 +66,9 @@ export function ensureWorkspaceStorage(projectRoot: string): string {
       if (current.projectRoot === canonicalRoot) return dir;
     } catch {}
     const error = new Error(
-      `stim-cli workspace collision at ${dir}: its workspace.json does not belong to ${canonicalRoot}.`,
+      `Stim workspace collision at ${dir}: its workspace.json does not belong to ${canonicalRoot}.`,
     ) as Error & { code?: string };
-    error.code = 'STIM_CLI_WORKSPACE_COLLISION';
+    error.code = 'STIM_WORKSPACE_COLLISION';
     throw error;
   });
 }

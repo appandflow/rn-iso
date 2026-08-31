@@ -1,50 +1,32 @@
 # @stim-cli/expo-build-cache
 
-> Commands use `stim`. If it is not installed globally, replace `stim` with
-> `npx stim-cli`.
+A local Expo build-cache provider that shares `.app` and `.apk` artifacts across
+worktrees and direct Expo builds.
 
-A local Expo build cache provider. When no native input has changed, the CLI
-installs a cached `.app` / `.apk` instead of compiling — which is the difference
-between a JS-only change costing a simulator boot and costing a full native
-build.
-
-Local on purpose: a directory under `$HOME` shared by every worktree on the
-machine. No account, no network, and a second worktree building the same commit
-is a hit rather than a second five-minute build.
+If Stim is not installed globally, replace `stim` with `npx stim-cli`.
 
 ```bash
-npm i -D @stim-cli/expo-build-cache
+npm install --save-dev @stim-cli/expo-build-cache
 ```
 
-Point your Expo config at it. **Which key depends on the SDK, and the wrong one
-is a silent no-op rather than an error:**
+For current Expo SDK versions:
 
-```jsonc
-// SDK 54+
-{ "expo": { "buildCacheProvider": { "plugin": "@stim-cli/expo-build-cache" } } }
-
-// SDK 53 — reads only the experiments key and ignores the top-level one
-{ "expo": { "experiments": { "buildCacheProvider": { "plugin": "@stim-cli/expo-build-cache" } } } }
+```json
+{
+  "expo": {
+    "buildCacheProvider": {
+      "plugin": "@stim-cli/expo-build-cache"
+    }
+  }
+}
 ```
 
-Add a `.fingerprintignore` for anything that changes without changing the build.
-`ios/Podfile.lock` is the usual culprit: pod checksums can embed absolute paths,
-which makes the fingerprint differ per machine and the cache never hit.
+Expo SDK 53 reads this value under `expo.experiments.buildCacheProvider`.
 
-Watch for `[build-cache] hit` or `miss` in the output. A miss means you changed
-something native — or that you are the first workspace on this commit.
+The provider works without the `stim-cli` npm package. When Stim is available,
+the provider registers its cache so `stim gc` can report and trim it.
 
-### Housekeeping
+Set `STIM_BUILD_CACHE` to override the cache location.
 
-The cache registers itself with [`stim-cli`](https://www.npmjs.com/package/stim-cli)
-if it is installed, so it can be reported and trimmed:
-
-```bash
-stim gc                            # what it has grown to (reported on every run)
-stim gc --delete --older-than 30   # drop entries unused for 30 days
-```
-
-stim-cli is an optional peer. Without it the cache works exactly the same; it is
-just invisible to housekeeping.
-
-The location can be overridden by `STIM_CLI_BUILD_CACHE`, or machine-wide by `caches.buildCache` in `~/.stim-cli/config.json` (an absolute path; the env var wins). The CLI and this package resolve both identically, so they always share one store.
+See the [cache package documentation](https://appandflow.github.io/stim/docs/cache-packages)
+for current setup and cleanup guidance.

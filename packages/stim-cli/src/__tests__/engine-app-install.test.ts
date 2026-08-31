@@ -636,7 +636,7 @@ describe('verifyLaunch', () => {
   });
 
   test("reads the workspace's own metro.ndjson, half-written last line and all", async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'stim-cli-verify-'));
+    const dir = mkdtempSync(join(tmpdir(), 'stim-verify-'));
     try {
       const clock = fakeClock();
       writeFileSync(
@@ -739,7 +739,7 @@ describe('the debug_http_host script, run for real under sh', () => {
   const prefsPath = () => join(dir, 'shared_prefs', `${PKG}_preferences.xml`);
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'stim-cli-prefs-'));
+    dir = mkdtempSync(join(tmpdir(), 'stim-prefs-'));
   });
   afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
@@ -967,7 +967,7 @@ describe('installConflictKind', () => {
 });
 
 describe('installAndroidApp: the uninstall-and-retry, exactly once', () => {
-  const apkPath = '/tmp/stim-cli-apk-swap-1/app-production-release.apk';
+  const apkPath = '/tmp/stim-apk-swap-1/app-production-release.apk';
 
   function conflictingExec(text: string, { alsoFailRetry = false } = {}) {
     const calls: string[][] = [];

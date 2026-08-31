@@ -173,7 +173,7 @@ export function startAndroidLogcat({
 const PID_WATCH_MS = 3000;
 
 export function pidWatchInterval(): number {
-  const override = Number(process.env.STIM_CLI_PID_WATCH_MS);
+  const override = Number(process.env.STIM_PID_WATCH_MS);
   return Number.isFinite(override) && override > 0 ? override : PID_WATCH_MS;
 }
 

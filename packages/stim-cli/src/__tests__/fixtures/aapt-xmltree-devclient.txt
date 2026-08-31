@@ -1,5 +1,5 @@
 # Captured verbatim from `aapt dump xmltree <apk> AndroidManifest.xml` on a
-# real expo-dev-client debug APK (com.th3rdwave 7.0.7, built by stim-cli's own
+# real expo-dev-client debug APK (com.th3rdwave 7.0.7, built by Stim's own
 # gradle path and pulled out of the shared build cache), then TRIMMED to the
 # activities that matter: the launchable one, a third-party SDK's deep-link
 # interceptor, and expo-dev-launcher's own AuthActivity. Nothing else is

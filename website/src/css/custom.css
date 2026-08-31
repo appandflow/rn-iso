@@ -1,5 +1,5 @@
 /**
- * stim-cli site theme: a restrained developer-tool palette over Infima.
+ * Stim site theme: a restrained developer-tool palette over Infima.
  */
 
 :root {
@@ -12,6 +12,124 @@
   --ifm-color-primary-lightest: #93c5fd;
   --ifm-code-font-size: 90%;
   --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.1);
+}
+
+.stimHero {
+  padding: 5rem 1rem 4.5rem;
+  text-align: center;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(96, 165, 250, 0.22), transparent 42%),
+    linear-gradient(180deg, #101827 0%, #111827 100%);
+}
+
+.stimHeroLead {
+  max-width: 760px;
+  margin: 0 auto 2rem;
+  color: #dbeafe;
+  font-size: 1.15rem;
+  line-height: 1.7;
+}
+
+.stimQuickStart {
+  max-width: 760px;
+  margin: 0 auto;
+  text-align: left;
+}
+
+.stimHeroActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: center;
+  margin-top: 1.5rem;
+}
+
+.stimFeatures {
+  padding: 4rem 1rem;
+}
+
+.stimFeatureGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1.5rem;
+}
+
+.stimFeatureCard {
+  overflow: hidden;
+  padding: 1.5rem;
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 1.25rem;
+  background: var(--ifm-background-surface-color);
+}
+
+.stimFeatureCard h3 {
+  margin-top: 1.25rem;
+}
+
+.stimFeatureCard p {
+  margin-bottom: 0;
+  color: var(--ifm-color-emphasis-700);
+  line-height: 1.7;
+}
+
+.featureIllustration {
+  display: block;
+  width: 100%;
+  height: auto;
+  color: var(--ifm-color-primary);
+}
+
+.illustGrid,
+.illustMuted,
+.illustLine,
+.illustAccent {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.illustGrid {
+  stroke: var(--ifm-color-emphasis-200);
+  stroke-width: 1;
+}
+
+.illustMuted {
+  stroke: var(--ifm-color-emphasis-400);
+  stroke-width: 2;
+}
+
+.illustLine {
+  stroke: var(--ifm-color-emphasis-600);
+  stroke-width: 3;
+}
+
+.illustAccent {
+  stroke: currentColor;
+  stroke-width: 4;
+}
+
+.illustAccentSoft {
+  fill: color-mix(in srgb, var(--ifm-color-primary) 14%, transparent);
+}
+
+.illustPanel {
+  fill: var(--ifm-background-color);
+  stroke: var(--ifm-color-emphasis-300);
+  stroke-width: 2;
+}
+
+.illustDot {
+  fill: currentColor;
+}
+
+@media (max-width: 768px) {
+  .stimHero {
+    padding: 3.5rem 1rem 3rem;
+  }
+
+  .stimFeatureGrid {
+    grid-template-columns: 1fr;
+  }
 }
 
 [data-theme='dark'] {

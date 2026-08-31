@@ -38,16 +38,16 @@ function liveProjectDir(name: string) {
 }
 
 beforeEach(() => {
-  tmpHome = mkdtempSync(join(tmpdir(), 'stim-cli-test-'));
-  process.env.STIM_CLI_HOME = tmpHome;
+  tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
+  process.env.STIM_HOME = tmpHome;
 });
 
 afterEach(() => {
   rmSync(tmpHome, { recursive: true, force: true });
-  delete process.env.STIM_CLI_HOME;
+  delete process.env.STIM_HOME;
 });
 
-test('getConfigDir respects STIM_CLI_HOME', () => {
+test('getConfigDir respects STIM_HOME', () => {
   expect(getConfigDir()).toBe(tmpHome);
 });
 
@@ -145,7 +145,7 @@ test('concurrent processes each keep their record', async () => {
     keys.map(
       (key) =>
         new Promise<void>((resolve, reject) => {
-          execFile(process.execPath, [script, key], { env: { ...process.env, STIM_CLI_HOME: tmpHome } }, (err) =>
+          execFile(process.execPath, [script, key], { env: { ...process.env, STIM_HOME: tmpHome } }, (err) =>
             err ? reject(err) : resolve(),
           );
         }),
@@ -262,14 +262,14 @@ test('allConsolePortsAndSerials ignores entries from project paths that no longe
 test('allConsolePortsAndSerials keeps the claim of a project on an unmounted volume', () => {
   const unmounted = '/Volumes/NotPluggedIn/worktree';
   upsertProject(unmounted, { bundleId: 'com.x', androidPackage: 'com.x', isExpo: false });
-  setDevice(unmounted, 'android', { avdName: 'stim-cli-x', consolePort: 5554 });
+  setDevice(unmounted, 'android', { avdName: 'stim-x', consolePort: 5554 });
   const result = allConsolePortsAndSerials({ isMounted: () => false });
   expect(result.androidConsolePorts).toEqual([5554]);
 });
 
 test('allConsolePortsAndSerials frees the claim of a dead project on a mounted volume', () => {
   upsertProject('/definitely/gone', { bundleId: 'com.x', androidPackage: 'com.x', isExpo: false });
-  setDevice('/definitely/gone', 'android', { avdName: 'stim-cli-x', consolePort: 5554 });
+  setDevice('/definitely/gone', 'android', { avdName: 'stim-x', consolePort: 5554 });
   const result = allConsolePortsAndSerials({ isMounted: () => true });
   expect(result.androidConsolePorts).toEqual([]);
 });
@@ -366,14 +366,14 @@ test('getConcurrencyLimits reads config.json concurrency', () => {
 
 test('env overrides config, and 0/absent means no enforcement', () => {
   saveConfig({ version: 2, projects: {}, repos: {}, concurrency: { maxBuilds: 2, maxDevices: 3 } });
-  expect(getConcurrencyLimits({ env: { STIM_CLI_MAX_BUILDS: '5', STIM_CLI_MAX_DEVICES: '0' } })).toEqual({
+  expect(getConcurrencyLimits({ env: { STIM_MAX_BUILDS: '5', STIM_MAX_DEVICES: '0' } })).toEqual({
     maxBuilds: 5,
     maxDevices: 0,
   });
 });
 
 test('a negative or garbage value reads as unlimited', () => {
-  expect(getConcurrencyLimits({ env: { STIM_CLI_MAX_BUILDS: '-1', STIM_CLI_MAX_DEVICES: 'lots' } })).toEqual({
+  expect(getConcurrencyLimits({ env: { STIM_MAX_BUILDS: '-1', STIM_MAX_DEVICES: 'lots' } })).toEqual({
     maxBuilds: 0,
     maxDevices: 0,
   });

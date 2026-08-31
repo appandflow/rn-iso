@@ -33,7 +33,7 @@ test('detectIsExpo false when expo is not in dependencies', () => {
 });
 
 test('detectIsExpo trusts the ios script: react-native script wins even with expo dep', async () => {
-  const tmp = mkdtempSync(join((await import('os')).tmpdir(), 'stim-cli-detect-'));
+  const tmp = mkdtempSync(join((await import('os')).tmpdir(), 'stim-detect-'));
   try {
     writeFileSync(
       join(tmp, 'package.json'),
@@ -49,7 +49,7 @@ test('detectIsExpo trusts the ios script: react-native script wins even with exp
 });
 
 test('detectIsExpo trusts the ios script: expo run:ios wins', async () => {
-  const tmp = mkdtempSync(join((await import('os')).tmpdir(), 'stim-cli-detect-'));
+  const tmp = mkdtempSync(join((await import('os')).tmpdir(), 'stim-detect-'));
   try {
     writeFileSync(
       join(tmp, 'package.json'),
@@ -82,12 +82,12 @@ test('detectAndroidPackage falls back to android/app/build.gradle (namespace)', 
 
 let tmpHome: string;
 beforeEach(() => {
-  tmpHome = mkdtempSync(join(tmpdir(), 'stim-cli-resolve-'));
-  process.env.STIM_CLI_HOME = tmpHome;
+  tmpHome = mkdtempSync(join(tmpdir(), 'stim-resolve-'));
+  process.env.STIM_HOME = tmpHome;
 });
 afterEach(() => {
   rmSync(tmpHome, { recursive: true, force: true });
-  delete process.env.STIM_CLI_HOME;
+  delete process.env.STIM_HOME;
 });
 
 test('resolveRegisteredProject finds a project by absolute path', () => {

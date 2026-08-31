@@ -330,7 +330,7 @@ export async function waitForBuild({
           `without an artifact, and pid ${info.pid} is still alive. The lock is ${path}; ` +
           'remove that directory if that process is not really building.',
       ) as Error & { code?: string; lockPath?: string; holder?: BuildLockRecord };
-      err.code = 'STIM_CLI_BUILD_WAIT_TIMEOUT';
+      err.code = 'STIM_BUILD_WAIT_TIMEOUT';
       err.lockPath = path;
       err.holder = info;
       throw err;

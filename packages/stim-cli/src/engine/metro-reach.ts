@@ -2,7 +2,7 @@ export type TunnelMode = 'auto' | 'off' | 'expo' | 'cloudflared' | 'ngrok';
 
 export const TUNNEL_MODES: readonly TunnelMode[] = ['auto', 'off', 'expo', 'cloudflared', 'ngrok'];
 
-export const PUBLIC_METRO_ENV = 'STIM_CLI_METRO_PUBLIC_URL';
+export const PUBLIC_METRO_ENV = 'STIM_METRO_PUBLIC_URL';
 
 // Prefer ngrok because Cloudflare quick tunnels can take minutes to become routable.
 const MANAGED_PROVIDERS = ['ngrok', 'cloudflared'] as const;
@@ -61,7 +61,7 @@ export function planMetroReach({ mode, metroPort, publicUrl = null, isExpo, avai
   return {
     failed: `A remote device cannot reach this workspace's Metro on port ${metroPort}, and no tunnel is available to give it one.`,
     remedy:
-      `Install ${NAMED.ngrok} or ${NAMED.cloudflared} and stim-cli will manage the tunnel for you. ` +
+      `Install ${NAMED.ngrok} or ${NAMED.cloudflared} and Stim will manage the tunnel for you. ` +
       'If you already have one, set metro.publicUrl to its URL. ' +
       'If the device shares this machine (a local `agent-device proxy`), set metro.tunnel to "off".',
   };

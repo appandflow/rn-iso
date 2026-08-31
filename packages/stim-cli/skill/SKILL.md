@@ -1,11 +1,11 @@
 ---
-name: stim-cli
+name: stim
 description: The React Native / Expo CLI for AI agents. Use when an agent needs an isolated Metro server and simulator or emulator, must build and launch an app, inspect build or runtime errors, create a parallel worktree, or identify the correct device for UI interaction.
 ---
 
-# stim-cli
+# Stim
 
-Use stim-cli to run React Native and Expo apps without sharing a Metro port or
+Use Stim to run React Native and Expo apps without sharing a Metro port or
 device with another workspace. Run it without installing:
 
 ```bash
@@ -21,7 +21,7 @@ npm install --global stim-cli
 Do not change the installation mode unless the user asks. Later examples use
 `stim`. If it is not installed globally, replace `stim` with the `npx` form above.
 
-stim-cli requires Node 20.19.4 or later on Node 20, or Node 22.12.0 or
+Stim requires Node 20.19.4 or later on Node 20, or Node 22.12.0 or
 later. If `npx` returns E401 or E404 in a repo with a private registry, use:
 
 ```bash
@@ -74,7 +74,7 @@ stim worktree remove
 Follow these rules during the loop:
 
 - Run `start` before a debug `ios` or `android` build. If the build returns
-  `STIM_CLI_NO_METRO`, run `stim start` and retry.
+  `STIM_NO_METRO`, run `stim start` and retry.
 - Run `ios` or `android` again after a native input changes. A JavaScript-only
   change does not need another native build.
 - A cold native build can outlive a shell timeout. Run the same build command
@@ -98,8 +98,8 @@ Follow these rules during the loop:
 
 ## Ownership and deletion
 
-stim-cli operates only on devices it created. Owned devices use the
-`stim-cli-<label>` name. Never use stim-cli on physical or user-created devices.
+Stim operates only on devices it created. Owned devices use the
+`stim-<label>` name. Never use Stim on physical or user-created devices.
 
 Treat a refusal as an ownership or state mismatch. Read its code and remedy.
 Do not add `--force` as a first response.

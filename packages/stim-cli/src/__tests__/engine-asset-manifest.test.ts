@@ -21,7 +21,7 @@ const sha = (text: string) => createHash('sha256').update(text).digest('hex');
 let root: string;
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), 'stim-cli-assets-'));
+  root = mkdtempSync(join(tmpdir(), 'stim-assets-'));
 });
 
 afterEach(() => {

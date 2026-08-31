@@ -1,4 +1,4 @@
-# stim-cli v3 — the RN / Expo CLI for AI agents
+# Stim v3 — the RN / Expo CLI for AI agents
 
 Date: 2026-08-25
 Status: draft
@@ -14,7 +14,7 @@ terminal noise. An AI agent driving a build loop has close to the opposite
 needs — never prompt, print little, capture everything, expose state as data,
 and let long-running things run in the background where they can be polled.
 
-stim-cli v2 answered part of this by becoming a pure _broker_: it arbitrates the
+Stim v2 answered part of this by becoming a pure _broker_: it arbitrates the
 two genuinely contended resources on a machine (an owned simulator/emulator and
 a Metro port) and refuses to invoke project tooling. That was the right call
 against the alternative available at the time, which was reconstructing other
@@ -22,7 +22,7 @@ people's command lines. It leaves the agent to run the bundler and the build by
 hand, which is where most of the remaining friction and most of the token cost
 now live.
 
-v3 takes the other road: stim-cli reimplements the operations an agent needs —
+v3 takes the other road: Stim reimplements the operations an agent needs —
 `start`, `ios`, `android`, `logs` — with a deliberately small option surface,
 optimized end to end for an agent loop rather than a terminal.
 
@@ -32,7 +32,7 @@ The 2026-08-20 spec deleted `start` and `logs`, on this reasoning: _how to
 invoke a project's tooling is project-specific judgment, and encoding it
 centrally means perpetually chasing idiosyncrasies._ The evidence was concrete
 — on `member-app`, whose own start script is `react-native start
---client-logs`, stim-cli composed `react-native start --port 8082` and silently
+--client-logs`, Stim composed `react-native start --port 8082` and silently
 dropped the project's flag.
 
 That reasoning was correct about **reconstruction** and is not load-bearing
@@ -40,7 +40,7 @@ against **reimplementation**. v1 failed because it tried to infer and rebuild a
 command line that already existed elsewhere; any inference it made could be
 wrong, and silently. v3 infers nothing. It implements the operation directly
 with a fixed, small set of options, and a project needing something outside
-that set composes it in an npm script that wraps stim-cli, rather than stim-cli
+that set composes it in an npm script that wraps Stim, rather than Stim
 guessing at the project.
 
 The `--client-logs` example is the clearest illustration of why the option
@@ -85,7 +85,7 @@ The organizing rule:
 > **Runtime state and content-addressed artifacts are global.**
 
 ```
-~/.stim-cli/workspaces/<project>--<digest>/ # global workspace state
+~/.stim/workspaces/<project>--<digest>/ # global workspace state
   derived-data/                      # -derivedDataPath for THIS checkout
   gradle-build/                      # android build dirs, .cxx
   logs/
@@ -93,7 +93,7 @@ The organizing rule:
   supervisor.pid
   state.json                         # last build, fingerprint, cache result
 
-~/.stim-cli/                           # machine-wide state and caches
+~/.stim/                           # machine-wide state and caches
   config.json                        # the broker registry (unchanged from v2)
   metro-cache/                       # transform cache (exists today)
   build-cache/<platform>/<key>/      # .app/.apk by fingerprint (exists today)
@@ -104,7 +104,7 @@ The organizing rule:
 
 ### Why this deletes code
 
-stim-cli today carries `src/artifacts.js` (~350 lines) plus the unmounted-volume
+Stim today carries `src/artifacts.js` (~350 lines) plus the unmounted-volume
 guard recorded as item 8 in `CLAUDE.md`, and effectively all of it exists to
 answer one question: _which workspace owns this
 `~/Library/Developer/Xcode/DerivedData/<hash>`, and is that workspace actually
@@ -135,7 +135,7 @@ utilities move to `src/fs-util.js`, and the DerivedData half is removed.
   workspace's DerivedData, logs and pidfile into the new worktree — strictly
   worse than starting cold.
 - **The supervisor pidfile is workspace-local, but a record of it stays
-  global.** `~/.stim-cli/config.json` records that a workspace has a supervisor
+  global.** `~/.stim/config.json` records that a workspace has a supervisor
   at pid N, or deleting a worktree out from under a running supervisor orphans
   a Metro process nothing can find. Same shape as the existing device records,
   and it keeps the existing reapers working.
@@ -153,7 +153,7 @@ This interacts with the layout above and must be handled explicitly: **the
 default CAS path is inside DerivedData.** Redirecting DerivedData into the
 worktree would drag the CAS in with it, making it per-worktree and sharing
 nothing — defeating the only reason to enable it. v3 therefore pins
-`COMPILATION_CACHE_CAS_PATH` to `~/.stim-cli/compilation-cache/`. `doctor`
+`COMPILATION_CACHE_CAS_PATH` to `~/.stim/compilation-cache/`. `doctor`
 already flags this exact misconfiguration.
 
 ## Architecture
@@ -301,13 +301,13 @@ change, and the inspector proxy exposes the same events through
 ## Command surface
 
 ```
-stim-cli init | doctor
-stim-cli worktree create | remove
-stim-cli start | stop
-stim-cli ios | android
-stim-cli logs [--source --level --since --grep --tail --follow --errors]
-stim-cli status [--all]
-stim-cli gc [--delete] [--older-than <days>]
+stim init | doctor
+stim worktree create | remove
+stim start | stop
+stim ios | android
+stim logs [--source --level --since --grep --tail --follow --errors]
+stim status [--all]
+stim gc [--delete] [--older-than <days>]
 ```
 
 Eleven entry points against v2's twenty-two. Two removals are consolidations
@@ -345,7 +345,7 @@ ensure owned device booted
 
 Per the metro handoff spec, these **never start the bundler**. But if no
 healthy Metro holds the reserved port, `ios` fails immediately with
-`STIM_CLI_NO_METRO` rather than spending four minutes producing an app that
+`STIM_NO_METRO` rather than spending four minutes producing an app that
 cannot load a bundle; `--no-metro-check` overrides. Failing at second zero is
 worth more to an agent loop than tolerance here.
 
@@ -411,7 +411,7 @@ since `git worktree list` reports the main checkout as entry zero, which is why
 
 ### `status`, and why there is no `worktree list`
 
-v2 shipped both, and `worktree list`'s own description reads "`stim-cli status`
+v2 shipped both, and `worktree list`'s own description reads "`stim status`
 shows the same worktrees WITH their environments -- prefer it." A command whose
 purpose is to redirect to another command does not survive into v3. `status`
 already reports unprovisioned worktrees (`unprovisionedWorktrees` in
@@ -430,7 +430,7 @@ under a `cache` verb.
 So `gc` survives, narrowed to what is still real:
 
 - **`gc`** reports, and is always safe: dead project entries, orphaned owned
-  devices (`findOrphanedDevices`), and the shared caches under `~/.stim-cli/`
+  devices (`findOrphanedDevices`), and the shared caches under `~/.stim/`
   with their sizes and age distribution.
 - **`gc --delete [--older-than <days>]`** acts. `--older-than` trims cache
   entries by age; caches that index their own data — the LLVM CAS — are
@@ -467,15 +467,15 @@ path every command has to justify itself against.
 ### Once per repo, not per ticket
 
 ```
-$ stim-cli doctor
+$ stim doctor
   compilation caching   OFF          costs ~4m per cold native build
   metro cache           per-project  each worktree re-transforms the graph
   build cache provider  absent
   server adapter        expo 54.0.1 (child process)
 
-$ stim-cli init
+$ stim init
   wrote  metro.config.js       reporter + sharedCacheStores
-  wrote  ios/Podfile           COMPILATION_CACHE_ENABLE_CACHING, CAS -> ~/.stim-cli
+  wrote  ios/Podfile           COMPILATION_CACHE_ENABLE_CACHING, CAS -> ~/.stim
 ```
 
 `doctor` is the read-only half and `init` the writing half of one question:
@@ -485,7 +485,7 @@ must be able to _inspect_ a repo it does not own without modifying it.
 ### The ticket
 
 ```
-$ cd "$(stim-cli worktree create app-412)"
+$ cd "$(stim worktree create app-412)"
 ```
 
 Isolation, so this ticket cannot collide with whatever else is on the machine.
@@ -494,10 +494,10 @@ stdout is the path and nothing else — the `WorktreeCreate` hook contract from
 `ios/Pods` instead of reinstalling them.
 
 ```
-$ stim-cli start
+$ stim start
   port       8082 (reserved)
   supervisor pid 41233
-  logs       ~/.stim-cli/workspaces/app--<digest>/logs/
+  logs       ~/.stim/workspaces/app--<digest>/logs/
 ```
 
 Reserves a collision-free port, spawns the detached supervisor, waits until the
@@ -506,8 +506,8 @@ The agent gets its shell back — no backgrounding idiom, no `sleep`, no poll
 loop, and no chance of building against another worktree's bundler.
 
 ```
-$ stim-cli ios
-  device      stim-cli-app-412 (BF2A..) booted
+$ stim ios
+  device      stim-app-412 (BF2A..) booted
   fingerprint a3f9b1.. hit
   install     from cache (3.1s)
   launch      com.example.app
@@ -518,7 +518,7 @@ The fingerprint is unchanged from a build another workspace already did, so
 workspace on a commit costs a simulator boot, not four minutes of xcodebuild.
 
 ```
-$ stim-cli logs --errors --json
+$ stim logs --errors --json
 {"ts":"..","src":"client","level":"fatal",
  "message":"TypeError: Cannot read property 'id' of undefined",
  "stack":[{"file":"src/screens/Profile.tsx","line":142,"fn":"onSave"}]}
@@ -530,11 +530,11 @@ client logs and bundler logs come from different places. **This is the command
 the whole design exists to make possible** — everything upstream is
 infrastructure for it.
 
-The agent edits `Profile.tsx`. Fast Refresh applies it; no stim-cli command is
-involved, because editing JS is not an stim-cli concern.
+The agent edits `Profile.tsx`. Fast Refresh applies it; no Stim command is
+involved, because editing JS is not a Stim concern.
 
 ```
-$ stim-cli logs --since 30s --level error
+$ stim logs --since 30s --level error
   (no matching records)
 ```
 
@@ -543,8 +543,8 @@ Empty is the pass condition. Note it exits rather than streaming — principle 7
 ### Teardown
 
 ```
-$ stim-cli stop                           # supervisor down, sim shut down, port freed
-$ stim-cli worktree remove                # done with the branch entirely
+$ stim stop                           # supervisor down, sim shut down, port freed
+$ stim worktree remove                # done with the branch entirely
 ```
 
 ### The other commands, and what invokes them
@@ -552,35 +552,35 @@ $ stim-cli worktree remove                # done with the branch entirely
 Every remaining entry point earns its place on a path this happy sequence never
 touches:
 
-| Command                                | Invoked when                                                                                                                                                                                                                                            |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `stim-cli status`                      | Session start, to orient: what is already running on this machine, which ports and devices are taken, is anything wedged. Also the answer to "the build is slow" — it reports RAM over-commitment and tight disk, the two causes nothing else surfaces. |
-| `stim-cli status --all`                | Several agents share the Mac and one needs to know whether it is the fourth environment on a 16 GB box.                                                                                                                                                 |
-| `stim-cli android`                     | The same ticket on the other platform, or a bug that only reproduces there.                                                                                                                                                                             |
-| `stim-cli logs --source device`        | A native crash that never reached JS, so `--errors` on the client stream is empty but `logcat` / `simctl log stream` is not.                                                                                                                            |
-| `stim-cli logs --follow`               | Watching a manual reproduction in real time rather than querying after.                                                                                                                                                                                 |
-| `stim-cli gc`                          | Disk is filling, or a machine has accumulated environments from deleted checkouts. Reports dead entries, orphaned devices and cache sizes.                                                                                                              |
-| `stim-cli gc --delete --older-than 14` | Reclaim without destroying the working set. Emptying costs every project on the machine its next build; trimming costs only what nothing has used.                                                                                                      |
-| `stim-cli stop`                        | Reclaim ~1.5 GB from a branch you are not finished with, or release the main checkout, which `worktree remove` cannot act on.                                                                                                                           |
-| `stim-cli doctor`                      | After an SDK upgrade, or when builds are unexpectedly slow — it names the cause instead of leaving the agent to guess.                                                                                                                                  |
+| Command                            | Invoked when                                                                                                                                                                                                                                            |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `stim status`                      | Session start, to orient: what is already running on this machine, which ports and devices are taken, is anything wedged. Also the answer to "the build is slow" — it reports RAM over-commitment and tight disk, the two causes nothing else surfaces. |
+| `stim status --all`                | Several agents share the Mac and one needs to know whether it is the fourth environment on a 16 GB box.                                                                                                                                                 |
+| `stim android`                     | The same ticket on the other platform, or a bug that only reproduces there.                                                                                                                                                                             |
+| `stim logs --source device`        | A native crash that never reached JS, so `--errors` on the client stream is empty but `logcat` / `simctl log stream` is not.                                                                                                                            |
+| `stim logs --follow`               | Watching a manual reproduction in real time rather than querying after.                                                                                                                                                                                 |
+| `stim gc`                          | Disk is filling, or a machine has accumulated environments from deleted checkouts. Reports dead entries, orphaned devices and cache sizes.                                                                                                              |
+| `stim gc --delete --older-than 14` | Reclaim without destroying the working set. Emptying costs every project on the machine its next build; trimming costs only what nothing has used.                                                                                                      |
+| `stim stop`                        | Reclaim ~1.5 GB from a branch you are not finished with, or release the main checkout, which `worktree remove` cannot act on.                                                                                                                           |
+| `stim doctor`                      | After an SDK upgrade, or when builds are unexpectedly slow — it names the cause instead of leaving the agent to guess.                                                                                                                                  |
 
 ### The failure paths, which are where the design earns its keep
 
 ```
-$ stim-cli ios                                   # supervisor never came up
-  error  STIM_CLI_NO_METRO: no Metro server holds reserved port 8082.
-  remedy Run `stim-cli start` first, or pass --no-metro-check.
+$ stim ios                                   # supervisor never came up
+  error  STIM_NO_METRO: no Metro server holds reserved port 8082.
+  remedy Run `stim start` first, or pass --no-metro-check.
 ```
 
 Two seconds, not four minutes followed by an app that cannot load a bundle.
 
 ```
-$ stim-cli ios                                   # native change, cache miss
+$ stim ios                                   # native change, cache miss
   fingerprint 7c02de.. miss
   pods        out of sync with Podfile.lock -> installed (18s)
   build       FAILED after 2m41s
   error       ios/App/AppDelegate.swift:42:8: cannot find 'Foo' in scope
-  log         ~/.stim-cli/workspaces/app--<digest>/logs/build-ios.ndjson
+  log         ~/.stim/workspaces/app--<digest>/logs/build-ios.ndjson
 ```
 
 Six lines and the actual compiler diagnostic. `expo run:ios` emits several
@@ -592,9 +592,9 @@ rarely, and never as tokens.
 
 ```json
 {
-  "code": "STIM_CLI_NO_METRO",
+  "code": "STIM_NO_METRO",
   "message": "No Metro server holds reserved port 8082.",
-  "remedy": "Run `stim-cli start` first, or pass --no-metro-check."
+  "remedy": "Run `stim start` first, or pass --no-metro-check."
 }
 ```
 
@@ -664,7 +664,7 @@ usable until the build path that replaces it actually works.
 - Pure decision logic (fingerprint keying, staleness detection, diagnostic
   extraction, log query filtering) unit-tested under `node --test`, following
   the existing split between pure functions and thin I/O wrappers.
-- `STIM_CLI_HOME` continues to redirect all state for tests.
+- `STIM_HOME` continues to redirect all state for tests.
 - A fixture matrix of real projects — bare RN, Expo CNG, Expo with committed
   native dirs, a monorepo — exercised end to end against real toolchains, since
   item 9 applies to every new engine module.

@@ -19,7 +19,7 @@ type SpawnCall = { cmd: string; args: string[]; opts: Record<string, unknown> };
 let root: string;
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), 'stim-cli-prebuild-'));
+  root = mkdtempSync(join(tmpdir(), 'stim-prebuild-'));
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app', dependencies: { expo: '52.0.0' } }));
 });
 

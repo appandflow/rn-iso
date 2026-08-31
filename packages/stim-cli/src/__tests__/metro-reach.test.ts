@@ -25,7 +25,7 @@ describe('an address the operator supplied', () => {
     expect(plan).toEqual({ origin: 'https://abc.trycloudflare.com', gate: true });
   });
 
-  test('is GATED, because stim-cli did not create it', () => {
+  test('is GATED, because Stim did not create it', () => {
     const plan = planMetroReach({ ...BARE, mode: 'auto', publicUrl: 'https://abc.example' });
     expect('gate' in plan && plan.gate).toBe(true);
   });

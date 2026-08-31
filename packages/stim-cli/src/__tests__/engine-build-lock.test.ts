@@ -22,15 +22,15 @@ let home: string;
 let root: string;
 
 beforeEach(() => {
-  home = mkdtempSync(join(tmpdir(), 'stim-cli-home-'));
-  process.env.STIM_CLI_HOME = home;
-  root = mkdtempSync(join(tmpdir(), 'stim-cli-ws-'));
+  home = mkdtempSync(join(tmpdir(), 'stim-home-'));
+  process.env.STIM_HOME = home;
+  root = mkdtempSync(join(tmpdir(), 'stim-ws-'));
 });
 
 afterEach(() => {
   rmSync(home, { recursive: true, force: true });
   rmSync(root, { recursive: true, force: true });
-  delete process.env.STIM_CLI_HOME;
+  delete process.env.STIM_HOME;
 });
 
 const spec = (over = {}) => ({ platform: PLATFORM, key: KEY, root, logFile: join(root, 'build.ndjson'), ...over });
@@ -41,8 +41,8 @@ describe('where the lock lives', () => {
     expect(buildLockPath(PLATFORM, KEY)).toBe(join(home, 'build-locks', `ios-${KEY}.lock`));
   });
 
-  test('follows STIM_CLI_HOME', () => {
-    process.env.STIM_CLI_HOME = join(home, 'elsewhere');
+  test('follows STIM_HOME', () => {
+    process.env.STIM_HOME = join(home, 'elsewhere');
     expect(buildLocksDir()).toBe(join(home, 'elsewhere', 'build-locks'));
   });
 
@@ -359,7 +359,7 @@ describe('waitForBuild', () => {
       err = e as Error & { code?: string; lockPath?: string };
     }
     expect(err).toBeInstanceOf(Error);
-    expect(err?.code).toBe('STIM_CLI_BUILD_WAIT_TIMEOUT');
+    expect(err?.code).toBe('STIM_BUILD_WAIT_TIMEOUT');
     expect(err?.lockPath).toBe(path);
     expect(err?.message).toMatch(new RegExp(path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   });
@@ -371,10 +371,10 @@ describe('waitingLine', () => {
       projectRoot: '/w/app-412',
       pid: 41233,
       elapsedMs: 8 * 60 * 1000,
-      logFile: '/w/app-412/.stim-cli/logs/build-ios.ndjson',
+      logFile: '/w/app-412/.stim/logs/build-ios.ndjson',
     });
     expect(line).toBe(
-      'build       waiting on /w/app-412 (pid 41233, 8m elapsed) -- tail /w/app-412/.stim-cli/logs/build-ios.ndjson',
+      'build       waiting on /w/app-412 (pid 41233, 8m elapsed) -- tail /w/app-412/.stim/logs/build-ios.ndjson',
     );
   });
 
@@ -404,7 +404,7 @@ describe('a real race between real processes', () => {
         process.execPath,
         [path, ...args],
         {
-          env: { ...process.env, STIM_CLI_HOME: home, ...env },
+          env: { ...process.env, STIM_HOME: home, ...env },
           timeout: 60000,
         },
         (err, stdout, stderr) => {
@@ -542,14 +542,14 @@ describe('takeoverLine', () => {
     const line = takeoverLine({
       projectRoot: '/w/other',
       pid: 4242,
-      logFile: '/w/other/.stim-cli/logs/build-android.ndjson',
+      logFile: '/w/other/.stim/logs/build-android.ndjson',
       startedAt: new Date(1_000_000).toISOString(),
       now: () => 1_000_000 + 120_000,
     });
     expect(line).toMatch(/RETRY: \/w\/other's build of this fingerprint \(pid 4242\) FAILED without an artifact/);
     expect(line).toMatch(/it started 2m ago/);
     expect(line).toMatch(/SAME inputs/);
-    expect(line).toMatch(/read \/w\/other\/\.stim-cli\/logs\/build-android\.ndjson/);
+    expect(line).toMatch(/read \/w\/other\/\.stim\/logs\/build-android\.ndjson/);
   });
 
   test('an unidentifiable holder still produces one usable line', () => {

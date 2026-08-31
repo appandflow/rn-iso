@@ -28,8 +28,8 @@ const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => set
 
 export function workspaceProcessLockError(err: unknown): 'refused' | 'timeout' | null {
   const code = (err as Error & { code?: string })?.code;
-  if (code === 'STIM_CLI_LOCK_REFUSED') return 'refused';
-  if (code === 'STIM_CLI_LOCK_TIMEOUT') return 'timeout';
+  if (code === 'STIM_LOCK_REFUSED') return 'refused';
+  if (code === 'STIM_LOCK_TIMEOUT') return 'timeout';
   return null;
 }
 
@@ -80,7 +80,7 @@ export async function withWorkspaceProcessLock<T>(
     external = false,
   }: WorkspaceProcessLockOptions = {},
 ): Promise<T> {
-  const path = external ? join(root, `${name}.lock`) : join(root, '.stim-cli', `${name}.lock`);
+  const path = external ? join(root, `${name}.lock`) : join(root, '.stim', `${name}.lock`);
   const deadline = now() + waitMs;
   let owned: LockRecord | null = null;
 
@@ -105,7 +105,7 @@ export async function withWorkspaceProcessLock<T>(
     }
     if (holder?.purpose && rejectOwnerPurposes.includes(holder.purpose)) {
       const error = new Error(`The ${name} lock at ${path} is held for ${holder.purpose}.`);
-      (error as Error & { code?: string }).code = 'STIM_CLI_LOCK_REFUSED';
+      (error as Error & { code?: string }).code = 'STIM_LOCK_REFUSED';
       throw error;
     }
     if (!holder) {
@@ -118,7 +118,7 @@ export async function withWorkspaceProcessLock<T>(
     }
     if (now() >= deadline) {
       const error = new Error(`Timed out waiting for the ${name} lock at ${path}.`);
-      (error as Error & { code?: string }).code = 'STIM_CLI_LOCK_TIMEOUT';
+      (error as Error & { code?: string }).code = 'STIM_LOCK_TIMEOUT';
       throw error;
     }
     await sleep(POLL_MS);

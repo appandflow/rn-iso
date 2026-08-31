@@ -361,7 +361,7 @@ export function carryUncommittedChanges({ root, target }: { root: string; target
     .map((line) => line.trim())
     .filter((line) => line !== '');
 
-  const staging = mkdtempSync(join(tmpdir(), 'stim-cli-carry-'));
+  const staging = mkdtempSync(join(tmpdir(), 'stim-carry-'));
   const patchFile = join(staging, 'uncommitted.patch');
   try {
     writeFileSync(patchFile, patch + (/^GIT binary patch$/m.test(patch) ? '\n\n' : '\n'));

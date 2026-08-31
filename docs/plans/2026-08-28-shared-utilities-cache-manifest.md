@@ -4,7 +4,7 @@
 
 **Goal:** Remove duplicated output and process helpers, make iOS and Android output consistent, and serialize cache manifest updates without adding dependencies.
 
-**Architecture:** Keep presentation helpers and process helpers inside the CLI. Put the filesystem lock and cache manifest transaction in `@stim-cli/core`, because cache packages must work without `stim-cli` installed. Keep command, Metro, build-engine, and CLI cache validation behavior in their current domains.
+**Architecture:** Keep presentation helpers and process helpers inside the CLI. Put the filesystem lock and cache manifest transaction in `@stim-cli/core`, because cache packages must work without `Stim` installed. Keep command, Metro, build-engine, and CLI cache validation behavior in their current domains.
 
 **Tech Stack:** TypeScript, Node.js 22 built-ins, Vitest, pnpm workspaces, tsdown
 
@@ -215,7 +215,7 @@ git -c commit.gpgsign=false commit -m "fix: serialize cache manifest updates"
 
 **Step 1: Write a failing CLI concurrency test**
 
-Add a test that starts one core cache registration and one CLI registration against the same temporary `STIM_CLI_HOME`. Verify that both distinct entries remain. The test must execute real child processes.
+Add a test that starts one core cache registration and one CLI registration against the same temporary `STIM_HOME`. Verify that both distinct entries remain. The test must execute real child processes.
 
 **Step 2: Run the CLI manifest test and verify RED**
 

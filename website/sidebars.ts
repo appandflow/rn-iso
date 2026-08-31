@@ -4,18 +4,17 @@ const sidebars: SidebarsConfig = {
   docs: [
     'why',
     'getting-started',
-    'commands',
     {
       type: 'category',
-      label: 'Concepts',
+      label: 'Understand Stim',
       collapsed: false,
-      items: ['owned-devices', 'dev-server-and-logs', 'build-caches', 'worktrees'],
+      items: ['build-caches', 'worktrees', 'owned-devices', 'dev-server-and-logs'],
     },
     {
       type: 'category',
       label: 'Reference',
       collapsed: false,
-      items: ['settings', 'cache-packages', 'agent-skills', 'requirements'],
+      items: ['commands', 'settings', 'requirements', 'agent-skills', 'cache-packages'],
     },
     'changelog',
   ],

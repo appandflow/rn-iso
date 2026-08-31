@@ -1,11 +1,11 @@
 # End-to-end tests and CI
 
 Per-workspace runtime state and logs live outside the project tree under
-`$STIM_CLI_HOME/workspaces/<readable-project-slug>--<16hex-path-digest>/` (by
-default `~/.stim-cli/workspaces/...`). stim-cli does not create a project
+`$STIM_HOME/workspaces/<readable-project-slug>--<16hex-path-digest>/` (by
+default `~/.stim/workspaces/...`). Stim does not create a project
 `.gitignore` entry for this state.
 
-stim-cli has three test layers. The unit suite (`pnpm test`, Vitest, more than
+Stim has three test layers. The unit suite (`pnpm test`, Vitest, more than
 2,000 cases across four packages) is the bulk of the coverage. On top of it sit
 two end-to-end layers that exercise the _published loop_ rather than individual
 functions. The separately built runtime-floor job loads every published ESM
@@ -25,7 +25,7 @@ later. CI runs the suite on Node 22 and 24; the separate runtime-floor job loads
 every published entry point under exactly Node 20.19.4. Git is also required.
 The suite needs **no Xcode or Android SDK**.
 It drives the real CLI and the real cache library end to end under a throwaway
-`STIM_CLI_HOME` and a throwaway temp repo, so it never touches the machine's real
+`STIM_HOME` and a throwaway temp repo, so it never touches the machine's real
 caches, registry, or checkouts. What it proves:
 
 1. `stim worktree create` makes two real git worktrees at one commit and keeps
@@ -88,7 +88,7 @@ node test/e2e/native/run-native-e2e.mjs --framework bare --platform android --dr
 ```
 
 The fixture-creation commands are version-sensitive; each is overridable with an
-env var (`STIM_CLI_E2E_BARE_INIT`, `STIM_CLI_E2E_EXPO_INIT`) so a runner can adjust
+env var (`STIM_E2E_BARE_INIT`, `STIM_E2E_EXPO_INIT`) so a runner can adjust
 them without touching assertion logic.
 
 ### The cache suite
@@ -104,7 +104,7 @@ refuses to take one as evidence of another:
 
 - **ENGAGED** -- the flag / setting / record is really there, read back off the
   REAL argv or the REAL log, never re-derived from the suite's idea of what
-  stim-cli should have done.
+  Stim should have done.
 - **STORES** -- the cache directory actually GREW. A file count before and a
   file count after. **This is the one that matters**: an engaged cache that
   stores nothing looks identical to a working one from every other angle, and
@@ -113,16 +113,16 @@ refuses to take one as evidence of another:
 
 **The eight checks.**
 
-| id                  | what it proves                                                                              | how                                                                                                                                                                                                                                                                                                                                                                                       |
-| ------------------- | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `zero-config`       | stim-cli writes no runtime state into the repo; global workspace state needs no ignore rule | `git status --porcelain` before and after; a change to `metro.config.js` / `Podfile` / `gradle.properties` is a CRITICAL failure; every worktree is removed WITHOUT `--force` and no project `.gitignore` mutation is expected                                                                                                                                                            |
-| `metro-store`       | the shared transform store is engaged per dev-server mode, stores, and is reused            | the `cache_store_added` record in the global workspace `logs/metro.ndjson` (Expo SDK 54+: the config adapter's confirmation from inside the child; bare: the in-process append), the absence of a "could not share" warning, one store root for both workspaces, then a file count around each workspace's build+launch                                                                   |
-| `xcode-cas`         | Xcode 26 compilation caching                                                                | the five build settings read verbatim off the `build_start` record in `build-ios.ndjson`, CAS directory growth across the cold compile, and near-zero growth when a never-compiled workspace compiles the same sources                                                                                                                                                                    |
-| `gradle-cache`      | the Gradle build cache                                                                      | `--build-cache` read off the `build_start` record in `build-android.ndjson` (added in #78 so this need not race `ps`), growth of `<gradle user home>/caches/build-cache-1`, and `FROM-CACHE` tasks in a second worktree forced to run gradle with `stim android --no-build-cache`                                                                                                         |
-| `fingerprint-cache` | the entry is complete and under the right key                                               | the entry holds the artifact AND `fingerprint-sources.json` (and, for an Android release entry, `assets-manifest.json`); a second run in the SAME tree must HIT what the first stored, which is what proves the entry landed under the POST-mutation key that prebuild and `pod install` shift it to                                                                                      |
-| `pods-reuse`        | carried Pods skip `pod install`                                                             | the racing worktrees are cloned from wt1 with `--carry-ignored`, so they carry its `ios/` and its installed Pods; the one that takes the BUILD path must print no `pods` phase line at all                                                                                                                                                                                                |
-| `single-flight`     | two workspaces racing one uncached fingerprint compile once                                 | both racers point at an EMPTY build-cache root (so the fingerprint is identical to the one already stored and misses only because that root is empty, which keeps the check about the lock and nothing else) while the build lock stays shared through `STIM_CLI_HOME`; exactly one compiles, the other reports `waited ... -> installed from cache` with `waitedForBuild` in its payload |
-| `gc-view`           | `gc` can see every cache                                                                    | a bare `gc` must list each live cache directory with a size under "Shared build caches (N) - alive, not garbage"                                                                                                                                                                                                                                                                          |
+| id                  | what it proves                                                                          | how                                                                                                                                                                                                                                                                                                                                                                                   |
+| ------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `zero-config`       | Stim writes no runtime state into the repo; global workspace state needs no ignore rule | `git status --porcelain` before and after; a change to `metro.config.js` / `Podfile` / `gradle.properties` is a CRITICAL failure; every worktree is removed WITHOUT `--force` and no project `.gitignore` mutation is expected                                                                                                                                                        |
+| `metro-store`       | the shared transform store is engaged per dev-server mode, stores, and is reused        | the `cache_store_added` record in the global workspace `logs/metro.ndjson` (Expo SDK 54+: the config adapter's confirmation from inside the child; bare: the in-process append), the absence of a "could not share" warning, one store root for both workspaces, then a file count around each workspace's build+launch                                                               |
+| `xcode-cas`         | Xcode 26 compilation caching                                                            | the five build settings read verbatim off the `build_start` record in `build-ios.ndjson`, CAS directory growth across the cold compile, and near-zero growth when a never-compiled workspace compiles the same sources                                                                                                                                                                |
+| `gradle-cache`      | the Gradle build cache                                                                  | `--build-cache` read off the `build_start` record in `build-android.ndjson` (added in #78 so this need not race `ps`), growth of `<gradle user home>/caches/build-cache-1`, and `FROM-CACHE` tasks in a second worktree forced to run gradle with `stim android --no-build-cache`                                                                                                     |
+| `fingerprint-cache` | the entry is complete and under the right key                                           | the entry holds the artifact AND `fingerprint-sources.json` (and, for an Android release entry, `assets-manifest.json`); a second run in the SAME tree must HIT what the first stored, which is what proves the entry landed under the POST-mutation key that prebuild and `pod install` shift it to                                                                                  |
+| `pods-reuse`        | carried Pods skip `pod install`                                                         | the racing worktrees are cloned from wt1 with `--carry-ignored`, so they carry its `ios/` and its installed Pods; the one that takes the BUILD path must print no `pods` phase line at all                                                                                                                                                                                            |
+| `single-flight`     | two workspaces racing one uncached fingerprint compile once                             | both racers point at an EMPTY build-cache root (so the fingerprint is identical to the one already stored and misses only because that root is empty, which keeps the check about the lock and nothing else) while the build lock stays shared through `STIM_HOME`; exactly one compiles, the other reports `waited ... -> installed from cache` with `waitedForBuild` in its payload |
+| `gc-view`           | `gc` can see every cache                                                                | a bare `gc` must list each live cache directory with a size under "Shared build caches (N) - alive, not garbage"                                                                                                                                                                                                                                                                      |
 
 **Honesty rules.** Every assertion prints the evidence it checked -- numbers, and
 quoted lines. A check that cannot run SKIPS with the reason spelled out ("no
@@ -140,9 +140,9 @@ Each `checks[]` entry carries its `id`, `status`, `reason` and the full
 log.
 
 **Cache roots are forced, not inherited.** Unlike the loop suite -- which lets
-CI persist `STIM_CLI_BUILD_CACHE` across runs on purpose, and has
-`STIM_CLI_E2E_WARM_CACHE` to relax its cold-miss assertion -- the cache suite
-overrides `STIM_CLI_BUILD_CACHE` and `STIM_CLI_METRO_CACHE` into its own throwaway
+CI persist `STIM_BUILD_CACHE` across runs on purpose, and has
+`STIM_E2E_WARM_CACHE` to relax its cold-miss assertion -- the cache suite
+overrides `STIM_BUILD_CACHE` and `STIM_METRO_CACHE` into its own throwaway
 home. Every number it reports is a before/after around a COLD compile, and an
 inherited warm cache turns "the CAS gained 4,000 files" into a measurement of
 nothing.
@@ -212,8 +212,8 @@ Two workflows under `.github/workflows/`:
   per-check evidence is worth reading. iOS runs on `macos-latest` (Xcode via
   `maxim-lobanov/setup-xcode`); Android runs on a Linux+KVM host via
   `reactivecircus/android-emulator-runner`. Each platform's `{bare, expo}` are a
-  matrix, so they run as parallel, isolated jobs. `~/.stim-cli`'s shared build
-  cache (`STIM_CLI_BUILD_CACHE`) is persisted across runs with `actions/cache`, so
+  matrix, so they run as parallel, isolated jobs. `~/.stim`'s shared build
+  cache (`STIM_BUILD_CACHE`) is persisted across runs with `actions/cache`, so
   the cross-run cache path is itself exercised; build logs
   (`build-*.ndjson`) are uploaded as artifacts on failure.
 
@@ -227,7 +227,7 @@ Two workflows under `.github/workflows/`:
 - The Android job's `api-level` / `target` / `arch` have a matching system image
   available to `android-emulator-runner`.
 - **Disk, for the `caches` suite only.** It stands up FOUR worktrees, each with
-  its own global workspace DerivedData / Gradle build dir under `STIM_CLI_HOME`, and
+  its own global workspace DerivedData / Gradle build dir under `STIM_HOME`, and
   `--keep` leaves them for the artifact step. A hosted runner's free space is
   the thing most likely to end that run early; if it does, `--skip-race` drops
   it to two worktrees at the cost of the `single-flight` and `pods-reuse`

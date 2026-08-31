@@ -48,20 +48,20 @@ function recordingExec(outputs: Record<string, string> = {}): Executor & { calls
 }
 
 describe('ownership by session name', () => {
-  test('a session is named stim-cli-<label>, the marker every destructive path checks', () => {
-    expect(ownedSessionName('my-worktree')).toBe('stim-cli-my-worktree');
+  test('a session is named stim-<label>, the marker every destructive path checks', () => {
+    expect(ownedSessionName('my-worktree')).toBe('stim-my-worktree');
   });
 
   test('a label that already carries the prefix is not doubled', () => {
-    expect(ownedSessionName('stim-cli-test')).toBe('stim-cli-test');
+    expect(ownedSessionName('stim-test')).toBe('stim-test');
   });
 
   test('a label with characters eas would reject is sanitized', () => {
-    expect(ownedSessionName('feat/my thing')).toBe('stim-cli-feat-my-thing');
+    expect(ownedSessionName('feat/my thing')).toBe('stim-feat-my-thing');
   });
 
   test('isOwnedSessionName refuses anything without the prefix', () => {
-    expect(isOwnedSessionName('stim-cli-a')).toBe(true);
+    expect(isOwnedSessionName('stim-a')).toBe(true);
     expect(isOwnedSessionName('someone-elses-session')).toBe(false);
     expect(isOwnedSessionName(undefined)).toBe(false);
   });
@@ -70,8 +70,8 @@ describe('ownership by session name', () => {
 describe('stored-session teardown authorization', () => {
   test('authorizes an owned live session', () => {
     expect(
-      inspectSessionForTeardown(JSON.stringify({ id: 'drs_42', name: 'stim-cli-wt', status: 'IN_PROGRESS' }), 'drs_42'),
-    ).toEqual({ action: 'stop', name: 'stim-cli-wt', status: 'IN_PROGRESS' });
+      inspectSessionForTeardown(JSON.stringify({ id: 'drs_42', name: 'stim-wt', status: 'IN_PROGRESS' }), 'drs_42'),
+    ).toEqual({ action: 'stop', name: 'stim-wt', status: 'IN_PROGRESS' });
   });
 
   test('refuses an unowned live session', () => {
@@ -81,13 +81,13 @@ describe('stored-session teardown authorization', () => {
     );
     expect(result.action).toBe('refused');
     assert(result.action === 'refused');
-    expect(result.reason).toContain('not owned by stim-cli');
+    expect(result.reason).toContain('not owned by Stim');
   });
 
   test.each(['STOPPED', 'ERRORED'])('treats verified terminal status %s as already stopped', (status) => {
-    expect(inspectSessionForTeardown(JSON.stringify({ id: 'drs_42', name: 'stim-cli-wt', status }), 'drs_42')).toEqual({
+    expect(inspectSessionForTeardown(JSON.stringify({ id: 'drs_42', name: 'stim-wt', status }), 'drs_42')).toEqual({
       action: 'already-stopped',
-      name: 'stim-cli-wt',
+      name: 'stim-wt',
       status,
     });
   });
@@ -99,7 +99,7 @@ describe('stored-session teardown authorization', () => {
     const result = inspectSessionForTeardown(JSON.stringify({ id: 'drs_42', name, status: 'STOPPED' }), 'drs_42');
     expect(result.action).toBe('refused');
     assert(result.action === 'refused');
-    expect(result.reason).toContain('not owned by stim-cli');
+    expect(result.reason).toContain('not owned by Stim');
   });
 
   test('refuses malformed output', () => {
@@ -111,7 +111,7 @@ describe('stored-session teardown authorization', () => {
 
   test('refuses a response for a different session', () => {
     const result = inspectSessionForTeardown(
-      JSON.stringify({ id: 'drs_other', name: 'stim-cli-wt', status: 'IN_PROGRESS' }),
+      JSON.stringify({ id: 'drs_other', name: 'stim-wt', status: 'IN_PROGRESS' }),
       'drs_42',
     );
     expect(result.action).toBe('refused');
@@ -121,7 +121,7 @@ describe('stored-session teardown authorization', () => {
 
   test('refuses an unknown status', () => {
     const result = inspectSessionForTeardown(
-      JSON.stringify({ id: 'drs_42', name: 'stim-cli-wt', status: 'PAUSED' }),
+      JSON.stringify({ id: 'drs_42', name: 'stim-wt', status: 'PAUSED' }),
       'drs_42',
     );
     expect(result.action).toBe('refused');
@@ -170,7 +170,7 @@ describe('createSessionArgs', () => {
   test('carries the ownership name and the platform', () => {
     const args = createSessionArgs({ label: 'wt', platform: 'ios' });
     expect(args.slice(0, 3)).toEqual(['sim', '--platform', 'ios']);
-    expect(args[args.indexOf('--name') + 1]).toBe('stim-cli-wt');
+    expect(args[args.indexOf('--name') + 1]).toBe('stim-wt');
   });
 
   test('omits --max-duration-minutes unless one was chosen', () => {
@@ -184,14 +184,14 @@ describe('parseCreatedSession', () => {
   test('reads the id, name and daemon out of a real create payload', () => {
     const stdout = JSON.stringify({
       id: 'drs_42',
-      name: 'stim-cli-wt',
+      name: 'stim-wt',
       type: 'agent-device',
       deviceRunSessionUrl: 'https://expo.dev/accounts/a/projects/p/simulators/drs_42',
       remoteConfig: AGENT_DEVICE_CONFIG,
     });
     expect(parseCreatedSession(stdout)).toEqual({
       id: 'drs_42',
-      name: 'stim-cli-wt',
+      name: 'stim-wt',
       url: 'https://expo.dev/accounts/a/projects/p/simulators/drs_42',
       daemon: {
         baseUrl: 'https://sim-42.eas.dev/daemon',
@@ -202,7 +202,7 @@ describe('parseCreatedSession', () => {
   });
 
   test('a session with no id yet is not a session', () => {
-    expect(parseCreatedSession(JSON.stringify({ name: 'stim-cli-wt' }))).toBeNull();
+    expect(parseCreatedSession(JSON.stringify({ name: 'stim-wt' }))).toBeNull();
   });
 
   test('unparseable output is null, never a throw', () => {
@@ -212,7 +212,7 @@ describe('parseCreatedSession', () => {
 });
 
 describe('remoteDaemonFrom', () => {
-  test('extracts the two values stim-cli needs from an agent-device session', () => {
+  test('extracts the two values Stim needs from an agent-device session', () => {
     expect(remoteDaemonFrom(AGENT_DEVICE_CONFIG)).toEqual({
       baseUrl: 'https://sim-42.eas.dev/daemon',
       token: 'tok_secret',
@@ -240,13 +240,13 @@ describe('parseSessionList', () => {
   test('reads the sessions array', () => {
     const stdout = JSON.stringify({
       sessions: [
-        { id: 'a', name: 'stim-cli-one', status: 'IN_PROGRESS', platform: 'IOS' },
+        { id: 'a', name: 'stim-one', status: 'IN_PROGRESS', platform: 'IOS' },
         { id: 'b', name: 'someone-else', status: 'NEW', platform: 'IOS' },
       ],
       pageInfo: {},
     });
     expect(parseSessionList(stdout)).toEqual([
-      { id: 'a', name: 'stim-cli-one', status: 'IN_PROGRESS', platform: 'IOS' },
+      { id: 'a', name: 'stim-one', status: 'IN_PROGRESS', platform: 'IOS' },
       { id: 'b', name: 'someone-else', status: 'NEW', platform: 'IOS' },
     ]);
   });
@@ -257,7 +257,7 @@ describe('parseSessionList', () => {
   });
 
   test('a session with no id is dropped rather than carried as a partial record', () => {
-    const stdout = JSON.stringify({ sessions: [{ name: 'stim-cli-x' }, { id: 'ok', name: 'stim-cli-y' }] });
+    const stdout = JSON.stringify({ sessions: [{ name: 'stim-x' }, { id: 'ok', name: 'stim-y' }] });
     expect(parseSessionList(stdout).map((s) => s.id)).toEqual(['ok']);
   });
 });
@@ -268,8 +268,8 @@ describe('findOrphanedOwnedSessions', () => {
   test('returns only active owned sessions without recorded workspace IDs', () => {
     const result = findOrphanedOwnedSessions({
       sessions: [
-        { id: 'orphan', name: 'stim-cli-orphan', status: 'in_progress', platform: 'ios' },
-        { id: 'recorded', name: 'stim-cli-live', status: 'NEW', platform: 'ANDROID' },
+        { id: 'orphan', name: 'stim-orphan', status: 'in_progress', platform: 'ios' },
+        { id: 'recorded', name: 'stim-live', status: 'NEW', platform: 'ANDROID' },
         { id: 'foreign', name: 'manual-session', status: 'IN_PROGRESS', platform: 'IOS' },
       ],
       recordedSessionIds: ['recorded'],
@@ -279,7 +279,7 @@ describe('findOrphanedOwnedSessions', () => {
     expect(result.orphaned).toEqual([
       {
         id: 'orphan',
-        name: 'stim-cli-orphan',
+        name: 'stim-orphan',
         status: 'IN_PROGRESS',
         platform: 'ios',
         projectScope: scope,
@@ -289,7 +289,7 @@ describe('findOrphanedOwnedSessions', () => {
   });
 
   test('deduplicates a repeated listed session ID', () => {
-    const session = { id: 'same', name: 'stim-cli-same', status: 'IN_PROGRESS', platform: 'IOS' };
+    const session = { id: 'same', name: 'stim-same', status: 'IN_PROGRESS', platform: 'IOS' };
     const result = findOrphanedOwnedSessions({
       sessions: [session, session],
       recordedSessionIds: [],
@@ -301,8 +301,8 @@ describe('findOrphanedOwnedSessions', () => {
   test('does not classify terminal or unknown statuses as orphan candidates', () => {
     const result = findOrphanedOwnedSessions({
       sessions: [
-        { id: 'stopped', name: 'stim-cli-stopped', status: 'STOPPED', platform: 'IOS' },
-        { id: 'paused', name: 'stim-cli-paused', status: 'PAUSED', platform: 'IOS' },
+        { id: 'stopped', name: 'stim-stopped', status: 'STOPPED', platform: 'IOS' },
+        { id: 'paused', name: 'stim-paused', status: 'PAUSED', platform: 'IOS' },
       ],
       recordedSessionIds: [],
       projectScope: scope,
@@ -317,7 +317,7 @@ describe('findOrphanedOwnedSessions', () => {
     ['unknown', 'WINDOWS'],
   ])('requires a known platform when it is %s', (_label, platform) => {
     const result = findOrphanedOwnedSessions({
-      sessions: [{ id: 'bad-platform', name: 'stim-cli-bad', status: 'IN_PROGRESS', platform }],
+      sessions: [{ id: 'bad-platform', name: 'stim-bad', status: 'IN_PROGRESS', platform }],
       recordedSessionIds: [],
       projectScope: scope,
     });
@@ -328,7 +328,7 @@ describe('findOrphanedOwnedSessions', () => {
   test('reports malformed owned entries and refuses to infer their identity', () => {
     const result = findOrphanedOwnedSessions({
       sessions: [
-        { name: 'stim-cli-missing-id', status: 'IN_PROGRESS' },
+        { name: 'stim-missing-id', status: 'IN_PROGRESS' },
         { id: 'missing-name', status: 'IN_PROGRESS' },
         null,
       ],
@@ -342,7 +342,7 @@ describe('findOrphanedOwnedSessions', () => {
   test('a malformed duplicate blocks the same session ID from becoming a candidate', () => {
     const result = findOrphanedOwnedSessions({
       sessions: [
-        { id: 'same', name: 'stim-cli-same', status: 'IN_PROGRESS', platform: 'IOS' },
+        { id: 'same', name: 'stim-same', status: 'IN_PROGRESS', platform: 'IOS' },
         { id: 'same', status: 'IN_PROGRESS', platform: 'IOS' },
       ],
       recordedSessionIds: [],
@@ -354,7 +354,7 @@ describe('findOrphanedOwnedSessions', () => {
 
   test('requires an explicit current-project scope', () => {
     const result = findOrphanedOwnedSessions({
-      sessions: [{ id: 'a', name: 'stim-cli-a', status: 'IN_PROGRESS' }],
+      sessions: [{ id: 'a', name: 'stim-a', status: 'IN_PROGRESS' }],
       recordedSessionIds: [],
       projectScope: '',
     });
@@ -372,9 +372,9 @@ describe('the read and destroy argv', () => {
     expect(stopSessionArgs('drs_42')).toEqual(['simulator:stop', '--id', 'drs_42', '--json', '--non-interactive']);
   });
 
-  test('listOwnedSessionsArgs asks only for live stim-cli sessions', () => {
+  test('listOwnedSessionsArgs asks only for live Stim sessions', () => {
     const args = listOwnedSessionsArgs();
-    expect(args[args.indexOf('--name') + 1]).toBe('stim-cli-');
+    expect(args[args.indexOf('--name') + 1]).toBe('stim-');
     expect(args).toContain('--status');
     expect(args).toContain('new');
     expect(args).toContain('in-progress');
@@ -410,7 +410,7 @@ describe('the shape eas sim actually prints', () => {
   // Captured from eas sim --platform ios --json; the payload intentionally omits __typename.
   const LIVE = JSON.stringify({
     id: '01a03fb5-c9f7-7403-8810-712f74e6cafc',
-    name: 'stim-cli endpoint probe',
+    name: 'Stim endpoint probe',
     type: 'agent-device',
     deviceRunSessionUrl: 'https://expo.dev/accounts/appandflow/projects/stimcli-eas-test/simulator-sessions/01a03fb5',
     remoteConfig: {

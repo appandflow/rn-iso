@@ -14,7 +14,7 @@ import {
 
 let dir: string;
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'stim-cli-ndjson-'));
+  dir = mkdtempSync(join(tmpdir(), 'stim-ndjson-'));
 });
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });

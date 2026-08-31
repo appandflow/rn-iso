@@ -7,7 +7,7 @@ import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts'
 import { detectIsExpo } from '../project.ts';
 import { expoBinPath, expoBinRefusal } from '../supervisor/server-expo.ts';
 
-export const PREBUILD_ERROR = 'STIM_CLI_PREBUILD_FAILED';
+export const PREBUILD_ERROR = 'STIM_PREBUILD_FAILED';
 
 const LAST_LINES = 20;
 
@@ -42,7 +42,7 @@ export function prebuildRefusal({
   const dir = nativeDirName(platform);
   return {
     code: PREBUILD_ERROR,
-    message: `This project has no ${dir}/ directory and is not an Expo (CNG) project, so stim-cli cannot generate one.`,
+    message: `This project has no ${dir}/ directory and is not an Expo (CNG) project, so Stim cannot generate one.`,
     remedy: `Check out or generate the native project (\`npx @react-native-community/cli init\` produced one originally), or add \`expo\` to the project so \`expo prebuild\` can create ${dir}/.`,
   };
 }

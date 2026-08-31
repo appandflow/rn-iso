@@ -18,7 +18,7 @@ import {
 
 let dir: string;
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'stim-cli-logsq-'));
+  dir = mkdtempSync(join(tmpdir(), 'stim-logsq-'));
 });
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });

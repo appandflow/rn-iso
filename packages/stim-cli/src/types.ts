@@ -67,7 +67,7 @@ export interface ConcurrencyLimits {
   maxDevices: number;
 }
 
-export interface StimCliConfig {
+export interface StimConfig {
   version?: number;
   projects: Record<string, ProjectRecord>;
   repos: Record<string, RepoRecord>;
@@ -75,7 +75,7 @@ export interface StimCliConfig {
   caches?: { buildCache?: unknown; metroCache?: unknown; injectMetroStore?: unknown };
   [key: string]: unknown;
 }
-export type Config = StimCliConfig;
+export type Config = StimConfig;
 
 export type SettingsObject = Record<string, unknown>;
 export type Settings = SettingsObject;

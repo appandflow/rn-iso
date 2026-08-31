@@ -18,13 +18,13 @@ import assert from 'node:assert';
 let tmpHome: string;
 
 beforeEach(() => {
-  tmpHome = mkdtempSync(join(tmpdir(), 'stim-cli-test-'));
-  process.env.STIM_CLI_HOME = tmpHome;
+  tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
+  process.env.STIM_HOME = tmpHome;
 });
 
 afterEach(() => {
   rmSync(tmpHome, { recursive: true, force: true });
-  delete process.env.STIM_CLI_HOME;
+  delete process.env.STIM_HOME;
   resetExecutor();
 });
 
@@ -217,7 +217,7 @@ test('sanitizeDeviceLabel strips characters simctl names should not carry', () =
   expect(sanitizeDeviceLabel('x  y"z`$')).toBe('x-y-z');
 });
 
-test('deleteIosSim refuses to delete a sim not owned by stim-cli', () => {
+test('deleteIosSim refuses to delete a sim not owned by Stim', () => {
   setExecutor({
     run: () =>
       JSON.stringify({
@@ -232,18 +232,18 @@ test('deleteIosSim refuses to delete a sim not owned by stim-cli', () => {
     },
     spawn: () => null,
   });
-  expect(() => deleteIosSim('UDID-A')).toThrow(/stim-cli/);
+  expect(() => deleteIosSim('UDID-A')).toThrow(/Stim/);
 });
 
 const OWNED_SIM_LIST = JSON.stringify({
   devices: {
     'com.apple.CoreSimulator.SimRuntime.iOS-17-2': [
-      { udid: 'UDID-B', name: 'stim-cli-my-project', state: 'Shutdown', isAvailable: true },
+      { udid: 'UDID-B', name: 'stim-my-project', state: 'Shutdown', isAvailable: true },
     ],
   },
 });
 
-test('deleteIosSim deletes an stim-cli-owned sim', () => {
+test('deleteIosSim deletes a Stim-owned sim', () => {
   const ran: string[] = [];
   setExecutor({
     run: (cmd) => {
@@ -305,7 +305,7 @@ test('occupyingApps reports a shut-down device free without probing', async () =
   const devices = JSON.stringify({
     devices: {
       'com.apple.CoreSimulator.SimRuntime.iOS-26-2': [
-        { udid: 'UDID-X', name: 'stim-cli-x', state: 'Shutdown', isAvailable: true },
+        { udid: 'UDID-X', name: 'stim-x', state: 'Shutdown', isAvailable: true },
       ],
     },
   });
@@ -327,7 +327,7 @@ test('occupyingApps still returns null (doubt) for a booted device whose probe c
   const devices = JSON.stringify({
     devices: {
       'com.apple.CoreSimulator.SimRuntime.iOS-26-2': [
-        { udid: 'UDID-X', name: 'stim-cli-x', state: 'Booted', isAvailable: true },
+        { udid: 'UDID-X', name: 'stim-x', state: 'Booted', isAvailable: true },
       ],
     },
   });
@@ -337,9 +337,9 @@ test('occupyingApps still returns null (doubt) for a booted device whose probe c
 });
 
 test('ownedSimName does not double the ownership prefix', () => {
-  expect(ownedSimName('stim-cli-test-dialogue')).toBe('stim-cli-test-dialogue');
-  expect(ownedSimName('test-dialogue')).toBe('stim-cli-test-dialogue');
-  expect(ownedSimName('feat-a/tlon-mobile')).toBe('stim-cli-feat-a-tlon-mobile');
-  expect(ownedSimName('stim-cli-x').startsWith('stim-cli-')).toBeTruthy();
-  expect(ownedSimName('stim-cli').startsWith('stim-cli-')).toBeTruthy();
+  expect(ownedSimName('stim-test-dialogue')).toBe('stim-test-dialogue');
+  expect(ownedSimName('test-dialogue')).toBe('stim-test-dialogue');
+  expect(ownedSimName('feat-a/tlon-mobile')).toBe('stim-feat-a-tlon-mobile');
+  expect(ownedSimName('stim-x').startsWith('stim-')).toBeTruthy();
+  expect(ownedSimName('Stim').startsWith('stim-')).toBeTruthy();
 });

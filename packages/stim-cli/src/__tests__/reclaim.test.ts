@@ -10,13 +10,13 @@ import { ensureWorkspaceStorage, workspaceStateFile } from '../paths.ts';
 let tmpHome: string;
 
 beforeEach(() => {
-  tmpHome = mkdtempSync(join(tmpdir(), 'stim-cli-test-'));
-  process.env.STIM_CLI_HOME = tmpHome;
+  tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
+  process.env.STIM_HOME = tmpHome;
 });
 
 afterEach(() => {
   rmSync(tmpHome, { recursive: true, force: true });
-  delete process.env.STIM_CLI_HOME;
+  delete process.env.STIM_HOME;
   resetExecutor();
 });
 
@@ -71,7 +71,7 @@ test('reclaimProject keeps the config entry when an owned device delete fails', 
   const listJson = JSON.stringify({
     devices: {
       'com.apple.CoreSimulator.SimRuntime.iOS-17-4': [
-        { udid: 'U1', name: 'stim-cli-proj', state: 'Shutdown', isAvailable: true },
+        { udid: 'U1', name: 'stim-proj', state: 'Shutdown', isAvailable: true },
       ],
     },
   });
@@ -98,7 +98,7 @@ test('reclaimProject removes the entry when the owned device really is deleted',
   const listJson = JSON.stringify({
     devices: {
       'com.apple.CoreSimulator.SimRuntime.iOS-17-4': [
-        { udid: 'U1', name: 'stim-cli-proj', state: 'Shutdown', isAvailable: true },
+        { udid: 'U1', name: 'stim-proj', state: 'Shutdown', isAvailable: true },
       ],
     },
   });
@@ -131,7 +131,7 @@ test('reclaimProject refuses to kill an unidentified process on the port', async
 });
 
 function workspaceWithSession(sessionId: string): string {
-  const root = mkdtempSync(join(tmpdir(), 'stim-cli-ws-'));
+  const root = mkdtempSync(join(tmpdir(), 'stim-ws-'));
   ensureWorkspaceStorage(root);
   writeFileSync(workspaceStateFile(root), JSON.stringify({ remoteDevice: { platform: 'ios', sessionId } }));
   upsertProject(root, { label: 'agent-1' });
@@ -211,7 +211,7 @@ test('a throwing stop is contained, so the caller still removes the tree', async
 });
 
 test('a workspace with no session never reaches for eas', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'stim-cli-ws-'));
+  const root = mkdtempSync(join(tmpdir(), 'stim-ws-'));
   upsertProject(root, { label: 'agent-1' });
   let called = false;
   const r = await reclaimProject(root, {
@@ -252,7 +252,7 @@ test.each([
   ['unowned terminal session', JSON.stringify({ id: 'drs_42', name: 'other-tool', status: 'STOPPED' })],
   ['unnamed terminal session', JSON.stringify({ id: 'drs_42', status: 'STOPPED' })],
   ['malformed output', 'not json'],
-  ['unknown status', JSON.stringify({ id: 'drs_42', name: 'stim-cli-wt', status: 'PAUSED' })],
+  ['unknown status', JSON.stringify({ id: 'drs_42', name: 'stim-wt', status: 'PAUSED' })],
 ])('reclaim retains the session record after an unverifiable %s', async (_name, sessionOutput) => {
   const root = workspaceWithSession('drs_42');
   const calls: string[] = [];
@@ -268,7 +268,7 @@ test('reclaim clears a verified terminal record without issuing stop', async () 
   const root = workspaceWithSession('drs_42');
   const calls: string[] = [];
   const result = await reclaimProject(root, {
-    stopSession: realStoredSessionStop(JSON.stringify({ id: 'drs_42', name: 'stim-cli-wt', status: 'STOPPED' }), calls),
+    stopSession: realStoredSessionStop(JSON.stringify({ id: 'drs_42', name: 'stim-wt', status: 'STOPPED' }), calls),
   });
   expect(result.keptEntry).toBe(false);
   expect(calls).not.toContain('simulator:stop');
@@ -277,7 +277,7 @@ test('reclaim clears a verified terminal record without issuing stop', async () 
 });
 
 function workspaceWithManagedTunnel(pid: number): string {
-  const root = mkdtempSync(join(tmpdir(), 'stim-cli-ws-'));
+  const root = mkdtempSync(join(tmpdir(), 'stim-ws-'));
   ensureWorkspaceStorage(root);
   writeFileSync(
     workspaceStateFile(root),
@@ -387,7 +387,7 @@ test('a throwing tunnel stop is contained, so the caller still removes the tree'
 });
 
 test('a workspace with no recorded tunnel never calls stopMetroTunnel', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'stim-cli-ws-'));
+  const root = mkdtempSync(join(tmpdir(), 'stim-ws-'));
   upsertProject(root, { label: 'agent-1' });
   let called = false;
   const r = await reclaimProject(root, {
@@ -402,7 +402,7 @@ test('a workspace with no recorded tunnel never calls stopMetroTunnel', async ()
 });
 
 test('an Expo-hosted tunnel has no process of its own -- reclaim never calls stopMetroTunnel for it', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'stim-cli-ws-'));
+  const root = mkdtempSync(join(tmpdir(), 'stim-ws-'));
   ensureWorkspaceStorage(root);
   writeFileSync(
     workspaceStateFile(root),
@@ -422,7 +422,7 @@ test('an Expo-hosted tunnel has no process of its own -- reclaim never calls sto
 });
 
 test('an operator-supplied tunnel (metro.publicUrl) is never recorded, so reclaim never touches it', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'stim-cli-ws-'));
+  const root = mkdtempSync(join(tmpdir(), 'stim-ws-'));
   upsertProject(root, { label: 'agent-1' });
   let called = false;
   const r = await reclaimProject(root, {

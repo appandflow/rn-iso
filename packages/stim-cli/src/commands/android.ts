@@ -224,11 +224,11 @@ interface AndroidRecord {
   deviceName?: string | null;
 }
 
-export const NO_METRO = 'STIM_CLI_NO_METRO';
-export const NO_FINGERPRINT = 'STIM_CLI_NO_FINGERPRINT';
-export const NO_DEVICE = 'STIM_CLI_NO_DEVICE';
-export const INSTALL_FAILED = 'STIM_CLI_INSTALL_FAILED';
-export const LAUNCH_FAILED = 'STIM_CLI_LAUNCH_FAILED';
+export const NO_METRO = 'STIM_NO_METRO';
+export const NO_FINGERPRINT = 'STIM_NO_FINGERPRINT';
+export const NO_DEVICE = 'STIM_NO_DEVICE';
+export const INSTALL_FAILED = 'STIM_INSTALL_FAILED';
+export const LAUNCH_FAILED = 'STIM_LAUNCH_FAILED';
 
 const FALLBACK_LINES = 5;
 
@@ -1029,8 +1029,7 @@ async function finishAndroidRun({
     const diag = noDeviceDiagnostic({
       reason: booted.reason ?? 'The emulator did not boot.',
       logFile: emuLog,
-      remedy:
-        'Run `stim status` to see what stim-cli thinks it owns; re-running `stim android` creates a fresh owned AVD.',
+      remedy: 'Run `stim status` to see what Stim thinks it owns; re-running `stim android` creates a fresh owned AVD.',
     });
     return fail(NO_DEVICE, diag.message, diag.remedy, {
       lines: diag.lines,
@@ -1383,9 +1382,9 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   try {
     await ensureStorage(root, { note: out });
   } catch (error) {
-    const code = (error as Error & { code?: string })?.code || 'STIM_CLI_WORKSPACE_STATE';
-    const message = `Could not prepare this workspace's stim-cli state: ${(error as Error)?.message || error}`;
-    const remedy = 'Check that STIM_CLI_HOME is writable and has free space.';
+    const code = (error as Error & { code?: string })?.code || 'STIM_WORKSPACE_STATE';
+    const message = `Could not prepare this workspace's Stim state: ${(error as Error)?.message || error}`;
+    const remedy = 'Check that STIM_HOME is writable and has free space.';
     out(phaseLine('error', chalk.red(`${code}: ${message}`)));
     out(phaseLine('remedy', remedy));
     if (json) emit(JSON.stringify({ code, message, remedy }));
@@ -1473,7 +1472,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   const dataPartitionSizeError = androidDataPartitionSizeGbSettingError(settings);
   if (dataPartitionSizeError) {
     return fail(
-      'STIM_CLI_BAD_ARG',
+      'STIM_BAD_ARG',
       dataPartitionSizeError,
       'Set android.dataPartitionSizeGb to a whole number of GiB from 6 through 16384.',
     );
@@ -1481,7 +1480,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   const avdConfigError = androidAvdConfigSettingError(settings, settingsRoot);
   if (avdConfigError) {
     return fail(
-      'STIM_CLI_BAD_ARG',
+      'STIM_BAD_ARG',
       avdConfigError,
       'Use only documented android.avdConfig keys, or an android.avdConfigFile fragment contained by the repository/project settings root.',
     );
@@ -1489,7 +1488,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   const remoteSettingError = remoteDeviceSettingError(settings);
   if (remoteSettingError) {
     return fail(
-      'STIM_CLI_BAD_ARG',
+      'STIM_BAD_ARG',
       remoteSettingError,
       `Set ios.remote and android.remote to one of: ${REMOTE_DEVICE_BACKENDS.join(', ')}.`,
     );
@@ -1833,9 +1832,9 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
           waited = await waitForBuild({ platform: PLATFORM, key: cacheKey, out });
         } catch (err) {
           const wtErr = err as Error & { code?: string; lockPath?: string };
-          if (wtErr?.code !== 'STIM_CLI_BUILD_WAIT_TIMEOUT') throw err;
+          if (wtErr?.code !== 'STIM_BUILD_WAIT_TIMEOUT') throw err;
           phaseFailure = fail(
-            'STIM_CLI_BUILD_WAIT_TIMEOUT',
+            'STIM_BUILD_WAIT_TIMEOUT',
             wtErr.message,
             `Check pid ${holder.pid}; if it is not really building, remove ${wtErr.lockPath} and run \`stim android\` again.`,
             { lastBuildStatus: true },

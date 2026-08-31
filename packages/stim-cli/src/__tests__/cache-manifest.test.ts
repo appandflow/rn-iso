@@ -27,14 +27,14 @@ register({ dir: process.argv[3], name: 'cli-cache' }, process.argv[2]);
 let tmpHome: string;
 let cacheDir: string;
 beforeEach(() => {
-  tmpHome = mkdtempSync(join(tmpdir(), 'stim-cli-manifest-'));
-  process.env.STIM_CLI_HOME = tmpHome;
-  cacheDir = mkdtempSync(join(tmpdir(), 'stim-cli-cachedir-'));
+  tmpHome = mkdtempSync(join(tmpdir(), 'stim-manifest-'));
+  process.env.STIM_HOME = tmpHome;
+  cacheDir = mkdtempSync(join(tmpdir(), 'stim-cachedir-'));
 });
 afterEach(() => {
   rmSync(tmpHome, { recursive: true, force: true });
   rmSync(cacheDir, { recursive: true, force: true });
-  delete process.env.STIM_CLI_HOME;
+  delete process.env.STIM_HOME;
 });
 
 function delay(ms: number): Promise<void> {
@@ -89,13 +89,13 @@ test('prune defaults to entries and only accepts atomic as the alternative', () 
 });
 
 test('a leading ~ is expanded, so a registration made from any cwd resolves the same', () => {
-  register({ dir: '~/.stim-cli-tilde-test' });
-  expect(readManifest().caches[0]?.dir).toBe(join(homedir(), '.stim-cli-tilde-test'));
+  register({ dir: '~/.stim-tilde-test' });
+  expect(readManifest().caches[0]?.dir).toBe(join(homedir(), '.stim-tilde-test'));
 });
 
 test('registeredCaches hides a directory that is gone but keeps it on file', () => {
   register({ dir: cacheDir, name: 'real' });
-  register({ dir: join(tmpdir(), 'stim-cli-never-existed'), name: 'ghost' });
+  register({ dir: join(tmpdir(), 'stim-never-existed'), name: 'ghost' });
   const live = registeredCaches();
   expect(live.map((c) => c.name)).toEqual(['real']);
   expect(readManifest().caches.length).toBe(2);
@@ -134,7 +134,7 @@ test('entriesDepth defaults to 1 and rejects anything that is not a usable depth
 
 test('a registration replaces the manifest atomically and leaves no temp file', () => {
   register({ dir: cacheDir, name: 'first' });
-  register({ dir: join(tmpdir(), 'stim-cli-second'), name: 'second' });
+  register({ dir: join(tmpdir(), 'stim-second'), name: 'second' });
   unregister(cacheDir);
 
   const leftovers = readdirSync(dirname(manifestPath())).filter((n) => n.includes('tmp'));

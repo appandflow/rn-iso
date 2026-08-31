@@ -25,7 +25,7 @@ import type { EasAuthResult } from '../engine/remote-cache.ts';
 import assert from 'node:assert';
 
 test('checkMainCheckout reports missing dependencies, Pods, and native output', () => {
-  const project = mkdtempSync(join(tmpdir(), 'stim-cli-doctor-source-cold-'));
+  const project = mkdtempSync(join(tmpdir(), 'stim-doctor-source-cold-'));
   try {
     writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
     writeFileSync(join(project, 'package-lock.json'), JSON.stringify({ lockfileVersion: 3 }));
@@ -47,7 +47,7 @@ test('checkMainCheckout reports missing dependencies, Pods, and native output', 
 });
 
 test('checkMainCheckout recognizes non-npm dependency installs', () => {
-  const project = mkdtempSync(join(tmpdir(), 'stim-cli-doctor-main-pnpm-'));
+  const project = mkdtempSync(join(tmpdir(), 'stim-doctor-main-pnpm-'));
   try {
     writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
     writeFileSync(join(project, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
@@ -65,7 +65,7 @@ test('checkMainCheckout recognizes non-npm dependency installs', () => {
 
 test('checkMainCheckout reads warm state from the Git main checkout', () => {
   resetExecutor();
-  const base = mkdtempSync(join(tmpdir(), 'stim-cli-doctor-main-worktree-'));
+  const base = mkdtempSync(join(tmpdir(), 'stim-doctor-main-worktree-'));
   const repo = join(base, 'repo');
   const linked = join(base, 'linked');
   try {
@@ -88,7 +88,7 @@ test('checkMainCheckout reads warm state from the Git main checkout', () => {
 });
 
 test('checkMainCheckout reports broken CocoaPods links even when lockfiles match', () => {
-  const project = mkdtempSync(join(tmpdir(), 'stim-cli-doctor-source-broken-pods-'));
+  const project = mkdtempSync(join(tmpdir(), 'stim-doctor-source-broken-pods-'));
   try {
     mkdirSync(join(project, 'ios', 'Pods'), { recursive: true });
     writeFileSync(join(project, 'ios', 'Podfile.lock'), 'pods\n');
@@ -107,7 +107,7 @@ test('checkMainCheckout reports broken CocoaPods links even when lockfiles match
 });
 
 test('checkMainCheckout reports stale dependencies and the locally known upstream gap', () => {
-  const project = mkdtempSync(join(tmpdir(), 'stim-cli-doctor-source-stale-'));
+  const project = mkdtempSync(join(tmpdir(), 'stim-doctor-source-stale-'));
   try {
     writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
     writeFileSync(join(project, 'package-lock.json'), JSON.stringify({ lockfileVersion: 3 }));
@@ -164,14 +164,14 @@ test('a Podfile that enables no compilation caching is reported as nothing at al
   expect(checkCompilationCache(null, 26)).toBe(null);
 });
 
-test('compilation cache enabled without a CAS path is a note about builds outside stim-cli', () => {
+test('compilation cache enabled without a CAS path is a note about builds outside Stim', () => {
   const f = checkCompilationCache("config.build_settings['COMPILATION_CACHE_ENABLE_CACHING'] = 'YES'", 26);
   assert(f);
   expect(f.level).toBe('note');
   expect(f.detail).toMatch(/per-workspace/);
-  expect(f.detail).toMatch(/outside stim-cli/);
-  expect(f.fix).toMatch(/Nothing to do for stim-cli/);
-  expect(f.fix).toMatch(/~\/\.stim-cli\/compilation-cache/);
+  expect(f.detail).toMatch(/outside Stim/);
+  expect(f.fix).toMatch(/Nothing to do for Stim/);
+  expect(f.fix).toMatch(/~\/\.stim\/compilation-cache/);
 });
 
 test('compilation cache with an explicit CAS path is reported as nothing', () => {
@@ -186,11 +186,11 @@ test('ccache alongside compilation caching is flagged as mutually defeating', ()
   expect(f.detail).toMatch(/explicitly built modules/);
 });
 
-test('ccache alone is now flagged, because it is what stops stim-cli supplying the other', () => {
+test('ccache alone is now flagged, because it is what stops Stim supplying the other', () => {
   const f = checkCcacheConflict('post_install', { 'apple.ccacheEnabled': 'true' });
   assert(f);
   expect(f.level).toBe('cost');
-  expect(f.title).toMatch(/stim-cli leaves Xcode compilation caching off/);
+  expect(f.title).toMatch(/Stim leaves Xcode compilation caching off/);
 });
 
 test('the ccache fix names where the value comes from, on Expo and on a bare project', () => {
@@ -449,7 +449,7 @@ test('runDoctor probes the session only for an EAS project, and passes it the ow
     return { ok: true, account: 'janic', accounts: ['janic'] };
   };
 
-  const easProject = mkdtempSync(join(tmpdir(), 'stim-cli-doctor-'));
+  const easProject = mkdtempSync(join(tmpdir(), 'stim-doctor-'));
   writeFileSync(join(easProject, 'package.json'), JSON.stringify({ dependencies: { expo: '~57.0.0' } }));
   writeFileSync(
     join(easProject, 'app.json'),
@@ -460,7 +460,7 @@ test('runDoctor probes the session only for an EAS project, and passes it the ow
   expect(probes[0]?.projectRoot).toBe(easProject);
   expect(probes[0]?.owner).toBe('th3rd-wave');
 
-  const otherProject = mkdtempSync(join(tmpdir(), 'stim-cli-doctor-'));
+  const otherProject = mkdtempSync(join(tmpdir(), 'stim-doctor-'));
   writeFileSync(join(otherProject, 'package.json'), JSON.stringify({ dependencies: { expo: '~57.0.0' } }));
   writeFileSync(
     join(otherProject, 'app.json'),
@@ -474,7 +474,7 @@ test('runDoctor probes the session only for an EAS project, and passes it the ow
 });
 
 test('the EAS finding reaches the report runDoctor returns', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'stim-cli-doctor-'));
+  const dir = mkdtempSync(join(tmpdir(), 'stim-doctor-'));
   writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies: { expo: '~57.0.0' } }));
   writeFileSync(join(dir, 'app.json'), JSON.stringify({ expo: { buildCacheProvider: 'eas' } }));
   const findings = runDoctor(dir, {
@@ -498,7 +498,7 @@ test('checkConcurrency echoes the caps and the current live count when set', () 
 });
 
 test('runDoctor stays silent about concurrency when nothing is set', () => {
-  const project = mkdtempSync(join(tmpdir(), 'stim-cli-doc-conc-'));
+  const project = mkdtempSync(join(tmpdir(), 'stim-doc-conc-'));
   writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
   const findings = runDoctor(project, { concurrency: () => ({ maxBuilds: 0, maxDevices: 0 }) });
   expect(!findings.some((f) => /concurrency/i.test(f.title))).toBeTruthy();
@@ -506,7 +506,7 @@ test('runDoctor stays silent about concurrency when nothing is set', () => {
 });
 
 test('runDoctor emits one concurrency note when a limit is set', () => {
-  const project = mkdtempSync(join(tmpdir(), 'stim-cli-doc-conc2-'));
+  const project = mkdtempSync(join(tmpdir(), 'stim-doc-conc2-'));
   writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
   const findings = runDoctor(project, {
     concurrency: () => ({ maxBuilds: 1, maxDevices: 2 }),
@@ -533,11 +533,11 @@ test('checkSimSlim reports only configured profiles that cannot run', () => {
 });
 
 test('runDoctor reports a configured SimSlim profile when the binary is missing', () => {
-  const project = mkdtempSync(join(tmpdir(), 'stim-cli-doctor-simslim-'));
+  const project = mkdtempSync(join(tmpdir(), 'stim-doctor-simslim-'));
   try {
     writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
     writeFileSync(join(project, 'simslim.json'), '{}\n');
-    writeFileSync(join(project, '.stim-cli.json'), JSON.stringify({ ios: { simslimProfile: 'simslim.json' } }));
+    writeFileSync(join(project, '.stim.json'), JSON.stringify({ ios: { simslimProfile: 'simslim.json' } }));
     const findings = runDoctor(project, {
       concurrency: { maxBuilds: 0, maxDevices: 0 },
       lookupSimSlim: () => false,
@@ -555,7 +555,7 @@ test('a project with no provider configured at all is reported as nothing', () =
 });
 
 test('a gradle.properties without org.gradle.caching is not a finding any more', () => {
-  const withAndroid = mkdtempSync(join(tmpdir(), 'stim-cli-doc-gradle-'));
+  const withAndroid = mkdtempSync(join(tmpdir(), 'stim-doc-gradle-'));
   writeFileSync(join(withAndroid, 'package.json'), JSON.stringify({ name: 'x' }));
   mkdirSync(join(withAndroid, 'android'), { recursive: true });
   for (const source of ['org.gradle.jvmargs=-Xmx2g\n', '# org.gradle.caching=true\n', 'org.gradle.caching=false\n']) {
@@ -609,7 +609,7 @@ test('a parity mismatch with no dirty files still fires, hedged instead of accus
 
 test('detectFingerprintParity against a real repo: a dirty app.json fires the note and the temp worktree is cleaned up', async () => {
   resetExecutor();
-  const base = mkdtempSync(join(tmpdir(), 'stim-cli-parity-repo-'));
+  const base = mkdtempSync(join(tmpdir(), 'stim-parity-repo-'));
   const repo = join(base, 'repo');
   try {
     mkdirSync(repo, { recursive: true });
@@ -650,7 +650,7 @@ test('detectFingerprintParity against a real repo: a dirty app.json fires the no
 
 test('detectFingerprintParity against a real repo: a clean checkout is silent', async () => {
   resetExecutor();
-  const base = mkdtempSync(join(tmpdir(), 'stim-cli-parity-clean-'));
+  const base = mkdtempSync(join(tmpdir(), 'stim-parity-clean-'));
   const repo = join(base, 'repo');
   try {
     mkdirSync(repo, { recursive: true });
@@ -678,7 +678,7 @@ test('detectFingerprintParity against a real repo: a clean checkout is silent', 
 
 test('detectFingerprintParity skips silently outside a git repo without invoking the fingerprinter', async () => {
   resetExecutor();
-  const dir = mkdtempSync(join(tmpdir(), 'stim-cli-parity-nogit-'));
+  const dir = mkdtempSync(join(tmpdir(), 'stim-parity-nogit-'));
   try {
     let called = false;
     const createFingerprint = async () => {
@@ -694,7 +694,7 @@ test('detectFingerprintParity skips silently outside a git repo without invoking
 
 test('detectFingerprintParity skips a cold comparison when dependencies are installed', async () => {
   resetExecutor();
-  const base = mkdtempSync(join(tmpdir(), 'stim-cli-parity-installed-'));
+  const base = mkdtempSync(join(tmpdir(), 'stim-parity-installed-'));
   try {
     execSync('git init -q', { cwd: base });
     mkdirSync(join(base, 'node_modules'));
@@ -763,11 +763,11 @@ test.each([
   ['proxy', 'eas'],
   ['eas', 'proxy'],
 ] as const)('runDoctor checks mixed %s and %s platform backends', (iosBackend, androidBackend) => {
-  const project = mkdtempSync(join(tmpdir(), 'stim-cli-doc-remote-'));
+  const project = mkdtempSync(join(tmpdir(), 'stim-doc-remote-'));
   try {
     writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
     writeFileSync(
-      join(project, '.stim-cli.json'),
+      join(project, '.stim.json'),
       JSON.stringify({ ios: { remote: iosBackend }, android: { remote: androidBackend } }),
     );
     const findings = runDoctor(project, {
@@ -788,11 +788,11 @@ test.each([
 });
 
 test('runDoctor checks one shared backend once', () => {
-  const project = mkdtempSync(join(tmpdir(), 'stim-cli-doc-remote-'));
+  const project = mkdtempSync(join(tmpdir(), 'stim-doc-remote-'));
   try {
     writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
     writeFileSync(
-      join(project, '.stim-cli.json'),
+      join(project, '.stim.json'),
       JSON.stringify({ ios: { remote: 'proxy' }, android: { remote: 'proxy' } }),
     );
     const findings = runDoctor(project, {
@@ -812,13 +812,13 @@ test('runDoctor checks one shared backend once', () => {
 });
 
 test('runDoctor resolves a SimSlim profile from the repository root in a monorepo', () => {
-  const repo = mkdtempSync(join(tmpdir(), 'stim-cli-doc-monorepo-'));
+  const repo = mkdtempSync(join(tmpdir(), 'stim-doc-monorepo-'));
   const project = join(repo, 'apps', 'mobile');
   try {
     mkdirSync(project, { recursive: true });
     writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'mobile' }));
     writeFileSync(join(repo, 'simslim.json'), '{}\n');
-    writeFileSync(join(repo, '.stim-cli.json'), JSON.stringify({ ios: { simslimProfile: 'simslim.json' } }));
+    writeFileSync(join(repo, '.stim.json'), JSON.stringify({ ios: { simslimProfile: 'simslim.json' } }));
     execSync('git init -q', { cwd: repo });
 
     const findings = runDoctor(project, {
@@ -837,10 +837,10 @@ test.each([
   ['AGENT_DEVICE_DAEMON_BASE_URL', '   ', 'proxy-token-fixture'],
   ['AGENT_DEVICE_DAEMON_AUTH_TOKEN', 'https://proxy.example/agent-device', '\t\n'],
 ] as const)('runDoctor rejects a whitespace-only %s', (_missingVariable, baseUrl, token) => {
-  const project = mkdtempSync(join(tmpdir(), 'stim-cli-doc-remote-'));
+  const project = mkdtempSync(join(tmpdir(), 'stim-doc-remote-'));
   try {
     writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
-    writeFileSync(join(project, '.stim-cli.json'), JSON.stringify({ ios: { remote: 'proxy' } }));
+    writeFileSync(join(project, '.stim.json'), JSON.stringify({ ios: { remote: 'proxy' } }));
     const findings = runDoctor(project, {
       concurrency: () => ({ maxBuilds: 0, maxDevices: 0 }),
       remoteEnv: {

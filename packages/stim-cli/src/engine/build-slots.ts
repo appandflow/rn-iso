@@ -180,7 +180,7 @@ export async function acquireBuildSlot({
           '; ' +
           'remove a slot directory whose builder is not really building, or raise concurrency.maxBuilds.',
       ) as Error & { code?: string };
-      err.code = 'STIM_CLI_BUILD_SLOT_TIMEOUT';
+      err.code = 'STIM_BUILD_SLOT_TIMEOUT';
       throw err;
     }
     if (now() - lastProgress >= progressMs) {

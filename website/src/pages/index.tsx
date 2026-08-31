@@ -4,92 +4,100 @@ import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import Layout from '@theme/Layout';
 import CodeBlock from '@theme/CodeBlock';
 import Heading from '@theme/Heading';
+import {
+  CacheIllustration,
+  CleanupIllustration,
+  ParallelIllustration,
+  PlatformsIllustration,
+} from '@site/src/components/FeatureIllustrations';
 
-const quickStart = `# the only command a human runs:
+const quickStart = `# install the CLI and its agent skill
+npm install --global stim-cli
 npx skills add appandflow/stim
 
-# then tell your agent:
+# then tell your coding agent:
 #   "Build and run the app on the iOS simulator and fix anything that breaks."
+# Stim runs on a clean checkout. There is nothing to commit.`;
 
-# no setup step, nothing to commit -- stim-cli runs on a clean checkout.`;
-
-const features: Array<{ title: string; body: ReactNode }> = [
+const features: Array<{ title: string; body: ReactNode; illustration: ReactNode }> = [
   {
-    title: 'Isolated environments',
+    title: 'Fast builds across worktrees',
     body: (
       <>
-        Every project or git worktree gets its own reserved Metro port and its own <em>owned</em> simulator or emulator.
-        Several coding agents build the same app on one machine at the same time without fighting over ports and
-        devices.
+        Native artifacts, Xcode compilation data, Gradle output, and Metro transforms are shared safely. A new worktree
+        can install a cached app when its native inputs match. Concurrent misses use one build.
       </>
     ),
+    illustration: <CacheIllustration />,
   },
   {
-    title: 'Built for agent loops',
+    title: 'Parallel agents without collisions',
     body: (
       <>
-        Never prompts, prints on the order of ten lines, takes <code>--json</code> everywhere, and reports a failing
-        build as the extracted compiler diagnostic plus a log path — not four thousand lines of transcript.{' '}
-        <code>logs --errors</code> returning nothing is the pass condition.
+        Each checkout gets its own Metro port and owned device. Agents can create isolated git worktrees and work in
+        parallel. Small, streaming output and focused errors reduce waiting and token use.
       </>
     ),
+    illustration: <ParallelIllustration />,
   },
   {
-    title: 'Builds that hit a cache',
+    title: 'React Native and Expo, here or remote',
     body: (
       <>
-        Native inputs are fingerprinted; when nothing native changed, the app installs from a shared cache instead of
-        compiling. When two workspaces miss at once, exactly one compiles and the other installs its artifact.
+        Stim works with React Native Community CLI and Expo projects. It builds locally, then launches on an owned local
+        simulator or a configured remote simulator. The agent gets the exact device and launch state.
       </>
     ),
+    illustration: <PlatformsIllustration />,
   },
   {
-    title: 'Cleans up after dying agents',
+    title: 'Owned resources and complete cleanup',
     body: (
       <>
-        A killed agent leaves a booted simulator, a Metro squatting on a port, a stale lock. <code>stop</code>,{' '}
-        <code>worktree remove</code> and <code>gc</code> reclaim all of it — and stim-cli never touches a device it did
-        not create.
+        Stim tracks every port, process, build, device, and remote session it creates. <code>stop</code>,{' '}
+        <code>worktree remove</code>, and <code>gc</code> reclaim resources without touching devices Stim does not own.
       </>
     ),
+    illustration: <CleanupIllustration />,
   },
 ];
 
 export default function Home(): ReactNode {
   const { siteConfig } = useDocusaurusContext();
   return (
-    <Layout description="The React Native / Expo CLI for AI agents: isolated dev environments, owned simulators, shared build caches, structured logs.">
-      <header className="hero hero--dark" style={{ textAlign: 'center', padding: '4rem 1rem' }}>
+    <Layout description="Stim gives coding agents fast, isolated React Native and Expo environments with shared build caches and owned devices.">
+      <header className="hero hero--dark stimHero">
         <div className="container">
           <Heading as="h1" className="hero__title">
             {siteConfig.title}
           </Heading>
           <p className="hero__subtitle">{siteConfig.tagline}</p>
-          <p style={{ maxWidth: 720, margin: '0 auto 2rem' }}>
-            Humans never run it — your agent does. Isolated dev environments, so several coding agents can build the
-            same app on one machine at the same time, with a build loop optimised for an agent, not a terminal.
+          <p className="stimHeroLead">
+            Give each coding agent a fast, isolated React Native environment. Stim shares build caches across worktrees,
+            owns each device and port, supports local and remote simulators, and cleans up when the work is done.
           </p>
-          <div style={{ maxWidth: 720, margin: '0 auto', textAlign: 'left' }}>
+          <div className="stimQuickStart">
             <CodeBlock language="bash">{quickStart}</CodeBlock>
           </div>
-          <div style={{ marginTop: '1.5rem', display: 'flex', gap: '1rem', justifyContent: 'center' }}>
+          <div className="stimHeroActions">
             <Link className="button button--primary button--lg" to="/docs/getting-started">
               Get started
             </Link>
             <Link className="button button--secondary button--lg" to="/docs/why">
-              Why stim-cli
+              Why Stim
             </Link>
           </div>
         </div>
       </header>
       <main>
-        <section className="container" style={{ padding: '3rem 1rem' }}>
-          <div className="row">
+        <section className="container stimFeatures">
+          <div className="stimFeatureGrid">
             {features.map((f) => (
-              <div key={f.title} className="col col--6" style={{ marginBottom: '2rem' }}>
+              <article key={f.title} className="stimFeatureCard">
+                {f.illustration}
                 <Heading as="h3">{f.title}</Heading>
                 <p>{f.body}</p>
-              </div>
+              </article>
             ))}
           </div>
         </section>

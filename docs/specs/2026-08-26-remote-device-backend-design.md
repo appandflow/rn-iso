@@ -1,4 +1,4 @@
-# stim-cli — the remote device backend
+# Stim — the remote device backend
 
 Date: 2026-08-26
 Status: draft
@@ -7,15 +7,15 @@ a decision.
 
 ## Purpose
 
-stim-cli brokers two contended resources: the Metro port and the device. The
-port is cheap and stim-cli can mint as many as it needs. The device is not. A
+Stim brokers two contended resources: the Metro port and the device. The
+port is cheap and Stim can mint as many as it needs. The device is not. A
 simulator costs RAM and a CPU share, and a machine runs out of them long
 before an agent fleet runs out of work. That ceiling is the reason to reach
 for a device that is not on this machine.
 
-This spec adds a second **device backend** to stim-cli. The build stays local:
+This spec adds a second **device backend** to Stim. The build stays local:
 the fingerprint, the shared build cache and single-flight builds are the
-reason stim-cli is fast, and none of them care where the device is. Only the
+reason Stim is fast, and none of them care where the device is. Only the
 device moves.
 
 Two hosted forms exist, and the useful discovery is that they are the same
@@ -27,18 +27,18 @@ interface:
 - **`agent-device proxy`** runs on a Mac you own and is reached over a
   tunnel. It hands back the same two values.
 
-So stim-cli implements one backend, against an agent-device daemon, and both
+So Stim implements one backend, against an agent-device daemon, and both
 forms fall out of it.
 
 ## The principle, unchanged
 
-> stim-cli brokers contended resources — the device and the Metro port. It
+> Stim brokers contended resources — the device and the Metro port. It
 > allocates them, records them, and reaps them. It never invokes the
 > project's tooling.
 
 A remote device is still a brokered device. The ownership rule survives with
-its terms substituted: stim-cli only ever creates, uses or destroys a session
-it created itself, named `stim-cli-<label>`.
+its terms substituted: Stim only ever creates, uses or destroys a session
+it created itself, named `stim-<label>`.
 
 ## What does not change
 
@@ -76,7 +76,7 @@ there cannot be caused by this change. An earlier draft of this spec proposed
 extracting a `DeviceBackend` interface; that would have been a second way to
 say what the dep seam already says.
 
-Selection is a `--remote` flag on `stim-cli ios`, plus an `ios.remote` key in
+Selection is a `--remote` flag on `stim ios`, plus an `ios.remote` key in
 settings, which must also be added to `KNOWN_SETTINGS` in `settings.ts` or it
 silently becomes a no-op.
 
@@ -87,31 +87,31 @@ recorded here and in that file's option-surface list.
 
 ## Session lifecycle
 
-stim-cli creates the session:
+Stim creates the session:
 
 ```
 eas sim --platform ios --json --non-interactive --out-config-type env \
-        --name stim-cli-<label> --max-duration-minutes <N>
+        --name stim-<label> --max-duration-minutes <N>
 ```
 
 Three flags carry weight.
 
 `--out-config-type env` is not optional. The default, `dotenv`, writes
 `.env.eas-simulator` into the project directory, and it does so even under
-`--json`. stim-cli does not edit the project's files; `engine/remote-cache.ts`
+`--json`. Stim does not edit the project's files; `engine/remote-cache.ts`
 states that rule and this honours it.
 
 `--json` makes the command print `{id, name, type, deviceRunSessionUrl,
 remoteConfig}` and return immediately, leaving the session running. That is
 the same detached model the supervisor already uses.
 
-`--name stim-cli-<label>` carries ownership. It replaces the `stim-cli-` simulator
+`--name stim-<label>` carries ownership. It replaces the `stim-` simulator
 name prefix as the marker every destructive path checks, so
-`eas simulator:list --name stim-cli-` is the analog of the local sweep and `gc`
+`eas simulator:list --name stim-` is the analog of the local sweep and `gc`
 can find leaked sessions with it.
 
 **The token is never persisted.** `remoteConfig` carries
-`agentDeviceRemoteSessionUrl` and `agentDeviceRemoteSessionToken`. stim-cli
+`agentDeviceRemoteSessionUrl` and `agentDeviceRemoteSessionToken`. Stim
 records only the session id, under a new `remoteDevice` key in the global
 workspace `state.json`, written through the same
 `withWorkspaceStateLock` as `supervisor` and `collectors`. Later commands
@@ -121,21 +121,21 @@ carry a live credential.
 
 ## Metro
 
-stim-cli keeps owning Metro, and the cloud simulator reaches it through
+Stim keeps owning Metro, and the cloud simulator reaches it through
 agent-device's companion tunnel. That tunnel is a detached local process
-which dials **outward** to the daemon and registers stim-cli's local Metro. The
+which dials **outward** to the daemon and registers Stim's local Metro. The
 daemon exposes it to the simulator on a device-side port. No inbound firewall
 hole and no third-party tunnel service.
 
-stim-cli does NOT drive `metro prepare` itself. `agent-device connect` defers
+Stim does NOT drive `metro prepare` itself. `agent-device connect` defers
 and then performs Metro preparation, and `disconnect` releases the lease and
-stops the companion it owns. stim-cli passes `metroProjectRoot` in the
+stops the companion it owns. Stim passes `metroProjectRoot` in the
 connection profile and lets agent-device own the tunnel; a second driver
 would fight it.
 
 The consequence worth naming: **`verify` keeps working unchanged.** Its check
 is "did a bundle request reach _this workspace's_ Metro", and with the tunnel
-it is literally the same Metro process. Going remote does not weaken stim-cli's
+it is literally the same Metro process. Going remote does not weaken Stim's
 central guarantee.
 
 ### The expo-dev-client deep link
@@ -144,35 +144,35 @@ agent-device's own Metro hint writes bare-RN's `RCT_jsLocation` only, which an
 expo-dev-client ignores. That is upstream issue callstack/agent-device#1245,
 open and unresolved.
 
-It does not block stim-cli, because `agent-device open <app> <url>` runs
-`simctl openurl` with the URL verbatim. stim-cli already composes the correct
+It does not block Stim, because `agent-device open <app> <url>` runs
+`simctl openurl` with the URL verbatim. Stim already composes the correct
 `exp+<scheme>://expo-development-client/?url=` link in
 `engine/app-install.ts` `devClientUrl`, verified against
-`EXDevLauncherURLHelper.swift`. stim-cli passes that link as the URL positional
+`EXDevLauncherURLHelper.swift`. Stim passes that link as the URL positional
 and bypasses the hint mechanism entirely.
 
-Contributing stim-cli's mechanism upstream would eventually remove this
+Contributing Stim's mechanism upstream would eventually remove this
 workaround. It is not a dependency.
 
 ## Logs
 
 Native device logs are **not** in v1, deliberately.
 
-Two things prevent a clean port. stim-cli runs `log stream --style ndjson` and
+Two things prevent a clean port. Stim runs `log stream --style ndjson` and
 its parser needs `subsystem`, `category`, `messageType` and
 `processImagePath`; agent-device runs the same tool with `--style compact`,
 which carries none of them in parseable form, so the `NOISE_RULES` table
-cannot match. Separately, stim-cli's collector reads a live pipe while
+cannot match. Separately, Stim's collector reads a live pipe while
 agent-device writes to a session artifact on the daemon host, served over an
 HTTP download route. Remote would be poll-and-download, not stream.
 
 What makes the gap acceptable is that device logs are the smaller half.
-stim-cli's other log source is its own Metro NDJSON reporter in `@stim-cli/metro`,
+Stim's other log source is its own Metro NDJSON reporter in `@stim-cli/metro`,
 which runs locally and is untouched by the device being remote. JS redboxes,
 bundling failures and console output all come from there, and they are the
 overwhelming majority of what `logs --errors` surfaces in an agent loop.
 
-The requirement this places on the implementation: on remote, `stim-cli logs`
+The requirement this places on the implementation: on remote, `stim logs`
 must **say** that device logs are unavailable. An empty device section reads
 as a pass, and `empty is the pass condition` is the contract `logs --errors`
 sells. A silent gap here would be a lie.
@@ -181,7 +181,7 @@ The fix is upstream and small. `buildIosSimulatorLogStreamArgs` in
 `packages/platform-apple/src/logs/log-predicate.ts` hardcodes `--style
 compact`; an opt-in style parameter threaded through `logs/descriptor.ts` and
 `logs/start.ts` is the whole change. Default stays compact, because `logs
-path` hands back a raw file a person reads. Once that lands, stim-cli's existing
+path` hands back a raw file a person reads. Once that lands, Stim's existing
 parser and noise rules work verbatim and the collector ports without a second
 implementation.
 
@@ -222,7 +222,7 @@ explicit exception for remote sessions, recorded in `CLAUDE.md` rather than
 left as an undocumented inconsistency.
 
 `gc` gains the remote analog of `findOrphanedDevices`, listing live sessions
-with `eas simulator:list --name stim-cli- --status new,in-progress --json` and
+with `eas simulator:list --name stim- --status new,in-progress --json` and
 reporting any whose name matches no known project. This matters more than the
 local case: a leaked simulator wastes RAM, a leaked session spends money until
 `--max-duration-minutes` expires.

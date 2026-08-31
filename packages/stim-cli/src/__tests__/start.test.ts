@@ -36,9 +36,9 @@ let root: string;
 const successfulTunnelCleanup = async () => ({ status: 'stopped' as const });
 
 beforeEach(() => {
-  tmpHome = mkdtempSync(join(tmpdir(), 'stim-cli-test-'));
-  process.env.STIM_CLI_HOME = tmpHome;
-  root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-cli-ws-')));
+  tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
+  process.env.STIM_HOME = tmpHome;
+  root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ws-')));
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'ws' }));
 });
 
@@ -47,7 +47,7 @@ afterEach(() => {
   resetExecutor();
   rmSync(tmpHome, { recursive: true, force: true });
   rmSync(root, { recursive: true, force: true });
-  delete process.env.STIM_CLI_HOME;
+  delete process.env.STIM_HOME;
 });
 
 type ActionFn = (opts: Record<string, unknown>) => void | Promise<void>;
@@ -372,19 +372,19 @@ describe('startFacts', () => {
       startFacts({
         port: 8082,
         supervisor: { pid: 91, mode: 'expo-child' },
-        logsDir: '/w/.stim-cli/logs',
+        logsDir: '/w/.stim/logs',
         alreadyRunning: false,
       }),
     ).toEqual({
       port: 8082,
       supervisorPid: 91,
       mode: 'expo-child',
-      logsDir: '/w/.stim-cli/logs',
+      logsDir: '/w/.stim/logs',
       alreadyRunning: false,
     });
   });
 
-  test('a dev server stim-cli did not start reports a null supervisor rather than a lie', () => {
+  test('a dev server Stim did not start reports a null supervisor rather than a lie', () => {
     const facts = startFacts({ port: 8082, supervisor: null, logsDir: '/l', alreadyRunning: true });
     expect(facts.supervisorPid).toBe(null);
     expect(facts.mode).toBe(null);
@@ -406,7 +406,7 @@ describe('failureEvidence (issue #24)', () => {
   const record = (ts: number, msg: string, src = 'metro') => JSON.stringify({ ts, level: 'error', src, msg });
 
   test('an empty supervisor.log is not pointed at; the timeline errors are quoted instead', () => {
-    const logsDir = join(root, '.stim-cli', 'logs');
+    const logsDir = join(root, '.stim', 'logs');
     mkdirSync(logsDir, { recursive: true });
     const logFile = join(logsDir, 'supervisor.log');
     writeFileSync(logFile, '');
@@ -427,7 +427,7 @@ describe('failureEvidence (issue #24)', () => {
   });
 
   test('a supervisor.log with content is still quoted, ahead of the timeline records', () => {
-    const logsDir = join(root, '.stim-cli', 'logs');
+    const logsDir = join(root, '.stim', 'logs');
     mkdirSync(logsDir, { recursive: true });
     const logFile = join(logsDir, 'supervisor.log');
     writeFileSync(logFile, 'Error: Cannot find module expo\n');
@@ -437,7 +437,7 @@ describe('failureEvidence (issue #24)', () => {
   });
 
   test('falls back to any-level records from this attempt when nothing reached error level (#30)', () => {
-    const logsDir = join(root, '.stim-cli', 'logs');
+    const logsDir = join(root, '.stim', 'logs');
     mkdirSync(logsDir, { recursive: true });
     const logFile = join(logsDir, 'supervisor.log');
     writeFileSync(logFile, '');
@@ -507,7 +507,7 @@ describe('action: already running', () => {
     expect(facts.alreadyRunning).toBe(true);
     expect(result.exitCode).toBe(null);
     expect(exec.calls.spawn).toEqual([]);
-    expect(result.errs.join('\n')).toMatch(/started outside stim-cli/);
+    expect(result.errs.join('\n')).toMatch(/started outside Stim/);
   });
 
   test('start --remote refuses an external Expo server that has no public URL', async () => {
@@ -527,7 +527,7 @@ describe('action: already running', () => {
 
     expect(result.exitCode).toBe(1);
     expect(exec.calls.spawn).toEqual([]);
-    expect(JSON.parse(result.logs[0] ?? '').code).toBe('STIM_CLI_REMOTE_START_REQUIRED');
+    expect(JSON.parse(result.logs[0] ?? '').code).toBe('STIM_REMOTE_START_REQUIRED');
   });
 
   test('start --remote accepts an external Expo server with an operator public URL', async () => {
@@ -595,7 +595,7 @@ describe('action: already running', () => {
     expect(tunnelStarted).toBe(false);
     expect(exec.calls.spawn).toEqual([]);
     expect(JSON.parse(result.logs[0] ?? '')).toEqual({
-      code: 'STIM_CLI_REMOTE_START_REQUIRED',
+      code: 'STIM_REMOTE_START_REQUIRED',
       message: `The dev server on port ${port} is local-only and cannot gain a managed tunnel while it is running.`,
       remedy: 'Run `stim stop`, then `stim start --remote`.',
     });
@@ -637,7 +637,7 @@ describe('action: already running', () => {
     expect(result.exitCode).toBe(1);
     expect(exec.calls.spawn).toEqual([]);
     expect(JSON.parse(result.logs[0] ?? '')).toEqual({
-      code: 'STIM_CLI_REMOTE_START_REQUIRED',
+      code: 'STIM_REMOTE_START_REQUIRED',
       message: `The Expo dev server on port ${port} is local-only and cannot gain a tunnel while it is running.`,
       remedy: 'Run `stim stop`, then `stim start --remote`.',
     });
@@ -762,7 +762,7 @@ describe('action: spawning the supervisor', () => {
     });
 
     expect(result.exitCode).toBe(1);
-    expect(JSON.parse(result.logs[0] ?? '').code).toBe('STIM_CLI_SUPERVISOR_EXITED');
+    expect(JSON.parse(result.logs[0] ?? '').code).toBe('STIM_SUPERVISOR_EXITED');
   });
 
   test('plain start does not pass --tunnel to an Expo supervisor in auto mode', async () => {
@@ -780,7 +780,7 @@ describe('action: spawning the supervisor', () => {
     });
     const spawned = exec.calls.spawn[0];
     assert(spawned);
-    expect(spawned.opts.env).not.toHaveProperty('STIM_CLI_METRO_PUBLIC_URL');
+    expect(spawned.opts.env).not.toHaveProperty('STIM_METRO_PUBLIC_URL');
     expect(spawned.opts.env).not.toHaveProperty('EXPO_PACKAGER_PROXY_URL');
   });
 
@@ -809,7 +809,7 @@ describe('action: spawning the supervisor', () => {
     expect(providerStarted).toBe(false);
     expect(exec.calls.spawn).toEqual([]);
     expect(result.exitCode).toBe(1);
-    expect(JSON.parse(result.logs[0] ?? '').code).toBe('STIM_CLI_BAD_ARG');
+    expect(JSON.parse(result.logs[0] ?? '').code).toBe('STIM_BAD_ARG');
   });
 
   test('start --remote reports worktree removal before project registration', async () => {
@@ -822,14 +822,14 @@ describe('action: spawning the supervisor', () => {
           return ['ngrok'];
         },
         withWorktreeLock: async () => {
-          throw Object.assign(new Error('held for worktree removal'), { code: 'STIM_CLI_LOCK_REFUSED' });
+          throw Object.assign(new Error('held for worktree removal'), { code: 'STIM_LOCK_REFUSED' });
         },
       }),
     );
 
     const error = JSON.parse(result.logs[0] ?? '');
     expect(result.exitCode).toBe(1);
-    expect(error.code).toBe('STIM_CLI_WORKTREE_REMOVAL_IN_PROGRESS');
+    expect(error.code).toBe('STIM_WORKTREE_REMOVAL_IN_PROGRESS');
     expect(error.remedy).toMatch(/retry.*worktree remove.*finishes/i);
     expect(providerChecked).toBe(false);
     expect(getProject(root)).toBeNull();
@@ -901,7 +901,7 @@ describe('action: spawning the supervisor', () => {
         port,
       });
       expect(opts.env).toMatchObject({
-        STIM_CLI_METRO_PUBLIC_URL: 'https://stable.ngrok.app',
+        STIM_METRO_PUBLIC_URL: 'https://stable.ngrok.app',
         EXPO_PACKAGER_PROXY_URL: 'https://stable.ngrok.app',
       });
       writeWorkspaceState(root, { supervisor: { pid: process.pid, port, mode: 'bare-inproc', startedAt: 'T' } });
@@ -1160,7 +1160,7 @@ describe('action: spawning the supervisor', () => {
     );
 
     expect(result.exitCode).toBe(1);
-    expect(JSON.parse(result.logs[0] ?? '').code).toBe('STIM_CLI_SUPERVISOR_EXITED');
+    expect(JSON.parse(result.logs[0] ?? '').code).toBe('STIM_SUPERVISOR_EXITED');
     expect(signals).toEqual(['SIGTERM', 'SIGKILL']);
     expect(alive).toBe(false);
     expect(readMetroTunnel(root)).toMatchObject({ pid: 4343 });
@@ -1429,7 +1429,7 @@ describe('action: spawning the supervisor', () => {
     }
 
     expect(result.exitCode).toBe(1);
-    expect(JSON.parse(result.logs[0] ?? '').code).toBe('STIM_CLI_REMOTE_METRO_UNREACHABLE');
+    expect(JSON.parse(result.logs[0] ?? '').code).toBe('STIM_REMOTE_METRO_UNREACHABLE');
     expect(stopped).toEqual([expect.objectContaining({ pid: 4242 })]);
     expect(readMetroTunnel(root)).toBeNull();
   });
@@ -1462,7 +1462,7 @@ describe('action: spawning the supervisor', () => {
 
     const error = JSON.parse(result.logs[0] ?? '');
     expect(result.exitCode).toBe(1);
-    expect(error.code).toBe('STIM_CLI_REMOTE_METRO_UNREACHABLE');
+    expect(error.code).toBe('STIM_REMOTE_METRO_UNREACHABLE');
     expect(error.remedy).toMatch(/cleanup.*failed.*stim stop/i);
     expect(readMetroTunnel(root)).toMatchObject({ pid: 4242, url: 'https://cleanup-failed.ngrok.app' });
   });
@@ -1518,7 +1518,7 @@ describe('action: spawning the supervisor', () => {
     );
 
     expect(result.exitCode).toBe(1);
-    expect(JSON.parse(result.logs[0] ?? '').code).toBe('STIM_CLI_REMOTE_METRO_UNREACHABLE');
+    expect(JSON.parse(result.logs[0] ?? '').code).toBe('STIM_REMOTE_METRO_UNREACHABLE');
     expect(readMetroTunnel(root)).toEqual(replacement);
   });
 
@@ -1608,7 +1608,7 @@ describe('action: spawning the supervisor', () => {
         'noise 4',
         'noise 5',
         'noise 6',
-        'stim-cli supervisor: failed to start the bare-inproc dev server: STIM_CLI_BARE_DEPS: metro is not resolvable',
+        'Stim supervisor: failed to start the bare-inproc dev server: STIM_BARE_DEPS: metro is not resolvable',
       ].join('\n'),
     );
 
@@ -1617,13 +1617,13 @@ describe('action: spawning the supervisor', () => {
     expect(result.exitCode).toBe(1);
     expect(result.logs.length).toBe(1);
     expect(JSON.parse(result.logs[0] ?? '')).toEqual({
-      code: 'STIM_CLI_METRO_TIMEOUT',
+      code: 'STIM_METRO_TIMEOUT',
       message: 'The dev server did not answer on port 8155 within 1s.',
       remedy: 'It may still be starting. Run `stim stop` to halt it, or `stim logs` to follow along.',
     });
     const stderr = result.errs.join('\n');
     expect(stderr).toMatch(/did not answer on port 8155 within 1s/);
-    expect(stderr).toMatch(/STIM_CLI_BARE_DEPS/);
+    expect(stderr).toMatch(/STIM_BARE_DEPS/);
     expect(stderr).toMatch(new RegExp(supervisorLogFile(root).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     expect(!stderr.includes('noise 1')).toBeTruthy();
     expect(stderr.includes('noise 4')).toBeTruthy();
@@ -1658,7 +1658,7 @@ describe('action: spawning the supervisor', () => {
     const lastLog = result.logs.at(-1);
     assert(lastLog);
     const facts = JSON.parse(lastLog);
-    expect(facts.code).toBe('STIM_CLI_SUPERVISOR_EXITED');
+    expect(facts.code).toBe('STIM_SUPERVISOR_EXITED');
     expect(facts.remedy).toMatch(/start` again/);
   });
 });
@@ -1670,7 +1670,7 @@ describe('the error contract', () => {
     expect(result.exitCode).toBe(1);
     expect(result.logs.length).toBe(1);
     const facts = JSON.parse(result.logs[0] ?? '');
-    expect(facts.code).toBe('STIM_CLI_BAD_ARG');
+    expect(facts.code).toBe('STIM_BAD_ARG');
     expect(facts.message).toMatch(/Invalid --wait/);
     expect(facts.remedy).toBeTruthy();
   });
@@ -1680,12 +1680,12 @@ describe('the error contract', () => {
     const result = await runAction({ wait: 'soon' });
     expect(result.exitCode).toBe(1);
     for (const line of result.logs) expect(() => JSON.parse(line)).toThrow(SyntaxError);
-    expect(result.errs.join('\n')).toMatch(/STIM_CLI_BAD_ARG/);
+    expect(result.errs.join('\n')).toMatch(/STIM_BAD_ARG/);
   });
 });
 
 describe('global workspace storage', () => {
-  test('creates ownership metadata under STIM_CLI_HOME and never touches .gitignore', async () => {
+  test('creates ownership metadata under STIM_HOME and never touches .gitignore', async () => {
     const port = 8161;
     const server = await metroListener(port);
     setExecutor(metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } }));
@@ -1837,7 +1837,7 @@ describe('action: an existing supervisor that is not answering', () => {
 
     expect(result.exitCode).toBe(1);
     expect(exec.calls.spawn).toEqual([]);
-    expect(JSON.parse(result.logs[0] ?? '').code).toBe('STIM_CLI_REMOTE_START_REQUIRED');
+    expect(JSON.parse(result.logs[0] ?? '').code).toBe('STIM_REMOTE_START_REQUIRED');
     expect(result.errs.join('\n')).toMatch(/stim stop.*stim start --remote/);
   });
 

@@ -162,7 +162,7 @@ export async function runCollector({
     } catch {}
     const closed = writer.close();
     if (closed.dropped > 0) {
-      stderr(`stim-cli collector: dropped ${closed.dropped} record(s); last error: ${describe(closed.lastError)}`);
+      stderr(`Stim collector: dropped ${closed.dropped} record(s); last error: ${describe(closed.lastError)}`);
     }
     onExit(code);
   };
@@ -182,7 +182,7 @@ export async function runCollector({
   try {
     registerCollector(root, platform, { pid: process.pid, startedAt });
   } catch (err) {
-    stderr(`stim-cli collector: could not record the collector in ${root}: ${describe(err)}`);
+    stderr(`Stim collector: could not record the collector in ${root}: ${describe(err)}`);
   }
 
   let pid: number | null = null;
@@ -316,17 +316,17 @@ function describe(err: unknown): string {
 export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
   const parsed = parseArgs(argv);
   if (parsed.error) {
-    console.error(`stim-cli collector: ${parsed.error}`);
+    console.error(`Stim collector: ${parsed.error}`);
     process.exit(2);
     return;
   }
   const root = parsed.root as string;
   if (!existsSync(root)) {
-    console.error(`stim-cli collector: --root ${root} does not exist.`);
+    console.error(`Stim collector: --root ${root} does not exist.`);
     process.exit(2);
     return;
   }
-  process.title = `stim-cli-collector-${parsed.platform}`;
+  process.title = `stim-collector-${parsed.platform}`;
   await runCollector(parsed as RunCollectorOptions);
 }
 
@@ -342,7 +342,7 @@ function invokedDirectly() {
 
 if (invokedDirectly()) {
   main().catch((err) => {
-    console.error(`stim-cli collector: ${describe(err)}`);
+    console.error(`Stim collector: ${describe(err)}`);
     process.exit(1);
   });
 }

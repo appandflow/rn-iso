@@ -35,7 +35,7 @@ import type { NdjsonRecord } from '../ndjson.ts';
 let root: string;
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), 'stim-cli-remote-'));
+  root = mkdtempSync(join(tmpdir(), 'stim-remote-'));
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'fixture' }));
 });
 
@@ -115,7 +115,7 @@ describe('normalizeProvider', () => {
 });
 
 describe('runOptionsFor', () => {
-  test('describes the debug simulator/emulator build stim-cli actually makes', () => {
+  test('describes the debug simulator/emulator build Stim actually makes', () => {
     expect(runOptionsFor('ios')).toEqual({ configuration: 'Debug' });
     expect(runOptionsFor('android')).toEqual({ variant: 'debug' });
   });
@@ -287,7 +287,7 @@ describe('loadProjectProvider', () => {
     expect(result.unavailable).toMatch(/not installed/);
   });
 
-  test("stim-cli's own provider package is treated as level one, not as a remote", async () => {
+  test("Stim's own provider package is treated as level one, not as a remote", async () => {
     writeAppJson({ expo: { buildCacheProvider: { plugin: LOCAL_PROVIDER_PACKAGE } } });
     expect(await loadProjectProvider(root)).toEqual({ none: true });
   });
@@ -352,7 +352,7 @@ describe('resolveRemote', () => {
     expect(hash).toBe('eas-side-hash');
   });
 
-  test('a calculateFingerprintHash that fails falls back to the fingerprint stim-cli already has', async () => {
+  test('a calculateFingerprintHash that fails falls back to the fingerprint Stim already has', async () => {
     const appPath = join(root, 'Fixture.app');
     mkdirSync(appPath);
     let hash = null;

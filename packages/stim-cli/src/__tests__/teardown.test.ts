@@ -9,7 +9,7 @@ let savedSdkRoot: string | undefined;
 beforeEach(() => {
   savedAndroidHome = process.env.ANDROID_HOME;
   savedSdkRoot = process.env.ANDROID_SDK_ROOT;
-  process.env.ANDROID_HOME = join(tmpdir(), 'stim-cli-test-no-sdk-here');
+  process.env.ANDROID_HOME = join(tmpdir(), 'stim-test-no-sdk-here');
   delete process.env.ANDROID_SDK_ROOT;
 });
 
@@ -42,14 +42,14 @@ function iosExecutor({ sims = [], occupied = '', throwOn = null }: IosExecutorOp
   return { calls, run: answer, runQuiet: answer, spawn: () => {} };
 }
 
-const OWNED = { udid: 'U1', name: 'stim-cli-app', state: 'Booted', isAvailable: true };
+const OWNED = { udid: 'U1', name: 'stim-app', state: 'Booted', isAvailable: true };
 
 test('teardownOwnedIosSim shuts down and deletes an owned, unoccupied sim', () => {
   const exec = iosExecutor({ sims: [OWNED] });
   setExecutor(exec);
   const r = teardownOwnedIosSim('U1', { del: true });
   expect(r.status).toBe('torn-down');
-  expect(r.label).toBe('stim-cli-app');
+  expect(r.label).toBe('stim-app');
   expect(exec.calls.some((c) => /simctl shutdown U1/.test(c))).toBeTruthy();
   expect(exec.calls.some((c) => /simctl delete U1/.test(c))).toBeTruthy();
 });
@@ -63,12 +63,12 @@ test('teardownOwnedIosSim shuts down WITHOUT deleting when del is false', () => 
   expect(!exec.calls.some((c) => /simctl delete/.test(c))).toBeTruthy();
 });
 
-test('teardownOwnedIosSim refuses a sim renamed away from stim-cli ownership', () => {
+test('teardownOwnedIosSim refuses a sim renamed away from Stim ownership', () => {
   const exec = iosExecutor({ sims: [{ ...OWNED, name: 'My Real Sim' }] });
   setExecutor(exec);
   const r = teardownOwnedIosSim('U1', { del: true });
   expect(r.status).toBe('skipped');
-  expect(r.reason).toMatch(/not stim-cli-owned/);
+  expect(r.reason).toMatch(/not Stim-owned/);
   expect(!exec.calls.some((c) => /simctl shutdown|simctl delete/.test(c))).toBeTruthy();
 });
 
@@ -114,7 +114,7 @@ test('teardownOwnedIosSim deletes an occupied sim anyway, without needing force'
   expect(exec.calls.some((c) => /simctl delete U1/.test(c))).toBeTruthy();
 });
 
-test('teardownOwnedIosSim still refuses a sim that is not stim-cli-owned, even when deleting', () => {
+test('teardownOwnedIosSim still refuses a sim that is not Stim-owned, even when deleting', () => {
   const exec = iosExecutor({ sims: [{ udid: 'U1', name: 'My iPhone', state: 'Booted', isAvailable: true }] });
   setExecutor(exec);
   const r = teardownOwnedIosSim('U1', { del: true });
@@ -160,18 +160,18 @@ function androidExecutor({ avds = [], adb = '', avdName = null, throwOn = null }
 
 test('teardownOwnedAvd shuts down the running emulator and deletes the AVD', () => {
   const exec = androidExecutor({
-    avds: ['stim-cli-app'],
+    avds: ['stim-app'],
     adb: 'List of devices attached\nemulator-5554\tdevice\n',
-    avdName: 'stim-cli-app',
+    avdName: 'stim-app',
   });
   setExecutor(exec);
-  const r = teardownOwnedAvd('stim-cli-app', { del: true });
+  const r = teardownOwnedAvd('stim-app', { del: true });
   expect(r.status).toBe('torn-down');
   expect(exec.calls.some((c) => /emu kill/.test(c))).toBeTruthy();
   expect(exec.calls.some((c) => /delete avd -n/.test(c))).toBeTruthy();
 });
 
-test('teardownOwnedAvd refuses an AVD that is not stim-cli-owned by name', () => {
+test('teardownOwnedAvd refuses an AVD that is not Stim-owned by name', () => {
   const exec = androidExecutor({ avds: ['Pixel_6_API_34'], adb: 'List of devices attached\n' });
   setExecutor(exec);
   const r = teardownOwnedAvd('Pixel_6_API_34', { del: true });
@@ -181,19 +181,19 @@ test('teardownOwnedAvd refuses an AVD that is not stim-cli-owned by name', () =>
 
 test('teardownOwnedAvd reports missing for an AVD that no longer exists', () => {
   setExecutor(androidExecutor({ avds: [], adb: 'List of devices attached\n' }));
-  expect(teardownOwnedAvd('stim-cli-gone', { del: true }).status).toEqual('missing');
+  expect(teardownOwnedAvd('stim-gone', { del: true }).status).toEqual('missing');
 });
 
 test('teardownOwnedAvd contains a throw instead of propagating it', () => {
   setExecutor(
     androidExecutor({
-      avds: ['stim-cli-app'],
+      avds: ['stim-app'],
       adb: 'List of devices attached\nemulator-5554\tdevice\n',
-      avdName: 'stim-cli-app',
+      avdName: 'stim-app',
       throwOn: 'delete avd',
     }),
   );
-  const r = teardownOwnedAvd('stim-cli-app', { del: true });
+  const r = teardownOwnedAvd('stim-app', { del: true });
   expect(r.status).toBe('failed');
   expect(r.reason).toMatch(/boom/);
 });

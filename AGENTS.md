@@ -1,11 +1,11 @@
-# stim-cli agent guide
+# Stim agent guide
 
 Use this guide when you change this repository. User documentation lives in
 [`packages/stim-cli/README.md`](./packages/stim-cli/README.md).
 
 ## Project
 
-stim-cli gives each React Native or Expo workspace an isolated Metro port and an
+Stim gives each React Native or Expo workspace an isolated Metro port and an
 owned simulator or emulator. It caches native builds and captures structured
 logs.
 
@@ -17,12 +17,12 @@ worktree create -> start -> ios|android -> logs --errors -> stop -> worktree rem
 
 The command surface is `doctor`, `worktree create|remove`, `start`, `stop`,
 `ios`, `android`, `logs`, `status`, `gc`, and `guide`. Do not add commands or
-flags without an explicit product decision. Projects can wrap stim-cli when they
+flags without an explicit product decision. Projects can wrap Stim when they
 need custom behavior.
 
-Runtime state belongs under `$STIM_CLI_HOME/workspaces/`, not in the project
+Runtime state belongs under `$STIM_HOME/workspaces/`, not in the project
 tree. Do not restore `init`, project setup mutations, or the deleted
-`stim-cli-init` skill. `doctor` reports setup that requires project judgment.
+`stim-init` skill. `doctor` reports setup that requires project judgment.
 
 ## Development
 
@@ -71,7 +71,7 @@ changes, and wait for the new checks.
   thin I/O wrappers. Unit-test the pure functions.
 - **Locked state.** Lock every read-modify-write to global config or workspace
   state. Use atomic writes. Long-lived build locks use PID liveness, not mtime.
-- **Cache contracts.** The cache packages must work without `stim-cli` installed.
+- **Cache contracts.** The cache packages must work without `Stim` installed.
   Keep their config path, cache root, cache key, and registration behavior
   aligned with the CLI. Resolution order is environment, machine config, then
   default. Update `cache-packages.test.ts` when those rules change.
@@ -118,7 +118,7 @@ that reference text in the skill.
 Update `guide` output and its contract tests when commands, flags, defaults, or
 remedies change. Update the skill only when the normal workflow, a permanent
 safety rule, or topic routing changes. Only one skill ships; do not restore
-`stim-cli-init`.
+`stim-init`.
 
 Document command invocation once in each main entry point. Show the no-install
 form, `npx stim-cli <command>`, and the global install,
@@ -131,7 +131,7 @@ checks, and registry remedies, which cannot assume a global install.
 
 ### 2. Use only owned devices
 
-stim-cli can use only devices it created, named `stim-cli-<label>` and recorded with
+Stim can use only devices it created, named `stim-<label>` and recorded with
 `owned: true`. Never operate on physical or user-created devices. Keep a device
 record when teardown fails so `gc` can find the device later.
 
@@ -158,7 +158,7 @@ can continue. `stop` shuts down devices; it never deletes them.
 
 ### 5. Redirect test state
 
-Set `STIM_CLI_HOME` to a temporary directory in every test that reads or writes
+Set `STIM_HOME` to a temporary directory in every test that reads or writes
 global state. Delete the directory and environment variable after each test.
 
 ### 6. Compare canonical paths

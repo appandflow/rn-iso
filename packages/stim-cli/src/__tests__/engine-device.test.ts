@@ -15,8 +15,8 @@ let savedSdkRoot: string | undefined;
 let savedDisplay: string | undefined;
 
 beforeEach(() => {
-  tmpHome = mkdtempSync(join(tmpdir(), 'stim-cli-test-'));
-  process.env.STIM_CLI_HOME = tmpHome;
+  tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
+  process.env.STIM_HOME = tmpHome;
   savedAndroidHome = process.env.ANDROID_HOME;
   savedSdkRoot = process.env.ANDROID_SDK_ROOT;
   process.env.ANDROID_HOME = join(tmpHome, 'no-sdk-here');
@@ -27,7 +27,7 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(tmpHome, { recursive: true, force: true });
-  delete process.env.STIM_CLI_HOME;
+  delete process.env.STIM_HOME;
   if (savedAndroidHome === undefined) delete process.env.ANDROID_HOME;
   else process.env.ANDROID_HOME = savedAndroidHome;
   if (savedSdkRoot === undefined) delete process.env.ANDROID_SDK_ROOT;
@@ -47,7 +47,7 @@ describe('ensureBooted: ios', () => {
     setExecutor({
       run: (cmd) => {
         commands.push(cmd);
-        return simList([{ udid: 'U1', name: 'stim-cli-app', state: 'Booted', isAvailable: true }]);
+        return simList([{ udid: 'U1', name: 'stim-app', state: 'Booted', isAvailable: true }]);
       },
       runQuiet: (cmd) => {
         commands.push(cmd);
@@ -73,7 +73,7 @@ describe('ensureBooted: ios', () => {
         if (cmd.includes('list devices')) {
           listCalls += 1;
           const state = listCalls >= 3 ? 'Booted' : 'Shutdown';
-          return simList([{ udid: 'U1', name: 'stim-cli-app', state, isAvailable: true }]);
+          return simList([{ udid: 'U1', name: 'stim-app', state, isAvailable: true }]);
         }
         return '';
       },
@@ -96,7 +96,7 @@ describe('ensureBooted: ios', () => {
     setExecutor({
       run: (cmd) => {
         if (cmd.includes('list devices')) {
-          return simList([{ udid: 'U1', name: 'stim-cli-app', state: 'Shutdown', isAvailable: true }]);
+          return simList([{ udid: 'U1', name: 'stim-app', state: 'Shutdown', isAvailable: true }]);
         }
         if (cmd.includes('bootstatus')) throw new Error('CoreLocationMigrator failed');
         return '';
@@ -113,7 +113,7 @@ describe('ensureBooted: ios', () => {
     expect(result.reason).toMatch(/CoreLocationMigrator failed/);
   });
 
-  test('refuses to boot a sim that is no longer stim-cli-owned by name', async () => {
+  test('refuses to boot a sim that is no longer Stim-owned by name', async () => {
     setExecutor({
       run: () => simList([{ udid: 'U1', name: 'My iPhone', state: 'Shutdown', isAvailable: true }]),
       runQuiet: () => '',
@@ -124,7 +124,7 @@ describe('ensureBooted: ios', () => {
     });
     const result = await ensureBooted({ platform: 'ios', device: { deviceUdid: 'U1' } });
     expect(result.ok).toBe(undefined);
-    expect(result.reason).toMatch(/not stim-cli-owned/);
+    expect(result.reason).toMatch(/not Stim-owned/);
   });
 
   test('reports a sim that no longer exists rather than booting a stale udid', async () => {
@@ -138,7 +138,7 @@ describe('ensureBooted: ios', () => {
     setExecutor({
       run: (cmd) =>
         cmd.includes('list devices')
-          ? simList([{ udid: 'U1', name: 'stim-cli-app', state: 'Booting', isAvailable: true }])
+          ? simList([{ udid: 'U1', name: 'stim-app', state: 'Booting', isAvailable: true }])
           : '',
       runQuiet: () => '',
       runFile: () => '',
@@ -160,13 +160,13 @@ describe('ensureBooted: android', () => {
     setExecutor({
       run: (cmd) => {
         commands.push(cmd);
-        if (cmd === 'emulator -list-avds') return 'stim-cli-app';
+        if (cmd === 'emulator -list-avds') return 'stim-app';
         if (cmd === 'adb devices') return 'List of devices attached\nemulator-5554\tdevice';
         return '';
       },
       runQuiet: (cmd) => {
         commands.push(cmd);
-        if (cmd.includes('emu avd name')) return 'stim-cli-app\nOK';
+        if (cmd.includes('emu avd name')) return 'stim-app\nOK';
         if (cmd.includes('sys.boot_completed')) return '1';
         return '';
       },
@@ -177,7 +177,7 @@ describe('ensureBooted: android', () => {
     });
     const result = await ensureBooted({
       platform: 'android',
-      device: { avdName: 'stim-cli-app', consolePort: 5554, owned: true },
+      device: { avdName: 'stim-app', consolePort: 5554, owned: true },
     });
     expect(result).toEqual({ ok: true, serial: 'emulator-5554' });
   });
@@ -187,7 +187,7 @@ describe('ensureBooted: android', () => {
     let booted = false;
     setExecutor({
       run: (cmd) => {
-        if (cmd === 'emulator -list-avds') return 'stim-cli-app';
+        if (cmd === 'emulator -list-avds') return 'stim-app';
         if (cmd === 'adb devices')
           return booted ? 'List of devices attached\nemulator-5556\tdevice' : 'List of devices attached';
         return '';
@@ -205,19 +205,19 @@ describe('ensureBooted: android', () => {
     });
     const result = await ensureBooted({
       platform: 'android',
-      device: { avdName: 'stim-cli-app', consolePort: 5556, owned: true },
+      device: { avdName: 'stim-app', consolePort: 5556, owned: true },
       timeoutMs: 5000,
     });
     expect(result).toEqual({ ok: true, serial: 'emulator-5556' });
     expect(spawned).toEqual([
-      ['emulator', '-avd', 'stim-cli-app', '-port', '5556', '-no-snapshot-save', '-no-snapshot-load'],
+      ['emulator', '-avd', 'stim-app', '-port', '5556', '-no-snapshot-save', '-no-snapshot-load'],
     ]);
   });
 
   test('reuses the serial returned by a fresh owned AVD boot when adb listing briefly misses it', async () => {
     setExecutor({
       run: (cmd) => {
-        if (cmd === 'emulator -list-avds') return 'stim-cli-app';
+        if (cmd === 'emulator -list-avds') return 'stim-app';
         if (cmd === 'adb devices') return 'List of devices attached';
         return '';
       },
@@ -230,7 +230,7 @@ describe('ensureBooted: android', () => {
     const result = await ensureBooted({
       platform: 'android',
       device: {
-        avdName: 'stim-cli-app',
+        avdName: 'stim-app',
         consolePort: 5556,
         serial: 'emulator-5556',
         owned: true,
@@ -245,7 +245,7 @@ describe('ensureBooted: android', () => {
     let ourSerial: string | null = null;
     setExecutor({
       run: (cmd) => {
-        if (cmd === 'emulator -list-avds') return 'stim-cli-app';
+        if (cmd === 'emulator -list-avds') return 'stim-app';
         if (cmd === 'adb devices') {
           const rows = ['List of devices attached', 'emulator-5554\tdevice'];
           if (ourSerial) rows.push(`${ourSerial}\tdevice`);
@@ -254,7 +254,7 @@ describe('ensureBooted: android', () => {
         return '';
       },
       runQuiet: (cmd) => {
-        if (cmd.includes('emu avd name')) return cmd.includes('5554') ? 'Pixel_7_API_35\nOK' : 'stim-cli-app\nOK';
+        if (cmd.includes('emu avd name')) return cmd.includes('5554') ? 'Pixel_7_API_35\nOK' : 'stim-app\nOK';
         if (cmd.includes('sys.boot_completed')) return ourSerial ? '1' : '';
         return '';
       },
@@ -267,7 +267,7 @@ describe('ensureBooted: android', () => {
     });
     const result = await ensureBooted({
       platform: 'android',
-      device: { avdName: 'stim-cli-app', consolePort: 5554, owned: true },
+      device: { avdName: 'stim-app', consolePort: 5554, owned: true },
       timeoutMs: 5000,
     });
     expect(result.ok).toBe(true);
@@ -281,7 +281,7 @@ describe('ensureBooted: android', () => {
   test('ensureBooted stops the moment the spawned emulator process is gone', async () => {
     setExecutor({
       run: (cmd) => {
-        if (cmd === 'emulator -list-avds') return 'stim-cli-app';
+        if (cmd === 'emulator -list-avds') return 'stim-app';
         if (cmd === 'adb devices') return 'List of devices attached';
         return '';
       },
@@ -292,7 +292,7 @@ describe('ensureBooted: android', () => {
     const started = Date.now();
     const result = await ensureBooted({
       platform: 'android',
-      device: { avdName: 'stim-cli-app', consolePort: 5556, owned: true },
+      device: { avdName: 'stim-app', consolePort: 5556, owned: true },
       timeoutMs: 240000,
       alive: () => false,
     });
@@ -305,7 +305,7 @@ describe('ensureBooted: android', () => {
     let probes = 0;
     setExecutor({
       run: (cmd) => {
-        if (cmd === 'emulator -list-avds') return 'stim-cli-app';
+        if (cmd === 'emulator -list-avds') return 'stim-app';
         if (cmd === 'adb devices') return 'List of devices attached';
         return '';
       },
@@ -319,7 +319,7 @@ describe('ensureBooted: android', () => {
     });
     const result = await ensureBooted({
       platform: 'android',
-      device: { avdName: 'stim-cli-app', consolePort: 5556, owned: true },
+      device: { avdName: 'stim-app', consolePort: 5556, owned: true },
       timeoutMs: 20000,
       alive: () => true,
     });
@@ -328,11 +328,11 @@ describe('ensureBooted: android', () => {
   });
 
   test('ensureBooted hands the caller log file to the emulator spawn', async () => {
-    const logFile = join(tmpHome, 'ws', '.stim-cli', 'logs', 'emulator.log');
+    const logFile = join(tmpHome, 'ws', '.stim', 'logs', 'emulator.log');
     const opts: Array<Record<string, unknown>> = [];
     setExecutor({
       run: (cmd) => {
-        if (cmd === 'emulator -list-avds') return 'stim-cli-app';
+        if (cmd === 'emulator -list-avds') return 'stim-app';
         if (cmd === 'adb devices') return 'List of devices attached';
         return '';
       },
@@ -345,7 +345,7 @@ describe('ensureBooted: android', () => {
     });
     const result = await ensureBooted({
       platform: 'android',
-      device: { avdName: 'stim-cli-app', consolePort: 5556, owned: true },
+      device: { avdName: 'stim-app', consolePort: 5556, owned: true },
       timeoutMs: 5000,
       logFile,
     });
@@ -357,7 +357,7 @@ describe('ensureBooted: android', () => {
     expect(existsSync(logFile)).toBe(true);
   });
 
-  test('refuses an AVD that is not stim-cli-owned by name', async () => {
+  test('refuses an AVD that is not Stim-owned by name', async () => {
     setExecutor({
       run: (cmd) => (cmd === 'emulator -list-avds' ? 'Pixel_7_API_35' : ''),
       runQuiet: () => '',
@@ -367,22 +367,22 @@ describe('ensureBooted: android', () => {
       },
     });
     const result = await ensureBooted({ platform: 'android', device: { avdName: 'Pixel_7_API_35' } });
-    expect(result.reason).toMatch(/not stim-cli-owned/);
+    expect(result.reason).toMatch(/not Stim-owned/);
   });
 
   test('refuses a legacy physical record without issuing a single command at it', async () => {
     setExecutor({
       run: (cmd) => {
-        throw new Error(`stim-cli must not run "${cmd}" for a physical record`);
+        throw new Error(`Stim must not run "${cmd}" for a physical record`);
       },
       runQuiet: () => {
-        throw new Error('stim-cli must not probe hardware');
+        throw new Error('Stim must not probe hardware');
       },
       runFile: () => {
-        throw new Error('stim-cli must not probe hardware');
+        throw new Error('Stim must not probe hardware');
       },
       spawn: () => {
-        throw new Error('stim-cli must never try to boot hardware');
+        throw new Error('Stim must never try to boot hardware');
       },
     });
     const physical = { serial: 'R5CT10', kind: 'physical', owned: false };
@@ -441,7 +441,7 @@ const RUNTIMES_JSON = JSON.stringify({
 });
 
 function projectDir() {
-  const dir = mkdtempSync(join(tmpdir(), 'stim-cli-test-proj-'));
+  const dir = mkdtempSync(join(tmpdir(), 'stim-test-proj-'));
   writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'scratch-app' }));
   upsertProject(dir, { bundleId: undefined, androidPackage: undefined, isExpo: false });
   return dir;
@@ -507,8 +507,8 @@ describe('ensureOwnedDevice: ios', () => {
       const profilePath = join(root, 'simslim.json');
       writeFileSync(profilePath, '{}\n');
       const profile = realpathSync(profilePath);
-      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-cli-app' });
-      const { exec } = iosExecutor([{ udid: 'U1', name: 'stim-cli-app', state: 'Booted', isAvailable: true }]);
+      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app' });
+      const { exec } = iosExecutor([{ udid: 'U1', name: 'stim-app', state: 'Booted', isAvailable: true }]);
       setExecutor(exec);
       const calls: unknown[] = [];
 
@@ -536,8 +536,8 @@ describe('ensureOwnedDevice: ios', () => {
     try {
       const profilePath = join(root, 'simslim.json');
       writeFileSync(profilePath, '{}\n');
-      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-cli-app' });
-      const { exec } = iosExecutor([{ udid: 'U1', name: 'stim-cli-app', state: 'Booted', isAvailable: true }]);
+      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app' });
+      const { exec } = iosExecutor([{ udid: 'U1', name: 'stim-app', state: 'Booted', isAvailable: true }]);
       setExecutor(exec);
       let managedBeforeRun = false;
 
@@ -568,10 +568,10 @@ describe('ensureOwnedDevice: ios', () => {
       setDevice(root, 'ios', {
         deviceUdid: 'U1',
         owned: true,
-        deviceName: 'stim-cli-app',
+        deviceName: 'stim-app',
         simslimManaged: true,
       });
-      const { exec } = iosExecutor([{ udid: 'U1', name: 'stim-cli-app', state: 'Booted', isAvailable: true }]);
+      const { exec } = iosExecutor([{ udid: 'U1', name: 'stim-app', state: 'Booted', isAvailable: true }]);
       setExecutor(exec);
       const calls: unknown[] = [];
 
@@ -594,10 +594,10 @@ describe('ensureOwnedDevice: ios', () => {
     }
   });
 
-  test('an owned record renamed away from stim-cli- ownership is never booted; a fresh owned sim is created', async () => {
+  test('an owned record renamed away from stim- ownership is never booted; a fresh owned sim is created', async () => {
     const root = projectDir();
     try {
-      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-cli-old' });
+      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-old' });
       const { run, exec } = iosExecutor([
         { udid: 'U1', name: 'Renamed-By-User', state: 'Shutdown', isAvailable: true },
       ]);
@@ -616,7 +616,7 @@ describe('ensureOwnedDevice: ios', () => {
       expect(result.deviceUdid).toBe('NEW-UDID');
       expect(result.owned).toBe(true);
       expect(result.created).toBe(true);
-      expect(notes.some((n) => /not stim-cli-owned by name/i.test(n))).toBeTruthy();
+      expect(notes.some((n) => /not Stim-owned by name/i.test(n))).toBeTruthy();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -641,7 +641,7 @@ describe('ensureOwnedDevice: ios', () => {
       expect(run.some((c) => /simctl create/.test(c))).toBe(false);
       expect(result.deviceUdid).toBe('U1');
       expect(!result.owned).toBeTruthy();
-      expect(notes.some((n) => /not owned by stim-cli/i.test(n))).toBeTruthy();
+      expect(notes.some((n) => /not owned by Stim/i.test(n))).toBeTruthy();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -654,7 +654,7 @@ describe('ensureOwnedDevice: android', () => {
   let prevAndroidAvdHome: string | undefined;
 
   beforeEach(() => {
-    androidHome = mkdtempSync(join(tmpdir(), 'stim-cli-test-sdk-'));
+    androidHome = mkdtempSync(join(tmpdir(), 'stim-test-sdk-'));
     mkdirSync(join(androidHome, 'system-images', 'android-36', 'google_apis', 'arm64-v8a'), { recursive: true });
     mkdirSync(join(androidHome, 'system-images', 'android-36', 'google_apis', 'x86_64'), { recursive: true });
     prevAndroidHome = process.env.ANDROID_HOME;
@@ -749,10 +749,10 @@ describe('ensureOwnedDevice: android', () => {
         note: (l) => notes.push(String(l)),
       });
       expect(run.some((c) => c.includes('R5CT10'))).toBe(false);
-      expect(result.avdName).toBe('stim-cli-app');
+      expect(result.avdName).toBe('stim-app');
       expect(result.owned).toBe(true);
       expect(notes.some((n) => /no longer supports physical devices/i.test(n))).toBeTruthy();
-      expect(readFileSync(join(process.env.ANDROID_AVD_HOME!, 'stim-cli-app.avd', 'config.ini'), 'utf8')).toContain(
+      expect(readFileSync(join(process.env.ANDROID_AVD_HOME!, 'stim-app.avd', 'config.ini'), 'utf8')).toContain(
         'disk.dataPartition.size=8589934592',
       );
     } finally {
@@ -772,7 +772,7 @@ describe('ensureOwnedDevice: android', () => {
         label: 'app',
         settings: { android: { dataPartitionSizeGb: 10 } },
       });
-      expect(readFileSync(join(process.env.ANDROID_AVD_HOME!, 'stim-cli-app.avd', 'config.ini'), 'utf8')).toContain(
+      expect(readFileSync(join(process.env.ANDROID_AVD_HOME!, 'stim-app.avd', 'config.ini'), 'utf8')).toContain(
         'disk.dataPartition.size=10737418240',
       );
     } finally {
@@ -798,7 +798,7 @@ describe('ensureOwnedDevice: android', () => {
           },
         },
       });
-      expect(readFileSync(join(process.env.ANDROID_AVD_HOME!, 'stim-cli-app.avd', 'config.ini'), 'utf8')).toBe(
+      expect(readFileSync(join(process.env.ANDROID_AVD_HOME!, 'stim-app.avd', 'config.ini'), 'utf8')).toBe(
         'hw.cpu.ncore=4\ndisk.dataPartition.size=8589934592\nhw.ramSize=3072\nhw.keyboard=yes\nvm.heapSize=512\n',
       );
     } finally {
@@ -842,7 +842,7 @@ describe('ensureOwnedDevice: android', () => {
           settings: {},
         }),
       ).rejects.toThrow(/could not configure its AVD settings/i);
-      expect(run.some((cmd) => /delete avd -n "stim-cli-app"/.test(cmd))).toBe(true);
+      expect(run.some((cmd) => /delete avd -n "stim-app"/.test(cmd))).toBe(true);
       expect(spawn).toEqual([]);
       expect(getProject(root)?.platforms?.android).toBeUndefined();
     } finally {
@@ -871,7 +871,7 @@ describe('ensureOwnedDevice: android', () => {
         }),
       ).rejects.toThrow(/could not configure.*already exists.*tracked for cleanup/i);
       expect(getProject(root)?.platforms?.android).toMatchObject({
-        avdName: 'stim-cli-app',
+        avdName: 'stim-app',
         owned: true,
         setupIncomplete: true,
       });
@@ -899,14 +899,14 @@ describe('ensureOwnedDevice: android', () => {
   test('an unrecorded existing owned AVD is recovered without resizing it', async () => {
     const root = projectDir();
     const avdRoot = process.env.ANDROID_AVD_HOME!;
-    const content = join(avdRoot, 'stim-cli-app.avd');
+    const content = join(avdRoot, 'stim-app.avd');
     mkdirSync(content, { recursive: true });
-    writeFileSync(join(avdRoot, 'stim-cli-app.ini'), `path=${content}\n`);
+    writeFileSync(join(avdRoot, 'stim-app.ini'), `path=${content}\n`);
     writeFileSync(join(content, 'config.ini'), 'disk.dataPartition.size=10G\n');
     try {
       const { exec } = androidExecutor({
-        avds: ['stim-cli-app'],
-        createAvdError: 'Error: AVD stim-cli-app already exists.',
+        avds: ['stim-app'],
+        createAvdError: 'Error: AVD stim-app already exists.',
       });
       setExecutor(exec);
       await ensureOwnedDevice({
@@ -930,10 +930,10 @@ describe('ensureOwnedDevice: android', () => {
     try {
       const staleProject = getProject(root);
       const { spawn, exec } = androidExecutor({
-        avds: ['stim-cli-app'],
-        createAvdError: 'Error: AVD stim-cli-app already exists.',
+        avds: ['stim-app'],
+        createAvdError: 'Error: AVD stim-app already exists.',
         beforeCreateAvdError: () => {
-          setDevice(root, 'android', { avdName: 'stim-cli-app', owned: true, setupIncomplete: true });
+          setDevice(root, 'android', { avdName: 'stim-app', owned: true, setupIncomplete: true });
         },
       });
       setExecutor(exec);
@@ -945,10 +945,10 @@ describe('ensureOwnedDevice: android', () => {
           label: 'app',
           settings: {},
         }),
-      ).rejects.toThrow(/incomplete setup.*concurrent stim-cli run/i);
+      ).rejects.toThrow(/incomplete setup.*concurrent Stim run/i);
       expect(spawn).toEqual([]);
       expect(getProject(root)?.platforms?.android).toMatchObject({
-        avdName: 'stim-cli-app',
+        avdName: 'stim-app',
         setupIncomplete: true,
       });
     } finally {
@@ -960,10 +960,10 @@ describe('ensureOwnedDevice: android', () => {
     const other = projectDir();
     const root = projectDir();
     try {
-      setDevice(other, 'android', { avdName: 'stim-cli-app', consolePort: 5554, owned: true });
+      setDevice(other, 'android', { avdName: 'stim-app', consolePort: 5554, owned: true });
       const { exec } = androidExecutor({
-        avds: ['stim-cli-app'],
-        createAvdError: 'Error: AVD stim-cli-app already exists.',
+        avds: ['stim-app'],
+        createAvdError: 'Error: AVD stim-app already exists.',
       });
       setExecutor(exec);
       await expect(
@@ -987,7 +987,7 @@ describe('deviceCapacityRefusal', () => {
   const shutdown = (udid: string, name: string) => makeIosSim({ udid, name, state: 'Shutdown' });
 
   test('unlimited (max 0) never refuses', () => {
-    const sims = [booted('u1', 'stim-cli-a'), booted('u2', 'stim-cli-b')];
+    const sims = [booted('u1', 'stim-a'), booted('u2', 'stim-b')];
     expect(
       deviceCapacityRefusal({
         platform: 'ios',
@@ -1000,8 +1000,8 @@ describe('deviceCapacityRefusal', () => {
     ).toBe(null);
   });
 
-  test('at the cap, a fresh workspace is refused with STIM_CLI_AT_CAPACITY', () => {
-    const sims = [booted('u1', 'stim-cli-a'), booted('u2', 'stim-cli-b')];
+  test('at the cap, a fresh workspace is refused with STIM_AT_CAPACITY', () => {
+    const sims = [booted('u1', 'stim-a'), booted('u2', 'stim-b')];
     const refusal = deviceCapacityRefusal({
       platform: 'ios',
       project: { platforms: {} },
@@ -1011,12 +1011,12 @@ describe('deviceCapacityRefusal', () => {
       config: makeConfig(),
     });
     assert(refusal);
-    expect(refusal.code).toBe('STIM_CLI_AT_CAPACITY');
+    expect(refusal.code).toBe('STIM_AT_CAPACITY');
     expect(refusal.remedy).toMatch(/stim stop|maxDevices/);
   });
 
   test('a workspace whose OWN sim is already booted is never refused', () => {
-    const sims = [booted('u1', 'stim-cli-a'), booted('u2', 'stim-cli-b')];
+    const sims = [booted('u1', 'stim-a'), booted('u2', 'stim-b')];
     const project = { platforms: { ios: { deviceUdid: 'u1', owned: true } } };
     expect(
       deviceCapacityRefusal({
@@ -1030,8 +1030,8 @@ describe('deviceCapacityRefusal', () => {
     ).toBe(null);
   });
 
-  test('only BOOTED stim-cli sims count toward the cap', () => {
-    const sims = [booted('u1', 'stim-cli-a'), shutdown('u2', 'stim-cli-b'), booted('u3', 'someone-else')];
+  test('only BOOTED Stim sims count toward the cap', () => {
+    const sims = [booted('u1', 'stim-a'), shutdown('u2', 'stim-b'), booted('u3', 'someone-else')];
     expect(
       deviceCapacityRefusal({
         platform: 'ios',
@@ -1046,7 +1046,7 @@ describe('deviceCapacityRefusal', () => {
 
   test('a running owned Android emulator counts via the registry', () => {
     const config = makeConfig({
-      projects: { '/w/x': { platforms: { android: { avdName: 'stim-cli-x', consolePort: 5556, owned: true } } } },
+      projects: { '/w/x': { platforms: { android: { avdName: 'stim-x', consolePort: 5556, owned: true } } } },
     });
     const adb = makeAdbDevices({ emulators: [{ serial: 'emulator-5556', consolePort: 5556 }] });
     const refusal = deviceCapacityRefusal({
@@ -1058,6 +1058,6 @@ describe('deviceCapacityRefusal', () => {
       config,
     });
     assert(refusal);
-    expect(refusal.code).toBe('STIM_CLI_AT_CAPACITY');
+    expect(refusal.code).toBe('STIM_AT_CAPACITY');
   });
 });

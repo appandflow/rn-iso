@@ -19,7 +19,7 @@ other line goes to stderr, so it is always safe to pipe.
 
   port            the Metro port RESERVED for this workspace
   supervisorPid   the detached supervisor's pid, or NULL when a dev server was
-                  already answering that stim-cli did not start
+                  already answering that Stim did not start
   mode            "bare-inproc" | "expo-child" | null (see \`guide metro\`)
   logsDir         where the NDJSON timeline is written
   alreadyRunning  true when nothing needed starting
@@ -96,7 +96,7 @@ other line goes to stderr, so it is always safe to pipe.
                                  finishing
                     "unverified" nothing was observed at all: usually a
                                  dev-client server picker awaiting a tap
-                  Before a local dev-client openurl, stim-cli preapproves
+                  Before a local dev-client openurl, Stim preapproves
                   CoreSimulatorBridge for exactly the installed bundle id and
                   discovered scheme on its owned simulator. That suppresses
                   iOS's first-launch confirmation; unrelated schemes remain
@@ -122,7 +122,7 @@ other line goes to stderr, so it is always safe to pipe.
 
   platform        "android"
   serial          the owned emulator (always "emulator-<consolePort>")
-  avdName         the AVD's NAME (stim-cli-<label>). The serial is a slot --
+  avdName         the AVD's NAME (stim-<label>). The serial is a slot --
                   emulator-5554 is whatever booted into that console port
                   first -- so this is what addresses the emulator in
                   \`emulator -avd\`, avdmanager, or a device tool
@@ -164,7 +164,7 @@ ON FAILURE
   \`start\`, \`ios\` and \`android\` all print the error contract instead,
   still one line on stdout, and exit 1:
 
-    { "code": "STIM_CLI_NO_METRO", "message": "...", "remedy": "..." }
+    { "code": "STIM_NO_METRO", "message": "...", "remedy": "..." }
 
   Branch on \`code\`, never on the message text. \`guide errors\` enumerates
   every code.
@@ -175,8 +175,8 @@ RULES
     (agent-device, xcrun simctl, adb -s, idb).
   - Never assume "booted" is your simulator. Other agents have theirs booted
     too.
-  - There is no physical-device support. Every device stim-cli touches is one
-    stim-cli created, named stim-cli-<label>.`,
+  - There is no physical-device support. Every device Stim touches is one
+    Stim created, named stim-<label>.`,
   },
 
   metro: {
@@ -214,12 +214,12 @@ REMOTE DEVICE BACKENDS
 
   The proxy backend connects to an agent-device daemon on another machine. It
   requires AGENT_DEVICE_DAEMON_BASE_URL and
-  AGENT_DEVICE_DAEMON_AUTH_TOKEN. stim-cli creates no remote session for it.
+  AGENT_DEVICE_DAEMON_AUTH_TOKEN. Stim creates no remote session for it.
 
   The EAS backend needs eas-cli and an account with EAS Simulator access. An
   EAS session is billable. EAS does not inherit the proxy credentials. Always
   tear the session down: \`stop\`, \`worktree remove\`, and \`gc --delete\`
-  can end sessions that stim-cli proves it owns.
+  can end sessions that Stim proves it owns.
 
 IDEMPOTENT
   A healthy dev server on the reserved port is a no-op: \`start\` prints the
@@ -231,12 +231,12 @@ WHAT THE SUPERVISOR IS
   One detached process per workspace. There is no machine-wide daemon, nothing
   to install, and no cross-project state. It hosts the dev server, writes its
   output as NDJSON into the global workspace logs directory
-  ($STIM_CLI_HOME/workspaces/<project>--<digest>/logs; see \`guide logs\`), and
+  ($STIM_HOME/workspaces/<project>--<digest>/logs; see \`guide logs\`), and
   records itself in that workspace's state.json before it starts serving. Two modes,
   chosen by ecosystem detection:
 
     bare-inproc  bare React Native: Metro is hosted INSIDE the supervisor,
-                 from the project's own node_modules, with stim-cli's reporter
+                 from the project's own node_modules, with Stim's reporter
                  attached. Bundler events, in-app console logs and redboxes
                  all arrive structured.
     expo-child   Expo: the project's own \`expo start --port <port>\` runs as
@@ -277,7 +277,7 @@ STARTING YOUR OWN BUNDLER STILL WORKS
   with supervisorPid: null and mode: null, exits 0, and starts nothing over it.
   Starting a second bundler on a working one is the actual failure. For
   \`start --remote\`, an external Expo server also needs metro.publicUrl because
-  stim-cli cannot add Expo tunnel mode to a process it does not supervise.
+  Stim cannot add Expo tunnel mode to a process it does not supervise.
 
   Start it from INSIDE the project directory, on the reserved port, or nothing
   can attribute it to you:
@@ -293,7 +293,7 @@ STARTING YOUR OWN BUNDLER STILL WORKS
   the process on the port answers /status AND runs from inside this project,
   and yours does.
 
-  The cost is logs. stim-cli captures only a dev server it hosted, so
+  The cost is logs. Stim captures only a dev server it hosted, so
   \`stim logs\` stays empty -- which is indistinguishable from a clean run --
   and finding output is back to redirecting it to a file yourself. Prefer
   \`start\`.
@@ -348,7 +348,7 @@ FLAGS
   process Apple's frameworks log thousands of Error-typed lines (nw_socket,
   SecTrust, WebKit, CoreUI) that have nothing to do with your app. The proven
   ones are demoted to info by the collector; the scope rule covers the rest.
-  The metro stream carries exactly one demotion of its own, and it is stim-cli's
+  The metro stream carries exactly one demotion of its own, and it is Stim's
   doing: the dev-client deep link \`ios\`/\`android\` open to wire the app to
   your port arrives inside the app as a link, and React Navigation logs at
   error that no navigator handled a NAVIGATE to \`expo-development-client\`.
@@ -418,7 +418,7 @@ WHAT WRITES WHAT
                        file over, so the first error in it always belongs to
                        the run that pointed you at it.
 
-  Only a dev server stim-cli hosted is captured. If you started the bundler
+  Only a dev server Stim hosted is captured. If you started the bundler
   yourself, the metro and client sources stay empty -- which is not a sign of a
   clean build. The device and build sources are written either way, because
   \`ios\` / \`android\` produce them.
@@ -428,7 +428,7 @@ WHAT WRITES WHAT
   },
 
   errors: {
-    summary: 'Every refusal stim-cli can print, and what to do about it',
+    summary: 'Every refusal Stim can print, and what to do about it',
     body: () => `WHAT STIM-CLI REFUSES, AND WHY
 
 Every refusal from \`ios\` / \`android\` carries a stable CODE. Branch on the
@@ -436,14 +436,14 @@ code, never on the message.
 
 --- BUILD-PATH CODES (\`stim ios\` / \`stim android\`) ---
 
-STIM_CLI_WORKSPACE_STATE / STIM_CLI_WORKSPACE_COLLISION
-  stim-cli could not prepare this project's global workspace directory under
-  $STIM_CLI_HOME/workspaces. Check that STIM_CLI_HOME is writable and has free
+STIM_WORKSPACE_STATE / STIM_WORKSPACE_COLLISION
+  Stim could not prepare this project's global workspace directory under
+  $STIM_HOME/workspaces. Check that STIM_HOME is writable and has free
   space. COLLISION means the readable-name-plus-digest directory already has a
   workspace.json for a different canonical project path; do not overwrite it
   until you identify which workspace owns it.
 
-STIM_CLI_NO_METRO
+STIM_NO_METRO
   Nothing that could be proven to be THIS workspace's dev server holds the
   reserved port -- or no port is reserved at all. The gate fires in about a
   second, before the device is even booted, rather than after four minutes of
@@ -456,30 +456,30 @@ STIM_CLI_NO_METRO
   another repo's Metro. Restart it from inside the project, or free the port
   and run \`stim start\` to get a fresh reservation.
 
-STIM_CLI_NO_FINGERPRINT
+STIM_NO_FINGERPRINT
   \`@expo/fingerprint\` produced no hash, so the shared build cache cannot be
-  addressed. stim-cli uses its declared @expo/fingerprint dependency directly,
+  addressed. Stim uses its declared @expo/fingerprint dependency directly,
   independently of the target project's package graph. This is a refusal
   rather than a silent full build because an unaddressable cache means every
   workspace on the commit compiles from scratch, forever.
 
-STIM_CLI_PREBUILD_FAILED
+STIM_PREBUILD_FAILED
   \`expo prebuild\` could not generate the missing native directory. The
   extracted output is above the code; the transcript is in
   the global workspace logs/build-<platform>.ndjson file.
 
-STIM_CLI_DEPS_FAILED
+STIM_DEPS_FAILED
   \`pod install\` (iOS) or the gradle dependency sync (Android) failed. On iOS
   this runs only when Podfile.lock and Pods/Manifest.lock disagree, or Pods is
   absent -- which is exactly what a carried worktree produces.
 
-STIM_CLI_BUILD_FAILED
+STIM_BUILD_FAILED
   xcodebuild or gradle failed. The EXTRACTED diagnostics are printed (capped),
   not the transcript. Read the log path on the next line for the rest.
   Three Android refusals share this code without gradle itself failing:
   - MORE THAN ONE debug APK under android/app/build/outputs/apk and nothing
     configured to pick one (a project with product flavors, several flavors
-    already built). stim-cli will not guess which flavor to install: the
+    already built). Stim will not guess which flavor to install: the
     refusal lists the candidates -- pass \`--variant <name>\` or set the
     android.variant setting (e.g. "productionDebug") to the one you want.
   - NO APK for the configured variant: the android.variant / --variant value
@@ -491,7 +491,7 @@ STIM_CLI_BUILD_FAILED
     android/app/build/outputs/apk and run again.
 
 FALLBACK NOTES THAT ARE NOT CODES (release cache hits)
-  On a release cache hit stim-cli regenerates this workspace's JS bundle into a
+  On a release cache hit Stim regenerates this workspace's JS bundle into a
   COPY of the cached artifact before installing it -- \`ios --configuration
   Release\` into a copy of the .app, \`android --variant ...Release\` into a
   copy of the APK. When any step of that swap fails (the bundle command,
@@ -499,13 +499,13 @@ FALLBACK NOTES THAT ARE NOT CODES (release cache hits)
   cached artifact -- its baked-in JS is the builder's, not yours -- and does
   NOT fail: it prints a \`js swap\` / \`apk swap  failed at <step>: ... --
   building fresh instead\` note on stderr and falls back to a full build. If
-  the run then fails, the code is the build's own (STIM_CLI_BUILD_FAILED etc.);
+  the run then fails, the code is the build's own (STIM_BUILD_FAILED etc.);
   the swap note above it says why the cache hit was not used. A swap that
   merely finds no hermesc notes it and embeds the plain JS bundle instead --
   that is a note, not a fallback.
 
   ANDROID'S ASSET GATE is the second, and it is not a failure at all. Before
-  re-packing, stim-cli compares this workspace's freshly emitted asset tree
+  re-packing, Stim compares this workspace's freshly emitted asset tree
   against the assets the cached APK carries. Any added, removed or changed
   asset prints
 
@@ -534,7 +534,7 @@ FALLBACK NOTES THAT ARE NOT CODES (release cache hits)
   conflict cannot arise, and losing a dev app's data to a silent uninstall
   would be a worse bug than the one it fixes.
 
-STIM_CLI_BUILD_WAIT_TIMEOUT
+STIM_BUILD_WAIT_TIMEOUT
   This run was waiting for ANOTHER workspace's build of the same fingerprint
   (see \`guide lifecycle\`), and after ~90 minutes that process was still alive
   and had still produced nothing. A wait is normally bounded by the builder
@@ -543,22 +543,22 @@ STIM_CLI_BUILD_WAIT_TIMEOUT
   the pid and the lock directory: check the pid, and if it is not really
   building, remove that directory and run the command again.
 
-STIM_CLI_INSTALL_FAILED
+STIM_INSTALL_FAILED
   The artifact built or came from cache, but \`simctl install\` / \`adb install\`
   refused it. A signature or architecture mismatch, or a full device.
 
-STIM_CLI_LAUNCH_FAILED
+STIM_LAUNCH_FAILED
   Installed, but the app would not start. On Android this usually means no
   launchable activity resolved.
 
-STIM_CLI_NO_SCHEME
+STIM_NO_SCHEME
   No buildable Xcode scheme was found in ios/. A scheme has to be shared to be
   visible to xcodebuild.
 
-STIM_CLI_NO_DEVICE
+STIM_NO_DEVICE
   The owned simulator/emulator could not be created or could not reach a booted
   state. \`stim doctor\` checks the toolchain; \`stim status\` says what
-  stim-cli thinks it owns. Re-running the command creates a fresh owned device
+  Stim thinks it owns. Re-running the command creates a fresh owned device
   when the recorded one is gone.
   On Android the emulator's own stdio is captured to
   the global workspace logs/emulator.log (truncated per boot), and when it printed a
@@ -571,11 +571,11 @@ STIM_CLI_NO_DEVICE
   boot whose emulator process exited is also reported at once rather than after
   the full cold-boot timeout.
 
-STIM_CLI_AT_CAPACITY
+STIM_AT_CAPACITY
   Only when concurrency.maxDevices is set (it is UNSET by default, so this never
   fires unless you opted in). Booting a NEW owned device would exceed the cap:
-  the machine already has that many stim-cli-owned devices booted. It is a refusal, not
-  a queue -- \`ios\`/\`android\` are interactive-shaped, so stim-cli does not make
+  the machine already has that many Stim-owned devices booted. It is a refusal, not
+  a queue -- \`ios\`/\`android\` are interactive-shaped, so Stim does not make
   you wait at a prompt. The remedy is fixed: stop an environment
   (\`stim stop\`) to free a device, or raise concurrency.maxDevices. A
   workspace whose OWN device is already booted is never refused -- re-running
@@ -585,23 +585,23 @@ STIM_CLI_AT_CAPACITY
 
 --- REMOTE-DEVICE CODES (\`ios --remote <proxy|eas>\` / \`android --remote <proxy|eas>\`) ---
 
-STIM_CLI_NO_REMOTE_SESSION
+STIM_NO_REMOTE_SESSION
   The selected backend could not use agent-device, or metro.tunnel names a
   provider or mode this workspace cannot use (e.g. "expo" on a bare RN
   project). The remedy line says which. Nothing was created yet.
 
-STIM_CLI_REMOTE_PROXY_CONFIG
+STIM_REMOTE_PROXY_CONFIG
   \`--remote proxy\` requires AGENT_DEVICE_DAEMON_BASE_URL and
   AGENT_DEVICE_DAEMON_AUTH_TOKEN. These variables provide credentials after
   proxy is selected. They never select the backend.
 
-STIM_CLI_REMOTE_EAS_UNAVAILABLE
+STIM_REMOTE_EAS_UNAVAILABLE
   \`--remote eas\` requires eas-cli. Proxy environment variables do not change
   this selection and are not passed to EAS.
 
-STIM_CLI_REMOTE_METRO_WRONG
+STIM_REMOTE_METRO_WRONG
   The gate that proves a tunnel still reaches THIS workspace's Metro failed --
-  before a session or a build, whether the tunnel is Expo's own, one stim-cli
+  before a session or a build, whether the tunnel is Expo's own, one Stim
   started (metro.tunnel: cloudflared/ngrok/auto), or a named metro.publicUrl.
   The usual cause: the tunnel was built for a port this workspace no longer
   holds (a stale one survived a \`stop\`/\`start\` that reserved a different
@@ -609,36 +609,36 @@ STIM_CLI_REMOTE_METRO_WRONG
   wrong. Re-run \`stim start\` (it prints the port it reserved) and, for a
   manual tunnel, rebuild it against that port.
 
-STIM_CLI_REMOTE_METRO_UNREACHABLE
+STIM_REMOTE_METRO_UNREACHABLE
   A remote start could not create its selected managed tunnel, or the device
   could not be told where Metro is. Follows the same remedy as
-  STIM_CLI_NO_REMOTE_SESSION's tunnel guidance -- set metro.tunnel, or use
+  STIM_NO_REMOTE_SESSION's tunnel guidance -- set metro.tunnel, or use
   metro.publicUrl for an existing endpoint.
 
 --- DEV-SERVER CODES (\`stim start\`) ---
 
-STIM_CLI_WORKTREE_REMOVAL_IN_PROGRESS
+STIM_WORKTREE_REMOVAL_IN_PROGRESS
   A managed remote start found that \`stim worktree remove\` owns the
   worktree lock. The start did not register the project or create a tunnel.
   Wait for removal to finish, then run \`stim start --remote\` again.
 
-STIM_CLI_REMOTE_START_REQUIRED
+STIM_REMOTE_START_REQUIRED
   A healthy bare or Expo server was started without its required remote
-  tunnel. A running server cannot gain that option. For an stim-cli supervisor,
+  tunnel. A running server cannot gain that option. For a Stim supervisor,
   run \`stim stop\`, then \`stim start --remote\`. For an external server,
-  configure metro.publicUrl or let stim-cli supervise the server.
+  configure metro.publicUrl or let Stim supervise the server.
 
-STIM_CLI_BARE_DEPS / STIM_CLI_BARE_LOAD / STIM_CLI_BARE_API  (bare RN)
+STIM_BARE_DEPS / STIM_BARE_LOAD / STIM_BARE_API  (bare RN)
   The supervisor hosts Metro out of the PROJECT's node_modules, so metro,
   @react-native/dev-middleware and @react-native-community/cli-server-api must
   be installed there and must match the project's React Native. DEPS = not
   resolvable (install them), LOAD = installed but threw while loading,
-  API = loaded but is not the API stim-cli expects (mismatched versions).
+  API = loaded but is not the API Stim expects (mismatched versions).
 
-STIM_CLI_EXPO_BIN  (Expo)
+STIM_EXPO_BIN  (Expo)
   node_modules/.bin/expo does not exist. Install the project's dependencies.
 
-STIM_CLI_METRO_TIMEOUT
+STIM_METRO_TIMEOUT
   "The dev server did not answer on port <n> within <s>s."
   The supervisor is alive, but Metro or its requested Expo tunnel is not ready.
   \`start\` has already
@@ -646,7 +646,7 @@ STIM_CLI_METRO_TIMEOUT
   them. A cold Metro on a large graph can genuinely need more than the default
   60s: re-run with \`--wait 180\`. Otherwise \`stim stop\`, then \`start\`.
 
-STIM_CLI_SUPERVISOR_EXITED
+STIM_SUPERVISOR_EXITED
   "The supervisor exited (<code|signal>) before the dev server came up"
   The dev server failed outright, and the quoted evidence is the real error:
   the supervisor.log tail if it wrote one, plus this attempt's error records
@@ -654,7 +654,7 @@ STIM_CLI_SUPERVISOR_EXITED
   config -- lands THERE, not in supervisor.log). \`stim logs --errors\` has
   the full records. Fix that and run \`start\` again; nothing is left running.
 
-STIM_CLI_BAD_ARG / STIM_CLI_NO_PROJECT
+STIM_BAD_ARG / STIM_NO_PROJECT
   The command refused before doing anything: an unusable --wait value, an invalid
   Metro tunnel setting, an invalid android.dataPartitionSizeGb value, an unsafe
   android.avdConfig key or fragment, or a working directory with no package.json
@@ -671,7 +671,7 @@ captured"  (in metro.ndjson, bare RN)
 --- TEARDOWN AND WORKSPACE REFUSALS ---
 
 "metro: refusing to kill port <n>: ... runs from <dir>, outside <project>"
-  (stop) stim-cli will not kill a process it cannot attribute to you.
+  (stop) Stim will not kill a process it cannot attribute to you.
   \`stim stop --force\` kills it without proving whose it is -- ask the user
   first. That flag is reachable only when no supervisor is recorded for this
   workspace, and it never deletes anything.
@@ -689,14 +689,14 @@ captured"  (in metro.ndjson, bare RN)
   minus -- it is a process group).
 
 "this project's sim is X, but --device-type asked for Y"
-  The project already owns a simulator of a different model, and stim-cli will
+  The project already owns a simulator of a different model, and Stim will
   not silently boot a different one. Reap it (\`worktree remove\`, or
   \`gc --delete\`) and run \`stim ios\` again to create the requested model.
   That loses the old sim's app state.
 
 "Refusing to remove <path>: uncommitted changes / untracked files / commits
 not on any remote"  (worktree remove)
-  A native build rewrites tracked files, and stim-cli now RESTORES the one class
+  A native build rewrites tracked files, and Stim now RESTORES the one class
   it can prove is not work: when the only dirt left is \`pod install\` churn
   (\`<app>/ios/Podfile.lock\`, \`<app>/ios/*.xcodeproj/project.pbxproj\`,
   tracked and unstaged), \`worktree remove\` runs the checkout itself and says
@@ -714,7 +714,7 @@ not on any remote"  (worktree remove)
   refusal actually named.
   Use --force only when you genuinely intend to discard work; it deletes
   uncommitted and untracked files permanently.
-  Runtime state is outside the project tree, so stim-cli's own files never cause
+  Runtime state is outside the project tree, so Stim's own files never cause
   Other dirty paths still refuse as described above.
 
 "Refusing to create <name>: the branch worktree-<name> already exists at <sha>,
@@ -768,35 +768,35 @@ too; commit deliberately."  (worktree create --carry-ignored)
 
 --- ENVIRONMENT ---
 
-"npm error code E401 / E404" while \`npx\` resolves stim-cli
+"npm error code E401 / E404" while \`npx\` resolves the stim-cli package
   The repo probably pins a private registry in \`.npmrc\`, so \`npx\` looked for
-  stim-cli there instead of on npm. Use the public registry for this command:
+  the package there instead of on npm. Use the public registry for this command:
 
     npx --registry=https://registry.npmjs.org stim-cli <command>
 
   A line such as \`npm warn exec ... will be installed\` is normal when using
   the no-install form.
 
-"Unsupported engine" or a syntax error before stim-cli starts
-  stim-cli requires Node 20.19.4 or later on Node 20, or Node 22.12.0 or later.
+"Unsupported engine" or a syntax error before Stim starts
+  Stim requires Node 20.19.4 or later on Node 20, or Node 22.12.0 or later.
   Switch Node versions, then run the command again.
 
 
 "Found no free Metro port between ..."
   200 consecutive ports are claimed or occupied. \`stim status\` shows what
-  stim-cli knows about; the rest is other software.
+  Stim knows about; the rest is other software.
 
 "Could not reserve a Metro port after 5 attempts"
   Several commands raced for the same ports and each one lost. Nothing is
   wrong; retry.
 
-"stim-cli config at <path> is not valid JSON"
-  The file holding every owned-device record will not parse, and stim-cli never
+"Stim config at <path> is not valid JSON"
+  The file holding every owned-device record will not parse, and Stim never
   resets it for you -- a silent reset would orphan every simulator it names.
   Repair the file, or move it aside (\`mv <path> <path>.broken\`) and accept
   that the devices it recorded become orphans you delete by hand.
 
-"Timed out waiting for the stim-cli config lock at <path>"
+"Timed out waiting for the Stim config lock at <path>"
   Every config write is serialised so parallel commands cannot lose each
   other's records. A lock older than 10s is taken over automatically, so this
   means a command really is holding it. If none is running, remove that
@@ -822,7 +822,7 @@ too; commit deliberately."  (worktree create --carry-ignored)
   #    installed (or built), app launched wired to port 8082, device-log
   #    collector attached.
   stim ios          # or: stim android
-    device      stim-cli-app-412 (BF2A..) booted (9s)
+    device      stim-app-412 (BF2A..) booted (9s)
     fingerprint a3f9b1.. hit (2s)
     install     from cache (3s)
     launch      com.example.app (1s)
@@ -831,7 +831,7 @@ too; commit deliberately."  (worktree create --carry-ignored)
   #    "No matching log records" note on stderr when the result is clean.
   stim logs --errors
 
-  # 5. Edit the JS. Fast Refresh applies it; no stim-cli command is involved.
+  # 5. Edit the JS. Fast Refresh applies it; no Stim command is involved.
   #    Then ask again.
   stim logs --since 30s --level error
 
@@ -844,7 +844,7 @@ too; commit deliberately."  (worktree create --carry-ignored)
   stim worktree remove
 
 Steps 2 and 3 are ordered, not interchangeable: \`ios\` and \`android\` never
-start the bundler, and refuse with STIM_CLI_NO_METRO when nothing holds the
+start the bundler, and refuse with STIM_NO_METRO when nothing holds the
 reserved port. That refusal costs a second; the alternative costs four minutes
 and produces an app that cannot load a bundle.
 
@@ -856,7 +856,7 @@ OPTIONAL SIMSLIM PROFILE
 
     brew install mobai-app/tap/simslim
 
-  Then commit a profile and select it in .stim-cli.json:
+  Then commit a profile and select it in .stim.json:
 
     { "ios": { "simslimProfile": ".simslim/dev.json" } }
 
@@ -869,11 +869,11 @@ OPTIONAL SIMSLIM PROFILE
 
 NOTHING ABOVE NEEDS A CHANGE TO THE REPO
 Runtime state is stored outside the project tree under
-$STIM_CLI_HOME/workspaces/<project>--<digest>/ (default ~/.stim-cli/workspaces/).
+$STIM_HOME/workspaces/<project>--<digest>/ (default ~/.stim/workspaces/).
 No .gitignore entry is created or required.
-stim-cli runs on a clean checkout. Runtime state is stored outside the project tree.
-runtime state lives under $STIM_CLI_HOME/workspaces/<project>--<digest>, and the performance caches ride on the command
-lines stim-cli composes rather than on files the project owns:
+Stim runs on a clean checkout. Runtime state is stored outside the project tree.
+runtime state lives under $STIM_HOME/workspaces/<project>--<digest>, and the performance caches ride on the command
+lines Stim composes rather than on files the project owns:
 
   ios      xcodebuild carries COMPILATION_CACHE_ENABLE_CACHING, a shared
            COMPILATION_CACHE_CAS_PATH and a clang prefix mapping of this
@@ -887,18 +887,18 @@ lines stim-cli composes rather than on files the project owns:
            Expo's config override on SDK 54+. Expo SDK 53 and older use their
            normal Metro cache. Turn it off machine-wide with
            { "caches": { "injectMetroStore": false } } in
-           ~/.stim-cli/config.json; see \`guide settings\`.
+           ~/.stim/config.json; see \`guide settings\`.
 
 Each says so in one dim line. There is nothing to install, wire or commit, and
 no setup skill to run. \`stim doctor\` is the read-only second opinion when
-something IS blocked or slow: it reports only what stim-cli cannot handle itself
+something IS blocked or slow: it reports only what Stim cannot handle itself
 (a missing dev client, ccache, a fingerprint no fresh worktree reproduces, a
 provider on a key this SDK ignores) plus the project-side settings that matter
-solely for builds you make OUTSIDE stim-cli. A clean doctor means there is
-nothing stim-cli needs from this repo.
+solely for builds you make OUTSIDE Stim. A clean doctor means there is
+nothing Stim needs from this repo.
 
 THE BUILD CACHE HAS TWO LEVELS
-  1. stim-cli's own, on this machine: a directory under ~/.stim-cli shared by
+  1. Stim's own, on this machine: a directory under ~/.stim shared by
      every worktree, keyed on the @expo/fingerprint hash of the native inputs.
      Free, instant, offline, and the only level a bare React Native project
      has.
@@ -909,9 +909,9 @@ THE BUILD CACHE HAS TWO LEVELS
      so the next workspace on this machine gets it for free. After a build,
      the result is stored locally AND handed to the provider.
 
-  stim-cli never configures a provider and never suggests changing one: a
+  Stim never configures a provider and never suggests changing one: a
   project without one is a perfectly ordinary local-only project (doctor does
-  not ask for one either -- a provider only serves builds run OUTSIDE stim-cli).
+  not ask for one either -- a provider only serves builds run OUTSIDE Stim).
 
   A MISS explains itself when it can. When this workspace's previous build
   stored its fingerprint sources beside the cache entry, the fingerprint line
@@ -943,7 +943,7 @@ ONE COMPILE PER FINGERPRINT, ACROSS EVERY WORKSPACE
   first has finished. Three agents starting within the same minute all miss it,
   and without this all three compile the same app at once, fighting for the
   same cores. So when both cache levels miss, the run takes a LOCK on
-  <fingerprint, platform> (a directory under ~/.stim-cli/build-locks). Exactly
+  <fingerprint, platform> (a directory under ~/.stim/build-locks). Exactly
   one workspace compiles; the others print
 
     build       /w/app-412 is already building a3f9b1.. (pid 41233) -- tail ...
@@ -957,7 +957,7 @@ ONE COMPILE PER FINGERPRINT, ACROSS EVERY WORKSPACE
   crashes, is killed, or whose build simply fails frees it: the waiters see a
   released lock with no artifact, and one of them takes over and builds. A
   builder that is alive but wedged is the only case a wait can outlive, and
-  that ends after ~90 minutes with STIM_CLI_BUILD_WAIT_TIMEOUT naming the lock.
+  that ends after ~90 minutes with STIM_BUILD_WAIT_TIMEOUT naming the lock.
 
   --no-build-cache looks nothing up -- not level one, not level two -- and
   takes no lock and never waits, because it asked for a compile of its own.
@@ -967,16 +967,16 @@ ONE COMPILE PER FINGERPRINT, ACROSS EVERY WORKSPACE
   a plain miss.
 
 OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
-  stim-cli imposes NO limits of its own: unset is exactly the behaviour above --
+  Stim imposes NO limits of its own: unset is exactly the behaviour above --
   every build compiles, every device boots. When a machine cannot host as many
   parallel builds or booted simulators as there are agents, two MACHINE-level
   caps rein it in. They live under a top-level \`concurrency\` key in
-  ~/.stim-cli/config.json (not per-project -- the resource being shared is the
-  machine's), and STIM_CLI_MAX_BUILDS / STIM_CLI_MAX_DEVICES override the file.
+  ~/.stim/config.json (not per-project -- the resource being shared is the
+  machine's), and STIM_MAX_BUILDS / STIM_MAX_DEVICES override the file.
   Absent, 0, or any non-positive value means NO enforcement.
 
     concurrency.maxBuilds   how many builds COMPILE at once. It is a semaphore
-                            of N slots (~/.stim-cli/build-slots). A run takes a
+                            of N slots (~/.stim/build-slots). A run takes a
                             slot AFTER the single-flight lock -- a workspace
                             waiting to install another's identical artifact
                             never burns a slot -- so it caps distinct compiles,
@@ -985,17 +985,17 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
                             lock does, and a dead builder frees its slot within
                             a poll (pid-liveness, like the lock).
 
-    concurrency.maxDevices  how many stim-cli-owned devices are BOOTED at once. Checked
+    concurrency.maxDevices  how many Stim-owned devices are BOOTED at once. Checked
                             at device time, before a sim is created or booted.
                             At the cap, a NEW device is REFUSED with
-                            STIM_CLI_AT_CAPACITY (interactive-shaped: it does not
+                            STIM_AT_CAPACITY (interactive-shaped: it does not
                             queue). A workspace whose own device is already
                             booted is never refused. See \`guide errors\`.
 
   \`stim doctor\` prints one note echoing the caps and the current live count,
   but ONLY when a cap is set. \`stim gc\` reports stale build slots the way it
   reports stale build locks, and \`gc --delete\` clears them. There is no
-  \`stim config\` command: set these by editing ~/.stim-cli/config.json or via
+  \`stim config\` command: set these by editing ~/.stim/config.json or via
   the two env vars (see \`guide settings\`).
 
 THE OPTION SURFACE, IN FULL
@@ -1033,7 +1033,7 @@ THE OPTION SURFACE, IN FULL
   bytecode".
 
   On a release CACHE HIT the cached APK carries its BUILDER's baked-in JS, so
-  it is never installed as-is. stim-cli copies it aside, regenerates this
+  it is never installed as-is. Stim copies it aside, regenerates this
   workspace's bundle with the project's own tools (\`expo export:embed\` /
   \`react-native bundle\`, then the project's own hermesc when
   \`hermesEnabled\` is not false in android/gradle.properties), re-packs it
@@ -1052,7 +1052,7 @@ THE OPTION SURFACE, IN FULL
   the run falls back to a full gradle build with a note naming an example. An
   Android drawable is not just a file in the zip -- it has a row in
   resources.arsc only AAPT can write -- so an APK cannot be made to carry an
-  asset it was not built with, and stim-cli will not install one whose JS
+  asset it was not built with, and Stim will not install one whose JS
   references an asset it lacks. The APK's own res/ table is never read: a
   release build shortens every resource path (AGP's
   optimizeReleaseResources), so those entries are \`res/-B.png\`, not the names
@@ -1093,10 +1093,10 @@ THE OPTION SURFACE, IN FULL
   scope.
 
 DESTRUCTIVE COMMANDS -- ask the user first
-  gc --delete             deletes orphaned stim-cli-* devices, tens of GB
+  gc --delete             deletes orphaned stim-* devices, tens of GB
   gc --delete --all       empties the shared build caches every project uses
   worktree remove --force discards uncommitted and untracked work
-  stop --force            kills a process stim-cli could not identify
+  stop --force            kills a process Stim could not identify
 
 Permanent local deletion lives in exactly TWO commands: \`worktree remove\`
 (the workspace you name) and \`gc --delete\` (the machine). For a local device,
@@ -1118,7 +1118,7 @@ CAPACITY
 
 WHAT RECLAIMS AN OWNED DEVICE
   stim worktree remove    deletes every owned device under the worktree
-  stim gc --delete        sweeps stim-cli-* devices no project references
+  stim gc --delete        sweeps stim-* devices no project references
   stim gc --delete --older-than <days>
                             also reaps the device of a project nothing has
                             touched in that long, even though the project is
@@ -1178,13 +1178,13 @@ run drops the dead config ENTRIES those projects left behind and frees their
 Metro ports.
 
 REMOTE EAS SESSIONS
-  Plain \`stim gc\` is a dry run. \`gc --delete\` can stop active stim-cli-* EAS
+  Plain \`stim gc\` is a dry run. \`gc --delete\` can stop active stim-* EAS
   sessions after workspace state is missing. The stop needs verified
   project, name, platform, and status ownership. The same run also cleans the
   local state that it can prove is stale.
 
-  A fixed ownership record and lock live under ~/.stim-cli/machine/eas,
-  independent of STIM_CLI_HOME. Unclaimed sessions are never stopped.
+  A fixed ownership record and lock live under ~/.stim/machine/eas,
+  independent of STIM_HOME. Unclaimed sessions are never stopped.
   Missing config.json does not authorize cleanup.
   The exact recorded workspace state path must prove that the session ID is
   absent.
@@ -1205,9 +1205,9 @@ THE MIRROR IMAGE: A STALE DEVICE RECORD
   Metro port. The next \`ios\` / \`android\` creates a fresh owned device.
 
 THE ONE CASE GC WILL NOT REAP
-  If the config is gone entirely (deleted ~/.stim-cli, or a throwaway
-  STIM_CLI_HOME), gc cannot tell your stale devices from another config's LIVE
-  ones, so it refuses to delete anything. It still NAMES the stim-cli-* devices
+  If the config is gone entirely (deleted ~/.stim, or a throwaway
+  STIM_HOME), gc cannot tell your stale devices from another config's LIVE
+  ones, so it refuses to delete anything. It still NAMES the stim-* devices
   it found, so you can judge. Delete them yourself:
     xcrun simctl delete <udid>
     avdmanager delete avd -n <name>
@@ -1219,7 +1219,7 @@ DISK
 
   Android AVDs normally live under ~/.android/avd, and a booted owned AVD can
   use several GB. \`worktree remove\` deletes the workspace's owned AVD; plain
-  \`stop\` only shuts it down for reuse. stim-cli neither loads nor saves Quick
+  \`stop\` only shuts it down for reuse. Stim neither loads nor saves Quick
   Boot snapshots for owned AVDs, so every restart is a full boot but exit does
   not retain a large snapshot. \`gc\` prints the on-disk size beside an
   orphaned or stale owned Android AVD when its content directory can be read.
@@ -1234,7 +1234,7 @@ DISK
   holds one run and a workspace you keep building in does not accumulate them.
 
   Simulators are large and live in the CoreSimulator device set, not in your
-  project. If the disk is filling up, stim-cli's own devices are usually not the
+  project. If the disk is filling up, Stim's own devices are usually not the
   bulk of it -- Apple's default simulators and old runtimes are. Useful:
     xcrun simctl delete unavailable     # sims for runtimes you removed
     xcrun simctl list devices           # see everything
@@ -1250,24 +1250,24 @@ SHARED BUILD CACHES
     stim gc --delete --all             # empty them whole, index-backed ones
                                          # (the Xcode CAS) included
   The Gradle build cache under GRADLE_USER_HOME (default ~/.gradle) is
-  report-only because every Gradle build shares it. stim-cli reports its size
+  report-only because every Gradle build shares it. Stim reports its size
   but never prunes or empties it, including with --older-than or --all.
   Trim rather than empty. Emptying costs the next build in every project the
   time the cache was saving.`,
   },
 
   settings: {
-    summary: 'Settings stim-cli reads, and where they can live',
+    summary: 'Settings Stim reads, and where they can live',
     body: () => `SETTINGS
 
-There is no \`stim config\` command: stim-cli's commands take no device flags, so
+There is no \`stim config\` command: Stim's commands take no device flags, so
 settings are FILES, edited by hand or committed.
 
 Resolution order, first match wins:
-  1. project layer   ~/.stim-cli/config.json, under this project's entry
-  2. repo layer      ~/.stim-cli/config.json, under this repo's git common dir
-  3. committed       .stim-cli.json at the repo root  <- normally the one you want
-  4. stim-cli default
+  1. project layer   ~/.stim/config.json, under this project's entry
+  2. repo layer      ~/.stim/config.json, under this repo's git common dir
+  3. committed       .stim.json at the repo root  <- normally the one you want
+  4. Stim default
 
 The committed file is plain JSON and is the only layer that travels with the
 repo, so a device model or a carry-over rule every worktree should share
@@ -1319,7 +1319,7 @@ KEYS STIM-CLI READS
   android.avdConfigFile
                         path under the repository root (or project root
                         outside Git) to a flat native key=value INI fragment,
-                        at most 64 KiB. stim-cli parses it and
+                        at most 64 KiB. Stim parses it and
                         merges supported values into avdmanager's generated
                         config.ini before first boot; it is never used as a
                         replacement file. Absolute paths, repository or
@@ -1336,7 +1336,7 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         keys are protected. The emulator may normalize a valid
                         value. These overrides apply only to a newly created
                         AVD; existing and recovered AVDs are never rewritten.
-                        On displayless Linux, stim-cli launches with
+                        On displayless Linux, Stim launches with
                         -gpu swiftshader_indirect -noaudio; those arguments
                         override hw.gpu.enabled, hw.gpu.mode, hw.audioInput,
                         and hw.audioOutput for that headless launch.
@@ -1366,7 +1366,7 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         the password for it. apksigner's SCHEMED form is
                         passed through unchanged (\`env:MY_KS_PASS\`,
                         \`file:/keys/pw.txt\`, \`stdin\`), which is how a
-                        committed .stim-cli.json avoids carrying a secret; a
+                        committed .stim.json avoids carrying a secret; a
                         bare string is used as the literal password. Unset
                         means the debug keystore's fixed "android".
   android.remote        "proxy" or "eas"; the Android half of ios.remote
@@ -1382,10 +1382,10 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         "cloudflared" and "ngrok" name a managed provider
                         explicitly. Any other value is refused as invalid.
   metro.ngrokUrl        the stable managed ngrok URL. It requires metro.tunnel
-                        "ngrok" and passes --url to ngrok http. stim-cli owns
+                        "ngrok" and passes --url to ngrok http. Stim owns
                         this process.
   metro.publicUrl       an existing tunnel's URL. Takes precedence over
-                        starting one, whatever metro.tunnel says -- stim-cli
+                        starting one, whatever metro.tunnel says -- Stim
                         did not create it, so a Metro request through it is
                         still gated the same way a managed tunnel's is. Set it
                         before Expo start so the manifest advertises it.
@@ -1399,7 +1399,7 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
   caches                extra shared-cache paths for \`gc\` to report. A JSON
                         array; every path is treated as a flat store.
 
-Anything else is IGNORED, and stim-cli warns about it by name on every run that
+Anything else is IGNORED, and Stim warns about it by name on every run that
 resolves settings. If you see such a warning, the key was either renamed or
 removed -- check this list rather than assuming it still applies.
 
@@ -1407,7 +1407,7 @@ CONCURRENCY LIMITS ARE MACHINE-LEVEL, NOT A PER-PROJECT SETTING
 The caps above are not in the layered settings -- they are not per-project,
 because the resource they share (cores, RAM, booted simulators) is the whole
 machine's. They live under a top-level \`concurrency\` key in
-~/.stim-cli/config.json, edited by hand:
+~/.stim/config.json, edited by hand:
 
   {
     "concurrency": { "maxBuilds": 2, "maxDevices": 3 }
@@ -1415,14 +1415,14 @@ machine's. They live under a top-level \`concurrency\` key in
 
 or via the environment, which overrides the file:
 
-  STIM_CLI_MAX_BUILDS=2 STIM_CLI_MAX_DEVICES=3 stim ios
+  STIM_MAX_BUILDS=2 STIM_MAX_DEVICES=3 stim ios
 
 Unset, 0, or any non-positive value means NO enforcement -- the default, where
-stim-cli limits nothing. See \`guide lifecycle\` for what each cap does.
+Stim limits nothing. See \`guide lifecycle\` for what each cap does.
 
 STIM-CLI NEEDS NO PROJECT CHANGES TO RUN
-Nothing above is required to use stim-cli. The performance caches that used to
-be setup steps are supplied by stim-cli on the command lines it composes itself:
+Nothing above is required to use Stim. The performance caches that used to
+be setup steps are supplied by Stim on the command lines it composes itself:
 
   xcodebuild   COMPILATION_CACHE_ENABLE_CACHING / COMPILATION_CACHE_CAS_PATH /
                SWIFT_ENABLE_COMPILE_CACHE / CLANG_ENABLE_PREFIX_MAPPING /
@@ -1432,15 +1432,15 @@ be setup steps are supplied by stim-cli on the command lines it composes itself:
   gradlew      --build-cache -- so no org.gradle.caching=true in a committed
                gradle.properties
   start        a shared Metro FileStore, APPENDED to whatever the project
-               configured -- so no metro.config.js. On a bare project stim-cli
+               configured -- so no metro.config.js. On a bare project Stim
                hosts Metro itself and adds it to the config it loaded; on Expo
-               SDK 54+ the child loads stim-cli's config adapter through
+               SDK 54+ the child loads Stim's config adapter through
                EXPO_OVERRIDE_METRO_CONFIG. Expo SDK 53 and older run with
                their normal Metro cache.
 
 Each of those prints one dim line saying it happened. There is no setup skill
 and no init command; \`stim doctor\` reports the project-side settings as
-things you need only if you ALSO build outside stim-cli.
+things you need only if you ALSO build outside Stim.
 
 TURNING THE METRO STORE OFF (MACHINE-LEVEL)
 The Expo injection is the invasive one, so it has a switch -- and the switch is
@@ -1451,30 +1451,30 @@ feature exists to avoid:
     "caches": { "injectMetroStore": false }
   }
 
-in ~/.stim-cli/config.json. It turns the store off on BOTH dev servers. Only the
+in ~/.stim/config.json. It turns the store off on BOTH dev servers. Only the
 literal false does; anything else leaves it on. The Expo adapter also fails
 soft when it cannot create a FileStore: it writes one line to stderr (which
 lands in the timeline) and the dev server runs with whatever cache it would
 have had.
 
-Reading the timeline for it: on Expo, \`cache_store_requested\` is stim-cli saying
+Reading the timeline for it: on Expo, \`cache_store_requested\` is Stim saying
 it asked (it set EXPO_OVERRIDE_METRO_CONFIG on a process it does not run, which
 is all this side can know), and \`cache_store_added\` is the adapter reporting
 from inside that process that the store is in the config Metro loaded. Only the
 second one means transforms are being shared. A bare project writes
-\`cache_store_added\` directly, because there stim-cli adds the store itself.
+\`cache_store_added\` directly, because there Stim adds the store itself.
 
 CACHE LOCATIONS ARE MACHINE-LEVEL TOO
 The shared build cache and Metro transform cache default to living under
-~/.stim-cli. To relocate them (say, to an external disk), set a top-level
-\`caches\` key in ~/.stim-cli/config.json, edited by hand -- absolute paths:
+~/.stim. To relocate them (say, to an external disk), set a top-level
+\`caches\` key in ~/.stim/config.json, edited by hand -- absolute paths:
 
   {
-    "caches": { "buildCache": "/Volumes/SSD/stim-cli/build-cache",
-                "metroCache": "/Volumes/SSD/stim-cli/metro-cache" }
+    "caches": { "buildCache": "/Volumes/SSD/stim/build-cache",
+                "metroCache": "/Volumes/SSD/stim/metro-cache" }
   }
 
-STIM_CLI_BUILD_CACHE / STIM_CLI_METRO_CACHE in the environment override the file.
+STIM_BUILD_CACHE / STIM_METRO_CACHE in the environment override the file.
 The CLI and both cache packages resolve these identically, so every process
 finds the same store regardless of shell profile. A relative path is ignored.
 The Metro value is a PARENT root. The sanitized package name is appended below
@@ -1540,7 +1540,7 @@ export default function guideCommand(program: Command, version: string): void {
   program
     .command('guide [topic]')
     .description(
-      'Print reference documentation for THIS version of stim-cli (topics: ' +
+      'Print reference documentation for THIS version of Stim (topics: ' +
         topicNames().join(', ') +
         '). Generated by the binary, so it cannot drift from the installed CLI.',
     )

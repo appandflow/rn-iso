@@ -20,7 +20,7 @@ type SpawnCall = { cmd: string; args: string[]; opts: Record<string, unknown> };
 let root: string;
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), 'stim-cli-deps-'));
+  root = mkdtempSync(join(tmpdir(), 'stim-deps-'));
 });
 
 afterEach(() => {

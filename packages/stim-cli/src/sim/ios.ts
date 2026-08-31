@@ -167,7 +167,7 @@ export function sanitizeDeviceLabel(label: string): string {
 
 export function ownedSimName(label: string): string {
   const clean = sanitizeDeviceLabel(label);
-  return `stim-cli-${clean.startsWith('stim-cli-') ? clean.slice('stim-cli-'.length) : clean}`;
+  return `stim-${clean.startsWith('stim-') ? clean.slice('stim-'.length) : clean}`;
 }
 
 export function createOwnedIosSim(
@@ -188,7 +188,7 @@ export function createOwnedIosSim(
 export function resolveOwnedIosSim(udid: string): ResolvedIosSim {
   const sim = listAllIosSims().find((s) => s.udid === udid);
   if (!sim) return { missing: true };
-  if (!sim.name?.startsWith('stim-cli-')) return { notOwned: sim.name };
+  if (!sim.name?.startsWith('stim-')) return { notOwned: sim.name };
   return { sim };
 }
 
@@ -197,7 +197,7 @@ export function deleteIosSim(udid: string): void {
   if (result.missing) return;
   if (result.notOwned) {
     throw new Error(
-      `Refusing to delete simulator "${result.notOwned}" (${udid}): not an stim-cli-owned sim (name must start with "stim-cli-").`,
+      `Refusing to delete simulator "${result.notOwned}" (${udid}): not a Stim-owned sim (name must start with "stim-").`,
     );
   }
   getExecutor().run(`xcrun simctl delete ${udid}`);

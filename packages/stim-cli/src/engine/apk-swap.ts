@@ -196,7 +196,7 @@ export async function swapApkBundle({
   logWriter = null,
   exec = null,
   spawnFn = null,
-  mkdtemp = () => mkdtempSync(join(tmpdir(), 'stim-cli-apk-swap-')),
+  mkdtemp = () => mkdtempSync(join(tmpdir(), 'stim-apk-swap-')),
   exists = existsSync,
   hermesEnabled = null,
   buildTools = null,

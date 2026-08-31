@@ -9,7 +9,7 @@ import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat } from './xcode.ts';
 
 type SpawnFn = (cmd: string, args: string[], opts: Record<string, unknown>) => ChildProcess;
 
-export const DEPS_ERROR = 'STIM_CLI_DEPS_FAILED';
+export const DEPS_ERROR = 'STIM_DEPS_FAILED';
 
 const LAST_LINES = 20;
 

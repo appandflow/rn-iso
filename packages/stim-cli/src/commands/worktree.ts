@@ -134,7 +134,7 @@ export function registerCreate(worktree: Command): void {
       '--base <ref>',
       'base ref: "head" (current HEAD, default), "fresh" (origin/HEAD), or any ref this repo resolves (branch, tag, sha)',
     )
-    .option('--label <label>', 'stim-cli shortcut for the worktree (defaults to the worktree name)')
+    .option('--label <label>', 'Stim shortcut for the worktree (defaults to the worktree name)')
     .option(
       '--carry-ignored',
       "clone the source's working state: every safe gitignored path (node_modules, Pods, build output) except nested Git worktrees and paths in .worktreeexclude, plus its uncommitted tracked changes (applied when they fit this base)",
@@ -157,7 +157,7 @@ export function registerCreate(worktree: Command): void {
       const common = gitCommonDir(process.cwd());
       const settings = resolveSettings({ gitCommonDir: common, repoRoot: root }) as WorktreeSettings;
       for (const key of unknownSettingKeys(settings)) {
-        console.error(chalk.yellow(`Warning: setting "${key}" is not read by stim-cli and will be ignored.`));
+        console.error(chalk.yellow(`Warning: setting "${key}" is not read by Stim and will be ignored.`));
       }
 
       const base = opts.base || settings?.worktree?.baseRef || 'head';
@@ -563,14 +563,14 @@ async function reclaimAll(
 }
 
 function reportRetainedResources(root: string, result: ReclaimAllResult): void {
-  console.error(chalk.red(`Refusing to remove ${root}: stim-cli could not release owned resources.`));
+  console.error(chalk.red(`Refusing to remove ${root}: Stim could not release owned resources.`));
   for (const resource of result.retainedResources) {
-    console.error(chalk.yellow(`  - stim-cli still tracks ${describeKeptDevice(resource)} for ${resource.project}`));
+    console.error(chalk.yellow(`  - Stim still tracks ${describeKeptDevice(resource)} for ${resource.project}`));
     console.error(chalk.dim(`    ${resource.reason}`));
   }
   for (const kept of result.keptEntries) {
     if (result.retainedResources.some((resource) => resource.project === kept)) continue;
-    console.error(chalk.yellow(`  - retained stim-cli ownership state for ${kept}`));
+    console.error(chalk.yellow(`  - retained Stim ownership state for ${kept}`));
   }
   console.error(chalk.dim('Fix the reported cause, then run `stim worktree remove` again.'));
   process.exitCode = 1;
@@ -687,7 +687,7 @@ function printRemovalCleanup(result: ReclaimAllResult, failed: boolean): void {
   for (const kept of result.keptEntries) {
     print(
       (failed ? chalk.dim : chalk.yellow)(
-        `  stim-cli still tracks ${kept} because environment cleanup failed; re-run \`stim gc --delete\` once the cause is fixed.`,
+        `  Stim still tracks ${kept} because environment cleanup failed; re-run \`stim gc --delete\` once the cause is fixed.`,
       ),
     );
   }

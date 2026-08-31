@@ -1,14 +1,14 @@
-# website
+# Stim documentation website
 
-The stim-cli documentation site, built with [Docusaurus](https://docusaurus.io/).
+The Docusaurus source for [appandflow.github.io/stim](https://appandflow.github.io/stim/).
+
+The website is the primary human documentation. Package README files stay
+short and link here to avoid duplicate guidance.
 
 ```bash
-npm install
-npm start        # local dev server
-npm run build    # static site into build/
+pnpm install
+pnpm start
+pnpm build
 ```
 
-Deployed to GitHub Pages by `.github/workflows/docs.yml` on every push to
-`main` that touches `website/`. The doc pages under `docs/` were seeded from
-the package READMEs and `docs/getting-started.md` at the repo root; when those
-change, keep the corresponding page here in sync.
+GitHub Pages deploys the site from `main` through `.github/workflows/docs.yml`.

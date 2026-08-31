@@ -68,7 +68,7 @@ export function resolveRegisteredProject(arg?: string | null): ResolveResult {
     if (!projects[root])
       return {
         found: null,
-        error: `No stim-cli entry for ${root}. Run \`stim start\` or \`stim ios\` there first.`,
+        error: `No Stim entry for ${root}. Run \`stim start\` or \`stim ios\` there first.`,
       };
     return { found: root };
   }

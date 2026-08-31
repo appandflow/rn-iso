@@ -68,13 +68,13 @@ export function preflight(h, platform) {
 
 export const FIXTURE_COMMANDS = {
   bare(appDir) {
-    if (process.env.STIM_CLI_E2E_BARE_INIT) return withDir(process.env.STIM_CLI_E2E_BARE_INIT, appDir);
+    if (process.env.STIM_E2E_BARE_INIT) return withDir(process.env.STIM_E2E_BARE_INIT, appDir);
     return [
       'npx',
       '--yes',
       '@react-native-community/cli@latest',
       'init',
-      'StimCliE2E',
+      'StimE2E',
       '--directory',
       appDir,
       '--skip-git-init',
@@ -85,7 +85,7 @@ export const FIXTURE_COMMANDS = {
     ];
   },
   expo(appDir) {
-    if (process.env.STIM_CLI_E2E_EXPO_INIT) return withDir(process.env.STIM_CLI_E2E_EXPO_INIT, appDir);
+    if (process.env.STIM_E2E_EXPO_INIT) return withDir(process.env.STIM_E2E_EXPO_INIT, appDir);
     return ['npx', '--yes', 'create-expo-app@latest', appDir, '--template', 'blank', '--no-install'];
   },
 };
@@ -169,12 +169,12 @@ export function verifyCleanup({ h, platform, appDir, created }) {
 
   if (platform === 'ios') {
     const out = h.sh('xcrun', ['simctl', 'list', 'devices']).stdout;
-    assert(!/stim-cli-/.test(out), 'an stim-cli-* simulator was left behind');
+    assert(!/stim-/.test(out), 'an stim-* simulator was left behind');
   } else {
     const out = h.sh('emulator', ['-list-avds'], { allowFail: true }).stdout;
-    assert(!/stim-cli-/.test(out), 'an stim-cli-* AVD was left behind');
+    assert(!/stim-/.test(out), 'an stim-* AVD was left behind');
   }
-  h.log('(1) no stim-cli-* devices remain');
+  h.log('(1) no stim-* devices remain');
 
   const ps = h.sh('ps', ['ax'], { allowFail: true }).stdout;
   assert(!/stim-cli.*supervisor|supervisor\/run\.js/.test(ps), 'a supervisor process is still running');
@@ -220,7 +220,7 @@ export function workspaceLogsDir(cwd) {
       .toLowerCase()
       .slice(0, 48) || 'workspace';
   const id = createHash('sha256').update(canonical).digest('hex').slice(0, 16);
-  const home = process.env.STIM_CLI_HOME || join(process.env.HOME || '', '.stim-cli');
+  const home = process.env.STIM_HOME || join(process.env.HOME || '', '.stim');
   return join(home, 'workspaces', `${slug}--${id}`, 'logs');
 }
 

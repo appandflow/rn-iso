@@ -1,7 +1,7 @@
 {
   "name": "stim-cli",
   "version": "1.0.0-rc.4",
-  "description": "Isolated React Native dev environments per project/worktree",
+  "description": "Stim: fast, isolated React Native environments for coding agents",
   "keywords": [
     "agent",
     "emulator",

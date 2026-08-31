@@ -52,9 +52,9 @@ function acquireDirLock(
     if (Date.now() >= deadline) {
       const error = new Error(
         `Timed out waiting for the lock at ${lockPath}. ` +
-          'Another stim-cli process is holding it; if none is running, remove that directory.',
+          'Another Stim process is holding it; if none is running, remove that directory.',
       );
-      (error as Error & { code?: string; lockPath?: string }).code = 'STIM_CLI_LOCK_TIMEOUT';
+      (error as Error & { code?: string; lockPath?: string }).code = 'STIM_LOCK_TIMEOUT';
       (error as Error & { code?: string; lockPath?: string }).lockPath = lockPath;
       throw error;
     }
@@ -98,7 +98,7 @@ export function withDirLock<T>(
 }
 
 export function configDir(): string {
-  return process.env.STIM_CLI_HOME || path.join(os.homedir(), '.stim-cli');
+  return process.env.STIM_HOME || path.join(os.homedir(), '.stim');
 }
 
 export function workspaceSlug(projectRoot: string): string {
@@ -149,16 +149,15 @@ export function cacheNameSegment(name: string | null | undefined): string {
 }
 
 export function buildCacheRoot(): string {
-  return process.env.STIM_CLI_BUILD_CACHE || cachePathSetting('buildCache') || path.join(configDir(), 'build-cache');
+  return process.env.STIM_BUILD_CACHE || cachePathSetting('buildCache') || path.join(configDir(), 'build-cache');
 }
 
 export function metroCacheRoot(name?: string | null): string {
-  const root =
-    process.env.STIM_CLI_METRO_CACHE || cachePathSetting('metroCache') || path.join(configDir(), 'metro-cache');
+  const root = process.env.STIM_METRO_CACHE || cachePathSetting('metroCache') || path.join(configDir(), 'metro-cache');
   return name === undefined || name === null || name === '' ? root : path.join(root, cacheNameSegment(name));
 }
 
-export const STORE_ROOT_TAG = 'stimCliStoreRoot';
+export const STORE_ROOT_TAG = 'stimStoreRoot';
 
 export function tagSharedStore<T extends object>(store: T, root: string): T {
   try {

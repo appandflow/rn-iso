@@ -110,6 +110,6 @@ export async function reserveMetroPort(
     if (claimed !== null) return claimed;
   }
   throw new Error(
-    `Could not reserve a Metro port after ${RESERVE_ATTEMPTS} attempts: another stim-cli run claimed each one first. Retry.`,
+    `Could not reserve a Metro port after ${RESERVE_ATTEMPTS} attempts: another Stim run claimed each one first. Retry.`,
   );
 }

@@ -781,7 +781,7 @@ export async function stopTunnel(
     return {
       status: 'failed',
       reason:
-        `tunnel pid ${pid} has no process identity token, so stim-cli cannot verify ownership. ` +
+        `tunnel pid ${pid} has no process identity token, so Stim cannot verify ownership. ` +
         'Keep the record. Inspect the process, stop it with the provider tooling, remove the stale metroTunnel state, and retry.',
     };
   }

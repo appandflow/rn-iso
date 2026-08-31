@@ -117,7 +117,7 @@ test('unpushedCommits falls back to the remotes-only count on a detached HEAD or
 
 test('unpushedCommits against a real repo: empty right after push, reports a commit made only locally', () => {
   resetExecutor();
-  const base = mkdtempSync(join(tmpdir(), 'stim-cli-test-unpushed-'));
+  const base = mkdtempSync(join(tmpdir(), 'stim-test-unpushed-'));
   const bareRemote = join(base, 'remote.git');
   const repo = join(base, 'repo');
   try {
@@ -151,7 +151,7 @@ test('unpushedCommits against a real repo: empty right after push, reports a com
 
 test('unpushedCommits against a real repo: commits inherited from a local-only base ref do not count; a commit the worktree adds does', () => {
   resetExecutor();
-  const base = mkdtempSync(join(tmpdir(), 'stim-cli-test-inherited-'));
+  const base = mkdtempSync(join(tmpdir(), 'stim-test-inherited-'));
   const repo = join(base, 'repo');
   try {
     const bareRemote = join(base, 'remote.git');
@@ -249,8 +249,8 @@ test('listWorktrees parses a detached-HEAD entry without dropping neighbours', (
 });
 
 test('carryOverFiles copies only files that are both gitignored and pattern-matched (mocked)', () => {
-  const root = mkdtempSync(join(tmpdir(), 'stim-cli-test-root-'));
-  const target = mkdtempSync(join(tmpdir(), 'stim-cli-test-target-'));
+  const root = mkdtempSync(join(tmpdir(), 'stim-test-root-'));
+  const target = mkdtempSync(join(tmpdir(), 'stim-test-target-'));
   try {
     mkdirSync(join(root, 'apps/mobile'), { recursive: true });
     writeFileSync(join(root, 'apps/mobile/.env'), 'SECRET=1');
@@ -286,8 +286,8 @@ test('carryOverFiles copies only files that are both gitignored and pattern-matc
 });
 
 test('carryOverFiles reports per-file failures instead of swallowing them', () => {
-  const root = mkdtempSync(join(tmpdir(), 'stim-cli-test-root-'));
-  const target = mkdtempSync(join(tmpdir(), 'stim-cli-test-target-'));
+  const root = mkdtempSync(join(tmpdir(), 'stim-test-root-'));
+  const target = mkdtempSync(join(tmpdir(), 'stim-test-target-'));
   try {
     mkdirSync(join(root, 'apps/mobile'), { recursive: true });
     writeFileSync(join(root, 'apps/mobile/.env'), 'SECRET=1');
@@ -376,7 +376,7 @@ test('listCarryableIgnoredEntries fails closed when Git cannot list worktrees', 
 });
 
 test('cloneIgnoredEntries does not copy a registered worktree nested under an ignored parent', () => {
-  const base = mkdtempSync(join(tmpdir(), 'stim-cli-test-nested-worktree-'));
+  const base = mkdtempSync(join(tmpdir(), 'stim-test-nested-worktree-'));
   const root = join(base, 'repo');
   const target = join(base, 'target');
   try {
@@ -406,8 +406,8 @@ test('cloneIgnoredEntries does not copy a registered worktree nested under an ig
 });
 
 test('cloneIgnoredEntries skips excluded paths and reports a clone that fell back to a real copy', () => {
-  const root = mkdtempSync(join(tmpdir(), 'stim-cli-test-root-'));
-  const target = mkdtempSync(join(tmpdir(), 'stim-cli-test-target-'));
+  const root = mkdtempSync(join(tmpdir(), 'stim-test-root-'));
+  const target = mkdtempSync(join(tmpdir(), 'stim-test-target-'));
   try {
     const fileCalls: [string, string[]][] = [];
     setExecutor({
@@ -445,7 +445,7 @@ test('cloneIgnoredEntries skips excluded paths and reports a clone that fell bac
 });
 
 test('carryOverFiles against a real git repo copies only the gitignored+matched file', () => {
-  const base = mkdtempSync(join(tmpdir(), 'stim-cli-test-realgit-'));
+  const base = mkdtempSync(join(tmpdir(), 'stim-test-realgit-'));
   const root = join(base, 'repo');
   const target = join(base, 'target');
   try {
@@ -483,7 +483,7 @@ test('carryOverFiles against a real git repo copies only the gitignored+matched 
 });
 
 test('listGitignoredFiles and carryOverFiles still find the target file when raw ls-files output exceeds 1MB', () => {
-  const base = mkdtempSync(join(tmpdir(), 'stim-cli-test-bigignore-'));
+  const base = mkdtempSync(join(tmpdir(), 'stim-test-bigignore-'));
   const root = join(base, 'repo');
   const target = join(base, 'target');
   try {
@@ -526,7 +526,7 @@ test('listGitignoredFiles and carryOverFiles still find the target file when raw
 });
 
 test('addWorktree runs git via runFile (no shell) with a `--` terminator, path as one argv element', () => {
-  const tmp = mkdtempSync(join(tmpdir(), 'stim-cli-test-add-'));
+  const tmp = mkdtempSync(join(tmpdir(), 'stim-test-add-'));
   try {
     const path = join(tmp, 'my worktree', 'repo');
     const calls: [string, string[]][] = [];
@@ -553,7 +553,7 @@ test('addWorktree runs git via runFile (no shell) with a `--` terminator, path a
 });
 
 test('addWorktree attaches to an existing branch instead of erroring on -b', () => {
-  const tmp = mkdtempSync(join(tmpdir(), 'stim-cli-test-add-reuse-'));
+  const tmp = mkdtempSync(join(tmpdir(), 'stim-test-add-reuse-'));
   try {
     const path = join(tmp, 'repo2');
     const calls: [string, string[]][] = [];
@@ -579,7 +579,7 @@ test('addWorktree attaches to an existing branch instead of erroring on -b', () 
 });
 
 test('addWorktree uses -b for a genuinely new branch name', () => {
-  const tmp = mkdtempSync(join(tmpdir(), 'stim-cli-test-add-fresh-'));
+  const tmp = mkdtempSync(join(tmpdir(), 'stim-test-add-fresh-'));
   try {
     const path = join(tmp, 'repo3');
     const calls: [string, string[]][] = [];
@@ -633,7 +633,7 @@ function podsFixture({
   podfileLock?: string | null;
   dir?: string;
 }) {
-  const root = mkdtempSync(join(tmpdir(), 'stim-cli-pods-'));
+  const root = mkdtempSync(join(tmpdir(), 'stim-pods-'));
   mkdirSync(join(root, dir, 'Pods'), { recursive: true });
   if (manifest != null) writeFileSync(join(root, dir, 'Pods', 'Manifest.lock'), manifest);
   if (podfileLock != null) writeFileSync(join(root, dir, 'Podfile.lock'), podfileLock);
@@ -641,7 +641,7 @@ function podsFixture({
 }
 
 test('depsOutOfSync flags a carried node_modules whose source lockfile differs from the branch checkout', () => {
-  const base = mkdtempSync(join(tmpdir(), 'stim-cli-test-deps-'));
+  const base = mkdtempSync(join(tmpdir(), 'stim-test-deps-'));
   const root = join(base, 'src');
   const target = join(base, 'wt');
   try {
@@ -702,16 +702,16 @@ test('pod-install churn is recognised so the restore advice only fires when it w
   expect(isPodInstallChurn([])).toBe(false);
 });
 
-test('cloneIgnoredEntries treats .stim-cli like any other gitignored project directory', () => {
-  const root = mkdtempSync(join(tmpdir(), 'stim-cli-test-root-'));
-  const target = mkdtempSync(join(tmpdir(), 'stim-cli-test-target-'));
+test('cloneIgnoredEntries treats .stim like any other gitignored project directory', () => {
+  const root = mkdtempSync(join(tmpdir(), 'stim-test-root-'));
+  const target = mkdtempSync(join(tmpdir(), 'stim-test-target-'));
   try {
     setExecutor({
       run: () => '',
       runFile: () => '',
       runQuiet: (cmd) => {
         if (cmd.includes('ls-files -z')) return '';
-        if (cmd.startsWith('git ')) return 'node_modules/\n.stim-cli/\napps/mobile/.stim-cli/\napps/mobile/ios/Pods/';
+        if (cmd.startsWith('git ')) return 'node_modules/\n.stim/\napps/mobile/.stim/\napps/mobile/ios/Pods/';
         return '';
       },
       spawn: () => {},
@@ -719,29 +719,29 @@ test('cloneIgnoredEntries treats .stim-cli like any other gitignored project dir
 
     const { copied } = cloneIgnoredEntries({ root, target, patterns: [] });
 
-    expect(copied).toEqual(['node_modules', '.stim-cli', 'apps/mobile/.stim-cli', 'apps/mobile/ios/Pods']);
+    expect(copied).toEqual(['node_modules', '.stim', 'apps/mobile/.stim', 'apps/mobile/ios/Pods']);
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(target, { recursive: true, force: true });
   }
 });
 
-test('.worktreeexclude can skip a project-owned .stim-cli directory normally', () => {
-  const root = mkdtempSync(join(tmpdir(), 'stim-cli-test-root-'));
-  const target = mkdtempSync(join(tmpdir(), 'stim-cli-test-target-'));
+test('.worktreeexclude can skip a project-owned .stim directory normally', () => {
+  const root = mkdtempSync(join(tmpdir(), 'stim-test-root-'));
+  const target = mkdtempSync(join(tmpdir(), 'stim-test-target-'));
   try {
     setExecutor({
       run: () => '',
       runFile: () => '',
       runQuiet: (cmd) => {
         if (cmd.includes('ls-files -z')) return '';
-        if (cmd.startsWith('git ')) return 'node_modules/\ncoverage/\napps/mobile/.stim-cli/';
+        if (cmd.startsWith('git ')) return 'node_modules/\ncoverage/\napps/mobile/.stim/';
         return '';
       },
       spawn: () => {},
     });
 
-    const excluded = cloneIgnoredEntries({ root, target, patterns: ['coverage', '**/.stim-cli'] });
+    const excluded = cloneIgnoredEntries({ root, target, patterns: ['coverage', '**/.stim'] });
     expect(excluded.copied).toEqual(['node_modules']);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -749,24 +749,24 @@ test('.worktreeexclude can skip a project-owned .stim-cli directory normally', (
   }
 });
 
-test('carryOverFiles treats files inside .stim-cli like ordinary project files', () => {
-  const root = mkdtempSync(join(tmpdir(), 'stim-cli-test-root-'));
-  const target = mkdtempSync(join(tmpdir(), 'stim-cli-test-target-'));
+test('carryOverFiles treats files inside .stim like ordinary project files', () => {
+  const root = mkdtempSync(join(tmpdir(), 'stim-test-root-'));
+  const target = mkdtempSync(join(tmpdir(), 'stim-test-target-'));
   try {
-    mkdirSync(join(root, 'apps/mobile/.stim-cli'), { recursive: true });
-    writeFileSync(join(root, 'apps/mobile/.stim-cli/state.json'), '{"supervisorPid":123}');
+    mkdirSync(join(root, 'apps/mobile/.stim'), { recursive: true });
+    writeFileSync(join(root, 'apps/mobile/.stim/state.json'), '{"supervisorPid":123}');
     mkdirSync(join(root, 'config'), { recursive: true });
     writeFileSync(join(root, 'config/local.json'), '{}');
     setExecutor({
       run: () => '',
-      runQuiet: (cmd) => (cmd.includes('ls-files -z') ? '' : 'apps/mobile/.stim-cli/state.json\nconfig/local.json'),
+      runQuiet: (cmd) => (cmd.includes('ls-files -z') ? '' : 'apps/mobile/.stim/state.json\nconfig/local.json'),
       spawn: () => {},
     });
 
     const { copied } = carryOverFiles({ root, target, patterns: ['**/*.json'] });
 
-    expect(copied).toEqual(['apps/mobile/.stim-cli/state.json', 'config/local.json']);
-    expect(existsSync(join(target, 'apps/mobile/.stim-cli/state.json'))).toBe(true);
+    expect(copied).toEqual(['apps/mobile/.stim/state.json', 'config/local.json']);
+    expect(existsSync(join(target, 'apps/mobile/.stim/state.json'))).toBe(true);
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(target, { recursive: true, force: true });
@@ -774,7 +774,7 @@ test('carryOverFiles treats files inside .stim-cli like ordinary project files',
 });
 
 test('cloneIgnoredEntries against a real git repo never overwrites a path the destination tracks', () => {
-  const base = mkdtempSync(join(tmpdir(), 'stim-cli-test-tracked-clone-'));
+  const base = mkdtempSync(join(tmpdir(), 'stim-test-tracked-clone-'));
   const root = join(base, 'repo');
   const target = join(base, 'wt');
   try {
@@ -817,7 +817,7 @@ test('cloneIgnoredEntries against a real git repo never overwrites a path the de
 });
 
 test('carryOverFiles against a real git repo never overwrites a path the destination tracks', () => {
-  const base = mkdtempSync(join(tmpdir(), 'stim-cli-test-tracked-carry-'));
+  const base = mkdtempSync(join(tmpdir(), 'stim-test-tracked-carry-'));
   const root = join(base, 'repo');
   const target = join(base, 'wt');
   try {
@@ -857,7 +857,7 @@ test('carryOverFiles against a real git repo never overwrites a path the destina
 });
 
 test('carry against a real git repo leaves a tracked file under an ignored directory alone', () => {
-  const base = mkdtempSync(join(tmpdir(), 'stim-cli-test-negation-'));
+  const base = mkdtempSync(join(tmpdir(), 'stim-test-negation-'));
   const root = join(base, 'repo');
   const target = join(base, 'wt');
   try {
@@ -917,8 +917,8 @@ test('listTrackedPaths asks git for a NUL-delimited list and reports an unanswer
 });
 
 test('carry fails closed when the destination cannot be asked what it tracks', () => {
-  const root = mkdtempSync(join(tmpdir(), 'stim-cli-test-root-'));
-  const target = mkdtempSync(join(tmpdir(), 'stim-cli-test-target-'));
+  const root = mkdtempSync(join(tmpdir(), 'stim-test-root-'));
+  const target = mkdtempSync(join(tmpdir(), 'stim-test-target-'));
   try {
     mkdirSync(join(root, 'apps/mobile'), { recursive: true });
     writeFileSync(join(root, 'apps/mobile/.env'), 'SOURCE');
@@ -948,7 +948,7 @@ test('carry fails closed when the destination cannot be asked what it tracks', (
 
 test('C1: resolveRef never lets a $(...) baseRef reach a shell, and still resolves a real ref', () => {
   resetExecutor();
-  const base = mkdtempSync(join(tmpdir(), 'stim-cli-test-sec-resolveref-'));
+  const base = mkdtempSync(join(tmpdir(), 'stim-test-sec-resolveref-'));
   const root = join(base, 'repo');
   const cwdBefore = process.cwd();
   try {
@@ -975,7 +975,7 @@ test('C1: resolveRef never lets a $(...) baseRef reach a shell, and still resolv
 
 test('C1: addWorktree never lets a $(...) baseRef reach a shell, and still creates a worktree', () => {
   resetExecutor();
-  const base = mkdtempSync(join(tmpdir(), 'stim-cli-test-sec-addwt-'));
+  const base = mkdtempSync(join(tmpdir(), 'stim-test-sec-addwt-'));
   const root = join(base, 'repo');
   const cwdBefore = process.cwd();
   try {
@@ -1008,7 +1008,7 @@ test('C1: addWorktree never lets a $(...) baseRef reach a shell, and still creat
 });
 
 test('C1: addWorktree rejects a leading-dash baseRef with a clear error (defense in depth)', () => {
-  const path = join(tmpdir(), 'stim-cli-test-sec-dash', 'repo');
+  const path = join(tmpdir(), 'stim-test-sec-dash', 'repo');
   setExecutor({
     run: (cmd) => {
       throw new Error(`unexpected shell run: ${cmd}`);
@@ -1045,7 +1045,7 @@ test('C1: addWorktree rejects a worktree path with a leading dash or shell metac
 
 test('H1: cloneIgnoredEntries carries a top-level ignored $(...) filename as a literal file, never executing it', () => {
   resetExecutor();
-  const base = mkdtempSync(join(tmpdir(), 'stim-cli-test-sec-clone-'));
+  const base = mkdtempSync(join(tmpdir(), 'stim-test-sec-clone-'));
   const root = join(base, 'repo');
   const target = join(base, 'target');
   const cwdBefore = process.cwd();
@@ -1078,7 +1078,7 @@ test('H1: cloneIgnoredEntries carries a top-level ignored $(...) filename as a l
   }
 });
 
-test('isCarrySkipped skips .DerivedData at any depth and treats .stim-cli normally', () => {
+test('isCarrySkipped skips .DerivedData at any depth and treats .stim normally', () => {
   for (const rel of [
     '.DerivedData',
     'ios/build/.DerivedData',
@@ -1090,9 +1090,9 @@ test('isCarrySkipped skips .DerivedData at any depth and treats .stim-cli normal
   for (const rel of [
     'node_modules',
     'ios/Pods',
-    '.stim-cli',
-    'apps/mobile/.stim-cli',
-    'apps/mobile/.stim-clitope',
+    '.stim',
+    'apps/mobile/.stim',
+    'apps/mobile/.stimtope',
     'MyDerivedData',
     'apple/MyDerivedData/x',
     '.DerivedDataThing',
@@ -1104,7 +1104,7 @@ test('isCarrySkipped skips .DerivedData at any depth and treats .stim-cli normal
 });
 
 test('cloneIgnoredEntries against a real git repo drops a nested .DerivedData but keeps its sibling', () => {
-  const base = mkdtempSync(join(tmpdir(), 'stim-cli-test-derived-'));
+  const base = mkdtempSync(join(tmpdir(), 'stim-test-derived-'));
   const root = join(base, 'repo');
   const target = join(base, 'target');
   try {
@@ -1135,7 +1135,7 @@ test('cloneIgnoredEntries against a real git repo drops a nested .DerivedData bu
 });
 
 test('carryOverFiles against a real git repo skips a .DerivedData file but copies its sibling', () => {
-  const base = mkdtempSync(join(tmpdir(), 'stim-cli-test-derived-files-'));
+  const base = mkdtempSync(join(tmpdir(), 'stim-test-derived-files-'));
   const root = join(base, 'repo');
   const target = join(base, 'target');
   try {

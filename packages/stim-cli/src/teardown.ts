@@ -20,7 +20,7 @@ export function teardownOwnedIosSim(
       return {
         status: 'skipped',
         kind: 'not-owned',
-        reason: `sim is now named "${resolved.notOwned}", not stim-cli-owned by name`,
+        reason: `sim is now named "${resolved.notOwned}", not Stim-owned by name`,
       };
     }
     if (resolved.missing) return { status: 'missing' };
@@ -36,7 +36,7 @@ export function teardownOwnedAvd(avdName: string, { del = false }: { del?: boole
   try {
     const resolved = resolveOwnedAvdSerial(avdName);
     if (resolved.notOwned) {
-      return { status: 'skipped', kind: 'not-owned', reason: `AVD ${avdName} is not stim-cli-owned by name` };
+      return { status: 'skipped', kind: 'not-owned', reason: `AVD ${avdName} is not Stim-owned by name` };
     }
     if (resolved.missing) return { status: 'missing' };
     if (resolved.serial) shutdownAndroidEmulator(resolved.serial);

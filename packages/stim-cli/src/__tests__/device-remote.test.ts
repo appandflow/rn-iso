@@ -24,7 +24,7 @@ const LOOPBACK = { baseUrl: 'http://127.0.0.1:4310', token: 'tok_proxy' };
 
 const CREATED = JSON.stringify({
   id: 'drs_42',
-  name: 'stim-cli-wt',
+  name: 'stim-wt',
   type: 'agent-device',
   deviceRunSessionUrl: 'https://expo.dev/x',
   remoteConfig: {
@@ -104,15 +104,15 @@ function ctx(overrides: Partial<Parameters<typeof remoteIosDeps>[0]> = {}) {
 }
 
 beforeEach(() => {
-  tmpHome = mkdtempSync(join(tmpdir(), 'stim-cli-test-home-'));
-  process.env.STIM_CLI_HOME = tmpHome;
-  root = mkdtempSync(join(tmpdir(), 'stim-cli-remote-'));
+  tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-home-'));
+  process.env.STIM_HOME = tmpHome;
+  root = mkdtempSync(join(tmpdir(), 'stim-remote-'));
 });
 afterEach(() => {
   resetExecutor();
   rmSync(root, { recursive: true, force: true });
   rmSync(tmpHome, { recursive: true, force: true });
-  delete process.env.STIM_CLI_HOME;
+  delete process.env.STIM_HOME;
 });
 
 describe('explicit backend selection', () => {
@@ -133,7 +133,7 @@ describe('explicit backend selection', () => {
     expect(missingToken).toEqual({
       failed: 'The proxy backend requires AGENT_DEVICE_DAEMON_AUTH_TOKEN.',
       remedy: 'Export AGENT_DEVICE_DAEMON_AUTH_TOKEN, then run the device command with `--remote proxy` again.',
-      code: 'STIM_CLI_REMOTE_PROXY_CONFIG',
+      code: 'STIM_REMOTE_PROXY_CONFIG',
     });
 
     const missingUrl = await resolveRemoteContext({
@@ -147,7 +147,7 @@ describe('explicit backend selection', () => {
     expect(missingUrl).toEqual({
       failed: 'The proxy backend requires AGENT_DEVICE_DAEMON_BASE_URL.',
       remedy: 'Export AGENT_DEVICE_DAEMON_BASE_URL, then run the device command with `--remote proxy` again.',
-      code: 'STIM_CLI_REMOTE_PROXY_CONFIG',
+      code: 'STIM_REMOTE_PROXY_CONFIG',
     });
   });
 
@@ -185,7 +185,7 @@ describe('explicit backend selection', () => {
     expect(resolved).toEqual({
       failed: 'The eas backend requires eas-cli.',
       remedy: 'Install eas-cli, then run the device command with `--remote eas` again.',
-      code: 'STIM_CLI_REMOTE_EAS_UNAVAILABLE',
+      code: 'STIM_REMOTE_EAS_UNAVAILABLE',
     });
   });
 
@@ -225,7 +225,7 @@ writeFileSync(${JSON.stringify(reportPath)}, JSON.stringify({
   expoToken: process.env.EXPO_TOKEN,
   path: process.env.PATH,
   lang: process.env.LANG,
-  projectVariable: process.env.STIM_CLI_EAS_PROJECT_VARIABLE,
+  projectVariable: process.env.STIM_EAS_PROJECT_VARIABLE,
 }));
 process.stdout.write(${JSON.stringify(CREATED)});
 `,
@@ -239,7 +239,7 @@ process.stdout.write(${JSON.stringify(CREATED)});
       'AGENT_DEVICE_DAEMON_AUTH_TOKEN',
       'EXPO_TOKEN',
       'LANG',
-      'STIM_CLI_EAS_PROJECT_VARIABLE',
+      'STIM_EAS_PROJECT_VARIABLE',
     ] as const;
     const previous = new Map(keys.map((key) => [key, process.env[key]]));
     const expectedPath = process.env.PATH;
@@ -247,8 +247,8 @@ process.stdout.write(${JSON.stringify(CREATED)});
       process.env.AGENT_DEVICE_DAEMON_BASE_URL = 'https://proxy.example/agent-device';
       process.env.AGENT_DEVICE_DAEMON_AUTH_TOKEN = 'proxy-token-fixture';
       process.env.EXPO_TOKEN = 'expo-token-fixture';
-      process.env.LANG = 'stim-cli-test-locale';
-      process.env.STIM_CLI_EAS_PROJECT_VARIABLE = 'project-value';
+      process.env.LANG = 'stim-test-locale';
+      process.env.STIM_EAS_PROJECT_VARIABLE = 'project-value';
 
       const resolved = await resolveRemoteContext({
         root,
@@ -268,7 +268,7 @@ process.stdout.write(${JSON.stringify(CREATED)});
         hasProxyToken: false,
         expoToken: 'expo-token-fixture',
         path: expectedPath,
-        lang: 'stim-cli-test-locale',
+        lang: 'stim-test-locale',
         projectVariable: 'project-value',
       });
     } finally {
@@ -345,8 +345,8 @@ await withRemoteSessionLock(process.argv[2], async () => {
   test('workspaces with the same git common directory share the EAS project lock', async () => {
     const otherRoot = join(root, 'other-worktree');
     mkdirSync(otherRoot, { recursive: true });
-    const previousHome = process.env.STIM_CLI_HOME;
-    process.env.STIM_CLI_HOME = join(root, 'stim-cli-home');
+    const previousHome = process.env.STIM_HOME;
+    process.env.STIM_HOME = join(root, 'stim-home');
     setExecutor({
       run() {
         throw new Error('unexpected shell command');
@@ -377,7 +377,7 @@ await withRemoteSessionLock(process.argv[2], async () => {
       const first = ensureRemoteBootOwned({
         root,
         platform: 'ios',
-        sessionName: 'stim-cli-first',
+        sessionName: 'stim-first',
         startedAt: '2026-08-28T00:00:00.000Z',
         register: () => {},
         boot: async () => {
@@ -395,7 +395,7 @@ await withRemoteSessionLock(process.argv[2], async () => {
       const second = ensureRemoteBootOwned({
         root: otherRoot,
         platform: 'ios',
-        sessionName: 'stim-cli-second',
+        sessionName: 'stim-second',
         startedAt: '2026-08-28T00:00:00.000Z',
         register: () => {},
         boot: async () => {
@@ -416,15 +416,15 @@ await withRemoteSessionLock(process.argv[2], async () => {
       expect(secondBooted).toBe(true);
     } finally {
       releaseFirst();
-      if (previousHome === undefined) delete process.env.STIM_CLI_HOME;
-      else process.env.STIM_CLI_HOME = previousHome;
+      if (previousHome === undefined) delete process.env.STIM_HOME;
+      else process.env.STIM_HOME = previousHome;
     }
   });
 
-  test('EAS starts serialize across separate STIM_CLI_HOME values', async () => {
+  test('EAS starts serialize across separate STIM_HOME values', async () => {
     const otherRoot = join(root, 'other-clone');
     mkdirSync(otherRoot, { recursive: true });
-    const previousHome = process.env.STIM_CLI_HOME;
+    const previousHome = process.env.STIM_HOME;
     let releaseFirst!: () => void;
     const held = new Promise<void>((resolve) => {
       releaseFirst = resolve;
@@ -438,11 +438,11 @@ await withRemoteSessionLock(process.argv[2], async () => {
       withEasProjectLock(project, fn, { ...options, machineRoot: join(root, 'machine-eas') });
 
     try {
-      process.env.STIM_CLI_HOME = join(root, 'home-a');
+      process.env.STIM_HOME = join(root, 'home-a');
       const first = ensureRemoteBootOwned({
         root,
         platform: 'ios',
-        sessionName: 'stim-cli-first',
+        sessionName: 'stim-first',
         startedAt: '2026-08-28T00:00:00.000Z',
         boot: async () => {
           firstEntered();
@@ -457,11 +457,11 @@ await withRemoteSessionLock(process.argv[2], async () => {
       });
       await entered;
 
-      process.env.STIM_CLI_HOME = join(root, 'home-b');
+      process.env.STIM_HOME = join(root, 'home-b');
       const second = ensureRemoteBootOwned({
         root: otherRoot,
         platform: 'ios',
-        sessionName: 'stim-cli-second',
+        sessionName: 'stim-second',
         startedAt: '2026-08-28T00:00:00.000Z',
         boot: async () => {
           secondBooted = true;
@@ -481,8 +481,8 @@ await withRemoteSessionLock(process.argv[2], async () => {
       expect(secondBooted).toBe(true);
     } finally {
       releaseFirst();
-      if (previousHome === undefined) delete process.env.STIM_CLI_HOME;
-      else process.env.STIM_CLI_HOME = previousHome;
+      if (previousHome === undefined) delete process.env.STIM_HOME;
+      else process.env.STIM_HOME = previousHome;
     }
   });
 });
@@ -495,7 +495,7 @@ describe('session creation', () => {
     const result = await ensureRemoteBootOwned({
       root,
       platform: 'ios',
-      sessionName: 'stim-cli-wt',
+      sessionName: 'stim-wt',
       startedAt: '2026-08-28T00:00:00.000Z',
       boot: async () => ({ ok: true, udid: 'drs_claimed' }),
       createdSessionId: () => 'drs_claimed',
@@ -521,7 +521,7 @@ describe('session creation', () => {
     const result = await ensureRemoteBootOwned({
       root,
       platform: 'ios',
-      sessionName: 'stim-cli-wt',
+      sessionName: 'stim-wt',
       startedAt: '2026-08-28T00:00:00.000Z',
       boot: async () => ({ ok: true, udid: 'drs_unclaimed' }),
       createdSessionId: () => 'drs_unclaimed',
@@ -556,7 +556,7 @@ describe('session creation', () => {
     const result = await ensureRemoteBootOwned({
       root,
       platform: 'ios',
-      sessionName: 'stim-cli-wt',
+      sessionName: 'stim-wt',
       startedAt: '2026-08-28T00:00:00.000Z',
       boot: async () => ({ ok: true, udid: 'drs_claimed' }),
       createdSessionId: () => 'drs_claimed',
@@ -571,7 +571,7 @@ describe('session creation', () => {
     });
 
     expect('failed' in result && result.failed).toBe(true);
-    expect('code' in result && result.code).toBe('STIM_CLI_REMOTE_SESSION_CLEANUP');
+    expect('code' in result && result.code).toBe('STIM_REMOTE_SESSION_CLEANUP');
     expect('reason' in result && result.reason).toMatch(/session.*stopped.*ownership claim.*could not be removed/i);
     expect('remedy' in result && result.remedy).toContain(ledgerRoot);
     expect(readEasSessionLedger(ledgerRoot).claims.has('drs_claimed')).toBe(true);
@@ -596,7 +596,7 @@ describe('session creation', () => {
     expect(args[args.indexOf('--max-duration-minutes') + 1]).toBe('30');
   });
 
-  test('a session of a type stim-cli cannot drive is refused, not half-used', async () => {
+  test('a session of a type Stim cannot drive is refused, not half-used', async () => {
     const appium = JSON.stringify({
       id: 'drs_9',
       remoteConfig: { __typename: 'AppiumRunSessionRemoteConfig', appiumUrl: 'https://x' },
@@ -630,7 +630,7 @@ describe('fixed ownership claim teardown', () => {
     recordEasSessionClaim(
       {
         sessionId: 'drs_42',
-        name: 'stim-cli-wt',
+        name: 'stim-wt',
         platform: 'ios',
         workspaceRoot: root,
         workspaceHome: tmpHome,
@@ -640,7 +640,7 @@ describe('fixed ownership claim teardown', () => {
     );
     mockExec({
       outputs: {
-        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-cli-wt', status: 'IN_PROGRESS' }),
+        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-wt', status: 'IN_PROGRESS' }),
       },
     });
 
@@ -653,7 +653,7 @@ describe('fixed ownership claim teardown', () => {
     recordEasSessionClaim(
       {
         sessionId: 'drs_42',
-        name: 'stim-cli-wt',
+        name: 'stim-wt',
         platform: 'ios',
         workspaceRoot: root,
         workspaceHome: tmpHome,
@@ -672,7 +672,7 @@ describe('fixed ownership claim teardown', () => {
     recordEasSessionClaim(
       {
         sessionId: 'drs_42',
-        name: 'stim-cli-wt',
+        name: 'stim-wt',
         platform: 'ios',
         workspaceRoot: root,
         workspaceHome: tmpHome,
@@ -682,7 +682,7 @@ describe('fixed ownership claim teardown', () => {
     );
     mockExec({
       outputs: {
-        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-cli-wt', status: 'IN_PROGRESS' }),
+        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-wt', status: 'IN_PROGRESS' }),
       },
     });
 
@@ -705,7 +705,7 @@ describe('fixed ownership claim teardown', () => {
     recordEasSessionClaim(
       {
         sessionId: 'drs_42',
-        name: 'stim-cli-wt',
+        name: 'stim-wt',
         platform: 'ios',
         workspaceRoot: root,
         workspaceHome: tmpHome,
@@ -715,7 +715,7 @@ describe('fixed ownership claim teardown', () => {
     );
     mockExec({
       outputs: {
-        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-cli-wt', status: 'IN_PROGRESS' }),
+        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-wt', status: 'IN_PROGRESS' }),
       },
     });
 
@@ -771,7 +771,7 @@ describe('install and launch match their local counterparts', () => {
     expect(install?.args[1]).toBe('/tmp/My App.app');
   });
 
-  test('a dev-client launch sends stim-cli own deep link, not agent-device metro hint', async () => {
+  test('a dev-client launch sends Stim own deep link, not agent-device metro hint', async () => {
     const exec = mockExec({ outputs: { sim: CREATED } });
     const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK, tunnelMode: 'off' }));
     await deps.ensureBooted({});
@@ -809,7 +809,7 @@ describe('install and launch match their local counterparts', () => {
     await deps.ensureBooted({});
     const result = deps.installIosApp({ udid: 'drs_42', appPath: '/tmp/a.app' });
     expect(result.failed).toBe(true);
-    expect(result.code).toBe('STIM_CLI_INSTALL_FAILED');
+    expect(result.code).toBe('STIM_INSTALL_FAILED');
   });
 });
 
@@ -823,7 +823,7 @@ describe('teardown', () => {
   test('disconnects first, then stops the session', () => {
     const exec = mockExec({
       outputs: {
-        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-cli-wt', status: 'IN_PROGRESS' }),
+        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-wt', status: 'IN_PROGRESS' }),
         'simulator:stop': JSON.stringify({ id: 'drs_42', status: 'STOPPED' }),
       },
     });
@@ -836,7 +836,7 @@ describe('teardown', () => {
     const exec = mockExec({
       fail: 'disconnect',
       outputs: {
-        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-cli-wt', status: 'IN_PROGRESS' }),
+        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-wt', status: 'IN_PROGRESS' }),
         'simulator:stop': JSON.stringify({ id: 'drs_42', status: 'STOPPED' }),
       },
     });
@@ -848,7 +848,7 @@ describe('teardown', () => {
   test('a failed stop is reported, so the caller says leaked rather than torn down', () => {
     mockExec({
       fail: 'simulator:stop',
-      outputs: { 'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-cli-wt', status: 'IN_PROGRESS' }) },
+      outputs: { 'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-wt', status: 'IN_PROGRESS' }) },
     });
     const result = teardownRemote(ctx(), { sessionId: 'drs_42' });
     expect(result.status).toBe('failed');
@@ -868,7 +868,7 @@ describe('teardown', () => {
       output: JSON.stringify({ id: 'drs_42', name: 'other-tool', status: 'IN_PROGRESS' }),
     },
     { name: 'malformed lookup output', output: 'not json' },
-    { name: 'unknown status', output: JSON.stringify({ id: 'drs_42', name: 'stim-cli-wt', status: 'PAUSED' }) },
+    { name: 'unknown status', output: JSON.stringify({ id: 'drs_42', name: 'stim-wt', status: 'PAUSED' }) },
   ])('fails closed for $name', ({ output }) => {
     const exec = mockExec({ outputs: { 'simulator:get': output } });
     const result = teardownRemote(ctx(), { sessionId: 'drs_42' });
@@ -900,7 +900,7 @@ describe('teardown', () => {
 
   test.each(['STOPPED', 'ERRORED'])('treats verified terminal status %s as already stopped', (status) => {
     const exec = mockExec({
-      outputs: { 'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-cli-wt', status }) },
+      outputs: { 'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-wt', status }) },
     });
     const result = teardownRemote(ctx(), { sessionId: 'drs_42' });
     expect(result.status).toBe('torn-down');
@@ -910,7 +910,7 @@ describe('teardown', () => {
   test('fails closed when stop output does not verify completion', () => {
     const exec = mockExec({
       outputs: {
-        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-cli-wt', status: 'IN_PROGRESS' }),
+        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-wt', status: 'IN_PROGRESS' }),
         'simulator:stop': 'not json',
       },
     });
@@ -922,7 +922,7 @@ describe('teardown', () => {
   test('isolates proxy credentials from both lookup and stop', () => {
     const exec = mockExec({
       outputs: {
-        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-cli-wt', status: 'IN_PROGRESS' }),
+        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-wt', status: 'IN_PROGRESS' }),
         'simulator:stop': JSON.stringify({ id: 'drs_42', status: 'STOPPED' }),
       },
     });
@@ -969,7 +969,7 @@ describe('Metro reachability', () => {
       devClientScheme: 'myapp',
     });
     expect(result.failed).toBe(true);
-    expect(result.code).toBe('STIM_CLI_REMOTE_METRO_UNREACHABLE');
+    expect(result.code).toBe('STIM_REMOTE_METRO_UNREACHABLE');
   });
 
   test('the named url is what the deep link carries', async () => {
@@ -1059,7 +1059,7 @@ describe('the Metro refusal comes before anything billable', () => {
   });
 });
 
-describe('a tunnel stim-cli starts for itself', () => {
+describe('a tunnel Stim starts for itself', () => {
   test('reuses the tunnel recorded by start and gates it', async () => {
     let started = false;
     const { result, context } = await reach({
@@ -1097,14 +1097,14 @@ describe('a tunnel stim-cli starts for itself', () => {
       isTunnelAlive: () => true,
       gateOrigin: async () => ({
         failed: true as const,
-        code: 'STIM_CLI_REMOTE_METRO_WRONG',
+        code: 'STIM_REMOTE_METRO_WRONG',
         reason: 'wrong',
         remedy: 'fix',
       }),
     });
     expect('failed' in result).toBe(true);
     assert('failed' in result);
-    expect(result.code).toBe('STIM_CLI_REMOTE_METRO_WRONG');
+    expect(result.code).toBe('STIM_REMOTE_METRO_WRONG');
     expect(context.publicMetroUrl).toBeNull();
   });
 
@@ -1125,7 +1125,7 @@ describe('a tunnel stim-cli starts for itself', () => {
   });
 });
 
-describe('a session stim-cli created is never abandoned', () => {
+describe('a session Stim created is never abandoned', () => {
   const NO_ENDPOINT = JSON.stringify({ id: 'drs_9', remoteConfig: null });
 
   test('a session that never becomes reachable is stopped, not left running', async () => {
@@ -1166,7 +1166,7 @@ describe('a session stim-cli created is never abandoned', () => {
     const booted = await remoteIosDeps(ctx()).ensureBooted({});
 
     expect(booted.failed).toBe(true);
-    expect(booted.code).toBe('STIM_CLI_REMOTE_SESSION_CLEANUP');
+    expect(booted.code).toBe('STIM_REMOTE_SESSION_CLEANUP');
     expect(booted.reason).toContain('drs_42');
     expect(booted.reason).not.toContain('The session was stopped.');
     expect(booted.remedy).toBe('Run `eas simulator:stop --id drs_42`.');
@@ -1199,7 +1199,7 @@ describe('a session stim-cli created is never abandoned', () => {
     const booted = await remoteIosDeps(ctx()).ensureBooted({});
 
     expect(booted.failed).toBe(true);
-    expect(booted.code).toBe('STIM_CLI_REMOTE_SESSION_CLEANUP');
+    expect(booted.code).toBe('STIM_REMOTE_SESSION_CLEANUP');
     expect(booted.reason).toContain('drs_42');
     expect(booted.remedy).toBe('Run `eas simulator:stop --id drs_42`.');
   });
@@ -1220,7 +1220,7 @@ describe('a re-run does not orphan the session it already has', () => {
 
   const LIVE = JSON.stringify({
     id: 'drs_old',
-    name: 'stim-cli-wt',
+    name: 'stim-wt',
     status: 'IN_PROGRESS',
     remoteConfig: {
       agentDeviceRemoteSessionUrl: 'https://old.eas.dev/daemon',
@@ -1252,7 +1252,7 @@ describe('a re-run does not orphan the session it already has', () => {
     const booted = await remoteIosDeps(ctx()).ensureBooted({});
 
     expect(booted.failed).toBe(true);
-    expect(booted.code).toBe('STIM_CLI_REMOTE_PLATFORM_MISMATCH');
+    expect(booted.code).toBe('STIM_REMOTE_PLATFORM_MISMATCH');
     expect(booted.reason).toContain('drs_android');
     expect(exec.calls.some((call) => call.args[0] === 'sim')).toBe(false);
     expect(exec.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(false);
@@ -1265,7 +1265,7 @@ describe('a re-run does not orphan the session it already has', () => {
     const booted = await remoteAndroidDeps(ctx()).ensureDeviceBooted({});
 
     expect(booted.failed).toBe(true);
-    expect(booted.code).toBe('STIM_CLI_REMOTE_PLATFORM_MISMATCH');
+    expect(booted.code).toBe('STIM_REMOTE_PLATFORM_MISMATCH');
     expect(booted.reason).toContain('drs_ios');
     expect(exec.calls.some((call) => call.args[0] === 'sim')).toBe(false);
     expect(exec.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(false);
@@ -1297,7 +1297,7 @@ describe('a re-run does not orphan the session it already has', () => {
     recordSession('drs_dead');
     const dead = JSON.stringify({
       id: 'drs_dead',
-      name: 'stim-cli-wt',
+      name: 'stim-wt',
       status: 'STOPPED',
       remoteConfig: {
         agentDeviceRemoteSessionUrl: 'https://dead.eas.dev/daemon',
@@ -1315,7 +1315,7 @@ describe('a re-run does not orphan the session it already has', () => {
     recordSession('drs_dead');
     const exec = mockExec({
       outputs: {
-        'simulator:get': JSON.stringify({ id: 'drs_dead', name: 'stim-cli-wt', status: 'ERRORED' }),
+        'simulator:get': JSON.stringify({ id: 'drs_dead', name: 'stim-wt', status: 'ERRORED' }),
         sim: CREATED,
       },
     });
@@ -1330,7 +1330,7 @@ describe('a re-run does not orphan the session it already has', () => {
     recordEasSessionClaim(
       {
         sessionId: 'drs_dead',
-        name: 'stim-cli-wt',
+        name: 'stim-wt',
         platform: 'ios',
         workspaceRoot: root,
         workspaceHome: tmpHome,
@@ -1340,7 +1340,7 @@ describe('a re-run does not orphan the session it already has', () => {
     );
     const exec = mockExec({
       outputs: {
-        'simulator:get': JSON.stringify({ id: 'drs_dead', name: 'stim-cli-wt', status: 'STOPPED' }),
+        'simulator:get': JSON.stringify({ id: 'drs_dead', name: 'stim-wt', status: 'STOPPED' }),
         sim: CREATED,
       },
     });
@@ -1350,7 +1350,7 @@ describe('a re-run does not orphan the session it already has', () => {
     ).ensureBooted({});
 
     expect(booted.failed).toBe(true);
-    expect(booted.code).toBe('STIM_CLI_REMOTE_SESSION_CLEANUP');
+    expect(booted.code).toBe('STIM_REMOTE_SESSION_CLEANUP');
     expect(booted.reason).toMatch(/ownership claim.*could not be removed/i);
     expect(exec.calls.some((call) => call.args[0] === 'sim')).toBe(false);
     expect(JSON.parse(readFileSync(workspaceStateFile(root), 'utf-8')).remoteDevice.sessionId).toBe('drs_dead');
@@ -1395,7 +1395,7 @@ describe('a re-run does not orphan the session it already has', () => {
   });
 });
 
-describe("the alert stim-cli's own url open raises", () => {
+describe("the alert Stim's own url open raises", () => {
   test('a dev-client launch accepts it, so the bundle can actually load', async () => {
     const exec = mockExec({ outputs: { sim: CREATED } });
     const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK, tunnelMode: 'off' }));
@@ -1482,7 +1482,7 @@ describe('the android adapter', () => {
     await deps.ensureDeviceBooted({});
     const r = deps.launch({ serial: 'drs_42', packageName: 'com.example.app', metroPort: 8082 });
     expect(r.failed).toBe(true);
-    expect(r.code).toBe('STIM_CLI_REMOTE_METRO_UNREACHABLE');
+    expect(r.code).toBe('STIM_REMOTE_METRO_UNREACHABLE');
   });
 
   test('the local device cap does not apply to a remote emulator either', () => {
@@ -1509,7 +1509,7 @@ describe('a release-shaped remote launch', () => {
     await deps.ensureBooted({});
     const r = deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: 8082 });
     expect(r.failed).toBe(true);
-    expect(r.code).toBe('STIM_CLI_REMOTE_METRO_UNREACHABLE');
+    expect(r.code).toBe('STIM_REMOTE_METRO_UNREACHABLE');
   });
 
   test('android release launches the same way', async () => {

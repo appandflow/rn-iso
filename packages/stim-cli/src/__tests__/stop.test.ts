@@ -141,7 +141,7 @@ function seams(over = {}) {
     findListener: () => null,
     teardownIos: (udid: string, opts: { del?: boolean; label?: string }) => {
       calls.teardowns.push({ udid, opts });
-      return { status: 'torn-down', label: 'stim-cli-a' };
+      return { status: 'torn-down', label: 'stim-a' };
     },
     teardownAvd: (name: string, opts: { del?: boolean }) => {
       calls.teardowns.push({ avd: name, opts });
@@ -280,7 +280,7 @@ test('owned devices are shut down with del:false, never deleted', async () => {
       metroPort: 8083,
       platforms: {
         ios: { deviceUdid: 'U1', owned: true },
-        android: { avdName: 'stim-cli-a', owned: true },
+        android: { avdName: 'stim-a', owned: true },
       },
     },
   });
@@ -294,7 +294,7 @@ test('owned devices are shut down with del:false, never deleted', async () => {
   for (const c of calls.teardowns) expect(c.opts.del).toBe(false);
 });
 
-test('a device stim-cli does not own is left alone', async () => {
+test('a device Stim does not own is left alone', async () => {
   const { calls, opts } = seams({
     project: { metroPort: 8083, platforms: { ios: { deviceUdid: 'U1', owned: false } } },
   });
@@ -344,16 +344,16 @@ let tmpHome: string;
 let tmpRoot: string;
 
 beforeEach(() => {
-  tmpHome = mkdtempSync(join(tmpdir(), 'stim-cli-test-'));
-  process.env.STIM_CLI_HOME = tmpHome;
-  tmpRoot = mkdtempSync(join(tmpdir(), 'stim-cli-proj-'));
+  tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
+  process.env.STIM_HOME = tmpHome;
+  tmpRoot = mkdtempSync(join(tmpdir(), 'stim-proj-'));
   ensureWorkspaceStorage(tmpRoot);
 });
 
 afterEach(() => {
   rmSync(tmpHome, { recursive: true, force: true });
   rmSync(tmpRoot, { recursive: true, force: true });
-  delete process.env.STIM_CLI_HOME;
+  delete process.env.STIM_HOME;
   resetExecutor();
 });
 
@@ -442,7 +442,7 @@ test('stopping frees the reserved port in the registry and keeps the device reco
     root: tmpRoot,
     isAlive: () => false,
     resolveMetro: async () => ({ missing: true }),
-    teardownIos: () => ({ status: 'torn-down', label: 'stim-cli-a' }),
+    teardownIos: () => ({ status: 'torn-down', label: 'stim-a' }),
     clearRegistration: async () => {},
     report: () => {},
   });
@@ -748,7 +748,7 @@ test.each([
   ['unowned terminal session', JSON.stringify({ id: 'drs_42', name: 'other-tool', status: 'STOPPED' })],
   ['unnamed terminal session', JSON.stringify({ id: 'drs_42', status: 'STOPPED' })],
   ['malformed output', 'not json'],
-  ['unknown status', JSON.stringify({ id: 'drs_42', name: 'stim-cli-wt', status: 'PAUSED' })],
+  ['unknown status', JSON.stringify({ id: 'drs_42', name: 'stim-wt', status: 'PAUSED' })],
 ])('stop retains the session record after an unverifiable %s', async (_name, sessionOutput) => {
   withRemoteSession('drs_42');
   const calls: string[] = [];
@@ -775,7 +775,7 @@ test('stop clears the record for a verified terminal session without issuing sto
     resolveMetro: async () => ({ missing: true }),
     clearRegistration: async () => {},
     teardownRemoteSession: verifiedTeardown(
-      JSON.stringify({ id: 'drs_42', name: 'stim-cli-wt', status: 'STOPPED' }),
+      JSON.stringify({ id: 'drs_42', name: 'stim-wt', status: 'STOPPED' }),
       calls,
     ),
     report: () => {},
