@@ -801,7 +801,7 @@ function machineGlobalReason(cache: CacheDescriptor): string | null {
   return `STIM_HOME scopes this config, but ${cache.dir} is outside it and therefore machine-global`;
 }
 
-export const EVERY_CACHE = 'all';
+const EVERY_CACHE = 'all';
 
 export function selectCaches(caches: CacheDescriptor[], name: string | null | undefined): CacheDescriptor[] {
   if (!name) return caches;
@@ -887,11 +887,12 @@ export async function collectGcReport(
   }: CollectGcReportOptions = {},
   deps: GcDependencies = {},
 ): Promise<GcReport> {
-  const all = cache !== null && olderThan === null;
-  const selected = selectCaches(discoverCaches({ declared: declaredCachePaths() }), cache);
+  const scope = typeof cache === 'string' && cache.trim() ? cache : null;
+  const all = scope !== null && olderThan === null;
+  const selected = selectCaches(discoverCaches({ declared: declaredCachePaths() }), scope);
   const caches = planCacheEmptying(sizeCaches(selected), all);
 
-  if (cache) {
+  if (scope) {
     return {
       skipped: [],
       deadProjects: [],
@@ -903,7 +904,7 @@ export async function collectGcReport(
       deviceSweepNotices: [],
       easSessionSweep: { projectScope: null, orphaned: [], notices: [], deletionSafe: true },
       caches,
-      cacheScope: cache,
+      cacheScope: scope,
       olderThan,
       all,
     };
@@ -1114,8 +1115,7 @@ export async function runGc(opts: RunGcOptions = {}, deps: GcDependencies = {}):
 
 async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void> {
   const olderThan = typeof opts.olderThan === 'number' ? opts.olderThan : null;
-  const cache = typeof opts.cache === 'string' ? opts.cache : null;
-  const all = cache !== null && olderThan === null;
+  const cache = typeof opts.cache === 'string' && opts.cache.trim() ? opts.cache : null;
   const report = await collectGcReport(
     {
       olderThan,
@@ -1130,6 +1130,8 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
     if (names.length) console.log(chalk.dim(`Caches on this machine: ${names.join(', ')}`));
     return;
   }
+
+  const all = report.all;
 
   for (const line of formatGcReport(report)) console.log(line);
 
@@ -1498,7 +1500,7 @@ export default function gcCommand(program: Command): void {
     )
     .option(
       '--cache <name>',
-      'act on the shared caches whose name or directory contains <name>, or every cache with --cache all. With --delete they are emptied whole, which is the only way to clear an index-backed cache; add --older-than <days> to trim them by age instead. Only those caches are reported; devices and project entries are not inspected. Caches outside the config dir are refused while STIM_HOME is set.',
+      'act on the shared caches whose name or directory contains <name>, or every cache with --cache all, a reserved name that never selects a single cache. With --delete they are emptied whole, which is the only way to clear an index-backed cache; add --older-than <days> to trim them by age instead. Only those caches are reported; devices and project entries are not inspected. Caches outside the config dir are refused while STIM_HOME is set.',
       (v: string) => {
         if (!v.trim()) throw new InvalidArgumentError('must name a cache, e.g. --cache "compilation cache"');
         return v;

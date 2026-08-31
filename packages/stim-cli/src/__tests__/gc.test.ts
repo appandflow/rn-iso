@@ -2257,7 +2257,7 @@ test('--delete --older-than under a scoped home refuses machine-global caches', 
   expect(output).toMatch(/machine-global/);
 });
 
-test('--all reaches caches only: never a device, never a project entry', async () => {
+test('--cache all reaches caches only: never a device, never a project entry', async () => {
   const livePath = join(fakeHome, 'live-project');
   mkdirSync(livePath, { recursive: true });
   saveConfig({

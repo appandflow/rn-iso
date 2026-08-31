@@ -1089,7 +1089,7 @@ THE OPTION SURFACE, IN FULL
   android         --json --no-metro-check --no-build-cache --variant <name> --remote <proxy|eas>
   logs            --source --level --since --grep --tail --follow --errors --json
   stop            --json --force
-  status          --json          (already machine-wide; there is no --all)
+  status          --json          (already machine-wide)
   gc              --delete --older-than <days> --cache <name|all>
   worktree create <name> --carry-ignored --base <ref> --label <label>; remove [path] --force
 
@@ -1334,11 +1334,11 @@ SHARED BUILD CACHES
   each row tagged (registered) or (detected), with its size:
     stim gc                            # report, caches included
     stim gc --delete --older-than 30   # trim entries nothing has used
-    stim gc --delete --all             # empty them whole, index-backed ones
+    stim gc --delete --cache all       # empty them whole, index-backed ones
                                          # (the Xcode CAS) included
   The Gradle build cache under GRADLE_USER_HOME (default ~/.gradle) is
   report-only because every Gradle build shares it. Stim reports its size
-  but never prunes or empties it, including with --older-than or --all.
+  but never prunes or empties it, including with --older-than or --cache all.
   Trim rather than empty. Emptying costs the next build in every project the
   time the cache was saving.`,
   },
@@ -1607,7 +1607,7 @@ FileStore shards across 256 directories, a build cache is keyed
 <platform>/<key> -- or 'gc --delete --older-than N' removes a whole shard or
 platform instead of one entry. Pass prune: 'atomic' for a cache whose index
 references its own data (an LLVM CAS): it is then left alone by --older-than
-and emptied whole only by 'gc --delete --all'.
+and emptied whole only by 'gc --delete --cache all'.
 Registration is idempotent and keyed on the directory.`,
   },
 };

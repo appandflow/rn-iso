@@ -65,9 +65,9 @@ cold/warm split deliberately only when it is the behavior under test.
 ## Safety rules (non-negotiable)
 
 - NEVER modify the target repo's main checkout. Worktrees only.
-- NEVER run `gc --delete`, `gc --delete --all`, or `gc --delete --all --cache
-<name>` without the user's explicit approval in this session. Bare `gc`
-  (report) is always fine.
+- NEVER run `gc --delete`, `gc --delete --cache all`, or
+  `gc --delete --cache <name>` without the user's explicit approval in this
+  session. Bare `gc` (report) is always fine.
 - Touch no simulator/emulator except `stim-*` ones YOUR runs created.
 - No raw `simctl recordVideo` (it can wedge a machine with a global lock);
   record only through your device tool's own mechanism, prefer screenshots.

@@ -50,11 +50,13 @@ from the source checkout.
 ```bash
 stim gc
 stim gc --delete --older-than 30
-stim gc --delete --all
+stim gc --delete --cache all
 ```
 
 The first command only reports sizes. Age-based cleanup removes unused entries.
-`--all` empties managed caches and makes future builds cold.
+`--cache all` empties managed caches and makes future builds cold; it reaps
+nothing, so `gc --delete` on its own remains the way to prune stale entries.
+`--cache "compilation cache"` empties one cache instead of every one.
 
 Set `STIM_BUILD_CACHE` or `STIM_METRO_CACHE` to place the shared caches on a
 different volume. The same values can live in the machine config under
