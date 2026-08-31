@@ -6,6 +6,23 @@ export const CACHE_PROVIDER_API_VERSION = 1 as const;
 
 export const CACHE_PROVIDER_ENV = 'STIM_CACHE_PROVIDER_CONFIG';
 
+export const CACHE_PROVIDER_ENV_NONE = 'none';
+
+export const PROVIDER_LOAD_TIMEOUT_MS = 10_000;
+
+export const PROVIDER_LOAD_TIMEOUT_ENV = 'STIM_CACHE_LOAD_TIMEOUT_MS';
+
+/**
+ * Reads a positive integer millisecond override from the environment. Any other
+ * value falls back to the shipped default.
+ */
+export function timeoutFromEnv(name: string, fallback: number, env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env[name];
+  if (typeof raw !== 'string' || !/^[1-9]\d*$/.test(raw.trim())) return fallback;
+  const parsed = Number(raw.trim());
+  return Number.isSafeInteger(parsed) ? parsed : fallback;
+}
+
 /**
  * One resolved provider selection: the module reference, the options passed to
  * its factory, and the directory the reference resolves from.
@@ -138,12 +155,32 @@ function capabilityError(provider: CacheProvider): string | null {
 export async function loadCacheProvider({
   projectRoot,
   config,
+  timeoutMs = timeoutFromEnv(PROVIDER_LOAD_TIMEOUT_ENV, PROVIDER_LOAD_TIMEOUT_MS),
 }: {
   projectRoot: string;
   config?: CacheProviderConfig | null;
+  timeoutMs?: number;
 }): Promise<LoadCacheProviderResult> {
   const reference = typeof config?.provider === 'string' ? config.provider.trim() : '';
   if (!config || reference === '') return { none: true };
+
+  const outcome = await callWithTimeout(() => importCacheProvider({ projectRoot, config, reference }), timeoutMs);
+  if (outcome.timedOut) {
+    return { name: reference, unavailable: `the module did not load within ${timeoutMs}ms` };
+  }
+  if (outcome.failed) return { name: reference, unavailable: outcome.failed };
+  return outcome.value ?? { name: reference, unavailable: 'the module produced no provider' };
+}
+
+async function importCacheProvider({
+  projectRoot,
+  config,
+  reference,
+}: {
+  projectRoot: string;
+  config: CacheProviderConfig;
+  reference: string;
+}): Promise<LoadCacheProviderResult> {
   const options = isRecord(config.options) ? config.options : {};
   const baseDir = typeof config.baseDir === 'string' && config.baseDir !== '' ? config.baseDir : projectRoot;
 
@@ -189,12 +226,14 @@ export async function callWithTimeout<T>(
 ): Promise<ProviderCallResult<T>> {
   const controller = new AbortController();
   let timer: NodeJS.Timeout | null = null;
+  // The timer stays referenced on purpose: an unreferenced one lets Node exit
+  // while a provider call is pending, so the deadline never fires and the
+  // caller never gets its result.
   const expired = new Promise<'timeout'>((resolve) => {
     timer = setTimeout(() => {
       controller.abort();
       resolve('timeout');
     }, timeoutMs);
-    timer?.unref?.();
   });
   try {
     const outcome = await Promise.race([
@@ -221,13 +260,23 @@ export function createWarnOnce(emit: (message: string) => void): WarnOnce {
   };
 }
 
-export function cacheProviderEnv(config: CacheProviderConfig): string {
+export function cacheProviderEnv(config: CacheProviderConfig | null): string {
+  if (!config) return CACHE_PROVIDER_ENV_NONE;
   return JSON.stringify({ provider: config.provider, options: config.options ?? {}, baseDir: config.baseDir });
+}
+
+/**
+ * True when a parent process decided the provider selection, including the
+ * `none` sentinel. A child must not run its own search once this is set.
+ */
+export function cacheProviderEnvIsSet(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = env[CACHE_PROVIDER_ENV];
+  return typeof raw === 'string' && raw.trim() !== '';
 }
 
 export function cacheProviderConfigFromEnv(env: NodeJS.ProcessEnv = process.env): CacheProviderConfig | null {
   const raw = env[CACHE_PROVIDER_ENV];
-  if (typeof raw !== 'string' || raw.trim() === '') return null;
+  if (typeof raw !== 'string' || raw.trim() === '' || raw.trim() === CACHE_PROVIDER_ENV_NONE) return null;
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);

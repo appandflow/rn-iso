@@ -4,6 +4,11 @@ import { join } from 'node:path';
 import {
   CACHE_PROVIDER_API_VERSION,
   CACHE_PROVIDER_ENV,
+  CACHE_PROVIDER_ENV_NONE,
+  PROVIDER_LOAD_TIMEOUT_ENV,
+  PROVIDER_LOAD_TIMEOUT_MS,
+  cacheProviderEnvIsSet,
+  timeoutFromEnv,
   cacheProviderConfigFromEnv,
   cacheProviderEnv,
   callWithTimeout,
@@ -259,4 +264,42 @@ test('a warning class is emitted once', () => {
   warn('read', 'second read failure');
   warn('write', 'first write failure');
   expect(lines).toEqual(['first read failure', 'first write failure']);
+});
+
+test('a factory that never settles becomes unavailable instead of hanging', async () => {
+  writeModule(
+    'hangs.mjs',
+    `export const apiVersion = 1;
+export const createCacheProvider = () => new Promise(() => {});
+`,
+  );
+
+  const started = Date.now();
+  const loaded = await loadCacheProvider({ projectRoot, config: config('./hangs.mjs'), timeoutMs: 25 });
+  expect(loaded.provider).toBeUndefined();
+  expect(loaded.unavailable).toBe('the module did not load within 25ms');
+  expect(Date.now() - started).toBeLessThan(2_000);
+});
+
+test('a module whose top level never settles becomes unavailable instead of hanging', async () => {
+  writeModule('top-level-hang.mjs', 'await new Promise(() => {});\nexport const apiVersion = 1;\n');
+
+  const loaded = await loadCacheProvider({ projectRoot, config: config('./top-level-hang.mjs'), timeoutMs: 25 });
+  expect(loaded.unavailable).toBe('the module did not load within 25ms');
+});
+
+test('the load timeout is tunable through the environment', () => {
+  expect(timeoutFromEnv(PROVIDER_LOAD_TIMEOUT_ENV, PROVIDER_LOAD_TIMEOUT_MS, {})).toBe(PROVIDER_LOAD_TIMEOUT_MS);
+  expect(timeoutFromEnv(PROVIDER_LOAD_TIMEOUT_ENV, 10, { [PROVIDER_LOAD_TIMEOUT_ENV]: '250' })).toBe(250);
+  expect(timeoutFromEnv(PROVIDER_LOAD_TIMEOUT_ENV, 10, { [PROVIDER_LOAD_TIMEOUT_ENV]: '0' })).toBe(10);
+  expect(timeoutFromEnv(PROVIDER_LOAD_TIMEOUT_ENV, 10, { [PROVIDER_LOAD_TIMEOUT_ENV]: 'soon' })).toBe(10);
+});
+
+test('the environment transport carries an explicit none decision', () => {
+  expect(cacheProviderEnv(null)).toBe(CACHE_PROVIDER_ENV_NONE);
+  const env = { [CACHE_PROVIDER_ENV]: cacheProviderEnv(null) };
+  expect(cacheProviderConfigFromEnv(env)).toBeNull();
+  expect(cacheProviderEnvIsSet(env)).toBe(true);
+  expect(cacheProviderEnvIsSet({})).toBe(false);
+  expect(cacheProviderEnvIsSet({ [CACHE_PROVIDER_ENV]: '   ' })).toBe(false);
 });
