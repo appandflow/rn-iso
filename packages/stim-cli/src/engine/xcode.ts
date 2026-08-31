@@ -686,7 +686,7 @@ export async function buildIos({
   }
 
   if (outcome.code !== 0) {
-    const diagnostics = extractXcodeDiagnostics(text);
+    const diagnostics = extractXcodeDiagnostics(text, root);
     const capped = capDiagnostics(diagnostics);
     for (const d of capped.diagnostics) reportError(describeDiagnostic(d), d.remedy);
     if (capped.diagnostics.length === 0) {

@@ -8,6 +8,7 @@ import { diffFingerprintSources, fingerprintProject } from './build-cache.ts';
 import { dirtyFingerprintFiles, gitCommonDir, listWorktrees, repoRoot } from './worktree.ts';
 import { workspaceDerivedData } from './paths.ts';
 import { type Config, type ConcurrencyLimits, getConcurrencyLimits, loadConfig } from './config.ts';
+import { podInstallCommand } from './engine/bundler.ts';
 import { liveOwnedDeviceCount } from './engine/device.ts';
 import { simslimIsOnPath } from './engine/simslim.ts';
 import { listBuildSlots } from './engine/build-slots.ts';
@@ -199,9 +200,7 @@ export function checkMainCheckout(
     }
     if (podsState) {
       const iosRoot = join(mainRoot, 'ios');
-      const podCommand = existsSync(join(mainRoot, 'Gemfile'))
-        ? `cd ${quotedPath(iosRoot)} && bundle exec pod install`
-        : `cd ${quotedPath(iosRoot)} && pod install`;
+      const podCommand = `cd ${quotedPath(iosRoot)} && ${podInstallCommand(mainRoot)}`;
       findings.push(
         finding(
           'cost',
@@ -215,9 +214,7 @@ export function checkMainCheckout(
     const broken = brokenPods === undefined && existsSync(podsRoot) ? brokenPodLinks(podsRoot) : brokenPods || [];
     if (broken.length) {
       const iosRoot = join(mainRoot, 'ios');
-      const podCommand = existsSync(join(mainRoot, 'Gemfile'))
-        ? `cd ${quotedPath(iosRoot)} && bundle exec pod install --clean-install`
-        : `cd ${quotedPath(iosRoot)} && pod install --clean-install`;
+      const podCommand = `cd ${quotedPath(iosRoot)} && ${podInstallCommand(mainRoot, '--clean-install')}`;
       findings.push(
         finding(
           'cost',

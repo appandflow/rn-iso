@@ -1,3 +1,5 @@
+import { podInstallCommand } from './bundler.ts';
+
 export interface Diagnostic {
   file?: string | null;
   line?: number | null;
@@ -41,12 +43,13 @@ const NO_SUCH_SCHEME = /does not contain a scheme named/;
 // wrong node kind. See appandflow/stim#138.
 const CAS_CORRUPT = /not a IncludeTreeRoot node kind/;
 
-function remedyFor(message: string): string | null {
+function remedyFor(message: string, root: string | null): string | null {
   if (CAS_CORRUPT.test(message)) {
     return 'The compilation cache holds a damaged object. Run `stim gc --delete --cache "compilation cache"` to empty that cache, then build again. The next build is a cold one.';
   }
   if (PODS_OUT_OF_SYNC.test(message)) {
-    return 'Run `pod install` in ios/ (stim ios does this when Podfile.lock and Pods/Manifest.lock disagree), then build again.';
+    const pod = root ? podInstallCommand(root) : 'pod install';
+    return `Run \`${pod}\` in ios/ (stim ios does this when Podfile.lock and Pods/Manifest.lock disagree), then build again.`;
   }
   if (NO_SUCH_SCHEME.test(message)) {
     return 'Run `xcodebuild -list` in ios/ to see the schemes this project defines, and share the app scheme so it is visible to the build.';
@@ -70,24 +73,27 @@ function fileFromPrefix(prefix: string): string | null {
   return head;
 }
 
-function makeDiagnostic({
-  file = null,
-  line = null,
-  column = null,
-  message,
-}: {
-  file?: string | null;
-  line?: number | null;
-  column?: number | null;
-  message: string;
-}): Diagnostic {
+function makeDiagnostic(
+  {
+    file = null,
+    line = null,
+    column = null,
+    message,
+  }: {
+    file?: string | null;
+    line?: number | null;
+    column?: number | null;
+    message: string;
+  },
+  root: string | null,
+): Diagnostic {
   const text = String(message).trim();
   const out: Diagnostic = { message: text };
   if (file) out.file = file;
   if (line !== null && line !== undefined) out.line = line;
   if (column !== null && column !== undefined) out.column = column;
   out.message = text;
-  const remedy = remedyFor(text);
+  const remedy = remedyFor(text, root);
   if (remedy) out.remedy = remedy;
   return out;
 }
@@ -96,7 +102,7 @@ function dedupeKey(d: Diagnostic): string {
   return `${d.file || ''}|${d.line || ''}|${d.column || ''}|${d.message}`;
 }
 
-export function extractXcodeDiagnostics(transcript: string): Diagnostic[] {
+export function extractXcodeDiagnostics(transcript: string, root: string | null = null): Diagnostic[] {
   if (typeof transcript !== 'string' || transcript === '') return [];
 
   const lines = transcript.split('\n');
@@ -123,7 +129,7 @@ export function extractXcodeDiagnostics(transcript: string): Diagnostic[] {
         const sym = UNDEFINED_SYMBOL.exec(symLine.replace(/\r$/, ''));
         if (sym) {
           const symbol = sym[1];
-          if (symbol !== undefined) push(makeDiagnostic({ message: undefinedSymbolMessage(symbol) }));
+          if (symbol !== undefined) push(makeDiagnostic({ message: undefinedSymbolMessage(symbol) }, root));
           continue;
         }
         if (/^\s+\S/.test(symLine) && !/^\S/.test(symLine)) continue;
@@ -135,7 +141,7 @@ export function extractXcodeDiagnostics(transcript: string): Diagnostic[] {
 
     const ld = LD_ERROR.exec(raw);
     if (ld) {
-      push(makeDiagnostic({ message: `ld: ${ld[1]}` }));
+      push(makeDiagnostic({ message: `ld: ${ld[1]}` }, root));
       continue;
     }
 
@@ -144,12 +150,15 @@ export function extractXcodeDiagnostics(transcript: string): Diagnostic[] {
       const posMsg = positioned[4];
       if (posMsg === undefined) continue;
       push(
-        makeDiagnostic({
-          file: positioned[1],
-          line: Number(positioned[2]),
-          column: positioned[3] === undefined ? null : Number(positioned[3]),
-          message: posMsg,
-        }),
+        makeDiagnostic(
+          {
+            file: positioned[1],
+            line: Number(positioned[2]),
+            column: positioned[3] === undefined ? null : Number(positioned[3]),
+            message: posMsg,
+          },
+          root,
+        ),
       );
       continue;
     }
@@ -158,7 +167,7 @@ export function extractXcodeDiagnostics(transcript: string): Diagnostic[] {
     if (plain) {
       const plainMsg = plain[2];
       if (plainMsg === undefined) continue;
-      push(makeDiagnostic({ file: fileFromPrefix(plain[1] || ''), message: plainMsg }));
+      push(makeDiagnostic({ file: fileFromPrefix(plain[1] || ''), message: plainMsg }, root));
     }
   }
 

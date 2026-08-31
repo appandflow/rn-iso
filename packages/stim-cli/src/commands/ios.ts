@@ -1856,6 +1856,8 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
         const action = podAction(podState, verdict);
         if (action.install) {
           const result = await d.runPodInstall(root, logWriter());
+          const podCommand = result?.command || 'pod install';
+          for (const line of result?.notes || []) note(chalk.dim(phaseLine('pods', line)));
           if (result?.failed) {
             phase('pods', 'FAILED');
             fail({
@@ -1867,8 +1869,11 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
             });
             return false;
           }
-          phase('pods', `${action.reason} -> installed (${formatDuration(result?.durationMs ?? 0)})`);
-          mutatingSteps.push('pod install');
+          phase(
+            'pods',
+            `${action.reason} -> installed with \`${podCommand}\` (${formatDuration(result?.durationMs ?? 0)})`,
+          );
+          mutatingSteps.push(podCommand);
         }
 
         if (mutatingSteps.length) {

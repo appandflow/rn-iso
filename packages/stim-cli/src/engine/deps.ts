@@ -1,10 +1,11 @@
 import type { ChildProcess } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts';
+import { bundlerPin } from './bundler.ts';
 import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat } from './xcode.ts';
 
 type SpawnFn = (cmd: string, args: string[], opts: Record<string, unknown>) => ChildProcess;
@@ -22,6 +23,9 @@ const RUBY_HEAD = /^\S.*\.rb:\d+:in\s+(?:`[^']*'|'[^']*'):\s*\S/;
 const RUBY_FRAME = /^\s*from\s+\S/;
 
 const RUBY_CONTEXT_BEFORE = 4;
+
+const BUNDLER_FROZEN = /frozen mode|lockfile can't be updated|in deployment mode after changing/i;
+const BUNDLER_NO_COCOAPODS = /cocoapods is not currently included in the bundle|command not found: pod\b/i;
 
 export interface PodDiagnostics {
   source: 'cocoapods' | 'ruby';
@@ -196,11 +200,226 @@ export type PodInstallResult = {
   code?: string;
   reason?: string;
   remedy?: string;
+  command?: string;
+  notes?: string[];
   diagnosticSource?: string;
   diagnosticLines?: string[];
   lastLines?: string[];
   durationMs?: number;
 };
+
+// Bundler writes Gemfile.lock whenever it resolves: `bundle check`, `bundle install`,
+// and even `bundle exec` rewrite the lockfile when it does not match the Gemfile.
+// `--dry-run` and BUNDLE_FROZEN make bundler report instead of write, so the tracked
+// lockfile is never edited. Gems still land wherever the project's own bundler config
+// points BUNDLE_PATH (the React Native template ships `.bundle/config` with
+// vendor/bundle), which is the project's dependency state, not Stim's (#137).
+function bundlerEnv(root: string, gemfile: string): NodeJS.ProcessEnv {
+  return { ...podEnv(root), BUNDLE_GEMFILE: gemfile, BUNDLE_FROZEN: 'true' };
+}
+
+const BUNDLE_PATH_SETTING = /^BUNDLE_PATH:[ \t]*["']?([^"'\r\n]+?)["']?[ \t]*$/m;
+
+function bundlePathInsideProject(root: string, env: NodeJS.ProcessEnv): { path: string; where: string } | null {
+  const fromEnv = env.BUNDLE_PATH;
+  const configured = fromEnv || BUNDLE_PATH_SETTING.exec(readOrNull(join(root, '.bundle', 'config')) ?? '')?.[1];
+  // Bundler expands a leading ~ to $HOME, which resolve() would instead read as a
+  // directory named "~" under the project.
+  if (!configured || configured.startsWith('~')) return null;
+  const resolved = resolve(root, configured);
+  if (resolved !== root && !resolved.startsWith(root + sep)) return null;
+  return {
+    path: relative(root, resolved) || '.',
+    where: fromEnv
+      ? 'where the BUNDLE_PATH environment variable points'
+      : 'where its own .bundle/config points BUNDLE_PATH',
+  };
+}
+
+type RunContext = {
+  logWriter: NdjsonWriter | null | undefined;
+  spawn: SpawnFn;
+  now: () => number;
+  heartbeatMs: number;
+  onHeartbeat: (line: string) => void;
+};
+
+type CapturedRun = {
+  transcript: string[];
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  error: unknown;
+  durationMs: number;
+};
+
+async function runCaptured(
+  ctx: RunContext & {
+    cmd: string;
+    args: string[];
+    cwd: string;
+    env: NodeJS.ProcessEnv;
+    event: string;
+    label?: string | null;
+  },
+): Promise<CapturedRun> {
+  const startedAt = ctx.now();
+  const transcript: string[] = [];
+  const push = (line: unknown) => {
+    const msg = stripAnsi(String(line)).trimEnd();
+    if (!msg.trim()) return;
+    transcript.push(msg);
+    ctx.logWriter?.write?.({ src: 'build', level: 'debug', msg, raw: true, event: ctx.event });
+  };
+
+  let child: ChildProcess;
+  try {
+    child = ctx.spawn(ctx.cmd, ctx.args, {
+      cwd: ctx.cwd,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: ctx.env,
+    });
+  } catch (error) {
+    return { transcript, code: null, signal: null, error, durationMs: ctx.now() - startedAt };
+  }
+
+  const reader = { out: createLineReader(push), err: createLineReader(push) };
+  child.stdout?.setEncoding?.('utf-8');
+  child.stderr?.setEncoding?.('utf-8');
+  child.stdout?.on('data', (chunk) => reader.out.push(chunk));
+  child.stderr?.on('data', (chunk) => reader.err.push(chunk));
+
+  const stopHeartbeat = ctx.label
+    ? startBuildHeartbeat({
+        intervalMs: ctx.heartbeatMs,
+        elapsed: () => ctx.now() - startedAt,
+        lastLine: () => transcript.at(-1) ?? '',
+        emit: ctx.onHeartbeat,
+        label: ctx.label,
+      })
+    : () => {};
+
+  let result: Awaited<ReturnType<typeof waitForChild>>;
+  try {
+    result = await waitForChild(child);
+  } finally {
+    stopHeartbeat();
+  }
+  reader.out.flush();
+  reader.err.flush();
+  return {
+    transcript,
+    code: result.code ?? null,
+    signal: result.signal ?? null,
+    error: result.error ?? null,
+    durationMs: ctx.now() - startedAt,
+  };
+}
+
+type GemsResult = { bundler: boolean; note?: string; failure?: PodInstallResult };
+
+async function ensureBundledGems(
+  root: string,
+  pin: { gemfile: string; lockfile: string },
+  ctx: RunContext,
+): Promise<GemsResult> {
+  const env = bundlerEnv(root, pin.gemfile);
+  const cwd = dirname(pin.gemfile);
+
+  const check = await runCaptured({
+    ...ctx,
+    cmd: 'bundle',
+    args: ['check', '--dry-run'],
+    cwd,
+    env,
+    event: 'bundle_check',
+    label: 'gems',
+  });
+  if (check.error) return bundlerSpawnFailure('bundle check', check, pin);
+  if (check.code === 0) return { bundler: true };
+
+  const install = await runCaptured({
+    ...ctx,
+    cmd: 'bundle',
+    args: ['install'],
+    cwd,
+    env,
+    event: 'bundle_install',
+    label: 'gems',
+  });
+  if (install.error) return bundlerSpawnFailure('bundle install', install, pin);
+  const inProject = bundlePathInsideProject(cwd, env);
+  const note = inProject
+    ? `\`bundle install\` put this project's gems in ${inProject.path}/, ${inProject.where}; ` +
+      'Gemfile.lock itself is never written.'
+    : undefined;
+  if (install.code === 0) return { bundler: true, note };
+
+  const how = install.signal ? `signal ${install.signal}` : `exit code ${install.code}`;
+  const transcript = install.transcript.join('\n');
+  const extracted = extractPodDiagnostics(transcript);
+  return {
+    bundler: false,
+    failure: {
+      failed: true,
+      code: DEPS_ERROR,
+      reason: `\`bundle install\` failed (${how}).`,
+      remedy: frozenRemedy(root, pin, transcript) || gemInstallRemedy(root, pin),
+      diagnosticSource: extracted ? extracted.source : 'tail',
+      diagnosticLines: extracted ? extracted.lines : [],
+      lastLines: install.transcript.slice(-LAST_LINES),
+      durationMs: install.durationMs,
+    },
+  };
+}
+
+function bundlerSpawnFailure(
+  command: string,
+  run: CapturedRun,
+  pin: { gemfile: string; lockfile: string },
+): GemsResult {
+  if (isMissingBinary(run.error)) return { bundler: false, note: missingBundlerNote(pin) };
+  return {
+    bundler: false,
+    failure: {
+      failed: true,
+      code: DEPS_ERROR,
+      reason: `Could not run \`${command}\`: ${(run.error as Error)?.message || run.error}`,
+      remedy: `Bundler is how this project pins its CocoaPods (${pin.lockfile}). Check that \`bundle\` runs in ${dirname(pin.gemfile)}, then run again.`,
+      lastLines: run.transcript.slice(-LAST_LINES),
+      durationMs: run.durationMs,
+    },
+  };
+}
+
+function missingBundlerNote(pin: { gemfile: string; lockfile: string }): string {
+  return (
+    `${pin.lockfile} pins this project's CocoaPods, but \`bundle\` is not on PATH, ` +
+    'so pods run as plain `pod install` with whatever CocoaPods PATH resolves to (`gem install bundler` to use the pin).'
+  );
+}
+
+function frozenRemedy(
+  root: string,
+  pin: { gemfile: string; lockfile: string },
+  transcript: string,
+): string | undefined {
+  if (!BUNDLER_FROZEN.test(transcript)) return undefined;
+  return (
+    `Stim runs bundler with BUNDLE_FROZEN so it can never write into your checkout, and ${pin.gemfile} no longer ` +
+    `matches ${pin.lockfile}. Run \`cd ${root} && bundle install\` yourself, keep the updated Gemfile.lock, then run again.`
+  );
+}
+
+function gemInstallRemedy(root: string, pin: { gemfile: string; lockfile: string }): string {
+  const version = readRubyVersion(root);
+  const ruby = version
+    ? `This repo pins ruby ${version} (.ruby-version), so put that ruby on PATH (rbenv/rvm/asdf/mise) first. `
+    : '';
+  return (
+    `${ruby}Bundler could not install the gems ${pin.lockfile} pins, so \`bundle exec pod install\` cannot run. ` +
+    `Run \`cd ${root} && bundle install\` and fix what it reports, then run again.`
+  );
+}
 
 export async function runPodInstall(
   root: string,
@@ -228,97 +447,116 @@ export async function runPodInstall(
     };
   }
 
-  const spawn: SpawnFn = spawnFn || ((cmd, args, opts) => getExecutor().spawn(cmd, args, opts));
-  const startedAt = now();
-  const transcript: string[] = [];
-  const push = (line: unknown) => {
-    const msg = stripAnsi(String(line)).trimEnd();
-    if (!msg.trim()) return;
-    transcript.push(msg);
-    logWriter?.write?.({ src: 'build', level: 'debug', msg, raw: true, event: 'pod_install' });
+  const ctx: RunContext = {
+    logWriter,
+    spawn: spawnFn || ((cmd, args, opts) => getExecutor().spawn(cmd, args, opts)),
+    now,
+    heartbeatMs,
+    onHeartbeat,
   };
 
-  let child: ChildProcess;
-  try {
-    child = spawn('pod', ['install'], {
-      cwd: iosDir,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: podEnv(root),
-    });
-  } catch (err) {
-    return (
-      missingPod(err) || {
-        failed: true,
-        code: DEPS_ERROR,
-        reason: `Could not run \`pod install\`: ${(err as Error)?.message || err}`,
-        lastLines: [] as string[],
-      }
-    );
+  const notes: string[] = [];
+  const pin = bundlerPin(root);
+  let bundler = false;
+  if (pin) {
+    const gems = await ensureBundledGems(root, pin, ctx);
+    if (gems.failure) return { ...gems.failure, notes };
+    if (gems.note) notes.push(gems.note);
+    bundler = gems.bundler;
   }
 
-  const reader = { out: createLineReader(push), err: createLineReader(push) };
-  child.stdout?.setEncoding?.('utf-8');
-  child.stderr?.setEncoding?.('utf-8');
-  child.stdout?.on('data', (chunk) => reader.out.push(chunk));
-  child.stderr?.on('data', (chunk) => reader.err.push(chunk));
-
-  const stopHeartbeat = startBuildHeartbeat({
-    intervalMs: heartbeatMs,
-    elapsed: () => now() - startedAt,
-    lastLine: () => transcript.at(-1) ?? '',
-    emit: onHeartbeat,
+  const args = bundler ? ['bundle', 'exec', 'pod', 'install'] : ['pod', 'install'];
+  const command = args.join(' ');
+  const run = await runCaptured({
+    ...ctx,
+    cmd: args[0] as string,
+    args: args.slice(1),
+    cwd: iosDir,
+    env: bundler && pin ? bundlerEnv(root, pin.gemfile) : podEnv(root),
+    event: 'pod_install',
     label: 'pods',
   });
 
-  let result: Awaited<ReturnType<typeof waitForChild>>;
-  try {
-    result = await waitForChild(child);
-  } finally {
-    stopHeartbeat();
-  }
-  reader.out.flush();
-  reader.err.flush();
-  const durationMs = now() - startedAt;
-
-  if (result.error) {
-    return (
-      missingPod(result.error) || {
+  if (run.error) {
+    const missing = bundler ? missingBundle(run.error, pin) : missingPod(run.error);
+    return {
+      ...(missing || {
         failed: true,
         code: DEPS_ERROR,
-        reason: `Could not run \`pod install\`: ${result.error?.message || result.error}`,
-        lastLines: transcript.slice(-LAST_LINES),
-        durationMs,
-      }
-    );
+        reason: `Could not run \`${command}\`: ${(run.error as Error)?.message || run.error}`,
+        lastLines: run.transcript.slice(-LAST_LINES),
+        durationMs: run.durationMs,
+      }),
+      command,
+      notes,
+    };
   }
-  if (result.code !== 0) {
-    const how = result.signal ? `signal ${result.signal}` : `exit code ${result.code}`;
-    const extracted = extractPodDiagnostics(transcript.join('\n'));
-    const pinned = /Could not find proper version of cocoapods/.test(transcript.join('\n'))
-      ? readRubyVersion(root)
-      : null;
+  if (run.code !== 0) {
+    const how = run.signal ? `signal ${run.signal}` : `exit code ${run.code}`;
+    const transcript = run.transcript.join('\n');
+    const extracted = extractPodDiagnostics(transcript);
     return {
       failed: true,
       code: DEPS_ERROR,
-      reason: `\`pod install\` failed (${how}).`,
-      remedy: pinned
-        ? `This repo pins ruby ${pinned} (.ruby-version) and its Gemfile's cocoapods was installed under it; ` +
-          `the shell's ruby is likely a different version, so bundler looks in the wrong gem home. ` +
-          `Put ruby ${pinned} on PATH (rbenv/rvm/asdf/mise) -- \`bundle install\` will NOT fix this.`
-        : undefined,
+      reason: `\`${command}\` failed (${how}).`,
+      remedy: podFailureRemedy(root, pin, transcript),
+      command,
+      notes,
       diagnosticSource: extracted ? extracted.source : ('tail' as const),
       diagnosticLines: extracted ? extracted.lines : ([] as string[]),
-      lastLines: transcript.slice(-LAST_LINES),
-      durationMs,
+      lastLines: run.transcript.slice(-LAST_LINES),
+      durationMs: run.durationMs,
     };
   }
-  return { ok: true, durationMs };
+  return { ok: true, command, notes, durationMs: run.durationMs };
+}
+
+function podFailureRemedy(
+  root: string,
+  pin: { gemfile: string; lockfile: string } | null,
+  transcript: string,
+): string | undefined {
+  if (pin) {
+    const frozen = frozenRemedy(root, pin, transcript);
+    if (frozen) return frozen;
+    if (BUNDLER_NO_COCOAPODS.test(transcript)) {
+      return (
+        `${pin.lockfile} resolves cocoapods, but bundler found no \`pod\` executable in the bundle it loaded: ` +
+        `the installed gems belong to a different Gemfile than ${pin.gemfile}, or that Gemfile's bundle was never ` +
+        `installed. Run \`cd ${root} && bundle install && bundle exec pod --version\` and make that work, then run again.`
+      );
+    }
+  }
+  const pinned = /Could not find proper version of cocoapods/.test(transcript) ? readRubyVersion(root) : null;
+  if (!pinned) return undefined;
+  return (
+    `This repo pins ruby ${pinned} (.ruby-version) and its Gemfile's cocoapods was installed under it; ` +
+    `the shell's ruby is likely a different version, so bundler looks in the wrong gem home. ` +
+    `Put ruby ${pinned} on PATH (rbenv/rvm/asdf/mise) -- \`bundle install\` will NOT fix this.`
+  );
+}
+
+function isMissingBinary(err: unknown): boolean {
+  const nodeErr = err as NodeJS.ErrnoException;
+  const message = String(nodeErr?.message || err || '');
+  return nodeErr?.code === 'ENOENT' || /ENOENT|not found/i.test(message);
+}
+
+function missingBundle(err: unknown, pin: { gemfile: string; lockfile: string } | null) {
+  if (!isMissingBinary(err)) return null;
+  return {
+    failed: true,
+    code: DEPS_ERROR,
+    reason: 'Bundler is not installed: no `bundle` executable on PATH.',
+    remedy:
+      `${pin?.lockfile ?? 'Gemfile.lock'} pins this project's CocoaPods, so pods run through bundler. ` +
+      'Install bundler (`gem install bundler`) and run again.',
+    lastLines: [] as string[],
+  };
 }
 
 function missingPod(err: unknown) {
-  const nodeErr = err as NodeJS.ErrnoException;
-  const message = String(nodeErr?.message || err || '');
-  if (nodeErr?.code !== 'ENOENT' && !/ENOENT|not found/i.test(message)) return null;
+  if (!isMissingBinary(err)) return null;
   return {
     failed: true,
     code: DEPS_ERROR,

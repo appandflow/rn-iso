@@ -476,6 +476,25 @@ STIM_DEPS_FAILED
   \`pod install\` (iOS) or the gradle dependency sync (Android) failed. On iOS
   this runs only when Podfile.lock and Pods/Manifest.lock disagree, or Pods is
   absent -- which is exactly what a carried worktree produces.
+  WHICH POD COMMAND: when the project root has a Gemfile and a Gemfile.lock
+  that resolves cocoapods, pods go through bundler -- \`bundle check --dry-run\`,
+  then \`bundle install\` only when that reports missing gems, then \`bundle exec
+  pod install\` -- so the CocoaPods the lockfile pins is the one that writes
+  Podfile.lock. Everything else gets plain \`pod install\`: no Gemfile, a Gemfile
+  with no Gemfile.lock (\`bundle install\` would CREATE that tracked file in
+  your checkout, which Stim will not do), and a Gemfile.lock that
+  pins something other than pods, such as a fastlane-only bundle. When
+  \`bundle\` is not on PATH the run prints one dim \`pods\` note and uses plain
+  \`pod install\`. The \`pods\` phase line always names the command that ran, and
+  the gem steps heartbeat under the \`gems\` label.
+  Bundler runs with BUNDLE_FROZEN, so a Gemfile that no longer matches its
+  Gemfile.lock FAILS the build rather than quietly falling back to unpinned
+  pods -- silently using a different CocoaPods than the lockfile pins is the
+  bug this path exists to kill. Run \`bundle install\` yourself and keep the
+  result. Gems themselves are installed wherever BUNDLE_PATH points -- the
+  project's own \`.bundle/config\` (vendor/bundle in the React Native template),
+  or the environment. When that lands inside the project, Stim says so in a dim
+  note naming which of the two set it; Gemfile.lock is never edited either way.
 
 STIM_BUILD_FAILED
   xcodebuild or gradle failed. The EXTRACTED diagnostics are printed (capped),
