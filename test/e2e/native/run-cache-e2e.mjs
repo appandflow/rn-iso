@@ -49,7 +49,7 @@ if (!['bare', 'expo'].includes(FRAMEWORK) || !['ios', 'android'].includes(PLATFO
   process.stderr.write(
     'usage: run-cache-e2e.mjs --framework <bare|expo> --platform <ios|android> [--app-dir P] [--home P] [--keep] [--skip-race] [--summary F] [--dry-run]\n',
   );
-  process.exit(2);
+  process.exit(1);
 }
 
 const HOME_DIR = args.dryRun ? '<dry-run>' : args.home || mkdtempSync(join(tmpdir(), `stim-cache-${VARIANT}-home-`));
@@ -97,8 +97,7 @@ function seedGradleUserHome(source) {
   try {
     writeFileSync(join(target, 'owner.pid'), String(process.pid));
     // Daemons rooted in a deleted home can never be reused; a short idle
-    // timeout reaps them soon after the run while builds within the run
-    // still share one.
+    // timeout reaps them soon after each build.
     writeFileSync(join(target, 'gradle.properties'), 'org.gradle.daemon.idletimeout=30000\n');
     mkdirSync(join(target, 'caches'), { recursive: true });
     for (const [rel, dest] of [
@@ -122,35 +121,28 @@ function seedGradleUserHome(source) {
     throw err;
   }
   process.on('exit', () => {
-    if (!args.keep) {
-      stopGradleDaemon(target);
-      rmSync(target, { recursive: true, force: true });
-    }
+    if (!args.keep) rmSync(target, { recursive: true, force: true });
   });
   return target;
 }
 
 function ownerIsAlive(home) {
+  let pid;
   try {
-    const pid = Number(readFileSync(join(home, 'owner.pid'), 'utf-8').trim());
-    if (!Number.isInteger(pid) || pid <= 0) return false;
-    process.kill(pid, 0);
-    return true;
+    pid = Number(readFileSync(join(home, 'owner.pid'), 'utf-8').trim());
   } catch {
     return false;
   }
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // EPERM means the pid exists but is not signalable: alive, keep the home.
+    return err.code === 'EPERM';
+  }
 }
 
-function stopGradleDaemon(gradleHome) {
-  const gradlew = join(WORK_DIR, 'app', 'android', 'gradlew');
-  if (!existsSync(gradlew)) return;
-  spawnSync(gradlew, ['--stop'], {
-    cwd: dirname(gradlew),
-    env: { ...process.env, GRADLE_USER_HOME: gradleHome },
-    stdio: 'ignore',
-    timeout: 30 * 1000,
-  });
-}
 const RACE_CACHE_ROOT = args.dryRun ? '<dry-run>' : join(WORK_DIR, 'race-build-cache');
 
 const h = createHarness({ env: ENV, cliPath: CLI, label: `cache-e2e ${VARIANT}` });
