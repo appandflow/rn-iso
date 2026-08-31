@@ -79,7 +79,7 @@ jobs:
 
       # The fast cross-platform e2e: real git worktrees, the real CLI, the real
       # fingerprint/buildCacheKey/store/resolve cache machinery, and a real
-      # single-flight race between real node processes -- throwaway STIM_CLI_HOME,
+      # single-flight race between real node processes -- throwaway STIM_HOME,
       # no Xcode, no Android SDK.
       - name: Cross-platform e2e
         run: pnpm run test:e2e

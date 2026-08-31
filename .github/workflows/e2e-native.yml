@@ -76,19 +76,19 @@ jobs:
         # Schedule and pull_request events have no suite input and use loop.
         suite: ${{ fromJSON(inputs.suite == 'all' && '["loop","caches"]' || inputs.suite == 'caches' && '["caches"]' || '["loop"]') }}
     env:
-      STIM_CLI_E2E_SUITE: ${{ matrix.suite }}
+      STIM_E2E_SUITE: ${{ matrix.suite }}
       # The registry stays throwaway per run (the driver makes its own temp home)
       # for deterministic device/project state; the SHARED build cache is
       # persisted across runs here, so the cross-run cache path is itself
       # exercised. Kept per-variant so bare and expo never address one another's
       # entries.
-      STIM_CLI_BUILD_CACHE: ${{ github.workspace }}/.e2e-build-cache/ios-${{ matrix.framework }}
-      # Keep the throwaway STIM_CLI_HOME under the workspace so the failure
+      STIM_BUILD_CACHE: ${{ github.workspace }}/.e2e-build-cache/ios-${{ matrix.framework }}
+      # Keep the throwaway STIM_HOME under the workspace so the failure
       # artifact step can find global workspace logs.
       TMPDIR: ${{ github.workspace }}/.e2e-tmp
     steps:
       - uses: actions/checkout@v4
-      - run: mkdir -p "$TMPDIR" "$STIM_CLI_BUILD_CACHE"
+      - run: mkdir -p "$TMPDIR" "$STIM_BUILD_CACHE"
 
       - name: Set up pnpm and Node 22
         uses: pnpm/setup@v2
@@ -116,7 +116,7 @@ jobs:
         id: cache
         uses: actions/cache@v4
         with:
-          path: ${{ env.STIM_CLI_BUILD_CACHE }}
+          path: ${{ env.STIM_BUILD_CACHE }}
           # Invalidated when the lockfile changes (a dep bump can move the
           # fingerprint); restore-keys let an older cache warm-start a new key.
           key: stim-cli-buildcache-ios-${{ matrix.framework }}-${{ hashFiles('pnpm-lock.yaml') }}
@@ -128,7 +128,7 @@ jobs:
       # combined cache action only reports exact matches, so ask the filesystem.
       - name: Detect a warmed cross-run cache
         if: matrix.suite == 'loop'
-        run: echo "STIM_CLI_E2E_WARM_CACHE=$([ -n \"$(ls -A \"$STIM_CLI_BUILD_CACHE\" 2>/dev/null)\" ] && echo 1 || echo 0)" >> "$GITHUB_ENV"
+        run: echo "STIM_E2E_WARM_CACHE=$([ -n \"$(ls -A \"$STIM_BUILD_CACHE\" 2>/dev/null)\" ] && echo 1 || echo 0)" >> "$GITHUB_ENV"
 
       - name: Loop suite (ios, ${{ matrix.framework }})
         if: matrix.suite == 'loop'
@@ -138,7 +138,7 @@ jobs:
 
       - name: Cache suite (ios, ${{ matrix.framework }})
         if: matrix.suite == 'caches'
-        # It forces its own STIM_CLI_BUILD_CACHE / STIM_CLI_METRO_CACHE under a
+        # It forces its own STIM_BUILD_CACHE / STIM_METRO_CACHE under a
         # throwaway home ON PURPOSE (see the file header): every number it
         # reports is a before/after around a COLD compile, and the persisted
         # cross-run cache above would turn each of them into a measurement of
@@ -190,12 +190,12 @@ jobs:
         # Schedule and pull_request events have no suite input and use loop.
         suite: ${{ fromJSON(inputs.suite == 'all' && '["loop","caches"]' || inputs.suite == 'caches' && '["caches"]' || '["loop"]') }}
     env:
-      STIM_CLI_E2E_SUITE: ${{ matrix.suite }}
-      STIM_CLI_BUILD_CACHE: ${{ github.workspace }}/.e2e-build-cache/android-${{ matrix.framework }}
+      STIM_E2E_SUITE: ${{ matrix.suite }}
+      STIM_BUILD_CACHE: ${{ github.workspace }}/.e2e-build-cache/android-${{ matrix.framework }}
       TMPDIR: ${{ github.workspace }}/.e2e-tmp
     steps:
       - uses: actions/checkout@v4
-      - run: mkdir -p "$TMPDIR" "$STIM_CLI_BUILD_CACHE"
+      - run: mkdir -p "$TMPDIR" "$STIM_BUILD_CACHE"
 
       - name: Set up pnpm and Node 22
         uses: pnpm/setup@v2
@@ -223,7 +223,7 @@ jobs:
         id: cache
         uses: actions/cache@v4
         with:
-          path: ${{ env.STIM_CLI_BUILD_CACHE }}
+          path: ${{ env.STIM_BUILD_CACHE }}
           key: stim-cli-buildcache-android-${{ matrix.framework }}-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: |
             stim-cli-buildcache-android-${{ matrix.framework }}-
@@ -239,7 +239,7 @@ jobs:
 
       - name: Detect a warmed cross-run cache
         if: matrix.suite == 'loop'
-        run: echo "STIM_CLI_E2E_WARM_CACHE=$([ -n \"$(ls -A \"$STIM_CLI_BUILD_CACHE\" 2>/dev/null)\" ] && echo 1 || echo 0)" >> "$GITHUB_ENV"
+        run: echo "STIM_E2E_WARM_CACHE=$([ -n \"$(ls -A \"$STIM_BUILD_CACHE\" 2>/dev/null)\" ] && echo 1 || echo 0)" >> "$GITHUB_ENV"
 
       - name: Native e2e (android, ${{ matrix.framework }}) -- runs the selected suite(s)
         # reactivecircus/android-emulator-runner installs the SDK + system image,
@@ -261,8 +261,8 @@ jobs:
           script: |
             adb -s emulator-5554 emu kill || true
             sleep 3
-            if [ "$STIM_CLI_E2E_SUITE" = loop ]; then node test/e2e/native/run-native-e2e.mjs --framework ${{ matrix.framework }} --platform android --keep --home "$TMPDIR/stim-cli-home"; fi
-            if [ "$STIM_CLI_E2E_SUITE" = caches ]; then node test/e2e/native/run-cache-e2e.mjs --framework ${{ matrix.framework }} --platform android --keep --home "$TMPDIR/stim-cli-cache-home" --summary "$GITHUB_WORKSPACE/cache-summary-android-${{ matrix.framework }}.json"; fi
+            if [ "$STIM_E2E_SUITE" = loop ]; then node test/e2e/native/run-native-e2e.mjs --framework ${{ matrix.framework }} --platform android --keep --home "$TMPDIR/stim-cli-home"; fi
+            if [ "$STIM_E2E_SUITE" = caches ]; then node test/e2e/native/run-cache-e2e.mjs --framework ${{ matrix.framework }} --platform android --keep --home "$TMPDIR/stim-cli-cache-home" --summary "$GITHUB_WORKSPACE/cache-summary-android-${{ matrix.framework }}.json"; fi
 
       - name: Upload the cache-suite summary
         if: always() && matrix.suite == 'caches'
