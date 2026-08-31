@@ -948,7 +948,9 @@ lines Stim composes rather than on files the project owns:
            Expo's config override on SDK 54+. Expo SDK 53 and older use their
            normal Metro cache. Turn it off machine-wide with
            { "caches": { "injectMetroStore": false } } in
-           ~/.stim/config.json; see \`guide settings\`.
+           ~/.stim/config.json; see \`guide settings\`. A project that calls
+           \`sharedCacheStores()\` from @stim-cli/metro in its own metro
+           config also gets the \`cache.provider\` tier behind that store.
 
 Each says so in one dim line. There is nothing to install, wire or commit, and
 no setup skill to run. \`stim doctor\` is the read-only second opinion when
@@ -958,21 +960,32 @@ provider on a key this SDK ignores) plus the project-side settings that matter
 solely for builds you make OUTSIDE Stim. A clean doctor means there is
 nothing Stim needs from this repo.
 
-THE BUILD CACHE HAS TWO LEVELS
+THE BUILD CACHE HAS THREE LEVELS
   1. Stim's own, on this machine: a directory under ~/.stim shared by
      every worktree, keyed on the @expo/fingerprint hash of the native inputs.
-     Free, instant, offline, and the only level a bare React Native project
-     has.
-  2. On an EXPO project only, the provider the project ALREADY configured for
+     Free, instant, offline, and the only level a project without any
+     provider has.
+  2. The project's own cache provider, on ANY project including bare React
+     Native: \`cache.provider\` in the settings, a module implementing the
+     @stim-cli/cache contract (see \`guide settings\`). Consulted only when
+     level one misses, and its hit is stored into level one before install.
+     The same contract serves the Metro transform cache.
+  3. On an EXPO project only, the provider the project ALREADY configured for
      Expo (\`expo.buildCacheProvider\` -- "eas", or a module of its own).
-     Consulted only when level one misses, bounded so a slow or expired remote
-     cannot stall the loop, and a hit is copied into level one on the way past
-     so the next workspace on this machine gets it for free. After a build,
-     the result is stored locally AND handed to the provider.
+     Consulted only when levels one and two miss, bounded so a slow or expired
+     remote cannot stall the loop, and a hit is copied into level one on the
+     way past so the next workspace on this machine gets it for free. After a
+     build, the result is stored locally AND handed to both providers, which
+     run independently.
 
   Stim never configures a provider and never suggests changing one: a
   project without one is a perfectly ordinary local-only project (doctor does
   not ask for one either -- a provider only serves builds run OUTSIDE Stim).
+
+  A provider that fails to load, times out, or errors produces ONE note per
+  failure class and the run continues on the local cache. \`gc\` reports,
+  trims, and clears local caches only: the provider contract has no delete
+  operation, so no local command can remove data a team or CI system shares.
 
   A MISS explains itself when it can. When this workspace's previous build
   stored its fingerprint sources beside the cache entry, the fingerprint line
@@ -1020,7 +1033,7 @@ ONE COMPILE PER FINGERPRINT, ACROSS EVERY WORKSPACE
   builder that is alive but wedged is the only case a wait can outlive, and
   that ends after ~90 minutes with STIM_BUILD_WAIT_TIMEOUT naming the lock.
 
-  --no-build-cache looks nothing up -- not level one, not level two -- and
+  --no-build-cache looks nothing up -- not one level of the three -- and
   takes no lock and never waits, because it asked for a compile of its own.
   It still STORES the result, over the entry it was told not to trust, and
   still uploads it. Use it when a cached artifact is suspect; the --json
@@ -1457,6 +1470,19 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
   worktree.exclude      additional --carry-ignored skip list, same role as
                         .worktreeexclude. Registered nested Git worktrees are
                         always skipped.
+  cache.provider        one optional SECOND-TIER cache provider: a module
+                        path relative to the settings file that names it, or a
+                        package name. It implements the @stim-cli/cache
+                        contract and can serve Metro transforms, native build
+                        artifacts, or both. The local filesystem stays tier
+                        one; a provider is read only after a local miss and
+                        written after the local write. Failures and timeouts
+                        are cache misses, never build or bundle failures.
+                        Stim ships no provider and never configures one.
+  cache.options         free-form object handed to that module's factory. It
+                        merges key by key across settings layers. Keep secrets
+                        out of the committed file: read them from the
+                        environment or the machine layers.
   caches                extra shared-cache paths for \`gc\` to report. A JSON
                         array; every path is treated as a flat store.
 

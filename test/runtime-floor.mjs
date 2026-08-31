@@ -25,6 +25,7 @@ for (const directory of packageDirs) {
 
 const entrypoints = [
   ['@stim-cli/core', 'configDir'],
+  ['@stim-cli/cache', 'loadCacheProvider'],
   ['@stim-cli/expo-build-cache', 'cacheRoot'],
   ['@stim-cli/metro', 'sharedCacheStores'],
   ['stim-cli/cache-manifest', 'readManifest'],

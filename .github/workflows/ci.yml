@@ -1,7 +1,7 @@
 # Fast, BLOCKING CI. Runs on every push and pull request.
 #
 # Everything provable on a plain Linux box with no Xcode and no Android SDK:
-# lint, format, typecheck, build, the full vitest unit suite (all four
+# lint, format, typecheck, build, the full vitest unit suite (all five
 # packages), and the fast cross-platform e2e (test/e2e/cache-flow.e2e.js), which
 # drives the real CLI and the real cache library end to end with no compiler.
 # The SLOW native builds live in e2e-native.yml, gated so a flaky 15-minute
@@ -72,7 +72,7 @@ jobs:
       - name: Dead code (knip)
         run: pnpm run knip
 
-      # The unit suite on vitest (rolldown-vite): stim-cli + both cache packages,
+      # The unit suite on vitest (rolldown-vite): stim-cli + the cache packages,
       # 52 files. Real processes, real ports, real git; fakes for xcrun/adb.
       - name: Unit tests (vitest)
         run: pnpm test

@@ -4,11 +4,12 @@ How to cut a new version of `stim-cli` to npm and GitHub. Keep this in sync with
 what we actually do — when something changes, update both this file and the
 real workflow at the same time.
 
-## 0. The four packages
+## 0. The five packages
 
 ```
 packages/core                @stim-cli/core                shared primitives (cache roots, cache key, registration)
 packages/stim-cli              stim-cli                      the CLI
+packages/cache               @stim-cli/cache               cache provider contract and tier coordination
 packages/expo-build-cache    @stim-cli/expo-build-cache    Expo build cache provider
 packages/metro               @stim-cli/metro               shared Metro transform cache + log reporter
 ```
@@ -47,7 +48,7 @@ fi
 ```
 
 An npm `E404` means this is the first release for that package name. Confirm
-all four names are available, use the intended first version, and review the
+all five names are available, use the intended first version, and review the
 full release diff. Complete the first-publication bootstrap in section 4,
 step 7 before pushing the first tag.
 
@@ -83,7 +84,7 @@ Start from `main`, fully up to date with `origin/main`. Before candidate
 preparation, `git status --short` may show only the draft
 `docs/releases/X.Y.Z.md`.
 
-1. **Bump the version in lockstep.** All four `package.json` files carry the
+1. **Bump the version in lockstep.** All five `package.json` files carry the
    same number, and `dist/cli.mjs` reads it from its own `package.json`:
 
    ```bash
@@ -91,16 +92,16 @@ preparation, `git status --short` may show only the draft
    pnpm install --lockfile-only
    ```
 
-   The filtered `exec` bumps all four; `--no-git-tag-version` leaves the
+   The filtered `exec` bumps all five; `--no-git-tag-version` leaves the
    candidate uncommitted and untagged. The lockfile duplicates every
    workspace's version and must move with the manifests.
 
-   Confirm all four moved, and that dependency ranges between the packages
+   Confirm all five moved, and that dependency ranges between the packages
    still name versions that will exist when publishing finishes:
 
    ```bash
    grep -H '"version"' packages/*/package.json
-   grep -H '"@stim-cli/' packages/stim-cli/package.json packages/expo-build-cache/package.json packages/metro/package.json
+   grep -H '"@stim-cli/' packages/stim-cli/package.json packages/expo-build-cache/package.json packages/metro/package.json packages/cache/package.json
    ```
 
 2. **Install and run the full pre-flight against those exact files:**
@@ -133,7 +134,7 @@ preparation, `git status --short` may show only the draft
    packages). Every published JavaScript entry lives under `dist/`.
 
 4. **Inspect the candidate diff.** `git status --short` should contain only the
-   four package manifests, `pnpm-lock.yaml`, and the draft
+   five package manifests, `pnpm-lock.yaml`, and the draft
    release notes. Resolve anything else before QA.
 
 ## 3. Pre-tag QA gate
@@ -215,7 +216,7 @@ Before continuing:
    ```
 
    One tag for the repo, not one per package: the packages share a version, so
-   a per-package tag would only say the same thing four times.
+   a per-package tag would only say the same thing five times.
 
 6. **Publish the already-reviewed release notes in
    `docs/releases/X.Y.Z.md`.** This committed file is the single source of
@@ -248,18 +249,19 @@ Before continuing:
    provenance publish is REJECTED without it, E422), and a NEW package must
    be published once by hand first -- npm's trusted-publisher settings live
    on the package page, which does not exist until then. For the first
-   `stim-cli` release, create the `@stim-cli` npm organization, publish all four
+   `stim-cli` release, create the `@stim-cli` npm organization, publish all five
    packages manually in dependency order, then configure each package's trusted
    publisher for `appandflow/stim`, workflow `release.yml`, environment
    `release`. Do this before pushing the first tag. The tagged workflow skips an
    exact package version that already exists, uses the npm `next` dist-tag for
-   prereleases, then verifies all four registry versions. The same commands are
+   prereleases, then verifies all five registry versions. The same commands are
    the manual fallback for later releases. Add `--tag next` to every command
    when publishing a prerelease:
 
    ```bash
    npm whoami                                          # confirm login; if 401, `npm login` first
    pnpm --filter @stim-cli/core publish --access public --otp <code>
+   pnpm --filter @stim-cli/cache publish --access public --otp <code>
    pnpm --filter @stim-cli/metro publish --access public --otp <code>
    pnpm --filter @stim-cli/expo-build-cache publish --access public --otp <code>
    pnpm --filter stim-cli publish --access public --otp <code>
@@ -278,6 +280,7 @@ Before continuing:
    version=X.Y.Z
    cd /tmp && npx "stim-cli@$version" --version
    npm view "stim-cli@$version" readme | head -c 200        # NOT "No README data found!"
+   npm view "@stim-cli/cache@$version" version
    npm view "@stim-cli/expo-build-cache@$version" version
    npm view "@stim-cli/metro@$version" version
    ```

@@ -475,3 +475,18 @@ test('the binary command surface remains intentional', () => {
     'worktree',
   ]);
 });
+
+test('the guide documents the project cache provider as the tier between local and Expo', () => {
+  const lifecycle = renderTopic('lifecycle');
+  const settings = renderTopic('settings');
+  assert(lifecycle);
+  assert(settings);
+
+  expect(lifecycle).toMatch(/THE BUILD CACHE HAS THREE LEVELS/);
+  expect(lifecycle).toMatch(/2\. The project's own cache provider[\s\S]*bare React\s+Native/i);
+  expect(lifecycle).toMatch(/3\. On an EXPO project only[\s\S]*Consulted only when levels one and two miss/i);
+  expect(lifecycle).toMatch(/ONE note per\s+failure class/i);
+  expect(lifecycle).toMatch(/gc[\s\S]*no delete\s+operation/i);
+  expect(settings).toMatch(/cache\.provider[\s\S]*@stim-cli\/cache/);
+  expect(settings).toMatch(/cache\.options[\s\S]*Keep secrets/);
+});
