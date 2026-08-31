@@ -165,6 +165,12 @@ async function main() {
   const gradleAfter1 = dirStats(GRADLE_CACHE_DIR);
   const gradleNamesAfter1 = new Set(topFileNames(GRADLE_CACHE_DIR, { matching: GRADLE_ENTRY }));
   const gradleNewNames1 = [...gradleNamesAfter1].filter((n) => !gradleNamesBefore1.has(n));
+  const wt1FromCache =
+    PLATFORM === 'android'
+      ? readNdjson(buildLog(wt1))
+          .map((r) => String(r.msg || ''))
+          .filter((m) => /FROM-CACHE/.test(m))
+      : [];
 
   const wt2 = worktreeCreate('e2e-cache-2', appDir);
   const start2 = startAndAssertMode(wt2);
@@ -311,10 +317,6 @@ async function main() {
       );
       // A machine cache already holding this fixture's task outputs (a previous
       // suite run) stores nothing on a cold workspace: the build LOADS instead.
-      // Either direction proves the cache is engaged.
-      const wt1FromCache = readNdjson(buildLog(wt1))
-        .map((r) => String(r.msg || ''))
-        .filter((m) => /FROM-CACHE/.test(m));
       if (gradleNewNames1.length === 0) {
         for (const line of wt1FromCache.slice(0, 3)) c.ev(`wt1 gradle: ${line}`);
       }
@@ -338,7 +340,7 @@ async function main() {
         `--build-cache on the argv; ` +
           (gradleNewNames1.length > 0
             ? `${gradleNewNames1.length} new cache entries; `
-            : `warm machine cache reused by wt1 (${wt1FromCache.length} FROM-CACHE); `) +
+            : `warm machine cache: wt1 loaded ${wt1FromCache.length} FROM-CACHE, storing not exercised this run; `) +
           `${lines.length} FROM-CACHE task(s) in the second worktree`,
       );
     });
