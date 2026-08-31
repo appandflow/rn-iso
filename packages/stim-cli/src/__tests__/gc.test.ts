@@ -86,7 +86,7 @@ describe('a cache-scoped report', () => {
     expect(lines.some((l) => l.includes('Nothing to reclaim'))).toBeTruthy();
   });
 
-  test('a name no cache carries reports the caches the machine holds', async () => {
+  test('a name no cache carries says so instead of reporting a clean machine', async () => {
     const output = await captureLog(() => runGc({ cache: 'nothing-carries-this-name' }));
     expect(output).toContain('No shared cache carries "nothing-carries-this-name"');
     expect(output).not.toContain('Nothing to reclaim');
@@ -2279,6 +2279,17 @@ test('rejects a non-numeric --older-than instead of silently skipping every entr
   await expect(() => program.parseAsync(['node', 'stim', 'gc', '--older-than', 'lastweek'])).rejects.toThrow(
     /must be a whole number of days/,
   );
+});
+
+test('rejects a blank --cache instead of widening the run', async () => {
+  for (const value of ['', '   ']) {
+    const program = new Command();
+    program.exitOverride();
+    gcCommand(program);
+    await expect(() => program.parseAsync(['node', 'stim', 'gc', '--cache', value])).rejects.toThrow(
+      /must name a cache/,
+    );
+  }
 });
 
 test('describeUnverifiableDevices names Stim devices it cannot verify', () => {
