@@ -101,14 +101,41 @@ export function parseRuntimeVersion(runtimeId: string): string {
   return minor ? `${major}.${minor}` : major;
 }
 
-export function bootIosSim(udid: string): void {
+export const IOS_BOOT_TIMEOUT_MS: number = 600000;
+const BOOTSTATUS_ATTEMPT_MS = 240000;
+
+export function bootIosSim(udid: string, { timeoutMs = IOS_BOOT_TIMEOUT_MS }: { timeoutMs?: number } = {}): void {
   const exec = getExecutor();
   try {
     exec.run(`xcrun simctl boot ${udid}`);
   } catch (e) {
     if (!String((e as Error)?.message || e).includes('Booted')) throw e;
   }
-  exec.run(`xcrun simctl bootstatus ${udid} -b`, { timeoutMs: 240000 });
+  const deadline = Date.now() + timeoutMs;
+  // `simctl bootstatus -b` blocks until the boot finishes, and a first boot on a
+  // CPU-starved host (a CI runner sharing cores with xcodebuild) can legitimately
+  // outlast one attempt. An expired attempt while the device still reports
+  // Booting is a slow boot, not a failed one -- re-enter until the deadline.
+  for (;;) {
+    const remaining = deadline - Date.now();
+    if (remaining > 0) {
+      try {
+        exec.run(`xcrun simctl bootstatus ${udid} -b`, { timeoutMs: Math.min(remaining, BOOTSTATUS_ATTEMPT_MS) });
+        break;
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException)?.code !== 'ETIMEDOUT') throw e;
+      }
+    }
+    const state = listAllIosSims().find((s) => s.udid === udid)?.state ?? null;
+    if (state === 'Booted') break;
+    const waited = Math.round((timeoutMs - Math.max(0, deadline - Date.now())) / 1000);
+    if (state !== 'Booting') {
+      throw new Error(`Simulator ${udid} reports "${state ?? 'missing'}" after ${waited}s of boot wait.`);
+    }
+    if (remaining <= 0) {
+      throw new Error(`Simulator ${udid} did not finish booting within ${Math.round(timeoutMs / 1000)}s.`);
+    }
+  }
   exec.runQuiet('open -a Simulator');
 }
 
