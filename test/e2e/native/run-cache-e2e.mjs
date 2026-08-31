@@ -1,6 +1,15 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -36,6 +45,13 @@ const VARIANT = `${FRAMEWORK}-${PLATFORM}`;
 const EXPECTED_MODE = FRAMEWORK === 'expo' ? 'expo-child' : 'bare-inproc';
 const ARTIFACT_EXT = PLATFORM === 'ios' ? '.app' : '.apk';
 
+if (!['bare', 'expo'].includes(FRAMEWORK) || !['ios', 'android'].includes(PLATFORM)) {
+  process.stderr.write(
+    'usage: run-cache-e2e.mjs --framework <bare|expo> --platform <ios|android> [--app-dir P] [--home P] [--keep] [--skip-race] [--summary F] [--dry-run]\n',
+  );
+  process.exit(2);
+}
+
 const HOME_DIR = args.dryRun ? '<dry-run>' : args.home || mkdtempSync(join(tmpdir(), `stim-cache-${VARIANT}-home-`));
 const WORK_DIR = args.dryRun ? '<dry-run>' : mkdtempSync(join(tmpdir(), `stim-cache-${VARIANT}-`));
 
@@ -53,15 +69,11 @@ const ENV = {
   CI: '1',
 };
 process.env.STIM_HOME = HOME_DIR;
-// The suite isolates every cache root it measures; GRADLE_USER_HOME is the one
-// gradle owns. A machine cache already holding this fixture's task outputs
-// would force the gradle-cache check into its warm mode (loads, no stores), so
-// android runs get a throwaway home seeded with CLONES of the expensive,
-// unmeasured parts (dependency modules, wrapper dists) while build-cache-1
-// starts empty and storing stays measurable (#136). Clones, not symlinks:
-// gradle resolves real paths when it assembles script classpaths, so a
-// symlinked modules-2 breaks buildscript compilation. The throwaway home is
-// created BESIDE the real one so the clones stay same-volume copy-on-write.
+// Android runs get a throwaway gradle home so build-cache-1 starts empty and
+// storing stays measurable (#136). Clones, not symlinks: gradle resolves real
+// paths when it assembles script classpaths, so a symlinked modules-2 breaks
+// buildscript compilation. Created BESIDE the real home so the clones stay
+// same-volume copy-on-write.
 const GRADLE_USER_HOME =
   PLATFORM === 'android' && !args.dryRun
     ? seedGradleUserHome(process.env.GRADLE_USER_HOME || join(homedir(), '.gradle'))
@@ -75,23 +87,69 @@ const GRADLE_HOME_IS_THROWAWAY = PLATFORM === 'android' && !args.dryRun;
 
 function seedGradleUserHome(source) {
   const base = existsSync(source) ? dirname(realpathSync(source)) : tmpdir();
-  // A crashed run cannot clean its own home, so each run sweeps its
-  // predecessors' leftovers (suites run one at a time).
+  // A crashed run cannot clean its own home; sweep predecessors only when
+  // their recorded owner pid is provably dead.
   for (const stale of readdirSync(base).filter((n) => n.startsWith('.stim-e2e-gradle-'))) {
+    if (ownerIsAlive(join(base, stale))) continue;
     cleanupTmp([join(base, stale)]);
   }
   const target = mkdtempSync(join(base, '.stim-e2e-gradle-'));
-  mkdirSync(join(target, 'caches'), { recursive: true });
-  for (const [rel, dest] of [
-    ['caches/modules-2', join(target, 'caches', 'modules-2')],
-    ['wrapper', join(target, 'wrapper')],
-  ]) {
-    const from = join(source, rel);
-    if (!existsSync(from)) continue;
-    const clone = spawnSync('cp', ['-c', '-R', from, dest], { stdio: 'ignore' });
-    if (clone.status !== 0) spawnSync('cp', ['-R', from, dest], { stdio: 'ignore' });
+  try {
+    writeFileSync(join(target, 'owner.pid'), String(process.pid));
+    // Daemons rooted in a deleted home can never be reused; a short idle
+    // timeout reaps them soon after the run while builds within the run
+    // still share one.
+    writeFileSync(join(target, 'gradle.properties'), 'org.gradle.daemon.idletimeout=30000\n');
+    mkdirSync(join(target, 'caches'), { recursive: true });
+    for (const [rel, dest] of [
+      ['caches/modules-2', join(target, 'caches', 'modules-2')],
+      ['wrapper', join(target, 'wrapper')],
+    ]) {
+      const from = join(source, rel);
+      if (!existsSync(from)) {
+        process.stderr.write(`[cache-e2e] gradle home seed: ${rel} absent in ${source}, skipped\n`);
+        continue;
+      }
+      let r = spawnSync('cp', ['-c', '-R', from, dest], { stdio: 'ignore' });
+      if (r.status !== 0) {
+        rmSync(dest, { recursive: true, force: true });
+        r = spawnSync('cp', ['-R', from, dest], { stdio: 'ignore' });
+      }
+      process.stderr.write(`[cache-e2e] gradle home seed: ${rel} ${r.status === 0 ? 'cloned' : 'FAILED'}\n`);
+    }
+  } catch (err) {
+    rmSync(target, { recursive: true, force: true });
+    throw err;
   }
+  process.on('exit', () => {
+    if (!args.keep) {
+      stopGradleDaemon(target);
+      rmSync(target, { recursive: true, force: true });
+    }
+  });
   return target;
+}
+
+function ownerIsAlive(home) {
+  try {
+    const pid = Number(readFileSync(join(home, 'owner.pid'), 'utf-8').trim());
+    if (!Number.isInteger(pid) || pid <= 0) return false;
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function stopGradleDaemon(gradleHome) {
+  const gradlew = join(WORK_DIR, 'app', 'android', 'gradlew');
+  if (!existsSync(gradlew)) return;
+  spawnSync(gradlew, ['--stop'], {
+    cwd: dirname(gradlew),
+    env: { ...process.env, GRADLE_USER_HOME: gradleHome },
+    stdio: 'ignore',
+    timeout: 30 * 1000,
+  });
 }
 const RACE_CACHE_ROOT = args.dryRun ? '<dry-run>' : join(WORK_DIR, 'race-build-cache');
 
@@ -961,12 +1019,6 @@ function plan() {
       : `fixture: ${FIXTURE_COMMANDS[FRAMEWORK]('<appDir>').map(quote).join(' ')} (runtime state stays under STIM_HOME)`,
   );
   log(`checks: ${Object.keys(CHECK_TITLES).join(', ')}`);
-}
-
-if (!['bare', 'expo'].includes(FRAMEWORK) || !['ios', 'android'].includes(PLATFORM)) {
-  die(
-    'usage: run-cache-e2e.mjs --framework <bare|expo> --platform <ios|android> [--app-dir P] [--home P] [--keep] [--skip-race] [--summary F] [--dry-run]',
-  );
 }
 
 banner(`cache e2e: ${VARIANT}`);
