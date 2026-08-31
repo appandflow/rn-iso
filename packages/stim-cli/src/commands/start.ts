@@ -26,6 +26,7 @@ import {
   metroTunnelSettingError,
   remoteAndroidSetting,
   remoteDeviceSettingError,
+  cacheProviderSettingError,
   remoteIosSetting,
   resolveCacheProviderConfig,
   resolveSettings,
@@ -332,6 +333,8 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
       for (const key of unknownSettingKeys(settings)) {
         note(chalk.yellow(`Warning: setting "${key}" is not read by Stim and will be ignored.`));
       }
+      const cacheProviderError = cacheProviderSettingError(settings);
+      if (cacheProviderError) note(chalk.yellow(`Warning: ${cacheProviderError} No cache provider is used.`));
       const settingError = metroTunnelSettingError(settings);
       if (settingError) {
         return fail({

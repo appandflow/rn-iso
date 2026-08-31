@@ -3006,3 +3006,23 @@ describe('the project cache provider', () => {
     expect(errs.join('\n')).toMatch(/\.\/cache\.cjs upload failed: upload denied/);
   });
 });
+
+test('an invalid cache.provider setting is reported once and the run continues', async () => {
+  reserve();
+  writeFileSync(join(root, '.stim.json'), JSON.stringify({ cache: { provider: 42 } }));
+  const { exitCode, errs, calls } = await run(
+    {},
+    {
+      repoRoot: () => root,
+      loadCacheProvider: async () => {
+        throw new Error('an invalid setting must not reach the loader');
+      },
+    },
+  );
+
+  expect(exitCode).toBe(null);
+  expect(calls.order.includes('buildIos')).toBe(true);
+  const notices = errs.filter((line) => line.includes('Invalid cache.provider setting'));
+  expect(notices.length).toBe(1);
+  expect(notices[0]).toMatch(/Using the local cache\./);
+});

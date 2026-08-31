@@ -94,6 +94,7 @@ import { createNdjsonWriter, type NdjsonWriter } from '../ndjson.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../paths.ts';
 import { detectBundleId, detectIsExpo, findProjectRoot, isPackageResolvable, projectShortcut } from '../project.ts';
 import {
+  cacheProviderSettingError,
   publicUrlSetting,
   REMOTE_DEVICE_BACKENDS,
   remoteDeviceSettingError,
@@ -1386,6 +1387,8 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   for (const key of unknownSettingKeys(settings)) {
     note(chalk.yellow(`Warning: setting "${key}" is not read by Stim and will be ignored.`));
   }
+  const cacheProviderError = cacheProviderSettingError(settings);
+  if (cacheProviderError) note(chalk.yellow(phaseLine('cache', `${cacheProviderError} Using the local cache.`)));
   const remoteSettingError = remoteDeviceSettingError(settings);
   if (remoteSettingError) {
     return fail({

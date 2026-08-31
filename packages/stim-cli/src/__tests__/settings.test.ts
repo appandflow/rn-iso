@@ -4,6 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import {
   androidAvdConfigSetting,
+  cacheProviderSettingError,
   androidAvdConfigSettingError,
   androidDataPartitionSizeBytes,
   androidDataPartitionSizeGbSetting,
@@ -460,13 +461,25 @@ test('provider options merge across layers with earlier layers winning', () => {
   });
 });
 
-test('an invalid provider reference reports no provider', () => {
+test('an invalid provider reference reports no provider and names the error', () => {
   writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ cache: { provider: 42, options: { a: 1 } } }));
   upsertProject('/proj', {});
 
-  expect(
-    resolveCacheProviderConfig({ projectPath: '/proj', gitCommonDir: '/repo/.git', repoRoot: tmpHome }),
-  ).toBeNull();
+  const context = { projectPath: '/proj', gitCommonDir: '/repo/.git', repoRoot: tmpHome };
+  expect(resolveCacheProviderConfig(context)).toBeNull();
+  expect(cacheProviderSettingError(resolveSettings(context))).toBe(
+    'Invalid cache.provider setting 42. Expected a module path or package name.',
+  );
+});
+
+test('cacheProviderSettingError accepts valid shapes and names invalid ones', () => {
+  expect(cacheProviderSettingError({})).toBeNull();
+  expect(cacheProviderSettingError({ cache: { provider: './cache.cjs', options: { bucket: 'a' } } })).toBeNull();
+  expect(cacheProviderSettingError({ cache: { provider: '  ' } })).toMatch(/Invalid cache\.provider setting/);
+  expect(cacheProviderSettingError({ cache: { provider: './cache.cjs', options: 'nope' } })).toMatch(
+    /Invalid cache\.options setting/,
+  );
+  expect(cacheProviderSettingError({ cache: 'nope' })).toMatch(/Invalid cache setting/);
 });
 
 test('cache.provider and cache.options are known settings', () => {

@@ -59,6 +59,7 @@ import {
   REMOTE_DEVICE_BACKENDS,
   androidAvdConfigSettingError,
   androidDataPartitionSizeGbSettingError,
+  cacheProviderSettingError,
   publicUrlSetting,
   remoteAndroidSetting,
   remoteDeviceSettingError,
@@ -1496,6 +1497,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   };
   const settings = resolveSettingsFor(settingsContext);
   const cacheProviderConfig = resolveCacheProvider(settingsContext);
+  const cacheProviderError = cacheProviderSettingError(settings);
+  if (cacheProviderError) out(phaseLine('cache', chalk.yellow(`${cacheProviderError} Using the local cache.`)));
   const dataPartitionSizeError = androidDataPartitionSizeGbSettingError(settings);
   if (dataPartitionSizeError) {
     return fail(

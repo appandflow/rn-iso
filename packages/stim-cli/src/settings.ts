@@ -421,6 +421,22 @@ export function resolveCacheProviderConfig({
   return { provider, options, baseDir };
 }
 
+export function cacheProviderSettingError(settings: SettingsObject): string | null {
+  const block = settings.cache;
+  if (!isPlainObject(block)) {
+    return block === undefined
+      ? null
+      : `Invalid cache setting ${JSON.stringify(block)}. Expected an object with provider and options.`;
+  }
+  if ('provider' in block && (typeof block.provider !== 'string' || block.provider.trim() === '')) {
+    return `Invalid cache.provider setting ${JSON.stringify(block.provider)}. Expected a module path or package name.`;
+  }
+  if ('options' in block && !isPlainObject(block.options)) {
+    return `Invalid cache.options setting ${JSON.stringify(block.options)}. Expected an object.`;
+  }
+  return null;
+}
+
 export const REMOTE_DEVICE_BACKENDS: readonly RemoteDeviceBackend[] = ['proxy', 'eas'] as const;
 
 export function remoteIosSetting(settings: SettingsObject): RemoteDeviceBackend | null {
