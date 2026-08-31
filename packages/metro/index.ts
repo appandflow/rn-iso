@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import {
   cacheProviderConfigFromEnv,
+  cacheProviderEnvIsSet,
   createTieredMetroStore,
   loadCacheProvider,
   type CacheProviderConfig,
@@ -89,8 +90,20 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+function repositoryRoot(startDir: string): string | null {
+  let dir = startDir;
+  for (;;) {
+    if (fs.existsSync(path.join(dir, '.git'))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
 function committedProviderConfig(startDir: string): CacheProviderConfig | null {
-  let dir = path.resolve(startDir);
+  const start = path.resolve(startDir);
+  const stop = repositoryRoot(start) ?? start;
+  let dir = start;
   for (;;) {
     let parsed: unknown;
     try {
@@ -108,7 +121,7 @@ function committedProviderConfig(startDir: string): CacheProviderConfig | null {
       };
     }
     const parent = path.dirname(dir);
-    if (parent === dir) return null;
+    if (dir === stop || parent === dir) return null;
     dir = parent;
   }
 }
@@ -146,7 +159,7 @@ export function sharedCacheStores(
         ],
   );
   const local = tagSharedStore(new Store({ root }), root);
-  const config = cacheProviderConfigFromEnv(env) ?? committedProviderConfig(cwd);
+  const config = cacheProviderConfigFromEnv(env) ?? (cacheProviderEnvIsSet(env) ? null : committedProviderConfig(cwd));
   if (!config) return [local];
 
   const tiered = createTieredMetroStore({

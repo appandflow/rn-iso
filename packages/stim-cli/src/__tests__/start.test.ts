@@ -5,7 +5,7 @@ import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Command } from 'commander';
-import { CACHE_PROVIDER_ENV, cacheProviderConfigFromEnv } from '@stim-cli/cache';
+import { CACHE_PROVIDER_ENV, CACHE_PROVIDER_ENV_NONE, cacheProviderConfigFromEnv } from '@stim-cli/cache';
 import { getProject, upsertProject } from '../config.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import {
@@ -771,7 +771,7 @@ describe('action: spawning the supervisor', () => {
     expect(process.env[CACHE_PROVIDER_ENV]).toBeUndefined();
   });
 
-  test('no configured provider leaves the supervisor environment clean', async () => {
+  test('no configured provider hands the supervisor an explicit none', async () => {
     const port = 8157;
     process.env[CACHE_PROVIDER_ENV] = 'stale';
     const exec = metroExecutor({ listeners: {} });
@@ -803,7 +803,9 @@ describe('action: spawning the supervisor', () => {
 
     const spawned = exec.calls.spawn[0];
     assert(spawned);
-    expect((spawned.opts.env as NodeJS.ProcessEnv)[CACHE_PROVIDER_ENV]).toBeUndefined();
+    const env = spawned.opts.env as NodeJS.ProcessEnv;
+    expect(env[CACHE_PROVIDER_ENV]).toBe(CACHE_PROVIDER_ENV_NONE);
+    expect(cacheProviderConfigFromEnv(env)).toBeNull();
   });
 
   test('start --remote passes --tunnel to an Expo supervisor in explicit expo mode', async () => {

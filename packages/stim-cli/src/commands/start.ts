@@ -395,8 +395,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
             ...process.env,
             ...(origin ? { [PUBLIC_METRO_ENV]: origin, EXPO_PACKAGER_PROXY_URL: origin } : {}),
           };
-          if (cacheProvider) childEnv[CACHE_PROVIDER_ENV] = cacheProviderEnv(cacheProvider);
-          else delete childEnv[CACHE_PROVIDER_ENV];
+          childEnv[CACHE_PROVIDER_ENV] = cacheProviderEnv(cacheProvider);
           const child = getExecutor().spawn(process.execPath, supervisorArgs, {
             cwd: root,
             detached: true,
