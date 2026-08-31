@@ -5,11 +5,21 @@ import { basename, join } from 'node:path';
 import { spawnEntry } from '../spawn-entry.ts';
 import { InvalidArgumentError, type Command } from 'commander';
 import {
+  createWarnOnce,
+  loadCacheProvider,
+  resolveTieredBuild,
+  storeTieredBuild,
+  type LoadCacheProviderResult,
+  type ProviderCallResult,
+} from '@stim-cli/cache';
+import {
   buildCacheKey,
   describeFingerprintMiss,
+  filesystemBuildCapability,
   fingerprintDiffRecord,
   fingerprintDiffSuffix,
   fingerprintProject,
+  providerUploadOutcome,
   refingerprintAfterMutation,
   resolveBuild,
   storeBuild,
@@ -81,13 +91,14 @@ import { getExecutor } from '../exec.ts';
 import type { CacheHitLevel, CompilationCacheActivity, IosFacts, RemoteDeviceBackend } from '../types.ts';
 import { NOT_OURS_FOREIGN_CWD, isPidAlive, resolveProjectMetro } from '../metro.ts';
 import { createNdjsonWriter, type NdjsonWriter } from '../ndjson.ts';
-import { ensureWorkspaceStorage, workspaceLogsDir } from '../paths.ts';
+import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../paths.ts';
 import { detectBundleId, detectIsExpo, findProjectRoot, isPackageResolvable, projectShortcut } from '../project.ts';
 import {
   publicUrlSetting,
   REMOTE_DEVICE_BACKENDS,
   remoteDeviceSettingError,
   remoteIosSetting,
+  resolveCacheProviderConfig,
   resolveSettings,
   tunnelModeSetting,
   unknownSettingKeys,
@@ -651,6 +662,8 @@ interface IosDeps {
   untrackedNativeFiles: typeof untrackedNativeFiles;
   resolveBuild: typeof resolveBuild;
   storeBuild: typeof storeBuild;
+  resolveCacheProviderConfig: typeof resolveCacheProviderConfig;
+  loadCacheProvider: typeof loadCacheProvider;
   acquireBuildLock: typeof acquireBuildLock;
   releaseBuildLock: typeof releaseBuildLock;
   waitForBuild: typeof waitForBuild;
@@ -707,6 +720,8 @@ const DEFAULT_DEPS: IosDeps = {
   untrackedNativeFiles,
   resolveBuild,
   storeBuild,
+  resolveCacheProviderConfig,
+  loadCacheProvider,
   acquireBuildLock,
   releaseBuildLock,
   waitForBuild,
@@ -1087,6 +1102,8 @@ interface FinishIosRunArgs {
   note: (line: string) => void;
   logWriter: () => NdjsonWriter;
   uploadPending: Promise<RemoteUploadLike> | null;
+  providerUpload: Promise<ProviderCallResult<void>> | null;
+  providerName: string | null;
   remote: LoadProjectProviderResult | null;
   abandonedRemote: boolean;
   elapsed: () => number;
@@ -1125,6 +1142,8 @@ async function finishIosRun({
   note,
   logWriter,
   uploadPending,
+  providerUpload,
+  providerName,
   remote,
   abandonedRemote: remoteWasAbandoned,
   elapsed,
@@ -1238,6 +1257,11 @@ async function finishIosRun({
   logWriter().write(launchOutcomeRecord({ launchState, release, bundleId, configuration, metroPort }));
 
   const uploadWasAbandoned = await finishIosUpload(uploadPending, remote, phase, note);
+  const providerOutcome = providerUploadOutcome(providerUpload ? await providerUpload : null, providerName);
+  if (providerOutcome) {
+    if (providerOutcome.warn) note(chalk.yellow(phaseLine('cache', providerOutcome.line)));
+    else phase('cache', providerOutcome.line);
+  }
   const facts = reportIosResult({
     d,
     root,
@@ -1352,11 +1376,13 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   };
 
   const settingsRepoRoot = d.repoRoot(root);
-  const settings = d.resolveSettings({
+  const settingsContext = {
     projectPath: root,
     gitCommonDir: d.gitCommonDir(root),
     repoRoot: settingsRepoRoot,
-  });
+  };
+  const settings = d.resolveSettings(settingsContext);
+  const cacheProviderConfig = d.resolveCacheProviderConfig(settingsContext);
   for (const key of unknownSettingKeys(settings)) {
     note(chalk.yellow(`Warning: setting "${key}" is not read by Stim and will be ignored.`));
   }
@@ -1450,6 +1476,19 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   let remote: LoadProjectProviderResult | null = null;
   let abandonedRemote = false;
   let uploadPending: Promise<RemoteUploadLike> | null = null;
+  let providerUpload: Promise<ProviderCallResult<void>> | null = null;
+  let providerName: string | null = null;
+  let providerLoad: Promise<LoadCacheProviderResult> | null = null;
+  const cacheWarn = createWarnOnce((line) => note(chalk.yellow(phaseLine('cache', line))));
+  const loadProvider = cacheProviderConfig
+    ? () => (providerLoad ??= d.loadCacheProvider({ projectRoot: root, config: cacheProviderConfig }))
+    : null;
+  const providerDownloadDir = (): string => {
+    const dir = join(workspaceDir(root), 'cache-provider');
+    rmSync(dir, { recursive: true, force: true });
+    mkdirSync(dir, { recursive: true });
+    return dir;
+  };
   let waitedForBuild: WaitedForBuild | null = null;
   let swapDir: string | null = null;
   let buildFailure: BuildFailureFields = {};
@@ -1569,7 +1608,15 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     storeKey = cacheKey;
     storeSources = fingerprintSources;
 
-    const cached = useBuildCache ? d.resolveBuild(PLATFORM, cacheKey) : null;
+    const found = await resolveTieredBuild({
+      local: filesystemBuildCapability({ resolve: d.resolveBuild, store: d.storeBuild, sources: fingerprintSources }),
+      loadProvider,
+      target: { projectRoot: root, platform: PLATFORM, key: cacheKey },
+      destinationDir: loadProvider ? providerDownloadDir() : root,
+      skipRead: !useBuildCache,
+      warn: cacheWarn,
+    });
+    const cached = found?.tier === 'local' ? found.path : null;
     cacheHit = cached ? 'local' : false;
     let missDiff = '';
     let missUntracked: string | null = null;
@@ -1594,7 +1641,12 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
       `${shortHash(fingerprint)} ${cached ? 'hit' : 'miss'}${useBuildCache ? '' : ' (--no-build-cache)'} ${fingerprintTimer()}${missDiff}`,
     );
     if (missUntracked) note(chalk.dim(phaseLine('fingerprint', missUntracked)));
-    appPath = cached;
+    if (found?.tier === 'provider') {
+      cacheHit = 'remote';
+      providerName = found.providerName ?? null;
+      phase('cache', `provider hit (${providerName})${found.storedLocally ? ' -> stored locally' : ''}`);
+    }
+    appPath = found?.path ?? null;
     return true;
   }
 
@@ -1880,7 +1932,16 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
           bundleId = result.bundleId ?? null;
 
           try {
-            d.storeBuild(PLATFORM, storeKey, appPath!, { overwrite: !useBuildCache, sources: storeSources });
+            const stored = await storeTieredBuild({
+              local: filesystemBuildCapability({ resolve: d.resolveBuild, store: d.storeBuild, sources: storeSources }),
+              loadProvider,
+              target: { projectRoot: root, platform: PLATFORM, key: storeKey },
+              sourcePath: appPath!,
+              overwrite: !useBuildCache,
+              warn: cacheWarn,
+            });
+            providerUpload = stored.providerUpload;
+            providerName = stored.providerName ?? providerName;
           } catch (e) {
             note(chalk.yellow(`Could not store the build in the shared cache: ${(e as Error)?.message || e}`));
           }
@@ -1936,6 +1997,8 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     note,
     logWriter,
     uploadPending,
+    providerUpload,
+    providerName,
     remote,
     abandonedRemote,
     elapsed,

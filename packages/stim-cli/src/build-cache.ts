@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, u
 import { basename, dirname, join } from 'path';
 import * as expoFingerprint from '@expo/fingerprint';
 import type { Fingerprint, FingerprintSource, Options as FingerprintOptions } from '@expo/fingerprint';
-import type { BuildCacheCapability } from '@stim-cli/cache';
+import { BUILD_UPLOAD_TIMEOUT_MS, type BuildCacheCapability, type ProviderCallResult } from '@stim-cli/cache';
 import { buildCacheKey as coreBuildCacheKey } from '@stim-cli/core';
 import { getExecutor } from './exec.ts';
 import { register } from './cache-manifest.ts';
@@ -160,6 +160,24 @@ export function filesystemBuildCapability({
     resolve: ({ platform, key }) => (root === undefined ? resolve(platform, key) : resolve(platform, key, root)),
     store: ({ platform, key, sourcePath, overwrite }) => store(platform, key, sourcePath, { ...stored, overwrite }),
   };
+}
+
+export interface ProviderUploadOutcome {
+  line: string;
+  warn: boolean;
+}
+
+export function providerUploadOutcome(
+  result: ProviderCallResult<void> | null | undefined,
+  name: string | null,
+): ProviderUploadOutcome | null {
+  if (!result) return null;
+  const label = name || 'the cache provider';
+  if (result.timedOut) {
+    return { line: `${label} upload still running after ${BUILD_UPLOAD_TIMEOUT_MS}ms; not waiting`, warn: true };
+  }
+  if (result.failed) return { line: `${label} upload failed: ${result.failed}`, warn: true };
+  return { line: `uploaded (${label})`, warn: false };
 }
 
 const SOURCES_FILE = 'fingerprint-sources.json';
