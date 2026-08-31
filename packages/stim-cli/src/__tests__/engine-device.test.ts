@@ -92,6 +92,36 @@ describe('ensureBooted: ios', () => {
     expect(commands.indexOf('xcrun simctl boot U1')).toBeLessThan(commands.indexOf('xcrun simctl bootstatus U1 -b'));
   });
 
+  test('an explicit ensureBooted timeout bounds the whole iOS boot wait', async () => {
+    setExecutor({
+      run: (cmd) => {
+        if (cmd.includes('list devices')) {
+          return simList([{ udid: 'U1', name: 'stim-app', state: 'Booting', isAvailable: true }]);
+        }
+        if (cmd.includes('bootstatus')) {
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
+          const e = new Error('spawnSync /bin/sh ETIMEDOUT') as Error & { code?: string };
+          e.code = 'ETIMEDOUT';
+          throw e;
+        }
+        return '';
+      },
+      runQuiet: () => '',
+      runFile: () => '',
+      spawn: () => null,
+    });
+
+    const result = await ensureBooted({
+      platform: 'ios',
+      device: { deviceUdid: 'U1', owned: true },
+      timeoutMs: 1200,
+      pollMs: 5,
+    });
+
+    expect(result.ok).toBeUndefined();
+    expect(result.reason).toMatch(/did not finish booting within 1s/);
+  });
+
   test('reports boot setup failures instead of treating the Booted state as ready', async () => {
     setExecutor({
       run: (cmd) => {
