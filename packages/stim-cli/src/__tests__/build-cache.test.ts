@@ -1,13 +1,25 @@
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, existsSync, statSync, utimesSync } from 'node:fs';
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+  rmSync,
+  existsSync,
+  statSync,
+  utimesSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert';
 import * as expoFingerprint from '@expo/fingerprint';
 import type { FingerprintSource, Options as FingerprintOptions } from '@expo/fingerprint';
+import { resolveTieredBuild, runCacheProviderContract, storeTieredBuild } from '@stim-cli/cache';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import {
   artifactIn,
   buildCacheKey,
+  filesystemBuildCapability,
   compareSourceLists,
   describeFingerprintMiss,
   diffFingerprintSources,
@@ -564,4 +576,124 @@ describe('untracked native files on a first miss', () => {
     expect(line).toMatch(/\.fingerprintignore/);
     expect(line).not.toMatch(/android\/d/);
   });
+});
+
+function treeOf(dir: string): string[] {
+  const entries: string[] = [];
+  const walk = (current: string, prefix: string): void => {
+    for (const name of readdirSync(current).toSorted()) {
+      const path = join(current, name);
+      const relative = prefix ? `${prefix}/${name}` : name;
+      if (statSync(path).isDirectory()) {
+        entries.push(`${relative}/`);
+        walk(path, relative);
+      } else {
+        entries.push(`${relative} ${readFileSync(path, 'utf-8')}`);
+      }
+    }
+  };
+  walk(dir, '');
+  return entries;
+}
+
+test('the filesystem capability reads and writes the same entries as the plain functions', async () => {
+  const built = join(root, 'build', 'MyApp.app');
+  mkdirSync(join(root, 'build'), { recursive: true });
+  writeFileSync(built, 'binary');
+  const sources = [fpFile('ios/Podfile', 'h1')];
+  const key = buildCacheKey('ios', 'abc', {});
+
+  const direct = join(root, 'direct');
+  storeBuild('ios', key, built, { root: direct, sources });
+
+  const throughCapability = join(root, 'capability');
+  const capability = filesystemBuildCapability({ root: throughCapability, sources });
+  await capability.store({
+    projectRoot: root,
+    platform: 'ios',
+    key,
+    sourcePath: built,
+    overwrite: false,
+    signal: new AbortController().signal,
+  });
+
+  expect(treeOf(throughCapability)).toEqual(treeOf(direct));
+  expect(
+    await capability.resolve({
+      projectRoot: root,
+      platform: 'ios',
+      key,
+      destinationDir: root,
+      signal: new AbortController().signal,
+    }),
+  ).toBe(join(entryDir('ios', key, throughCapability), 'MyApp.app'));
+  expect(storedSources('ios', key, throughCapability)).toEqual(sources);
+});
+
+test('the tiered coordinator leaves the same cache on disk as a direct store', async () => {
+  const built = join(root, 'build', 'MyApp.apk');
+  mkdirSync(join(root, 'build'), { recursive: true });
+  writeFileSync(built, 'binary');
+  const sources = [fpFile('android/build.gradle', 'h2')];
+  const manifest: AssetManifest = { version: ASSET_MANIFEST_VERSION, entries: [] };
+  const key = buildCacheKey('android', 'def', { variant: 'debug' });
+
+  const direct = join(root, 'direct');
+  storeBuild('android', key, built, { root: direct, sources, assetManifest: manifest });
+
+  const tiered = join(root, 'tiered');
+  const stored = await storeTieredBuild({
+    local: filesystemBuildCapability({ root: tiered, sources, assetManifest: manifest }),
+    target: { projectRoot: root, platform: 'android', key },
+    sourcePath: built,
+    overwrite: false,
+  });
+
+  expect(stored.providerUpload).toBeNull();
+  expect(stored.localPath).toBe(join(entryDir('android', key, tiered), 'MyApp.apk'));
+  expect(treeOf(tiered)).toEqual(treeOf(direct));
+
+  const found = await resolveTieredBuild({
+    local: filesystemBuildCapability({ root: tiered }),
+    target: { projectRoot: root, platform: 'android', key },
+    destinationDir: root,
+  });
+  expect(found).toEqual({ path: resolveBuild('android', key, tiered), tier: 'local' });
+});
+
+test('a provider hit lands in the local cache under the same key', async () => {
+  const downloaded = join(root, 'downloaded', 'MyApp.apk');
+  mkdirSync(join(root, 'downloaded'), { recursive: true });
+  writeFileSync(downloaded, 'binary');
+  const cacheDir = join(root, 'cache');
+  const key = buildCacheKey('android', 'ghi', { variant: 'debug' });
+
+  const found = await resolveTieredBuild({
+    local: filesystemBuildCapability({ root: cacheDir }),
+    provider: { resolve: () => downloaded, store: () => {} },
+    providerName: './cache.cjs',
+    target: { projectRoot: root, platform: 'android', key },
+    destinationDir: join(root, 'downloaded'),
+  });
+
+  expect(found).toEqual({
+    path: join(entryDir('android', key, cacheDir), 'MyApp.apk'),
+    tier: 'provider',
+    providerName: './cache.cjs',
+    storedLocally: true,
+  });
+  expect(resolveBuild('android', key, cacheDir)).toBe(found?.path);
+});
+
+test('the built-in filesystem build cache satisfies the provider contract', async () => {
+  for (const platform of ['ios', 'android'] as const) {
+    const results = await runCacheProviderContract({
+      provider: { builds: filesystemBuildCapability({ root: join(root, `contract-${platform}`) }) },
+      projectRoot: root,
+      workDir: root,
+      platform,
+    });
+    expect(results.length).toBeGreaterThan(0);
+    expect(results.filter((result) => !result.passed)).toEqual([]);
+  }
 });

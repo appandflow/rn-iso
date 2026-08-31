@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, u
 import { basename, dirname, join } from 'path';
 import * as expoFingerprint from '@expo/fingerprint';
 import type { Fingerprint, FingerprintSource, Options as FingerprintOptions } from '@expo/fingerprint';
+import type { BuildCacheCapability } from '@stim-cli/cache';
 import { buildCacheKey as coreBuildCacheKey } from '@stim-cli/core';
 import { getExecutor } from './exec.ts';
 import { register } from './cache-manifest.ts';
@@ -133,6 +134,32 @@ export function storeBuild(
   rmSync(dest, { recursive: true, force: true });
   renameSync(staging, dest);
   return artifactIn(dest);
+}
+
+export interface FilesystemBuildCapabilityOptions {
+  root?: string;
+  sources?: FingerprintSource[] | null;
+  assetManifest?: AssetManifest | null;
+  resolve?: typeof resolveBuild;
+  store?: typeof storeBuild;
+}
+
+export function filesystemBuildCapability({
+  root,
+  sources,
+  assetManifest,
+  resolve = resolveBuild,
+  store = storeBuild,
+}: FilesystemBuildCapabilityOptions = {}): BuildCacheCapability {
+  const stored = {
+    ...(root === undefined ? {} : { root }),
+    ...(sources === undefined ? {} : { sources }),
+    ...(assetManifest === undefined ? {} : { assetManifest }),
+  };
+  return {
+    resolve: ({ platform, key }) => (root === undefined ? resolve(platform, key) : resolve(platform, key, root)),
+    store: ({ platform, key, sourcePath, overwrite }) => store(platform, key, sourcePath, { ...stored, overwrite }),
+  };
 }
 
 const SOURCES_FILE = 'fingerprint-sources.json';
