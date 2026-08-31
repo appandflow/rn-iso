@@ -339,7 +339,7 @@ export function reverseMetroPorts(
 const EMULATOR_HOST_LOOPBACK = '10.0.2.2';
 const PHYSICAL_HOST_LOOPBACK = 'localhost';
 
-export function androidMetroHost(physical: boolean): string {
+function androidMetroHost(physical: boolean): string {
   return physical ? PHYSICAL_HOST_LOOPBACK : EMULATOR_HOST_LOOPBACK;
 }
 
