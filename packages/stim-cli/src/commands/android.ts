@@ -858,6 +858,7 @@ interface ReportAndroidResultArgs {
   storeKey: string;
   waitedForBuild: WaitedForBuild | null;
   remote: LoadProjectProviderResult | null;
+  providerName: string | null;
   launchState: boolean | string;
   launched: LaunchResultLike;
   writer: AndroidWriter;
@@ -880,6 +881,7 @@ function reportAndroidResult({
   storeKey,
   waitedForBuild,
   remote,
+  providerName,
   launchState,
   launched,
   writer,
@@ -912,7 +914,7 @@ function reportAndroidResult({
     const summary =
       `OK: ${androidPackage} launched on ${serial}, ` +
       `${release ? `${variant} (embedded JS, no Metro)` : `Metro port ${metroPort}`} ` +
-      `(${cacheOutcome(record.cacheHit, remote?.name)})`;
+      `(${cacheOutcome(record.cacheHit, remote?.name ?? providerName)})`;
     const outcome =
       launchState === LAUNCH_UNVERIFIED
         ? chalk.yellow(`${summary} -- launch UNVERIFIED`)
@@ -920,7 +922,7 @@ function reportAndroidResult({
           ? chalk.green(`${summary} -- bundle requested, still building`)
           : chalk.green(summary);
     const deviceName = record.avdName || record.deviceName || serial;
-    const cacheResult = useBuildCache ? cacheOutcome(record.cacheHit, remote?.name) : 'bypassed; built';
+    const cacheResult = useBuildCache ? cacheOutcome(record.cacheHit, remote?.name ?? providerName) : 'bypassed; built';
     const metroResult = release
       ? `embedded (${variant})`
       : !metroCheck
@@ -1212,6 +1214,7 @@ async function finishAndroidRun({
     storeKey,
     waitedForBuild,
     remote,
+    providerName,
     launchState,
     launched,
     writer,

@@ -3294,6 +3294,8 @@ describe('the project cache provider', () => {
     expect(h.calls.loadProvider.length).toBe(0);
     expect(h.calls.storeCached[0]?.[2]).toBe(artifact);
     expect(labelled(h.stderr, 'cache')[0]).toMatch(/provider hit \(\.\/cache\.cjs\) -> stored locally/);
+    expect(h.stdout.join('\n')).toMatch(/cache hit from \.\/cache\.cjs/);
+    expect(h.stdout.join('\n')).not.toMatch(/from the remote cache/);
   });
 
   test('a bare React Native project uses the provider without reading Expo config', async () => {

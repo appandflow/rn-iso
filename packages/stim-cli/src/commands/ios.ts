@@ -974,6 +974,7 @@ interface ReportIosResultArgs {
   waitedForBuild: WaitedForBuild | null;
   launchState: boolean | string;
   remote: LoadProjectProviderResult | null;
+  providerName: string | null;
   closeWriter: () => void;
   webPreviewUrl: string | null;
 }
@@ -1001,6 +1002,7 @@ function reportIosResult({
   waitedForBuild,
   launchState,
   remote,
+  providerName,
   closeWriter,
   webPreviewUrl,
 }: ReportIosResultArgs): IosFacts {
@@ -1046,7 +1048,7 @@ function reportIosResult({
     const summary =
       `OK: ${bundleId} on ${deviceLabel(device, udid)}, ` +
       (release ? `${configuration} (embedded JS, no Metro)` : `Metro port ${metroPort}`) +
-      ` (${cacheDescription(cacheHit, remote?.name)}, ${formatDuration(durationMs)})`;
+      ` (${cacheDescription(cacheHit, remote?.name ?? providerName)}, ${formatDuration(durationMs)})`;
     const outcome =
       launchState === LAUNCH_UNVERIFIED
         ? chalk.yellow(`${summary} -- launch UNVERIFIED`)
@@ -1054,7 +1056,7 @@ function reportIosResult({
           ? chalk.green(`${summary} -- bundle requested, still building`)
           : chalk.green(summary);
     const deviceName = device?.deviceName ?? device?.name ?? udid;
-    const cacheResult = useBuildCache ? cacheDescription(cacheHit, remote?.name) : 'bypassed; built';
+    const cacheResult = useBuildCache ? cacheDescription(cacheHit, remote?.name ?? providerName) : 'bypassed; built';
     const metroResult = release
       ? `embedded (${configuration})`
       : !metroCheck
@@ -1286,6 +1288,7 @@ async function finishIosRun({
     waitedForBuild,
     launchState,
     remote,
+    providerName,
     closeWriter,
     webPreviewUrl: remoteDevice?.webPreviewUrl() ?? null,
   });

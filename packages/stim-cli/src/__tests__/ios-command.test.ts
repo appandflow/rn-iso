@@ -2906,6 +2906,16 @@ describe('the project cache provider', () => {
     expect(seen[1]?.value).toMatchObject({ platform: 'ios', key: `${FINGERPRINT}-debug-sim` });
   });
 
+  test('the summary names the provider a hit came from', async () => {
+    reserve();
+    const artifact = downloaded();
+    const { logs } = await run({}, providerDeps({ resolve: () => artifact, store: () => {} }));
+
+    expect(logs.join('\n')).toMatch(/OK: [^\n]*from \.\/cache\.cjs/);
+    expect(logs.join('\n')).toMatch(/^ {2}cache {7}from \.\/cache\.cjs$/m);
+    expect(logs.join('\n')).not.toMatch(/the remote cache/);
+  });
+
   test('a provider miss falls through to the Expo provider, the build lock, then the build', async () => {
     reserve();
     const { exitCode, calls } = await run(
