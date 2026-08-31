@@ -827,8 +827,9 @@ too; commit deliberately."  (worktree create --carry-ignored)
     install     from cache (3s)
     launch      com.example.app (1s)
 
-  # 4. Did it work? Empty output and exit 0 is the pass condition.
-  stim logs --errors --json
+  # 4. Did it work? Exit 0 is the pass condition. Human mode prints a
+  #    "No matching log records" note on stderr when the result is clean.
+  stim logs --errors
 
   # 5. Edit the JS. Fast Refresh applies it; no stim-cli command is involved.
   #    Then ask again.

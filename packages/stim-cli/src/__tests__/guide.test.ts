@@ -357,8 +357,16 @@ test('exactly one compact skill ships', () => {
 test('the skill shows the fast worktree and Agent Device path', () => {
   const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
   expect(skill).toContain('stim worktree create <name> --carry-ignored');
-  expect(skill).toContain('agent-device open <app-id> --foreground --metro-port <stim-reported-port>');
-  expect(skill).toMatch(/exact app ID and Metro port printed by Stim/i);
+  expect(skill).toContain('agent-device --udid <stim-reported-udid> open <app-id>');
+  expect(skill).toContain('agent-device --serial <stim-reported-serial> open <app-id>');
+  expect(skill).toMatch(/exact UDID or serial and app ID/i);
+  expect(skill).not.toContain('open <app-id> --foreground');
+});
+
+test('the skill explains a clean human log result', () => {
+  const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
+  expect(skill).toMatch(/Exit code 0 from `logs --errors` is the pass condition/);
+  expect(skill).toContain('No matching log records');
 });
 
 test('the skill keeps ordinary authorized cleanup on the fast path', () => {

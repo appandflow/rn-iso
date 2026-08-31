@@ -60,7 +60,8 @@ cd <printed-path>
 
 stim start
 stim ios                    # or: stim android
-agent-device open <app-id> --foreground --metro-port <stim-reported-port>
+agent-device --udid <stim-reported-udid> open <app-id>       # iOS
+agent-device --serial <stim-reported-serial> open <app-id>   # Android
 stim logs --errors
 
 # Edit JavaScript or TypeScript. Fast Refresh applies the change.
@@ -82,14 +83,16 @@ Follow these rules during the loop:
   again. The second call joins the active build or returns its result.
 - Target only the full UDID, serial, app ID, and Metro port from this
   workspace's current output. Never assume that the device named `booted` is
-  yours. Pass the exact app ID and Metro port printed by Stim to Agent Device.
+  yours. Agent Device needs the exact UDID or serial and app ID. Stim already
+  connects the launched app to this workspace's Metro port.
 - An `OK` summary with no launch qualifier proves the launch. When the summary
   says `bundle requested, still building`, Metro has not completed the bundle;
   wait and query the logs. For `launch UNVERIFIED`, follow the printed remedy
   before you claim success. JSON reports these states as `true`, `"bundling"`,
   and `"unverified"` in `launched`.
-- Empty output from `logs --errors` with exit code 0 is the pass condition.
-  Do not read the NDJSON files directly.
+- Exit code 0 from `logs --errors` is the pass condition. Human output can show
+  `No matching log records` on stderr. JSON mode prints zero bytes when no
+  records match. Do not read the NDJSON files directly.
 - Use `stim status` when resuming a workspace or recovering missing device,
   port, server, or build facts. A normal `start` and platform run already print
   the facts needed for the next step. Use `stim doctor` when a build is
