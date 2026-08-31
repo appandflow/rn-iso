@@ -3,6 +3,7 @@ import {
   callWithTimeout,
   type BuildCacheCapability,
   type BuildCacheTarget,
+  type LoadCacheProviderResult,
   type ProviderCallResult,
   type WarnOnce,
 } from './provider.ts';
@@ -17,10 +18,11 @@ export interface TieredBuildResolution {
   storedLocally?: boolean;
 }
 
+export type LoadBuildProvider = () => Promise<LoadCacheProviderResult> | LoadCacheProviderResult;
+
 export interface ResolveTieredBuildOptions {
   local: BuildCacheCapability;
-  provider?: BuildCacheCapability | null;
-  providerName?: string | null;
+  loadProvider?: LoadBuildProvider | null;
   target: BuildCacheTarget;
   destinationDir: string;
   skipRead?: boolean;
@@ -30,16 +32,41 @@ export interface ResolveTieredBuildOptions {
 
 export interface StoreTieredBuildOptions {
   local: BuildCacheCapability;
-  provider?: BuildCacheCapability | null;
+  loadProvider?: LoadBuildProvider | null;
   target: BuildCacheTarget;
   sourcePath: string;
   overwrite: boolean;
+  warn?: WarnOnce;
   timeoutMs?: number;
+}
+
+interface BuildProviderTier {
+  capability: BuildCacheCapability;
+  name: string;
+}
+
+async function providerTier(
+  loadProvider: LoadBuildProvider | null | undefined,
+  warn: WarnOnce,
+): Promise<BuildProviderTier | null> {
+  if (!loadProvider) return null;
+  const loaded = await loadProvider();
+  if (loaded?.unavailable) {
+    warn(
+      'provider-load',
+      `provider not usable (${loaded.name ?? 'the cache provider'}): ${loaded.unavailable}; using local cache`,
+    );
+    return null;
+  }
+  const capability = loaded?.provider?.builds;
+  if (!capability) return null;
+  return { capability, name: loaded.name ?? 'the cache provider' };
 }
 
 export interface TieredBuildStoreResult {
   localPath: string | null;
   providerUpload: Promise<ProviderCallResult<void>> | null;
+  providerName: string | null;
 }
 
 function neverAborted(): AbortSignal {
@@ -50,8 +77,7 @@ function ignore(): void {}
 
 export async function resolveTieredBuild({
   local,
-  provider = null,
-  providerName = null,
+  loadProvider = null,
   target,
   destinationDir,
   skipRead = false,
@@ -62,9 +88,11 @@ export async function resolveTieredBuild({
 
   const hit = await local.resolve({ ...target, destinationDir, signal: neverAborted() });
   if (hit) return { path: hit, tier: 'local' };
-  if (!provider) return null;
 
-  const label = providerName || 'the cache provider';
+  const tier = await providerTier(loadProvider, warn);
+  if (!tier) return null;
+
+  const { capability: provider, name: label } = tier;
   const outcome = await callWithTimeout((signal) => provider.resolve({ ...target, destinationDir, signal }), timeoutMs);
   if (outcome.timedOut) {
     warn('provider-resolve', `${label} did not answer within ${timeoutMs}ms; building instead`);
@@ -90,27 +118,25 @@ export async function resolveTieredBuild({
       `a ${label} hit could not be stored locally: ${String((error as Error)?.message || error)}`,
     );
   }
-  return {
-    path: stored || path,
-    tier: 'provider',
-    ...(providerName ? { providerName } : {}),
-    storedLocally: Boolean(stored),
-  };
+  return { path: stored || path, tier: 'provider', providerName: label, storedLocally: Boolean(stored) };
 }
 
 export async function storeTieredBuild({
   local,
-  provider = null,
+  loadProvider = null,
   target,
   sourcePath,
   overwrite,
+  warn = ignore,
   timeoutMs = BUILD_UPLOAD_TIMEOUT_MS,
 }: StoreTieredBuildOptions): Promise<TieredBuildStoreResult> {
   const localPath = (await local.store({ ...target, sourcePath, overwrite, signal: neverAborted() })) || null;
-  if (!provider) return { localPath, providerUpload: null };
+
+  const tier = await providerTier(loadProvider, warn);
+  if (!tier) return { localPath, providerUpload: null, providerName: null };
 
   const providerUpload = callWithTimeout<void>(async (signal) => {
-    await provider.store({ ...target, sourcePath, overwrite, signal });
+    await tier.capability.store({ ...target, sourcePath, overwrite, signal });
   }, timeoutMs);
-  return { localPath, providerUpload };
+  return { localPath, providerUpload, providerName: tier.name };
 }

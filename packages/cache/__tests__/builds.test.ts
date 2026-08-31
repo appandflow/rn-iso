@@ -53,8 +53,7 @@ test('a local hit does not call the provider', async () => {
 
   const found = await resolveTieredBuild({
     local: local.cap,
-    provider: provider.cap,
-    providerName: './cache.cjs',
+    loadProvider: () => ({ name: './cache.cjs', provider: { builds: provider.cap } }),
     target,
     destinationDir: workDir,
   });
@@ -71,8 +70,7 @@ test('a provider hit is stored locally and reports the provider tier', async () 
 
   const found = await resolveTieredBuild({
     local: local.cap,
-    provider: provider.cap,
-    providerName: './cache.cjs',
+    loadProvider: () => ({ name: './cache.cjs', provider: { builds: provider.cap } }),
     target,
     destinationDir: workDir,
   });
@@ -95,8 +93,7 @@ test('a local backfill failure still returns the downloaded artifact', async () 
 
   const found = await resolveTieredBuild({
     local: local.cap,
-    provider: provider.cap,
-    providerName: 'team-cache',
+    loadProvider: () => ({ name: 'team-cache', provider: { builds: provider.cap } }),
     target,
     destinationDir: workDir,
     warn: (code, message) => warnings.push(`${code}: ${message}`),
@@ -113,7 +110,7 @@ test('skipRead bypasses both tiers', async () => {
   expect(
     await resolveTieredBuild({
       local: local.cap,
-      provider: provider.cap,
+      loadProvider: () => ({ provider: { builds: provider.cap } }),
       target,
       destinationDir: workDir,
       skipRead: true,
@@ -128,7 +125,7 @@ test('a provider miss, timeout, failure, or missing path returns a miss', async 
 
   const miss = await resolveTieredBuild({
     local: local.cap,
-    provider: capability({ resolve: () => null }).cap,
+    loadProvider: () => ({ provider: { builds: capability({ resolve: () => null }).cap } }),
     target,
     destinationDir: workDir,
   });
@@ -137,8 +134,10 @@ test('a provider miss, timeout, failure, or missing path returns a miss', async 
   const timedOutWarnings: string[] = [];
   const timedOut = await resolveTieredBuild({
     local: local.cap,
-    provider: capability({ resolve: () => new Promise(() => {}) }).cap,
-    providerName: 'team-cache',
+    loadProvider: () => ({
+      name: 'team-cache',
+      provider: { builds: capability({ resolve: () => new Promise(() => {}) }).cap },
+    }),
     target,
     destinationDir: workDir,
     timeoutMs: 5,
@@ -150,12 +149,16 @@ test('a provider miss, timeout, failure, or missing path returns a miss', async 
   const failureWarnings: string[] = [];
   const failed = await resolveTieredBuild({
     local: local.cap,
-    provider: capability({
-      resolve: () => {
-        throw new Error('unauthorized');
+    loadProvider: () => ({
+      name: 'team-cache',
+      provider: {
+        builds: capability({
+          resolve: () => {
+            throw new Error('unauthorized');
+          },
+        }).cap,
       },
-    }).cap,
-    providerName: 'team-cache',
+    }),
     target,
     destinationDir: workDir,
     warn: (_code, message) => failureWarnings.push(message),
@@ -166,8 +169,10 @@ test('a provider miss, timeout, failure, or missing path returns a miss', async 
   const missingWarnings: string[] = [];
   const missing = await resolveTieredBuild({
     local: local.cap,
-    provider: capability({ resolve: () => join(workDir, 'nope.apk') }).cap,
-    providerName: 'team-cache',
+    loadProvider: () => ({
+      name: 'team-cache',
+      provider: { builds: capability({ resolve: () => join(workDir, 'nope.apk') }).cap },
+    }),
     target,
     destinationDir: workDir,
     warn: (_code, message) => missingWarnings.push(message),
@@ -194,7 +199,7 @@ test('a fresh build stores locally before the provider upload starts', async () 
 
   const result = await storeTieredBuild({
     local: local.cap,
-    provider: provider.cap,
+    loadProvider: () => ({ provider: { builds: provider.cap } }),
     target,
     sourcePath: built,
     overwrite: false,
@@ -212,11 +217,15 @@ test('a provider upload failure or timeout is reported without throwing', async 
 
   const failed = await storeTieredBuild({
     local: local.cap,
-    provider: capability({
-      store: () => {
-        throw new Error('upload denied');
+    loadProvider: () => ({
+      provider: {
+        builds: capability({
+          store: () => {
+            throw new Error('upload denied');
+          },
+        }).cap,
       },
-    }).cap,
+    }),
     target,
     sourcePath: built,
     overwrite: true,
@@ -225,7 +234,7 @@ test('a provider upload failure or timeout is reported without throwing', async 
 
   const timedOut = await storeTieredBuild({
     local: local.cap,
-    provider: capability({ store: () => new Promise(() => {}) }).cap,
+    loadProvider: () => ({ provider: { builds: capability({ store: () => new Promise(() => {}) }).cap } }),
     target,
     sourcePath: built,
     overwrite: true,
@@ -239,5 +248,46 @@ test('without a provider the store reports the local path and no upload', async 
   const local = capability({ store: () => built });
 
   const result = await storeTieredBuild({ local: local.cap, target, sourcePath: built, overwrite: false });
-  expect(result).toEqual({ localPath: built, providerUpload: null });
+  expect(result).toEqual({ localPath: built, providerUpload: null, providerName: null });
+});
+
+test('an unusable provider warns once and keeps the local tier', async () => {
+  const built = artifact('built');
+  const local = capability({ resolve: () => null, store: () => built });
+  const warnings: string[] = [];
+  const loadProvider = () => ({ name: './cache.cjs', unavailable: 'missing credentials' });
+
+  const found = await resolveTieredBuild({
+    local: local.cap,
+    loadProvider,
+    target,
+    destinationDir: workDir,
+    warn: (code, message) => warnings.push(`${code}: ${message}`),
+  });
+  const stored = await storeTieredBuild({
+    local: local.cap,
+    loadProvider,
+    target,
+    sourcePath: built,
+    overwrite: false,
+    warn: (code, message) => warnings.push(`${code}: ${message}`),
+  });
+
+  expect(found).toBeNull();
+  expect(stored).toEqual({ localPath: built, providerUpload: null, providerName: null });
+  expect(warnings).toEqual([
+    'provider-load: provider not usable (./cache.cjs): missing credentials; using local cache',
+    'provider-load: provider not usable (./cache.cjs): missing credentials; using local cache',
+  ]);
+});
+
+test('a Metro-only provider adds no build tier', async () => {
+  const built = artifact('built');
+  const local = capability({ resolve: () => null, store: () => built });
+  const loadProvider = () => ({ name: './cache.cjs', provider: { metro: { get: () => null, set: () => {} } } });
+
+  expect(await resolveTieredBuild({ local: local.cap, loadProvider, target, destinationDir: workDir })).toBeNull();
+  expect(
+    await storeTieredBuild({ local: local.cap, loadProvider, target, sourcePath: built, overwrite: false }),
+  ).toEqual({ localPath: built, providerUpload: null, providerName: null });
 });

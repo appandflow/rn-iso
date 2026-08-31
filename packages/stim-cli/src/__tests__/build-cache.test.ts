@@ -635,7 +635,7 @@ test('the tiered coordinator leaves the same cache on disk as a direct store', a
   mkdirSync(join(root, 'build'), { recursive: true });
   writeFileSync(built, 'binary');
   const sources = [fpFile('android/build.gradle', 'h2')];
-  const manifest: AssetManifest = { version: ASSET_MANIFEST_VERSION, entries: [] };
+  const manifest: AssetManifest = { version: ASSET_MANIFEST_VERSION, assets: [] };
   const key = buildCacheKey('android', 'def', { variant: 'debug' });
 
   const direct = join(root, 'direct');
@@ -670,8 +670,7 @@ test('a provider hit lands in the local cache under the same key', async () => {
 
   const found = await resolveTieredBuild({
     local: filesystemBuildCapability({ root: cacheDir }),
-    provider: { resolve: () => downloaded, store: () => {} },
-    providerName: './cache.cjs',
+    loadProvider: () => ({ name: './cache.cjs', provider: { builds: { resolve: () => downloaded, store: () => {} } } }),
     target: { projectRoot: root, platform: 'android', key },
     destinationDir: join(root, 'downloaded'),
   });
