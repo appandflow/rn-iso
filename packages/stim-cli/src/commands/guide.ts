@@ -560,6 +560,9 @@ STIM_NO_DEVICE
   state. \`stim doctor\` checks the toolchain; \`stim status\` says what
   Stim thinks it owns. Re-running the command creates a fresh owned device
   when the recorded one is gone.
+  On iOS a slow first boot is waited out for up to ten minutes while the
+  simulator still reports Booting -- a long silent wait on a loaded machine
+  is patience, not a hang. The failure names the udid and the wait.
   On Android the emulator's own stdio is captured to
   the global workspace logs/emulator.log (truncated per boot), and when it printed a
   \`FATAL |\` / \`ERROR |\` / \`PANIC:\` line THAT is the message and the remedy

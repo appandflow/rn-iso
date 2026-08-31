@@ -103,6 +103,8 @@ export function parseRuntimeVersion(runtimeId: string): string {
 
 export const IOS_BOOT_TIMEOUT_MS: number = 600000;
 const BOOTSTATUS_ATTEMPT_MS = 240000;
+const BOOTSTATUS_ATTEMPT_FLOOR_MS = 1000;
+const BOOT_STATE_LIST_TIMEOUT_MS = 30000;
 
 export function bootIosSim(udid: string, { timeoutMs = IOS_BOOT_TIMEOUT_MS }: { timeoutMs?: number } = {}): void {
   const exec = getExecutor();
@@ -114,25 +116,31 @@ export function bootIosSim(udid: string, { timeoutMs = IOS_BOOT_TIMEOUT_MS }: { 
   const deadline = Date.now() + timeoutMs;
   // `simctl bootstatus -b` blocks until the boot finishes, and a first boot on a
   // CPU-starved host (a CI runner sharing cores with xcodebuild) can legitimately
-  // outlast one attempt. An expired attempt while the device still reports
-  // Booting is a slow boot, not a failed one -- re-enter until the deadline.
+  // outlast one attempt (#128).
   for (;;) {
     const remaining = deadline - Date.now();
     if (remaining > 0) {
       try {
-        exec.run(`xcrun simctl bootstatus ${udid} -b`, { timeoutMs: Math.min(remaining, BOOTSTATUS_ATTEMPT_MS) });
+        exec.run(`xcrun simctl bootstatus ${udid} -b`, {
+          timeoutMs: Math.min(Math.max(remaining, BOOTSTATUS_ATTEMPT_FLOOR_MS), BOOTSTATUS_ATTEMPT_MS),
+        });
         break;
       } catch (e) {
         if ((e as NodeJS.ErrnoException)?.code !== 'ETIMEDOUT') throw e;
       }
     }
-    const state = listAllIosSims().find((s) => s.udid === udid)?.state ?? null;
+    let state: string | null | undefined;
+    try {
+      state = listAllIosSims({ timeoutMs: BOOT_STATE_LIST_TIMEOUT_MS }).find((s) => s.udid === udid)?.state ?? null;
+    } catch {
+      state = undefined;
+    }
     if (state === 'Booted') break;
     const waited = Math.round((timeoutMs - Math.max(0, deadline - Date.now())) / 1000);
-    if (state !== 'Booting') {
+    if (state !== 'Booting' && state !== undefined) {
       throw new Error(`Simulator ${udid} reports "${state ?? 'missing'}" after ${waited}s of boot wait.`);
     }
-    if (remaining <= 0) {
+    if (deadline - Date.now() <= 0) {
       throw new Error(`Simulator ${udid} did not finish booting within ${Math.round(timeoutMs / 1000)}s.`);
     }
   }

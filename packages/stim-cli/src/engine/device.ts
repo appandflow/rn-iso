@@ -8,7 +8,14 @@ import {
   type ProjectRecord,
 } from '../config.ts';
 import { isPidAlive } from '../metro.ts';
-import { bootIosSim, createOwnedIosSim, listAllIosSims, listIosDeviceTypes, resolveOwnedIosSim } from '../sim/ios.ts';
+import {
+  bootIosSim,
+  createOwnedIosSim,
+  IOS_BOOT_TIMEOUT_MS,
+  listAllIosSims,
+  listIosDeviceTypes,
+  resolveOwnedIosSim,
+} from '../sim/ios.ts';
 import {
   bootAndroidEmulator,
   configureNewOwnedAvd,
@@ -611,7 +618,7 @@ interface BootResult {
 export async function ensureBooted({
   platform,
   device,
-  timeoutMs = 240000,
+  timeoutMs,
   pollMs = BOOT_POLL_MS,
   out = () => {},
   logFile = null,
@@ -625,8 +632,9 @@ export async function ensureBooted({
     out: Notify;
   } & EmulatorLogging
 > = {}): Promise<BootResult> {
-  if (platform === 'ios') return ensureIosBooted({ device, timeoutMs, pollMs, out });
-  if (platform === 'android') return ensureAndroidBooted({ device, timeoutMs, out, logFile, alive });
+  if (platform === 'ios') return ensureIosBooted({ device, timeoutMs: timeoutMs ?? IOS_BOOT_TIMEOUT_MS, pollMs, out });
+  if (platform === 'android')
+    return ensureAndroidBooted({ device, timeoutMs: timeoutMs ?? 240000, out, logFile, alive });
   return { failed: true, reason: `Unknown platform "${platform}".` };
 }
 
@@ -666,13 +674,15 @@ async function ensureIosBooted({
   if (sim.state === 'Booted') return { ok: true, udid };
 
   out(chalk.dim(`Booting sim ${sim.name} (${udid})...`));
+  const bootDeadline = Date.now() + timeoutMs;
   try {
-    bootIosSim(udid);
+    bootIosSim(udid, { timeoutMs });
   } catch (e) {
     return { failed: true, reason: `Could not boot simulator ${udid}: ${(e as Error)?.message || e}` };
   }
 
-  const deadline = Date.now() + timeoutMs;
+  // A boot that consumed the whole budget still gets a couple of verification polls.
+  const deadline = Math.max(bootDeadline, Date.now() + 2 * pollMs);
   while (Date.now() < deadline) {
     await sleep(pollMs);
     let state = null;

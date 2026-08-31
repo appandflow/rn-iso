@@ -360,11 +360,10 @@ function bootSimList(state: string) {
 }
 
 test('bootIosSim re-enters bootstatus after a timed-out attempt while the sim is still Booting', () => {
-  const commands: string[] = [];
+  const quiet: string[] = [];
   let bootstatusCalls = 0;
   setExecutor({
     run: (cmd) => {
-      commands.push(cmd);
       if (cmd.includes('bootstatus')) {
         bootstatusCalls += 1;
         if (bootstatusCalls === 1) throw timedOut();
@@ -373,12 +372,16 @@ test('bootIosSim re-enters bootstatus after a timed-out attempt while the sim is
       if (cmd.includes('list devices')) return bootSimList('Booting');
       return '';
     },
-    runQuiet: () => '',
+    runQuiet: (cmd) => {
+      quiet.push(cmd);
+      return '';
+    },
     runFile: () => '',
     spawn: () => null,
   });
   bootIosSim('UDID-A');
   expect(bootstatusCalls).toBe(2);
+  expect(quiet).toContain('open -a Simulator');
 });
 
 test('bootIosSim treats a timed-out attempt as success when the sim reports Booted', () => {
@@ -400,10 +403,17 @@ test('bootIosSim treats a timed-out attempt as success when the sim reports Boot
   expect(bootstatusCalls).toBe(1);
 });
 
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 test('bootIosSim names the udid and the wait when the deadline expires while Booting', () => {
   setExecutor({
     run: (cmd) => {
-      if (cmd.includes('bootstatus')) throw timedOut();
+      if (cmd.includes('bootstatus')) {
+        sleepSync(300);
+        throw timedOut();
+      }
       if (cmd.includes('list devices')) return bootSimList('Booting');
       return '';
     },
@@ -411,7 +421,38 @@ test('bootIosSim names the udid and the wait when the deadline expires while Boo
     runFile: () => '',
     spawn: () => null,
   });
-  expect(() => bootIosSim('UDID-A', { timeoutMs: 25 })).toThrow(/UDID-A did not finish booting within \d+s/);
+  expect(() => bootIosSim('UDID-A', { timeoutMs: 1200 })).toThrow(/UDID-A did not finish booting within 1s/);
+});
+
+test('bootIosSim reports a sim that vanished from the device list', () => {
+  setExecutor({
+    run: (cmd) => {
+      if (cmd.includes('bootstatus')) throw timedOut();
+      if (cmd.includes('list devices')) return JSON.stringify({ devices: {} });
+      return '';
+    },
+    runQuiet: () => '',
+    runFile: () => '',
+    spawn: () => null,
+  });
+  expect(() => bootIosSim('UDID-A')).toThrow(/UDID-A reports "missing"/);
+});
+
+test('bootIosSim keeps waiting through a failing device list and still hits the deadline', () => {
+  setExecutor({
+    run: (cmd) => {
+      if (cmd.includes('bootstatus')) {
+        sleepSync(300);
+        throw timedOut();
+      }
+      if (cmd.includes('list devices')) throw new Error('CoreSimulatorService connection interrupted');
+      return '';
+    },
+    runQuiet: () => '',
+    runFile: () => '',
+    spawn: () => null,
+  });
+  expect(() => bootIosSim('UDID-A', { timeoutMs: 1200 })).toThrow(/UDID-A did not finish booting within 1s/);
 });
 
 test('bootIosSim reports a sim that left the boot path instead of retrying forever', () => {
