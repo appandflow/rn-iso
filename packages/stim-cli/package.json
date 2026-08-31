@@ -1,6 +1,6 @@
 {
   "name": "stim-cli",
-  "version": "1.0.0-rc.5",
+  "version": "1.0.0-rc.6",
   "description": "Stim: fast, isolated React Native environments for coding agents",
   "keywords": [
     "agent",
@@ -46,9 +46,9 @@
   },
   "dependencies": {
     "@expo/fingerprint": "^0.20.10",
-    "@stim-cli/cache": "^1.0.0-rc.5",
-    "@stim-cli/core": "^1.0.0-rc.5",
-    "@stim-cli/metro": "^1.0.0-rc.5",
+    "@stim-cli/cache": "^1.0.0-rc.6",
+    "@stim-cli/core": "^1.0.0-rc.6",
+    "@stim-cli/metro": "^1.0.0-rc.6",
     "chalk": "^5.4.1",
     "commander": "^13.1.0"
   },

@@ -138,16 +138,16 @@ importers:
   packages/expo-build-cache:
     dependencies:
       '@stim-cli/core':
-        specifier: ^1.0.0-rc.5
+        specifier: ^1.0.0-rc.6
         version: link:../core
 
   packages/metro:
     dependencies:
       '@stim-cli/cache':
-        specifier: ^1.0.0-rc.5
+        specifier: ^1.0.0-rc.6
         version: link:../cache
       '@stim-cli/core':
-        specifier: ^1.0.0-rc.5
+        specifier: ^1.0.0-rc.6
         version: link:../core
       metro-cache:
         specifier: '*'
@@ -159,13 +159,13 @@ importers:
         specifier: ^0.20.10
         version: 0.20.10(supports-color@8.1.1)
       '@stim-cli/cache':
-        specifier: ^1.0.0-rc.5
+        specifier: ^1.0.0-rc.6
         version: link:../cache
       '@stim-cli/core':
-        specifier: ^1.0.0-rc.5
+        specifier: ^1.0.0-rc.6
         version: link:../core
       '@stim-cli/metro':
-        specifier: ^1.0.0-rc.5
+        specifier: ^1.0.0-rc.6
         version: link:../metro
       chalk:
         specifier: ^5.4.1
