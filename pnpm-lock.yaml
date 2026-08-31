@@ -143,6 +143,9 @@ importers:
 
   packages/metro:
     dependencies:
+      '@stim-cli/cache':
+        specifier: ^1.0.0-rc.4
+        version: link:../cache
       '@stim-cli/core':
         specifier: ^1.0.0-rc.4
         version: link:../core
