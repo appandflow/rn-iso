@@ -29,8 +29,9 @@ are regenerated for the current workspace before installation.
 ## Keep the main checkout warm
 
 Run `stim doctor` before native worktree work. It checks whether the main
-checkout has current dependencies and CocoaPods state. It also checks whether a
-fresh worktree produces the same native fingerprint.
+checkout has current dependencies and CocoaPods state. On a checkout without
+installed dependencies, it also checks whether a fresh worktree produces the
+same native fingerprint.
 
 When several native tasks are coming, build the main checkout once:
 

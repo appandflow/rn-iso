@@ -76,6 +76,10 @@ Run `stim guide settings` for the complete key and value list.
 }
 ```
 
+The committed `.stim.json` `caches` key and this machine-file `caches` key are
+different shapes: the committed key is an array of extra paths for `gc` to
+report, and this machine-file key is an object of named cache locations.
+
 ## Environment variables
 
 | Variable                | Purpose                                |

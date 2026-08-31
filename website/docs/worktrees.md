@@ -29,7 +29,7 @@ Stim reports when it must make a normal byte copy.
 Stim excludes:
 
 - Nested registered git worktrees.
-- Every `.stim/` path.
+- Any `.DerivedData` directory.
 - Paths matched by `.worktreeexclude` or `worktree.exclude`.
 
 Use `.worktreeinclude` or `worktree.include` to copy a small explicit set during

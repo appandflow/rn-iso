@@ -32,8 +32,9 @@ stim doctor [--json]
 ```
 
 Inspects the main checkout. It reports missing or stale dependencies, CocoaPods
-state, fingerprint differences, cache conflicts, device capacity, and remote
-session problems. The check is read-only.
+state, cache conflicts, device capacity, and remote session problems. On a
+checkout without installed dependencies, it also reports fingerprint
+differences against a fresh worktree. The check is read-only.
 
 ## `start`
 
@@ -169,8 +170,9 @@ stale locks, and shared cache sizes. It does not change anything without
 stim guide [topic]
 ```
 
-Prints version-matched reference text. Topics cover lifecycle, facts, Metro,
-logs, errors, cleanup, settings, caches, remote devices, and release builds.
+Prints version-matched reference text. Topics are facts, Metro, logs, errors,
+lifecycle, cleanup, and settings. Cache mechanics, remote devices, and release
+builds are covered inside those topics rather than as topics of their own.
 
 ## Structured output and exit codes
 
