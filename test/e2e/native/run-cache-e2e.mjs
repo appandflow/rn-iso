@@ -550,9 +550,9 @@ async function main() {
           showDiff();
           critical += 1;
         } else if (POD_CHURN_PATHS.some((re) => re.test(path))) {
-          c.ev(`  ${path} -- CocoaPods' own install output, not an stim-cli edit`);
+          c.ev(`  ${path} -- CocoaPods' own install output, not a stim-cli edit`);
         } else if (FRAMEWORK === 'expo' && PREBUILD_CHURN_PATHS.some((re) => re.test(path))) {
-          c.ev(`  ${path} -- \`expo prebuild\` output, not an stim-cli edit; the lines it wrote:`);
+          c.ev(`  ${path} -- \`expo prebuild\` output, not a stim-cli edit; the lines it wrote:`);
           showDiff();
         } else {
           c.ev(`  UNEXPLAINED: ${path}`);
