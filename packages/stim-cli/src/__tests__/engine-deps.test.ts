@@ -340,8 +340,8 @@ describe('runPodInstall through bundler (#137)', () => {
       const env = call.opts.env as NodeJS.ProcessEnv;
       expect(env.BUNDLE_FROZEN).toBe('true');
       expect(env.BUNDLE_GEMFILE).toBe(join(root, 'Gemfile'));
-      expect(env.LANG).toBe('en_US.UTF-8');
       expect(env.FORCE_COLOR).toBe('0');
+      expect(env.CLICOLOR).toBe('0');
     }
   });
 
