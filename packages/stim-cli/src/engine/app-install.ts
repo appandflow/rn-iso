@@ -316,12 +316,15 @@ function resolveLaunchActivity(serial: string, packageName: string, { exec = nul
 }
 
 export function reverseMetroPorts(
-  { serial, metroPort }: { serial: string; metroPort: number | string },
+  {
+    serial,
+    metroPort,
+    devicePorts = null,
+  }: { serial: string; metroPort: number | string; devicePorts?: (number | string)[] | null },
   { exec = null }: ExecOpt = {},
 ): { ok?: boolean; reversed?: string[]; failed?: boolean; code?: string; reason?: string } {
   const e = exec || getExecutor();
-  const pairs = [[DEFAULT_METRO_PORT, metroPort]];
-  if (Number(metroPort) !== DEFAULT_METRO_PORT) pairs.push([metroPort, metroPort]);
+  const pairs = (devicePorts ?? [metroPort]).map((device) => [device, metroPort]);
   for (const [device, host] of pairs) {
     try {
       e.runFile('adb', ['-s', serial, 'reverse', `tcp:${device}`, `tcp:${host}`]);
@@ -449,8 +452,14 @@ export function launchAndroidApp(
   const reversed = reverseMetroPorts({ serial, metroPort }, { exec: e });
   if (reversed.failed) return reversed;
   const prefs = writeDebugHttpHost({ serial, packageName, metroPort, physical }, { exec: e });
+  let reversedPairs = reversed.reversed ?? [];
+  if (!prefs.ok && Number(metroPort) !== DEFAULT_METRO_PORT) {
+    const fallback = reverseMetroPorts({ serial, metroPort, devicePorts: [DEFAULT_METRO_PORT] }, { exec: e });
+    if (fallback.failed) return fallback;
+    reversedPairs = [...reversedPairs, ...(fallback.reversed ?? [])];
+  }
   const wiring = {
-    reversed: reversed.reversed,
+    reversed: reversedPairs,
     debugHttpHost: prefs.ok ? prefs.host : null,
     debugHttpHostNote: prefs.ok ? null : prefs.reason,
   };

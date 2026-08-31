@@ -378,14 +378,17 @@ describe('android: install and launch', () => {
     expect(exec.calls).toEqual([['adb', '-s', 'emulator-5554', 'install', '-r', apkPath]]);
   });
 
-  test('reverseMetroPorts maps 8081 to the reserved port AND keeps the same-port reverse', () => {
+  test('reverseMetroPorts maps only the reserved port to itself', () => {
     const exec = recordingExec();
     const result = reverseMetroPorts({ serial: 'emulator-5554', metroPort: 8082 }, { exec });
     expect(result.ok).toBe(true);
-    expect(exec.calls).toEqual([
-      ['adb', '-s', 'emulator-5554', 'reverse', 'tcp:8081', 'tcp:8082'],
-      ['adb', '-s', 'emulator-5554', 'reverse', 'tcp:8082', 'tcp:8082'],
-    ]);
+    expect(exec.calls).toEqual([['adb', '-s', 'emulator-5554', 'reverse', 'tcp:8082', 'tcp:8082']]);
+  });
+
+  test('reverseMetroPorts maps an explicit device port to the reserved one', () => {
+    const exec = recordingExec();
+    reverseMetroPorts({ serial: 'emulator-5554', metroPort: 8082, devicePorts: [8081] }, { exec });
+    expect(exec.calls).toEqual([['adb', '-s', 'emulator-5554', 'reverse', 'tcp:8081', 'tcp:8082']]);
   });
 
   test('a workspace that actually reserved 8081 gets one reverse, not a duplicate', () => {
@@ -404,9 +407,8 @@ describe('android: install and launch', () => {
     );
     expect(result.mode).toBe('am-start');
     expect(exec.calls).toEqual([
-      ['adb', '-s', 'emulator-5554', 'reverse', 'tcp:8081', 'tcp:8082'],
       ['adb', '-s', 'emulator-5554', 'reverse', 'tcp:8082', 'tcp:8082'],
-      exec.calls[2],
+      exec.calls[1],
       [
         'adb',
         '-s',
@@ -422,7 +424,7 @@ describe('android: install and launch', () => {
       ],
       ['adb', '-s', 'emulator-5554', 'shell', 'am', 'start', '-n', 'com.example.app/.MainActivity'],
     ]);
-    const httpHostCall = exec.calls[2];
+    const httpHostCall = exec.calls[1];
     assert(httpHostCall);
     expect(httpHostCall.slice(0, 6)).toEqual(['adb', '-s', 'emulator-5554', 'shell', 'run-as', 'com.example.app']);
     expect(httpHostCall.at(-1)).toMatch(/debug_http_host.*10\.0\.2\.2:8082/);
@@ -884,7 +886,7 @@ describe('the Android dev-client deep link', () => {
     ]);
     expect(!exec.calls.some((c: string[]) => c.includes('resolve-activity'))).toBeTruthy();
     expect(result.debugHttpHost).toBe('10.0.2.2:8082');
-    expect(result.reversed).toEqual(['tcp:8081->tcp:8082', 'tcp:8082->tcp:8082']);
+    expect(result.reversed).toEqual(['tcp:8082->tcp:8082']);
   });
 
   test('am start exits 0 on an intent it could not resolve, so the OUTPUT is read', () => {
@@ -1679,5 +1681,59 @@ describe('the Metro host for a physical device', () => {
     );
     expect(result.ok).toBe(true);
     expect(result.devClientUrl).toBe('exp+app://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8082');
+  });
+});
+
+describe('the 8081 adb reverse is a fallback, not a default', () => {
+  function execRecording(prefsOk: boolean) {
+    const calls: string[][] = [];
+    return {
+      calls,
+      exec: {
+        runFile: (cmd: string, args: string[]) => {
+          calls.push([cmd, ...args]);
+          if (!prefsOk && args.includes('run-as')) throw new Error('run-as: package not debuggable');
+          if (args.includes('resolve-activity')) return 'com.example.app/.MainActivity';
+          return '';
+        },
+      } as unknown as Executor,
+    };
+  }
+  const reverses = (calls: string[][]) => calls.filter((c) => c.includes('reverse')).map((c) => c.slice(-2).join(' '));
+
+  test('a successful prefs write leaves only the same-port mapping', () => {
+    const { calls, exec } = execRecording(true);
+    const result: LaunchResult = launchAndroidApp(
+      { serial: 'RFCR7081Q9L', packageName: 'com.example.app', metroPort: 8082, physical: true },
+      { exec },
+    );
+    expect(result.ok).toBe(true);
+    expect(reverses(calls)).toEqual(['tcp:8082 tcp:8082']);
+    expect(result.debugHttpHost).toBe('localhost:8082');
+  });
+
+  test('a failed prefs write adds the 8081 fallback so the app still finds Metro', () => {
+    const { calls, exec } = execRecording(false);
+    const result: LaunchResult = launchAndroidApp(
+      { serial: 'RFCR7081Q9L', packageName: 'com.example.app', metroPort: 8082, physical: true },
+      { exec },
+    );
+    expect(result.ok).toBe(true);
+    expect(reverses(calls)).toEqual(['tcp:8082 tcp:8082', 'tcp:8081 tcp:8082']);
+    expect(result.debugHttpHost).toBeNull();
+    expect(result.debugHttpHostNote).toMatch(/relying on adb reverse/);
+  });
+
+  test('the same-port mapping is registered before the prefs write, so the app can never race ahead of it', () => {
+    const { calls, exec } = execRecording(true);
+    launchAndroidApp({ serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082 }, { exec });
+    const order = calls.map((c) => (c.includes('reverse') ? 'reverse' : c.includes('run-as') ? 'prefs' : 'other'));
+    expect(order.indexOf('reverse')).toBeLessThan(order.indexOf('prefs'));
+  });
+
+  test('a workspace on the default port still gets its one mapping', () => {
+    const { calls, exec } = execRecording(true);
+    launchAndroidApp({ serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8081 }, { exec });
+    expect(reverses(calls)).toEqual(['tcp:8081 tcp:8081']);
   });
 });
