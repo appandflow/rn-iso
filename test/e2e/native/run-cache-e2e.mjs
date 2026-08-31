@@ -309,9 +309,18 @@ async function main() {
         `${gradleNewNames1.length} new entry file(s) written by the cold assemble` +
           (removed > 0 ? ` (Gradle's own cleanup removed ${removed} old file(s) in the same window)` : ''),
       );
+      // A machine cache already holding this fixture's task outputs (a previous
+      // suite run) stores nothing on a cold workspace: the build LOADS instead.
+      // Either direction proves the cache is engaged.
+      const wt1FromCache = readNdjson(buildLog(wt1))
+        .map((r) => String(r.msg || ''))
+        .filter((m) => /FROM-CACHE/.test(m));
+      if (gradleNewNames1.length === 0) {
+        for (const line of wt1FromCache.slice(0, 3)) c.ev(`wt1 gradle: ${line}`);
+      }
       assert(
-        gradleNewNames1.length > 0,
-        `${GRADLE_CACHE_DIR} gained no NEW entries across a cold assemble. Gradle only creates and fills it when --build-cache is on, so this is engaged-but-not-storing. (Judged by entry-name set difference; a net count drop from Gradle's periodic cleanup of old entries does not fail this check.)`,
+        gradleNewNames1.length > 0 || wt1FromCache.length > 0,
+        `${GRADLE_CACHE_DIR} gained no NEW entries across a cold assemble, and no wt1 task came back FROM-CACHE either. Gradle only creates, fills, or reads it when --build-cache is on, so this is engaged-but-inert. (Judged by entry-name set difference plus the build log; a net count drop from Gradle's periodic cleanup of old entries does not fail this check.)`,
       );
 
       log('forcing gradle to execute in wt2 with --no-build-cache so its task cache can be observed...');
@@ -326,7 +335,11 @@ async function main() {
         `no task in wt2 came back FROM-CACHE, so the second worktree reused none of wt1's task outputs (log: ${buildLog(wt2)})`,
       );
       return c.pass(
-        `--build-cache on the argv; ${gradleNewNames1.length} new cache entries; ${lines.length} FROM-CACHE task(s) in the second worktree`,
+        `--build-cache on the argv; ` +
+          (gradleNewNames1.length > 0
+            ? `${gradleNewNames1.length} new cache entries; `
+            : `warm machine cache reused by wt1 (${wt1FromCache.length} FROM-CACHE); `) +
+          `${lines.length} FROM-CACHE task(s) in the second worktree`,
       );
     });
   } else {
