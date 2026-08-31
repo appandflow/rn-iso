@@ -154,7 +154,7 @@ environment. `--force` permits removal with uncommitted or unpushed work.
 ## `gc`
 
 ```text
-stim gc [--delete] [--older-than <days>] [--all]
+stim gc [--delete] [--older-than <days>] [--cache <name|all>]
 ```
 
 Reports stale workspace entries, orphaned owned devices and remote sessions,
@@ -162,7 +162,9 @@ stale locks, and shared cache sizes. It does not change anything without
 `--delete`.
 
 - `--older-than <days>` also selects old devices and unused cache entries.
-- `--all` with `--delete` empties every managed cache.
+- `--cache <name|all>` with `--delete` empties the caches whose name or directory
+  carries `<name>` whole, or every cache with `all`. Devices and project entries
+  are not inspected, so a scoped run empties caches and reaps nothing.
 
 ## `guide`
 

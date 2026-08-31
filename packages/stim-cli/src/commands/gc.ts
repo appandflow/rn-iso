@@ -92,7 +92,6 @@ interface GcReport {
 
 interface CollectGcReportOptions {
   olderThan?: number | null;
-  all?: boolean;
   cache?: string | null;
   now?: number;
   lastTouched?: (path: string) => number;
@@ -101,7 +100,6 @@ interface CollectGcReportOptions {
 
 interface RunGcOptions {
   olderThan?: number;
-  all?: boolean;
   cache?: string;
   delete?: boolean;
   unsafeAllowScopedDeviceSweep?: boolean;
@@ -727,14 +725,14 @@ export function formatGcReport({
       lines.push(`  ${formatBytes(c.bytes ?? 0).padStart(10)}  ${c.name}${tag}`);
       lines.push(`              ${c.dir}`);
       if (c.note) lines.push(`              ${c.note}`);
-      if (c.willEmpty) lines.push('              --all would EMPTY this cache');
-      else if (c.emptySkipped) lines.push(`              --all skips this cache: ${c.emptySkipped}`);
+      if (c.willEmpty) lines.push('              would be EMPTIED');
+      else if (c.emptySkipped) lines.push(`              would be left alone: ${c.emptySkipped}`);
     }
     lines.push(`  total: ${formatBytes(total)}`);
     const doomed = caches.filter((c) => c.willEmpty);
     if (doomed.length) {
       const doomedBytes = doomed.reduce((n, c) => n + (c.bytes ?? 0), 0);
-      lines.push(`  --all would empty ${doomed.length} of these (${formatBytes(doomedBytes)})`);
+      lines.push(`  would empty ${doomed.length} of these (${formatBytes(doomedBytes)})`);
     }
   }
 
@@ -803,9 +801,12 @@ function machineGlobalReason(cache: CacheDescriptor): string | null {
   return `STIM_HOME scopes this config, but ${cache.dir} is outside it and therefore machine-global`;
 }
 
+const EVERY_CACHE = 'all';
+
 export function selectCaches(caches: CacheDescriptor[], name: string | null | undefined): CacheDescriptor[] {
   if (!name) return caches;
   const wanted = name.trim().toLowerCase();
+  if (wanted === EVERY_CACHE) return caches;
   return caches.filter((c) => c.name.toLowerCase().includes(wanted) || c.dir.toLowerCase().includes(wanted));
 }
 
@@ -879,7 +880,6 @@ function emptyCache(cache: CacheDescriptor): {
 export async function collectGcReport(
   {
     olderThan = null,
-    all = false,
     cache = null,
     now = Date.now(),
     lastTouched = projectLastTouched,
@@ -887,10 +887,12 @@ export async function collectGcReport(
   }: CollectGcReportOptions = {},
   deps: GcDependencies = {},
 ): Promise<GcReport> {
-  const selected = selectCaches(discoverCaches({ declared: declaredCachePaths() }), cache);
+  const scope = typeof cache === 'string' && cache.trim() ? cache : null;
+  const all = scope !== null && olderThan === null;
+  const selected = selectCaches(discoverCaches({ declared: declaredCachePaths() }), scope);
   const caches = planCacheEmptying(sizeCaches(selected), all);
 
-  if (cache) {
+  if (scope) {
     return {
       skipped: [],
       deadProjects: [],
@@ -902,7 +904,7 @@ export async function collectGcReport(
       deviceSweepNotices: [],
       easSessionSweep: { projectScope: null, orphaned: [], notices: [], deletionSafe: true },
       caches,
-      cacheScope: cache,
+      cacheScope: scope,
       olderThan,
       all,
     };
@@ -1113,12 +1115,10 @@ export async function runGc(opts: RunGcOptions = {}, deps: GcDependencies = {}):
 
 async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void> {
   const olderThan = typeof opts.olderThan === 'number' ? opts.olderThan : null;
-  const all = Boolean(opts.all);
-  const cache = typeof opts.cache === 'string' ? opts.cache : null;
+  const cache = typeof opts.cache === 'string' && opts.cache.trim() ? opts.cache : null;
   const report = await collectGcReport(
     {
       olderThan,
-      all,
       cache,
       unsafeAllowScopedDeviceSweep: opts.unsafeAllowScopedDeviceSweep,
     },
@@ -1130,6 +1130,8 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
     if (names.length) console.log(chalk.dim(`Caches on this machine: ${names.join(', ')}`));
     return;
   }
+
+  const all = report.all;
 
   for (const line of formatGcReport(report)) console.log(line);
 
@@ -1154,11 +1156,13 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
     ((olderThan !== null || all) && caches.length > 0);
 
   if (!opts.delete) {
-    if (all) console.log(chalk.dim('\nDry run. Re-run with --delete --all to empty the caches above.'));
+    if (all) console.log(chalk.dim('\nDry run. Re-run with --delete to empty the caches above.'));
     else if (actionable) console.log(chalk.dim('\nDry run. Re-run with --delete to reclaim.'));
     else if (caches.length) {
       console.log(
-        chalk.dim('\nPass --delete --older-than <days> to trim the caches above, or --delete --all to empty them.'),
+        chalk.dim(
+          '\nPass --delete --cache all to empty the caches above, or --delete --older-than <days> to trim them.',
+        ),
       );
     }
     return;
@@ -1411,7 +1415,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
   if (olderThan === null) {
     if (caches.length) {
       console.log(
-        chalk.dim('Shared caches left alone: pass --older-than <days> to trim them, or --all to empty them.'),
+        chalk.dim('Shared caches left alone: pass --cache all to empty them, or --older-than <days> to trim them.'),
       );
     }
     return;
@@ -1495,12 +1499,8 @@ export default function gcCommand(program: Command): void {
       },
     )
     .option(
-      '--all',
-      'with --delete, empty every shared cache whole rather than trimming it by age -- the only way to clear an index-backed cache. Reaches caches only, never devices or project entries. Caches outside the config dir are refused while STIM_HOME is set.',
-    )
-    .option(
       '--cache <name>',
-      'act on the shared caches whose name or directory contains <name>. Only those caches are reported and emptied; devices and project entries are not inspected. Use it with --delete --all, such as --cache "compilation cache".',
+      'act on the shared caches whose name or directory contains <name>, or every cache with --cache all, a reserved name that never selects a single cache. With --delete they are emptied whole, which is the only way to clear an index-backed cache; add --older-than <days> to trim them by age instead. Only those caches are reported; devices and project entries are not inspected. Caches outside the config dir are refused while STIM_HOME is set.',
       (v: string) => {
         if (!v.trim()) throw new InvalidArgumentError('must name a cache, e.g. --cache "compilation cache"');
         return v;

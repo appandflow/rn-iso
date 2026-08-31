@@ -115,8 +115,8 @@ Ask the user before these actions:
   when it has no unique commits, and its owned device.
 - `worktree remove --force`, because it also discards uncommitted and untracked
   files.
-- `gc --delete`, because it deletes orphaned resources. `gc --delete --all`
-  also empties shared build caches.
+- `gc --delete`, because it deletes orphaned resources. `gc --delete --cache all`
+  empties the shared build caches instead; it inspects nothing else.
 - `stop` when the workspace owns an EAS session, because it irreversibly ends
   that remote session. For a local device, `stop` shuts it down but does not
   delete it. An explicit `stop` shuts down a Stim-owned simulator even when

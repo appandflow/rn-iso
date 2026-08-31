@@ -43,7 +43,7 @@ const CAS_CORRUPT = /not a IncludeTreeRoot node kind/;
 
 function remedyFor(message: string): string | null {
   if (CAS_CORRUPT.test(message)) {
-    return 'The compilation cache holds a damaged object. Run `stim gc --delete --all --cache "compilation cache"` to empty that cache, then build again. The next build is a cold one.';
+    return 'The compilation cache holds a damaged object. Run `stim gc --delete --cache "compilation cache"` to empty that cache, then build again. The next build is a cold one.';
   }
   if (PODS_OUT_OF_SYNC.test(message)) {
     return 'Run `pod install` in ios/ (stim ios does this when Podfile.lock and Pods/Manifest.lock disagree), then build again.';

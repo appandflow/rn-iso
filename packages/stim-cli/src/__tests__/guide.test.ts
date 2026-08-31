@@ -77,9 +77,18 @@ test('the flags the guide advertises are the flags the commands define', () => {
     'android.ts': ['--json', '--no-metro-check', '--no-build-cache', '--variant', '--device', '--remote'],
     'stop.ts': ['--json', '--force'],
     'logs.ts': ['--errors', '--follow', '--since', '--grep', '--tail'],
-    'gc.ts': ['--delete', '--older-than', '--all', '--cache'],
+    'gc.ts': ['--delete', '--older-than', '--cache'],
     'worktree.ts': ['--carry-ignored', '--base', '--label', '--force'],
   };
+  const retired: Record<string, string[]> = { 'gc.ts': ['--all'] };
+  for (const [file, flags] of Object.entries(retired)) {
+    const src = readFileSync(new URL(`../commands/${file}`, import.meta.url), 'utf-8');
+    for (const flag of flags) {
+      const mention = new RegExp(`${flag}(?![\\w-])`);
+      expect(mention.test(src)).toBeFalsy();
+      for (const name of topicNames()) expect(mention.test(renderTopic(name) ?? '')).toBeFalsy();
+    }
+  }
   for (const [file, flags] of Object.entries(advertised)) {
     const src = readFileSync(new URL(`../commands/${file}`, import.meta.url), 'utf-8');
     for (const flag of flags) {
@@ -125,6 +134,7 @@ test('the guide keeps Metro intent separate from the explicit device backend', (
   expect(settings).toMatch(/android\.remote[^\n]*"proxy" or "eas"/);
   expect(errors).toContain('not a IncludeTreeRoot node kind');
   expect(errors).toContain('--cache "compilation cache"');
+  expect(errors).not.toContain('--delete --all');
   expect(errors).toContain('STIM_REMOTE_PROXY_CONFIG');
   expect(errors).toContain('STIM_REMOTE_EAS_UNAVAILABLE');
 });
