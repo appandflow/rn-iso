@@ -491,9 +491,10 @@ STIM_DEPS_FAILED
   Gemfile.lock FAILS the build rather than quietly falling back to unpinned
   pods -- silently using a different CocoaPods than the lockfile pins is the
   bug this path exists to kill. Run \`bundle install\` yourself and keep the
-  result. Gems themselves are installed wherever the project's own
-  \`.bundle/config\` points BUNDLE_PATH (vendor/bundle in the React Native
-  template); Stim reports that in a dim note and never edits Gemfile.lock.
+  result. Gems themselves are installed wherever BUNDLE_PATH points -- the
+  project's own \`.bundle/config\` (vendor/bundle in the React Native template),
+  or the environment. When that lands inside the project, Stim says so in a dim
+  note naming which of the two set it; Gemfile.lock is never edited either way.
 
 STIM_BUILD_FAILED
   xcodebuild or gradle failed. The EXTRACTED diagnostics are printed (capped),

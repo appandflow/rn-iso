@@ -220,13 +220,20 @@ function bundlerEnv(root: string, gemfile: string): NodeJS.ProcessEnv {
 
 const BUNDLE_PATH_SETTING = /^BUNDLE_PATH:[ \t]*["']?([^"'\r\n]+?)["']?[ \t]*$/m;
 
-function bundlePathInsideProject(root: string, env: NodeJS.ProcessEnv): string | null {
-  const configured =
-    env.BUNDLE_PATH || BUNDLE_PATH_SETTING.exec(readOrNull(join(root, '.bundle', 'config')) ?? '')?.[1];
-  if (!configured) return null;
+function bundlePathInsideProject(root: string, env: NodeJS.ProcessEnv): { path: string; where: string } | null {
+  const fromEnv = env.BUNDLE_PATH;
+  const configured = fromEnv || BUNDLE_PATH_SETTING.exec(readOrNull(join(root, '.bundle', 'config')) ?? '')?.[1];
+  // Bundler expands a leading ~ to $HOME, which resolve() would instead read as a
+  // directory named "~" under the project.
+  if (!configured || configured.startsWith('~')) return null;
   const resolved = resolve(root, configured);
   if (resolved !== root && !resolved.startsWith(root + sep)) return null;
-  return relative(root, resolved) || '.';
+  return {
+    path: relative(root, resolved) || '.',
+    where: fromEnv
+      ? 'where the BUNDLE_PATH environment variable points'
+      : 'where its own .bundle/config points BUNDLE_PATH',
+  };
 }
 
 type RunContext = {
@@ -342,7 +349,7 @@ async function ensureBundledGems(
   if (install.error) return bundlerSpawnFailure('bundle install', install, pin);
   const inProject = bundlePathInsideProject(cwd, env);
   const note = inProject
-    ? `\`bundle install\` put this project's gems in ${inProject}/, where its own .bundle/config points BUNDLE_PATH; ` +
+    ? `\`bundle install\` put this project's gems in ${inProject.path}/, ${inProject.where}; ` +
       'Gemfile.lock itself is never written.'
     : undefined;
   if (install.code === 0) return { bundler: true, note };

@@ -598,6 +598,36 @@ describe('runPodInstall through bundler (#137)', () => {
       }),
     });
     expect(outside.notes).toEqual([]);
+
+    writeFileSync(join(root, '.bundle', 'config'), 'BUNDLE_PATH: "~/gems-probe"\n');
+    const home = await runPodInstall(root, collectingWriter(), {
+      spawnFn: router([], {
+        'bundle check --dry-run': () => fakePodChild({ code: 1 }),
+        'bundle install': ok,
+        'bundle exec pod install': ok,
+      }),
+    });
+    expect(home.notes).toEqual([]);
+  });
+
+  test('a BUNDLE_PATH from the environment is reported as the environment, not as a config file', async () => {
+    pinnedProject();
+    const previous = process.env.BUNDLE_PATH;
+    process.env.BUNDLE_PATH = 'vendor/bundle';
+    try {
+      const result = await runPodInstall(root, collectingWriter(), {
+        spawnFn: router([], {
+          'bundle check --dry-run': () => fakePodChild({ code: 1 }),
+          'bundle install': ok,
+          'bundle exec pod install': ok,
+        }),
+      });
+      expect(result.notes?.join('\n')).toMatch(/BUNDLE_PATH environment variable/);
+      expect(result.notes?.join('\n')).not.toMatch(/\.bundle\/config/);
+    } finally {
+      if (previous === undefined) delete process.env.BUNDLE_PATH;
+      else process.env.BUNDLE_PATH = previous;
+    }
   });
 });
 
