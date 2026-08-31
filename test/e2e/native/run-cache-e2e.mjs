@@ -75,6 +75,11 @@ const GRADLE_HOME_IS_THROWAWAY = PLATFORM === 'android' && !args.dryRun;
 
 function seedGradleUserHome(source) {
   const base = existsSync(source) ? dirname(realpathSync(source)) : tmpdir();
+  // A crashed run cannot clean its own home, so each run sweeps its
+  // predecessors' leftovers (suites run one at a time).
+  for (const stale of readdirSync(base).filter((n) => n.startsWith('.stim-e2e-gradle-'))) {
+    cleanupTmp([join(base, stale)]);
+  }
   const target = mkdtempSync(join(base, '.stim-e2e-gradle-'));
   mkdirSync(join(target, 'caches'), { recursive: true });
   for (const [rel, dest] of [
