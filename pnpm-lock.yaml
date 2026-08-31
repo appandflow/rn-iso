@@ -131,6 +131,8 @@ importers:
         specifier: 4.1.11
         version: 4.1.11(@types/node@26.3.0)(vite@8.2.2(@types/node@26.3.0)(jiti@2.7.0)(terser@5.50.0)(yaml@2.9.0))
 
+  packages/cache: {}
+
   packages/core: {}
 
   packages/expo-build-cache:
