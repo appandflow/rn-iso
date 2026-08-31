@@ -375,3 +375,40 @@ test('the read and write budgets accept an environment override', () => {
   expect(METRO_READ_CONCURRENCY).toBe(6);
   expect(METRO_READ_FAILURE_LIMIT).toBe(5);
 });
+
+test('a tripped breaker drops the queued backlog instead of draining it', async () => {
+  const local = memoryStore();
+  let release = (): void => {};
+  const blocked = new Promise<void>((resolve) => {
+    release = () => resolve();
+  });
+  let writes = 0;
+  const provider = tracked({
+    get: () => {
+      throw new Error('unauthorized');
+    },
+    set: async () => {
+      writes += 1;
+      return blocked;
+    },
+  });
+  const { tiered, warnings } = store({
+    local,
+    loadProvider: async () => ({ provider: { metro: provider.provider } }),
+    limits: { concurrency: 1, failureLimit: 2 },
+  });
+
+  await tiered.set(Buffer.from('01', 'hex'), Buffer.from('one'));
+  await tiered.set(Buffer.from('02', 'hex'), Buffer.from('two'));
+  await tiered.set(Buffer.from('03', 'hex'), Buffer.from('three'));
+  expect(writes).toBe(1);
+
+  expect(await tiered.get(Buffer.from('04', 'hex'))).toBeNull();
+  expect(await tiered.get(Buffer.from('05', 'hex'))).toBeNull();
+  expect(warnings.map((w) => w.code)).toEqual(['provider-read', 'provider-disabled']);
+
+  release();
+  await tiered.flush();
+  expect(writes).toBe(1);
+  expect(local.entries.size).toBe(3);
+});

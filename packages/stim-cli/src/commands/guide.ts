@@ -1034,12 +1034,11 @@ ONE COMPILE PER FINGERPRINT, ACROSS EVERY WORKSPACE
   that ends after ~90 minutes with STIM_BUILD_WAIT_TIMEOUT naming the lock.
 
   --no-build-cache looks nothing up -- not the local cache, not either
-  provider -- and
-  takes no lock and never waits, because it asked for a compile of its own.
-  It still STORES the result, over the entry it was told not to trust, and
-  still uploads it. Use it when a cached artifact is suspect; the --json
-  payload reports cacheSkipped: true so a caller can tell that run apart from
-  a plain miss.
+  provider -- and takes no lock and never waits, because it asked for a compile
+  of its own. It still STORES the result, over the entry it was told not to
+  trust, and still uploads it. Use it when a cached artifact is suspect; the
+  --json payload reports cacheSkipped: true so a caller can tell that run apart
+  from a plain miss.
 
 OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   Stim imposes NO limits of its own: unset is exactly the behaviour above --

@@ -267,6 +267,7 @@ export function createTieredMetroStore({
         return;
       }
       const queued = queue.add(bytes, async () => {
+        if (disabled) return;
         const outcome = await callWithTimeout(
           (signal) => capability.set({ key, value, projectRoot, cacheName, signal }),
           writeMs,
