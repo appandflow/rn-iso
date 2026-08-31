@@ -85,6 +85,7 @@ interface GcReport {
   deviceSweepNotices: string[];
   easSessionSweep: EasSessionSweep;
   caches: GcCache[];
+  cacheScope: string | null;
   olderThan: number | null;
   all: boolean;
 }
@@ -92,6 +93,7 @@ interface GcReport {
 interface CollectGcReportOptions {
   olderThan?: number | null;
   all?: boolean;
+  cache?: string | null;
   now?: number;
   lastTouched?: (path: string) => number;
   unsafeAllowScopedDeviceSweep?: boolean;
@@ -100,6 +102,7 @@ interface CollectGcReportOptions {
 interface RunGcOptions {
   olderThan?: number;
   all?: boolean;
+  cache?: string;
   delete?: boolean;
   unsafeAllowScopedDeviceSweep?: boolean;
 }
@@ -604,6 +607,7 @@ export function formatGcReport({
   deviceSweepNotices = [],
   easSessionSweep = { projectScope: null, orphaned: [], notices: [], deletionSafe: true },
   caches = [],
+  cacheScope = null,
   olderThan = null,
 }: Partial<GcReport>): string[] {
   const lines: string[] = [];
@@ -611,7 +615,9 @@ export function formatGcReport({
   const liveLocks = buildLocks?.live ?? [];
   const staleSlots = buildSlots?.stale ?? [];
 
-  if (
+  if (cacheScope) {
+    lines.push(`Cache scope: "${cacheScope}". Devices, project entries and locks were not inspected.`);
+  } else if (
     deadProjects.length === 0 &&
     orphanedDevices.length === 0 &&
     staleDevices.length === 0 &&
@@ -797,6 +803,12 @@ function machineGlobalReason(cache: CacheDescriptor): string | null {
   return `STIM_HOME scopes this config, but ${cache.dir} is outside it and therefore machine-global`;
 }
 
+export function selectCaches(caches: CacheDescriptor[], name: string | null | undefined): CacheDescriptor[] {
+  if (!name) return caches;
+  const wanted = name.trim().toLowerCase();
+  return caches.filter((c) => c.name.toLowerCase().includes(wanted) || c.dir.toLowerCase().includes(wanted));
+}
+
 function planCacheEmptying(caches: CacheDescriptor[], all: boolean): GcCache[] {
   const annotated = caches.map((c) => Object.assign({}, c, { machineGlobal: machineGlobalReason(c) }));
   if (!all) return annotated;
@@ -868,13 +880,33 @@ export async function collectGcReport(
   {
     olderThan = null,
     all = false,
+    cache = null,
     now = Date.now(),
     lastTouched = projectLastTouched,
     unsafeAllowScopedDeviceSweep = false,
   }: CollectGcReportOptions = {},
   deps: GcDependencies = {},
 ): Promise<GcReport> {
-  const caches = planCacheEmptying(sizeCaches(discoverCaches({ declared: declaredCachePaths() })), all);
+  const selected = selectCaches(discoverCaches({ declared: declaredCachePaths() }), cache);
+  const caches = planCacheEmptying(sizeCaches(selected), all);
+
+  if (cache) {
+    return {
+      skipped: [],
+      deadProjects: [],
+      orphanedDevices: [],
+      staleDevices: [],
+      staleDeviceRecords: [],
+      buildLocks: { stale: [], live: [] },
+      buildSlots: { stale: [], live: [] },
+      deviceSweepNotices: [],
+      easSessionSweep: { projectScope: null, orphaned: [], notices: [], deletionSafe: true },
+      caches,
+      cacheScope: cache,
+      olderThan,
+      all,
+    };
+  }
 
   const mountedVolumes = listMountedVolumes();
   const cfg = loadConfig();
@@ -1002,12 +1034,19 @@ export async function collectGcReport(
     deviceSweepNotices,
     easSessionSweep,
     caches,
+    cacheScope: null,
     olderThan,
     all,
   };
 }
 
 export async function runGc(opts: RunGcOptions = {}, deps: GcDependencies = {}): Promise<void> {
+  if (opts.cache) {
+    return runGcCore(opts, {
+      ...deps,
+      precollectedEasSessionSweep: { projectScope: null, orphaned: [], notices: [], deletionSafe: true },
+    });
+  }
   let projectRoot: string | null = null;
   try {
     projectRoot = (deps.findProjectRoot ?? findProjectRoot)(process.cwd());
@@ -1075,14 +1114,23 @@ export async function runGc(opts: RunGcOptions = {}, deps: GcDependencies = {}):
 async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void> {
   const olderThan = typeof opts.olderThan === 'number' ? opts.olderThan : null;
   const all = Boolean(opts.all);
+  const cache = typeof opts.cache === 'string' ? opts.cache : null;
   const report = await collectGcReport(
     {
       olderThan,
       all,
+      cache,
       unsafeAllowScopedDeviceSweep: opts.unsafeAllowScopedDeviceSweep,
     },
     deps,
   );
+  if (cache && report.caches.length === 0) {
+    const names = [...new Set(discoverCaches({ declared: declaredCachePaths() }).map((c) => c.name))];
+    console.log(chalk.yellow(`No shared cache carries "${cache}" in its name or directory.`));
+    if (names.length) console.log(chalk.dim(`Caches on this machine: ${names.join(', ')}`));
+    return;
+  }
+
   for (const line of formatGcReport(report)) console.log(line);
 
   const {
@@ -1449,6 +1497,14 @@ export default function gcCommand(program: Command): void {
     .option(
       '--all',
       'with --delete, empty every shared cache whole rather than trimming it by age -- the only way to clear an index-backed cache. Reaches caches only, never devices or project entries. Caches outside the config dir are refused while STIM_HOME is set.',
+    )
+    .option(
+      '--cache <name>',
+      'act on the shared caches whose name or directory contains <name>. Only those caches are reported and emptied; devices and project entries are not inspected. Use it with --delete --all, such as --cache "compilation cache".',
+      (v: string) => {
+        if (!v.trim()) throw new InvalidArgumentError('must name a cache, e.g. --cache "compilation cache"');
+        return v;
+      },
     )
     .action(async (opts: RunGcOptions) => {
       await runGc(opts);

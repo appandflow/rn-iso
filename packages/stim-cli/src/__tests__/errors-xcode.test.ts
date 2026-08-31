@@ -109,6 +109,48 @@ const REAL_SUCCESS_TAIL = [
   '',
 ].join('\n');
 
+describe('a damaged compilation cache', () => {
+  test('the scan failure carries the remedy that empties that one cache', () => {
+    const transcript = [
+      "error: CAS-based dependency scan failed: not a IncludeTreeRoot node kind (in target 'sqlite3' from project 'Pods')",
+      '** BUILD FAILED **',
+    ].join('\n');
+    const found = extractXcodeDiagnostics(transcript);
+    expect(found.length).toBe(1);
+    expect(found[0]?.remedy).toContain('--cache');
+  });
+
+  test('a transcript that also carries a module failure still yields the cache remedy', () => {
+    const transcript = [
+      "/usr/include/stdio.h:61:10: error: Could not build module '_DarwinFoundation2' (in target 'nanopb' from project 'Pods')",
+      "error: CAS-based dependency scan failed: not a IncludeTreeRoot node kind (in target 'nanopb' from project 'Pods')",
+      '** BUILD FAILED **',
+    ].join('\n');
+    const found = extractXcodeDiagnostics(transcript);
+    const cas = found.find((d) => d.message.includes('IncludeTreeRoot'));
+    expect(cas?.remedy).toContain('--cache');
+  });
+
+  test('the remedy survives the diagnostic cap when the scan failure leads the transcript', () => {
+    const lines = ["error: CAS-based dependency scan failed: not a IncludeTreeRoot node kind (in target 'sqlite3')"];
+    for (let i = 0; i < 40; i += 1) {
+      lines.push(`/usr/include/h${i}.h:1:1: error: Could not build module '_DarwinFoundation1' (in target 'sqlite3')`);
+    }
+    lines.push('** BUILD FAILED **');
+    const all = extractXcodeDiagnostics(lines.join('\n'));
+    expect(all.length).toBeGreaterThan(MAX_DIAGNOSTICS);
+    expect(capDiagnostics(all).diagnostics.find((d) => d.remedy)?.remedy).toContain('--cache');
+  });
+
+  test('a CAS scan failure with another cause gets no cache remedy', () => {
+    const transcript = [
+      "error: CAS-based dependency scan failed: module map not found (in target 'sqlite3' from project 'Pods')",
+      '** BUILD FAILED **',
+    ].join('\n');
+    expect(extractXcodeDiagnostics(transcript)[0]?.remedy).toBeUndefined();
+  });
+});
+
 describe('real transcripts', () => {
   test('a clang compile failure yields file, line, column and message, and nothing else', () => {
     const found = extractXcodeDiagnostics(REAL_COMPILE_FAILURE);

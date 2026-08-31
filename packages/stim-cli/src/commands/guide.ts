@@ -785,6 +785,17 @@ but --base <ref> resolves to <sha>"  (worktree create)
   name, or \`git branch -D worktree-<name>\` and retry. Without --base,
   attaching is still the behaviour: nothing was promised about the tip.
 
+"failed to scan dependencies for source ..." on pods you did not touch  (ios)
+  The compilation cache holds a damaged object. Xcode reports it per source
+  file, so it names whichever targets reach the object first -- often pods such
+  as sqlite3, nanopb or libwebp -- and the list changes between runs. The
+  transcript carries the cause:
+    error: CAS-based dependency scan failed: not a IncludeTreeRoot node kind
+  A cache write that a full disk or a killed build cut short leaves such an
+  object, and upgrading the CLI does not clear it. Empty that one cache with
+  \`gc --delete --all --cache "compilation cache"\`, then build again. The next
+  build is a cold one.
+
 "Carried <dir>/Pods does not match <dir>/Podfile.lock"  (worktree create)
   \`ios/Pods\` is gitignored, so --carry-ignored clones it; \`ios/Podfile.lock\`
   is tracked, so it comes from the branch. When the source worktree's two
@@ -1079,7 +1090,7 @@ THE OPTION SURFACE, IN FULL
   logs            --source --level --since --grep --tail --follow --errors --json
   stop            --json --force
   status          --json          (already machine-wide; there is no --all)
-  gc              --delete --older-than <days> --all
+  gc              --delete --older-than <days> --all --cache <name>
   worktree create <name> --carry-ignored --base <ref> --label <label>; remove [path] --force
 
   That is the whole surface today, and it is deliberately small. It can grow
@@ -1169,6 +1180,8 @@ THE OPTION SURFACE, IN FULL
 DESTRUCTIVE COMMANDS -- ask the user first
   gc --delete             deletes orphaned stim-* devices, tens of GB
   gc --delete --all       empties the shared build caches every project uses
+  gc --delete --all --cache <name>
+                          empties only the caches that carry <name>
   worktree remove --force discards uncommitted and untracked work
   stop --force            kills a process Stim could not identify
 

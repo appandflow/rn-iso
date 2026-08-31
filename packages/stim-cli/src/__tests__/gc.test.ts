@@ -29,8 +29,69 @@ import gcCommand, {
   findStaleProjectDevices,
   formatGcReport,
   runGc,
+  selectCaches,
 } from '../commands/gc.ts';
 import { makeConfig, makeIosSim, makeCacheDescriptor, makeBuildLock, makeBuildSlot } from './_factories.ts';
+
+describe('selectCaches', () => {
+  const caches = [
+    makeCacheDescriptor({ name: 'Xcode compilation cache', dir: '/home/.stim/compilation-cache' }),
+    makeCacheDescriptor({ name: 'Build cache', dir: '/home/.stim/build-cache' }),
+    makeCacheDescriptor({ name: 'Metro file maps', dir: '/tmp/metro-file-map-1' }),
+  ];
+
+  test('no name keeps every cache', () => {
+    expect(selectCaches(caches, null)).toHaveLength(3);
+    expect(selectCaches(caches, '')).toHaveLength(3);
+  });
+
+  test('a name selects the caches it appears in, whatever its case', () => {
+    expect(selectCaches(caches, 'compilation cache').map((c) => c.name)).toEqual(['Xcode compilation cache']);
+    expect(selectCaches(caches, 'COMPILATION').map((c) => c.name)).toEqual(['Xcode compilation cache']);
+  });
+
+  test('a directory fragment selects a cache the name does not match', () => {
+    expect(selectCaches(caches, 'metro-file-map').map((c) => c.name)).toEqual(['Metro file maps']);
+  });
+
+  test('a name nothing carries selects no cache', () => {
+    expect(selectCaches(caches, 'gradle')).toEqual([]);
+  });
+});
+
+describe('a cache-scoped report', () => {
+  test('carries the scope and inspects nothing else', async () => {
+    const report = await collectGcReport({ cache: 'compilation cache' });
+    expect(report.cacheScope).toBe('compilation cache');
+    expect(report.deadProjects).toEqual([]);
+    expect(report.orphanedDevices).toEqual([]);
+    expect(report.staleDevices).toEqual([]);
+    expect(report.staleDeviceRecords).toEqual([]);
+    expect(report.buildLocks).toEqual({ stale: [], live: [] });
+    expect(report.buildSlots).toEqual({ stale: [], live: [] });
+    expect(report.skipped).toEqual([]);
+    for (const c of report.caches) {
+      expect(`${c.name} ${c.dir}`.toLowerCase()).toContain('compilation cache');
+    }
+  });
+
+  test('the report says what was not inspected instead of claiming a clean machine', () => {
+    const lines = formatGcReport({ cacheScope: 'compilation cache' });
+    expect(lines.some((l) => l.includes('Cache scope: "compilation cache"'))).toBeTruthy();
+    expect(lines.some((l) => l.includes('Nothing to reclaim'))).toBeFalsy();
+  });
+
+  test('an unscoped report still reports a clean machine', () => {
+    const lines = formatGcReport({});
+    expect(lines.some((l) => l.includes('Nothing to reclaim'))).toBeTruthy();
+  });
+
+  test('a name no cache carries says so instead of reporting a clean machine', async () => {
+    const output = await captureLog(() => runGc({ cache: 'nothing-carries-this-name' }));
+    expect(output).toContain('No shared cache carries "nothing-carries-this-name"');
+    expect(output).not.toContain('Nothing to reclaim');
+  });
+});
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -2218,6 +2279,17 @@ test('rejects a non-numeric --older-than instead of silently skipping every entr
   await expect(() => program.parseAsync(['node', 'stim', 'gc', '--older-than', 'lastweek'])).rejects.toThrow(
     /must be a whole number of days/,
   );
+});
+
+test('rejects a blank --cache instead of widening the run', async () => {
+  for (const value of ['', '   ']) {
+    const program = new Command();
+    program.exitOverride();
+    gcCommand(program);
+    await expect(() => program.parseAsync(['node', 'stim', 'gc', '--cache', value])).rejects.toThrow(
+      /must name a cache/,
+    );
+  }
 });
 
 test('describeUnverifiableDevices names Stim devices it cannot verify', () => {
