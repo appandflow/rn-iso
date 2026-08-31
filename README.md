@@ -1,6 +1,6 @@
 # Stim
 
-Fast, isolated React Native environments for coding agents.
+Fast, isolated local React Native environments for coding agents.
 
 Stim gives each project or git worktree its own Metro port and owned simulator
 or emulator. It shares native artifacts, Xcode compilation data, Gradle output,
