@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import {
   callWithTimeout,
+  timeoutFromEnv,
   type BuildCacheCapability,
   type BuildCacheTarget,
   type LoadCacheProviderResult,
@@ -10,6 +11,17 @@ import {
 
 export const BUILD_RESOLVE_TIMEOUT_MS = 30_000;
 export const BUILD_UPLOAD_TIMEOUT_MS = 60_000;
+
+export const BUILD_RESOLVE_TIMEOUT_ENV = 'STIM_CACHE_BUILD_RESOLVE_TIMEOUT_MS';
+export const BUILD_UPLOAD_TIMEOUT_ENV = 'STIM_CACHE_BUILD_UPLOAD_TIMEOUT_MS';
+
+export function buildResolveTimeoutMs(env?: NodeJS.ProcessEnv): number {
+  return timeoutFromEnv(BUILD_RESOLVE_TIMEOUT_ENV, BUILD_RESOLVE_TIMEOUT_MS, env);
+}
+
+export function buildUploadTimeoutMs(env?: NodeJS.ProcessEnv): number {
+  return timeoutFromEnv(BUILD_UPLOAD_TIMEOUT_ENV, BUILD_UPLOAD_TIMEOUT_MS, env);
+}
 
 export interface TieredBuildResolution {
   path: string;
@@ -82,7 +94,7 @@ export async function resolveTieredBuild({
   destinationDir,
   skipRead = false,
   warn = ignore,
-  timeoutMs = BUILD_RESOLVE_TIMEOUT_MS,
+  timeoutMs = buildResolveTimeoutMs(),
 }: ResolveTieredBuildOptions): Promise<TieredBuildResolution | null> {
   if (skipRead) return null;
 
@@ -128,7 +140,7 @@ export async function storeTieredBuild({
   sourcePath,
   overwrite,
   warn = ignore,
-  timeoutMs = BUILD_UPLOAD_TIMEOUT_MS,
+  timeoutMs = buildUploadTimeoutMs(),
 }: StoreTieredBuildOptions): Promise<TieredBuildStoreResult> {
   const localPath = (await local.store({ ...target, sourcePath, overwrite, signal: neverAborted() })) || null;
 

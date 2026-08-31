@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, u
 import { basename, dirname, join } from 'path';
 import * as expoFingerprint from '@expo/fingerprint';
 import type { Fingerprint, FingerprintSource, Options as FingerprintOptions } from '@expo/fingerprint';
-import { BUILD_UPLOAD_TIMEOUT_MS, type BuildCacheCapability, type ProviderCallResult } from '@stim-cli/cache';
+import { buildUploadTimeoutMs, type BuildCacheCapability, type ProviderCallResult } from '@stim-cli/cache';
 import { buildCacheKey as coreBuildCacheKey } from '@stim-cli/core';
 import { getExecutor } from './exec.ts';
 import { register } from './cache-manifest.ts';
@@ -174,7 +174,7 @@ export function providerUploadOutcome(
   if (!result) return null;
   const label = name || 'the cache provider';
   if (result.timedOut) {
-    return { line: `${label} upload still running after ${BUILD_UPLOAD_TIMEOUT_MS}ms; not waiting`, warn: true };
+    return { line: `${label} upload was cancelled after ${buildUploadTimeoutMs()}ms`, warn: true };
   }
   if (result.failed) return { line: `${label} upload failed: ${result.failed}`, warn: true };
   return { line: `uploaded (${label})`, warn: false };

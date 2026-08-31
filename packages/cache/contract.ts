@@ -1,7 +1,7 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { join } from 'node:path';
-import type { CacheProvider } from './provider.ts';
+import { join, relative, sep } from 'node:path';
+import { loadCacheProvider, type CacheProvider } from './provider.ts';
 
 export interface CacheContractCheck {
   name: string;
@@ -11,7 +11,7 @@ export interface CacheContractCheck {
 
 export interface CacheContractResult {
   name: string;
-  capability: 'metro' | 'builds';
+  capability: 'metro' | 'builds' | 'module';
   passed: boolean;
   error?: string;
 }
@@ -22,6 +22,48 @@ export interface CacheContractOptions {
   workDir: string;
   cacheName?: string;
   platform?: 'ios' | 'android';
+  checkTimeoutMs?: number;
+  abortSettleMs?: number;
+}
+
+/**
+ * Loads the provider the way Stim does, from a module reference, so a provider
+ * author exercises `apiVersion` and factory validation as well as the
+ * capability checks.
+ */
+export interface CacheContractModuleOptions extends Omit<CacheContractOptions, 'provider'> {
+  providerModule: string;
+  options?: Record<string, unknown>;
+  baseDir?: string;
+}
+
+export const CACHE_CONTRACT_CHECK_TIMEOUT_MS = 30_000;
+
+const ABORT_SETTLE_MS = 1_000;
+
+async function settlesAfterAbort(start: (signal: AbortSignal) => unknown, settleMs: number): Promise<void> {
+  const controller = new AbortController();
+  const call = Promise.resolve()
+    .then(() => start(controller.signal))
+    .then(
+      () => 'settled',
+      () => 'settled',
+    );
+  controller.abort();
+  let timer: NodeJS.Timeout | undefined;
+  const outcome = await Promise.race([
+    call,
+    new Promise<'ignored'>((resolve) => {
+      timer = setTimeout(() => resolve('ignored'), settleMs);
+    }),
+  ]);
+  clearTimeout(timer);
+  assert(outcome === 'settled', `the call did not settle within ${settleMs}ms of its signal aborting`);
+}
+
+function isInside(parent: string, child: string): boolean {
+  const rel = relative(parent, child);
+  return rel !== '' && !rel.startsWith(`..${sep}`) && rel !== '..';
 }
 
 function neverAborted(): AbortSignal {
@@ -36,7 +78,11 @@ function metroChecks({
   provider,
   projectRoot,
   cacheName = 'app',
-}: Required<Pick<CacheContractOptions, 'provider' | 'projectRoot'>> & { cacheName?: string }): CacheContractCheck[] {
+  abortSettleMs = ABORT_SETTLE_MS,
+}: Required<Pick<CacheContractOptions, 'provider' | 'projectRoot'>> & {
+  cacheName?: string;
+  abortSettleMs?: number;
+}): CacheContractCheck[] {
   const metro = provider.metro;
   if (!metro) return [];
   const context = { projectRoot, cacheName, signal: neverAborted() };
@@ -77,6 +123,16 @@ function metroChecks({
       },
     },
     {
+      name: 'metro get settles when its signal aborts',
+      capability: 'metro',
+      async run() {
+        await settlesAfterAbort(
+          (signal) => metro.get({ projectRoot, cacheName, key: randomBytes(32), signal }),
+          abortSettleMs,
+        );
+      },
+    },
+    {
       name: 'metro keys do not collide',
       capability: 'metro',
       async run() {
@@ -99,8 +155,10 @@ function buildChecks({
   projectRoot,
   workDir,
   platform = 'android',
+  abortSettleMs = ABORT_SETTLE_MS,
 }: Required<Pick<CacheContractOptions, 'provider' | 'projectRoot' | 'workDir'>> & {
   platform?: 'ios' | 'android';
+  abortSettleMs?: number;
 }): CacheContractCheck[] {
   const builds = provider.builds;
   if (!builds) return [];
@@ -161,6 +219,80 @@ function buildChecks({
       },
     },
     {
+      name: 'builds resolve settles when its signal aborts',
+      capability: 'builds',
+      async run() {
+        await settlesAfterAbort(
+          (aborting) =>
+            builds.resolve({
+              projectRoot,
+              platform,
+              key: `contract-abort-${randomUUID()}`,
+              destinationDir: destination(),
+              signal: aborting,
+            }),
+          abortSettleMs,
+        );
+      },
+    },
+    {
+      name: 'builds resolve leaves the destination directory empty on a miss',
+      capability: 'builds',
+      async run() {
+        const dir = destination();
+        await builds.resolve({
+          projectRoot,
+          platform,
+          key: `contract-miss-${randomUUID()}`,
+          destinationDir: dir,
+          signal,
+        });
+        assert(readdirSync(dir).length === 0, `a miss left ${readdirSync(dir).join(', ')} in the destination`);
+      },
+    },
+    {
+      name: 'builds resolve returns a path it owns or one inside the destination',
+      capability: 'builds',
+      async run() {
+        const key = `contract-${randomUUID()}`;
+        const { sourcePath, contents } = artifact();
+        await builds.store({ projectRoot, platform, key, sourcePath, overwrite: false, signal });
+        const dir = destination();
+        const found = await builds.resolve({ projectRoot, platform, key, destinationDir: dir, signal });
+        assert(typeof found === 'string' && found !== '', 'the stored key did not resolve');
+        const path = found as string;
+        assert(
+          isInside(dir, path) || Buffer.compare(storedContents(path), contents) === 0,
+          `${path} is neither inside the destination nor a copy the capability owns`,
+        );
+      },
+    },
+    {
+      name: 'builds store honors overwrite',
+      capability: 'builds',
+      async run() {
+        const key = `contract-${randomUUID()}`;
+        const first = artifact();
+        const second = artifact();
+        await builds.store({ projectRoot, platform, key, sourcePath: first.sourcePath, overwrite: false, signal });
+        await builds.store({ projectRoot, platform, key, sourcePath: second.sourcePath, overwrite: false, signal });
+        const kept = await builds.resolve({ projectRoot, platform, key, destinationDir: destination(), signal });
+        assert(typeof kept === 'string', 'the stored key did not resolve');
+        assert(
+          Buffer.compare(storedContents(kept as string), first.contents) === 0,
+          'overwrite: false replaced an entry that already existed',
+        );
+
+        await builds.store({ projectRoot, platform, key, sourcePath: second.sourcePath, overwrite: true, signal });
+        const replaced = await builds.resolve({ projectRoot, platform, key, destinationDir: destination(), signal });
+        assert(typeof replaced === 'string', 'the overwritten key did not resolve');
+        assert(
+          Buffer.compare(storedContents(replaced as string), second.contents) === 0,
+          'overwrite: true kept the previous entry',
+        );
+      },
+    },
+    {
       name: 'builds store keeps unrelated keys separate',
       capability: 'builds',
       async run() {
@@ -194,27 +326,61 @@ function buildChecks({
   ];
 }
 
+const MODULE_CHECK = 'the module loads through loadCacheProvider()';
+
+async function loadContractProvider(
+  options: CacheContractModuleOptions,
+): Promise<CacheContractOptions | { failure: CacheContractResult }> {
+  const loaded = await loadCacheProvider({
+    projectRoot: options.projectRoot,
+    config: {
+      provider: options.providerModule,
+      options: options.options ?? {},
+      baseDir: options.baseDir ?? options.projectRoot,
+    },
+  });
+  if (!loaded.provider) {
+    return {
+      failure: {
+        name: MODULE_CHECK,
+        capability: 'module',
+        passed: false,
+        error: loaded.unavailable ?? 'the reference selected no provider',
+      },
+    };
+  }
+  return { ...options, provider: loaded.provider };
+}
+
 export function cacheProviderContractChecks(options: CacheContractOptions): CacheContractCheck[] {
   return [
     ...metroChecks({
       provider: options.provider,
       projectRoot: options.projectRoot,
       ...(options.cacheName ? { cacheName: options.cacheName } : {}),
+      ...(options.abortSettleMs ? { abortSettleMs: options.abortSettleMs } : {}),
     }),
     ...buildChecks({
       provider: options.provider,
       projectRoot: options.projectRoot,
       workDir: options.workDir,
       ...(options.platform ? { platform: options.platform } : {}),
+      ...(options.abortSettleMs ? { abortSettleMs: options.abortSettleMs } : {}),
     }),
   ];
 }
 
-export async function runCacheProviderContract(options: CacheContractOptions): Promise<CacheContractResult[]> {
+export async function runCacheProviderContract(
+  options: CacheContractOptions | CacheContractModuleOptions,
+): Promise<CacheContractResult[]> {
+  const resolved = 'providerModule' in options ? await loadContractProvider(options) : options;
+  if ('failure' in resolved) return [resolved.failure];
+
+  const checkTimeoutMs = resolved.checkTimeoutMs ?? CACHE_CONTRACT_CHECK_TIMEOUT_MS;
   const results: CacheContractResult[] = [];
-  for (const check of cacheProviderContractChecks(options)) {
+  for (const check of cacheProviderContractChecks(resolved)) {
     try {
-      await check.run();
+      await withDeadline(check.run(), checkTimeoutMs);
       results.push({ name: check.name, capability: check.capability, passed: true });
     } catch (error) {
       results.push({
@@ -226,4 +392,16 @@ export async function runCacheProviderContract(options: CacheContractOptions): P
     }
   }
   return results;
+}
+
+async function withDeadline(work: Promise<void>, timeoutMs: number): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  const expired = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`the check did not finish within ${timeoutMs}ms`)), timeoutMs);
+  });
+  try {
+    await Promise.race([work, expired]);
+  } finally {
+    clearTimeout(timer);
+  }
 }

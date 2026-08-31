@@ -78,10 +78,20 @@ export interface BuildStoreInput extends BuildCacheContext {
 }
 
 /**
- * Native build artifacts. `resolve` places the artifact for the key under
- * `destinationDir` and returns its path, or returns `null` for a miss. `store`
- * uploads the `.app` directory or `.apk` file at `sourcePath`; a capability
- * that owns a local path returns it, and any other capability returns nothing.
+ * Native build artifacts.
+ *
+ * `resolve` returns an existing path to the artifact for the key, or `null` for
+ * a miss. `destinationDir` is a scratch directory Stim creates and owns: a
+ * capability that fetches the artifact must materialize it there and return a
+ * path inside it, and a capability that already holds a local copy (the
+ * built-in filesystem tier) returns that copy instead. A miss must leave
+ * `destinationDir` empty.
+ *
+ * `store` publishes the `.app` directory or `.apk` file at `sourcePath`.
+ * `overwrite: false` must keep an entry that already exists for the key;
+ * `overwrite: true` must replace it. A capability that owns a local path
+ * returns it, and any other capability returns nothing.
+ *
  * Stim owns fingerprints and cache keys; the capability owns transport,
  * archive format, authentication, and retention.
  */

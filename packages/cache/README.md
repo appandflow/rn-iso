@@ -54,10 +54,17 @@ A provider implements one or both capabilities. It owns transport,
 serialization, archive format, authentication, and remote retention. Stim owns
 fingerprints, cache keys, and local artifact paths.
 
-`metro.get` returns the stored value or `null`. `builds.resolve` places the
-artifact for the key under `destinationDir` and returns its path, or returns
-`null`. `builds.store` receives the `.app` directory or `.apk` file that Stim
-just built.
+`metro.get` returns the stored value or `null`.
+
+`builds.resolve` returns an existing path to the artifact, or `null` for a
+miss. `destinationDir` is a scratch directory Stim creates and owns: a provider
+that fetches the artifact must materialize it there and return a path inside
+it, and must leave the directory empty on a miss. The built-in filesystem tier
+already holds the artifact, so it returns its own cache path instead.
+
+`builds.store` receives the `.app` directory or `.apk` file that Stim just
+built. `overwrite: false` must keep an entry that already exists for the key,
+and `overwrite: true` must replace it.
 
 Every call receives an `AbortSignal`. A provider must honor it: Stim abandons
 the call at the deadline and keeps building or bundling with the local tier.
@@ -90,8 +97,40 @@ for (const result of results) {
 }
 ```
 
+Pass `providerModule` instead of `provider` to load the module the way Stim
+does, which also checks `apiVersion` and the factory:
+
+```js
+const results = await runCacheProviderContract({
+  providerModule: './tools/cache-provider.cjs',
+  projectRoot,
+  workDir,
+});
+```
+
 `cacheProviderContractChecks()` returns the same checks as individual cases for
 a test runner that reports each one separately. Both helpers only check the
-capabilities a provider advertises.
+capabilities a provider advertises, bound every check with a deadline, and
+verify that a call settles once its `AbortSignal` aborts.
+
+## Budgets
+
+Every provider call is bounded. The defaults are 2s for a Metro read, 10s for a
+Metro write, 30s for a build lookup, 60s for a build upload, and 10s to load the
+module. Override any of them per run with an environment variable:
+
+```bash
+STIM_CACHE_METRO_READ_TIMEOUT_MS=5000 stim start
+STIM_CACHE_BUILD_RESOLVE_TIMEOUT_MS=60000 stim ios
+```
+
+The variables are `STIM_CACHE_METRO_READ_TIMEOUT_MS`,
+`STIM_CACHE_METRO_WRITE_TIMEOUT_MS`, `STIM_CACHE_BUILD_RESOLVE_TIMEOUT_MS`,
+`STIM_CACHE_BUILD_UPLOAD_TIMEOUT_MS`, and `STIM_CACHE_LOAD_TIMEOUT_MS`. Each
+takes whole milliseconds; any other value keeps the default.
+
+Metro reads are also capped: at most six can be in flight, and the tier turns
+itself off for the rest of the run after five consecutive failures, so a broken
+provider costs one round of warnings rather than a timeout per transform.
 
 The npm scope remains `@stim-cli` until the `@stim` scope is available.

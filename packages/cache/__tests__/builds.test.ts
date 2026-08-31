@@ -1,7 +1,16 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BUILD_RESOLVE_TIMEOUT_MS, BUILD_UPLOAD_TIMEOUT_MS, resolveTieredBuild, storeTieredBuild } from '../builds.ts';
+import {
+  BUILD_RESOLVE_TIMEOUT_ENV,
+  BUILD_RESOLVE_TIMEOUT_MS,
+  BUILD_UPLOAD_TIMEOUT_ENV,
+  BUILD_UPLOAD_TIMEOUT_MS,
+  buildResolveTimeoutMs,
+  buildUploadTimeoutMs,
+  resolveTieredBuild,
+  storeTieredBuild,
+} from '../builds.ts';
 import type { BuildCacheCapability, BuildCacheTarget } from '../provider.ts';
 
 let workDir: string;
@@ -290,4 +299,12 @@ test('a Metro-only provider adds no build tier', async () => {
   expect(
     await storeTieredBuild({ local: local.cap, loadProvider, target, sourcePath: built, overwrite: false }),
   ).toEqual({ localPath: built, providerUpload: null, providerName: null });
+});
+
+test('the build budgets accept an environment override', () => {
+  expect(buildResolveTimeoutMs({})).toBe(BUILD_RESOLVE_TIMEOUT_MS);
+  expect(buildUploadTimeoutMs({})).toBe(BUILD_UPLOAD_TIMEOUT_MS);
+  expect(buildResolveTimeoutMs({ [BUILD_RESOLVE_TIMEOUT_ENV]: '1500' })).toBe(1500);
+  expect(buildUploadTimeoutMs({ [BUILD_UPLOAD_TIMEOUT_ENV]: '1500' })).toBe(1500);
+  expect(buildUploadTimeoutMs({ [BUILD_UPLOAD_TIMEOUT_ENV]: '-1' })).toBe(BUILD_UPLOAD_TIMEOUT_MS);
 });
