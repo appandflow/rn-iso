@@ -46,7 +46,9 @@ commit. Run `pnpm run test:e2e` when a change affects an end-to-end workflow.
 ## Issue and pull request workflow
 
 When you find a bug or improvement, search the open GitHub issues first. If no
-issue already describes it, create one before implementation. Refresh the
+issue already describes it, create one before implementation, following the
+shape in `.github/ISSUE_TEMPLATE/report.md`; pull request descriptions follow
+`.github/PULL_REQUEST_TEMPLATE.md`. Refresh the
 remote refs, then confirm that an existing issue still applies to current
 `origin/main`; close stale issues with the fixing commit and verification
 evidence instead of creating duplicate work.
