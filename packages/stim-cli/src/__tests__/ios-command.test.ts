@@ -3353,13 +3353,13 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     expect(uploadCalls).toBe(0);
     expect(calls.order.includes('buildIos')).toBe(true);
     expect((calls.args.storeBuild as { key: string }).key).toBe(`${FINGERPRINT}-release-device`);
-    expect(errs.join('\n')).toMatch(/local-tier only/);
+    expect(errs.join('\n')).not.toMatch(/local-tier only/);
   });
 
   test('a device run never loads the build-cache provider, for the read or the upload', async () => {
     reserve();
     let loads = 0;
-    const { calls } = await run(
+    const { calls, errs } = await run(
       { device: true },
       {
         ...connected(),
@@ -3375,6 +3375,32 @@ describe('ios --device: selecting a phone and building the device slice', () => 
       'resolveBuild',
       'storeBuild',
     ]);
+    expect(errs.filter((line) => line.includes('local-tier only'))).toHaveLength(1);
+  });
+
+  test('a device run with no provider configured says nothing about providers', async () => {
+    reserve();
+    const { errs } = await run({ device: true }, connected());
+    expect(errs.join('\n')).not.toMatch(/local-tier only/);
+    expect(errs.join('\n')).not.toMatch(/provider/);
+  });
+
+  test('the refusal says what actually happened: built, or restored from the cache', async () => {
+    reserve();
+    const built = await run({ device: true }, connected());
+    expect(built.errs.join('\n')).toMatch(
+      new RegExp(`Built the Debug iphoneos slice[^\n]*and cached it under ${FINGERPRINT}-debug-device`),
+    );
+
+    const restored = await run(
+      { device: true },
+      { ...connected(), resolveBuild: () => join(root, 'cached', 'Fixture.app') },
+    );
+    expect(restored.calls.order.includes('buildIos')).toBe(false);
+    expect(restored.errs.join('\n')).toMatch(
+      new RegExp(`Restored the Debug iphoneos slice[^\n]*from the cache under ${FINGERPRINT}-debug-device`),
+    );
+    expect(restored.errs.join('\n')).not.toMatch(/Built the/);
   });
 
   test('the same providers ARE consulted without --device, so the gate is not vacuous', async () => {

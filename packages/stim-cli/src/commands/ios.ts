@@ -1233,7 +1233,8 @@ async function finishIosRun({
     return fail({
       code: 'STIM_BAD_ARG',
       message:
-        `Built the ${configuration || 'Debug'} iphoneos slice for ${deviceLabel(device, udid)} and cached it under ${storeKey}, ` +
+        `${cacheHit ? 'Restored' : 'Built'} the ${configuration || 'Debug'} iphoneos slice for ` +
+        `${deviceLabel(device, udid)} ${cacheHit ? 'from the cache under' : 'and cached it under'} ${storeKey}, ` +
         'but installing and launching on a phone are not wired yet.',
       remedy:
         'Device install and launch land with appandflow/stim#178. Run `stim ios` without --device to install on this workspace owned simulator.',
@@ -1770,10 +1771,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   }
 
   async function resolveRemoteArtifact(): Promise<void> {
-    if (physical) {
-      if (!appPath) note(chalk.dim(phaseLine('cache', PROVIDER_SKIPPED_ON_DEVICE)));
-      return;
-    }
+    if (physical) return;
     if (!appPath) {
       const loaded: LoadProjectProviderResult = await d.loadProjectProvider(root, { isExpo });
       if (loaded?.unavailable) {
