@@ -192,6 +192,7 @@ interface InstallResultLike {
   code?: string;
   reason?: string;
   note?: string;
+  skipped?: boolean;
 }
 
 interface LaunchResultLike {
@@ -451,6 +452,7 @@ export function androidFacts({
   waitedForBuild = null,
   appPath,
   bundleId,
+  installSkipped = false,
   launched,
   logs,
   debugHttpHost = null,
@@ -469,6 +471,7 @@ export function androidFacts({
   waitedForBuild?: WaitedForBuild | null;
   appPath?: string | null;
   bundleId?: string | null;
+  installSkipped?: boolean;
   launched?: boolean | string;
   logs?: string | null;
   debugHttpHost?: string | null;
@@ -489,6 +492,7 @@ export function androidFacts({
     waitedForBuild: waitedForBuild ? { pid: waitedForBuild.pid ?? null, ms: waitedForBuild.ms ?? 0 } : null,
     appPath: appPath ?? null,
     bundleId: bundleId ?? null,
+    installSkipped: Boolean(installSkipped),
     launched: launched === LAUNCH_UNVERIFIED || launched === LAUNCH_BUNDLING ? launched : Boolean(launched),
     debugHttpHost: debugHttpHost ?? null,
     debugHttpHostNote: debugHttpHostNote ?? null,
@@ -873,6 +877,7 @@ interface ReportAndroidResultArgs {
   serial: string;
   apkPath: string | null;
   androidPackage: string;
+  installSkipped: boolean;
   record: AndroidRecord;
   storeHash: string;
   storeKey: string;
@@ -896,6 +901,7 @@ function reportAndroidResult({
   serial,
   apkPath,
   androidPackage,
+  installSkipped,
   record,
   storeHash,
   storeKey,
@@ -923,6 +929,7 @@ function reportAndroidResult({
     waitedForBuild,
     appPath: apkPath,
     bundleId: androidPackage,
+    installSkipped,
     launched: launchState,
     logs: logsDir,
   });
@@ -1113,7 +1120,13 @@ async function finishAndroidRun({
       : `Check that ${serial} is still connected (\`adb devices\`) and has room for the APK.`;
     return fail(installed.code || INSTALL_FAILED, installed.reason, installRemedy, { lastBuildStatus: true });
   }
-  phase('install', `${record.cacheHit ? `from ${record.cacheHit} cache` : basename(apkPath!)} ${installTimer()}`);
+  const installSkipped = Boolean(installed.skipped);
+  phase(
+    'install',
+    installSkipped
+      ? `skipped; ${serial} already holds this APK ${installTimer()}`
+      : `${record.cacheHit ? `from ${record.cacheHit} cache` : basename(apkPath!)} ${installTimer()}`,
+  );
   if (installed.note) {
     phase('install', chalk.yellow(installed.note));
     writer.write({ src: 'build', level: 'warn', event: 'install_uninstalled_first', msg: installed.note });
@@ -1241,6 +1254,7 @@ async function finishAndroidRun({
     serial,
     apkPath,
     androidPackage,
+    installSkipped,
     record,
     storeHash,
     storeKey,

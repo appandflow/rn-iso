@@ -43,6 +43,7 @@ test('the facts topic documents the fields each --json payload actually carries'
       'waitedForBuild',
       'appPath',
       'bundleId',
+      'installSkipped',
       'launched',
       'metroPort',
     ],
@@ -57,6 +58,7 @@ test('the facts topic documents the fields each --json payload actually carries'
       'waitedForBuild',
       'appPath',
       'bundleId',
+      'installSkipped',
       'launched',
     ],
   };
@@ -111,6 +113,17 @@ test('the Metro guide documents explicit remote intent and the local default', (
   expect(body).toMatch(/stim start --remote/);
   expect(body).toMatch(/plain `stim start`[^.]*local/i);
   expect(body).toMatch(/metro\.tunnel[^.]*provider/i);
+});
+
+test('the guide documents the identical-artifact skip and its fail-closed rule', () => {
+  const lifecycle = renderTopic('lifecycle');
+  assert(lifecycle);
+  expect(lifecycle).toMatch(/pm path/);
+  expect(lifecycle).toMatch(/sha256sum/);
+  expect(lifecycle).toMatch(/simctl get_app_container/);
+  expect(lifecycle).toMatch(/cannot determine[^.]*installs exactly as it always did/i);
+  expect(lifecycle).toMatch(/release[\s\S]*COPY of the artifact[\s\S]*always installed/i);
+  expect(lifecycle).toMatch(/installSkipped/);
 });
 
 test('the guide documents scoped iOS dev-client preapproval', () => {

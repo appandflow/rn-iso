@@ -507,6 +507,7 @@ export function iosFacts({
   waitedForBuild = null,
   appPath,
   bundleId,
+  installSkipped = false,
   metroPort,
   logsDir,
   durationMs,
@@ -524,6 +525,7 @@ export function iosFacts({
   waitedForBuild?: WaitedForBuild | null;
   appPath?: string | null;
   bundleId?: string | null;
+  installSkipped?: boolean;
   metroPort?: number | null;
   logsDir?: string;
   durationMs?: number;
@@ -543,6 +545,7 @@ export function iosFacts({
     waitedForBuild: waitedForBuild ? { pid: waitedForBuild.pid ?? null, ms: waitedForBuild.ms ?? 0 } : null,
     appPath,
     bundleId,
+    installSkipped: Boolean(installSkipped),
     launched: launched === LAUNCH_UNVERIFIED || launched === LAUNCH_BUNDLING ? launched : Boolean(launched),
     metroPort,
     logs: { dir: logsDir },
@@ -966,6 +969,7 @@ interface ReportIosResultArgs {
   udid: string;
   appPath: string | null;
   bundleId: string;
+  installSkipped: boolean;
   elapsed: () => number;
   startedAt: string;
   storeHash: string;
@@ -994,6 +998,7 @@ function reportIosResult({
   udid,
   appPath,
   bundleId,
+  installSkipped,
   elapsed,
   startedAt,
   storeHash,
@@ -1038,6 +1043,7 @@ function reportIosResult({
     waitedForBuild,
     appPath,
     bundleId,
+    installSkipped,
     metroPort,
     logsDir,
     durationMs,
@@ -1198,7 +1204,13 @@ async function finishIosRun({
       build: { ...buildFailure, appPath, bundleId },
     });
   }
-  phase('install', `-> ${deviceLabel(device, udid)} ${installTimer()}`);
+  const installSkipped = Boolean(installed?.skipped);
+  phase(
+    'install',
+    installSkipped
+      ? `skipped; ${deviceLabel(device, udid)} already holds this app ${installTimer()}`
+      : `-> ${deviceLabel(device, udid)} ${installTimer()}`,
+  );
 
   if (swapDir) {
     try {
@@ -1280,6 +1292,7 @@ async function finishIosRun({
     udid,
     appPath,
     bundleId: bundleId!,
+    installSkipped,
     elapsed,
     startedAt,
     storeHash,
