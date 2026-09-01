@@ -21,7 +21,7 @@ import {
   metroStoreConfirmedRoot,
   metroStoreRoot,
 } from '../supervisor/metro-store.ts';
-import { makeChildProcess } from './_factories.ts';
+import { IMPOSSIBLE_PID, makeChildProcess } from './_factories.ts';
 
 const ESC = '\u001B';
 
@@ -54,8 +54,22 @@ function fakeBin(dir = root, sdk = 54) {
   return bin;
 }
 
-function fakeChild(pid = 999999) {
+function fakeChild(pid = IMPOSSIBLE_PID) {
   return makeChildProcess({ pid });
+}
+
+async function withoutProcessKill(fn: (byPid: Array<[number, string | number]>) => Promise<void>): Promise<void> {
+  const byPid: Array<[number, string | number]> = [];
+  const realKill = process.kill;
+  process.kill = ((pid: number, sig: string | number) => {
+    byPid.push([pid, sig]);
+    return true;
+  }) as typeof process.kill;
+  try {
+    await fn(byPid);
+  } finally {
+    process.kill = realKill;
+  }
 }
 
 describe('line parsing', () => {
@@ -280,9 +294,15 @@ describe('startExpoServer', () => {
     expect(exits.length).toBe(1);
   });
 
-  test('close signals the child PID, not the process group it shares with us', async () => {
+  test('close signals through the child handle, never by pid', async () => {
     fakeBin();
-    const child = fakeChild(4242);
+    const child = fakeChild();
+    const signals: Array<string | number> = [];
+    child.kill = ((sig: string | number) => {
+      signals.push(sig);
+      if (sig === 'SIGTERM') child.emit('exit', 0, 'SIGTERM');
+      return true;
+    }) as typeof child.kill;
     const handle = await startExpoServer({
       root,
       port: 8116,
@@ -290,24 +310,22 @@ describe('startExpoServer', () => {
       spawnFn: () => child,
       killTimeoutMs: 50,
     });
-    const signals: Array<[number, string | number]> = [];
-    const realKill = process.kill;
-    process.kill = ((pid: number, sig: string | number) => {
-      signals.push([pid, sig]);
-      if (sig === 'SIGTERM') child.emit('exit', 0, 'SIGTERM');
-      return true;
-    }) as typeof process.kill;
-    try {
+    await withoutProcessKill(async (byPid) => {
       await handle.close();
-    } finally {
-      process.kill = realKill;
-    }
-    expect(signals).toEqual([[4242, 'SIGTERM']]);
+      expect(byPid).toEqual([]);
+    });
+    expect(signals).toEqual(['SIGTERM']);
   });
 
   test('a child that ignores SIGTERM is escalated to SIGKILL rather than left holding the port', async () => {
     fakeBin();
-    const child = fakeChild(4243);
+    const child = fakeChild();
+    const signals: Array<string | number> = [];
+    child.kill = ((sig: string | number) => {
+      signals.push(sig);
+      if (sig === 'SIGKILL') child.emit('exit', null, 'SIGKILL');
+      return true;
+    }) as typeof child.kill;
     const handle = await startExpoServer({
       root,
       port: 8117,
@@ -315,41 +333,28 @@ describe('startExpoServer', () => {
       spawnFn: () => child,
       killTimeoutMs: 20,
     });
-    const signals: Array<[number, string | number]> = [];
-    const realKill = process.kill;
-    process.kill = ((pid: number, sig: string | number) => {
-      signals.push([pid, sig]);
-      if (sig === 'SIGKILL') child.emit('exit', null, 'SIGKILL');
-      return true;
-    }) as typeof process.kill;
-    try {
+    await withoutProcessKill(async (byPid) => {
       await handle.close();
-    } finally {
-      process.kill = realKill;
-    }
-    expect(signals).toEqual([
-      [4243, 'SIGTERM'],
-      [4243, 'SIGKILL'],
-    ]);
+      expect(byPid).toEqual([]);
+    });
+    expect(signals).toEqual(['SIGTERM', 'SIGKILL']);
   });
 
   test('closing an already dead child signals nothing', async () => {
     fakeBin();
-    const child = fakeChild(4244);
+    const child = fakeChild();
+    const signals: Array<string | number> = [];
+    child.kill = ((sig: string | number) => {
+      signals.push(sig);
+      return true;
+    }) as typeof child.kill;
     const handle = await startExpoServer({ root, port: 8118, logsDir: join(root, 'logs'), spawnFn: () => child });
     child.emit('exit', 0, null);
-    const realKill = process.kill;
-    let called = 0;
-    process.kill = (() => {
-      called += 1;
-      return true;
-    }) as typeof process.kill;
-    try {
+    await withoutProcessKill(async (byPid) => {
       await handle.close();
-    } finally {
-      process.kill = realKill;
-    }
-    expect(called).toBe(0);
+      expect(byPid).toEqual([]);
+    });
+    expect(signals).toEqual([]);
   });
 });
 

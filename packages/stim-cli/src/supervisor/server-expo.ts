@@ -358,14 +358,14 @@ export async function startExpoServer({
         child.once('exit', () => resolve());
       });
       try {
-        process.kill(child.pid, 'SIGTERM');
+        if (!child.kill('SIGTERM')) return;
       } catch {
         return;
       }
       await Promise.race([dead, delay(killTimeoutMs)]);
       if (!exited) {
         try {
-          process.kill(child.pid, 'SIGKILL');
+          child.kill('SIGKILL');
         } catch {}
         await Promise.race([dead, delay(killTimeoutMs)]);
       }
