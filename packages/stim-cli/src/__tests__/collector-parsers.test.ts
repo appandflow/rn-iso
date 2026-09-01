@@ -22,6 +22,13 @@ import {
   watchAppPid,
   NOISE_TAGS,
 } from '../collector/android.ts';
+import {
+  deviceConsoleArgs,
+  deviceConsoleLevel,
+  parseDeviceConsoleLine,
+  CONSOLE_ENV,
+  FATAL_MARKERS,
+} from '../collector/ios-device.ts';
 import { LEVELS, SOURCES } from '../ndjson.ts';
 
 function isNotNull<T>(value: T | null): value is T {
@@ -132,6 +139,129 @@ describe('ios: log stream ndjson', () => {
   test('appNameFromBundleId is the last segment, as a fallback for a caller with only a bundle id', () => {
     expect(appNameFromBundleId('com.example.MyApp')).toBe('MyApp');
     expect(appNameFromBundleId('MyApp')).toBe('MyApp');
+  });
+});
+
+describe('ios: the physical-device console', () => {
+  const capture = fixture('ios-device-console.txt');
+  const lines = capture.split('\n').filter((l) => l !== '');
+  const at = () => 1788271500000;
+  const parsed = lines.map((l) => parseDeviceConsoleLine(l, { now: at })).filter(isNotNull);
+
+  test('every line of the capture becomes a Contract-1 record', () => {
+    expect(parsed.length).toBe(lines.length);
+    for (const record of parsed) {
+      assert(record.src);
+      assert(record.level);
+      expect(record.src).toBe('device');
+      expect(SOURCES.includes(record.src)).toBeTruthy();
+      expect(LEVELS.includes(record.level)).toBeTruthy();
+      expect(typeof record.msg).toBe('string');
+      expect(Number.isFinite(record.ts)).toBeTruthy();
+      expect(record.raw).toBe(true);
+    }
+  });
+
+  test('a mirrored os_log line yields its own timestamp, process, pid and category', () => {
+    const record = parsed[1];
+    assert(record);
+    expect(record.msg).toBe('counter is 1');
+    expect(record.proc).toBe('StimFixture(431)');
+    expect(record.category).toBe('javascript');
+    expect(record.ts).toBe(Date.parse('2026-09-01 10:03:46.971897-0400'));
+  });
+
+  test('a logger with no subsystem mirrors without a category bracket, and none is invented', () => {
+    const record = parsed.find((r) => r.msg === 'a line logged with no subsystem');
+    assert(record);
+    expect('category' in record).toBeFalsy();
+    expect(record.proc).toBe('StimFixture(431)');
+  });
+
+  test('NSLog and os_log are indistinguishable in the mirror, and both parse', () => {
+    const record = parsed.find((r) => r.msg === 'an NSLog line');
+    assert(record);
+    expect(record.proc).toBe('StimFixture(431)');
+  });
+
+  test('a raw stdout or stderr write carries no prefix, so it is timestamped on receipt', () => {
+    const record = parsed.find((r) => r.msg === 'a raw stdout write');
+    assert(record);
+    expect(record.ts).toBe(at());
+    expect('proc' in record).toBeFalsy();
+    expect(record.level).toBe('info');
+  });
+
+  test('the second line of a multi-line message arrives unprefixed and is kept, not dropped', () => {
+    const index = parsed.findIndex((r) => r.msg === 'a message that');
+    expect(index).toBeGreaterThan(-1);
+    const next = parsed[index + 1];
+    assert(next);
+    expect(next.msg).toBe('spans two lines');
+    expect(next.ts).toBe(at());
+  });
+
+  test('the uncaught-exception line is the one severity the console can prove', () => {
+    const fatal = parsed.filter((r) => r.level === 'fatal');
+    expect(fatal.length).toBeGreaterThan(0);
+    const first = fatal[0];
+    assert(first);
+    expect(String(first.msg)).toMatch(/^\*\*\* Terminating app due to uncaught exception 'RCTFatalException/);
+    expect(first.proc).toBe('StimFixture(431)');
+    expect(parsed.some((r) => r.level === 'fatal' && String(r.msg).startsWith('libc++abi: terminating'))).toBeTruthy();
+  });
+
+  test('severity is otherwise info: the mirror renders Default, Error and Fault identically', () => {
+    const warning = parsed.find((r) => String(r.msg).startsWith('Warning: componentWillMount'));
+    assert(warning);
+    expect(warning.level).toBe('info');
+  });
+
+  test("devicectl's own refusal is recorded at error rather than as app output", () => {
+    const record = parseDeviceConsoleLine(
+      'ERROR: The specified device was not found. (Name: 00008030-DEAD) (com.apple.dt.CoreDeviceError error 1000 (0x3E8))',
+      { now: at },
+    );
+    assert(record);
+    expect(record.level).toBe('error');
+  });
+
+  test('blank lines and non-strings are not records', () => {
+    expect(parseDeviceConsoleLine('')).toBe(null);
+    expect(parseDeviceConsoleLine('   ')).toBe(null);
+    expect(parseDeviceConsoleLine(null as unknown as string)).toBe(null);
+    expect(parseDeviceConsoleLine('2026-09-01 10:03:46.971266-0400 App[1:2] ', { now: at })).toBe(null);
+  });
+
+  test('every fatal marker is matched by substring, wherever it sits in the line', () => {
+    for (const marker of FATAL_MARKERS) {
+      expect(deviceConsoleLevel(`prefix ${marker} suffix`)).toBe('fatal');
+    }
+    expect(deviceConsoleLevel('nothing alarming')).toBe('info');
+    expect(deviceConsoleLevel(42)).toBe('info');
+  });
+
+  test('deviceConsoleArgs is the exact argv, and it turns the os_log mirror on', () => {
+    expect(deviceConsoleArgs({ udid: 'U1', bundleId: 'com.example.app' })).toEqual([
+      'devicectl',
+      'device',
+      'process',
+      'launch',
+      '--quiet',
+      '--device',
+      'U1',
+      '--console',
+      '--terminate-existing',
+      '--environment-variables',
+      '{"OS_ACTIVITY_DT_MODE":"enable"}',
+      'com.example.app',
+    ]);
+    expect(CONSOLE_ENV['OS_ACTIVITY_DT_MODE']).toBe('enable');
+  });
+
+  test('a dev-client deep link travels as --payload-url, before the bundle id', () => {
+    const args = deviceConsoleArgs({ udid: 'U1', bundleId: 'com.example.app', payloadUrl: 'stim://x?url=y' });
+    expect(args.slice(-3)).toEqual(['--payload-url', 'stim://x?url=y', 'com.example.app']);
   });
 });
 

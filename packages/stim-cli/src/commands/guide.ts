@@ -365,7 +365,11 @@ FLAGS
   unhandled NAVIGATE names a route your app has, and is still an error.
   The app's own crashes reach client and metro either way. Opt back in with
   \`--source device\` or \`--source all\`; a plain \`logs\` with no --errors
-  has always shown everything.
+  has always shown everything. ON A PHYSICAL IPHONE opting back in buys less
+  than it does on a simulator: the device console carries no severity, so
+  \`--source device --errors\` there reports crash and refusal lines only,
+  never a level. Read a phone's device records with a plain \`logs
+  --source device\`.
 
   THE WINDOW. A marker closes the window for the sources it can speak for:
     a BUNDLE marker (src metro: bundle_build_done / bundle_build_failed, or
@@ -420,6 +424,40 @@ WHAT WRITES WHAT
                        the app's process also logs. The proven noise sources
                        are recorded at info rather than error; the rest is why
                        --errors leaves this source out unless asked.
+
+  ON A PHYSICAL IPHONE THE SAME FILE CARRIES LESS, and the difference is not
+  cosmetic. \`simctl spawn\` is simulator-only and there is no devicectl
+  console subcommand, so a device run reads
+  \`devicectl device process launch --console\`, which connects the app's own
+  stdout and stderr and nothing else. Stim launches it with
+  OS_ACTIVITY_DT_MODE, which makes os_log mirror itself onto that stderr --
+  without it React Native's own logging, which goes through os_log, would not
+  appear at all. What the mirror carries, and what it drops:
+
+    ts        KEPT   the device's own timestamp, off the mirrored line
+    proc      KEPT   as name(pid), from the mirrored line, not a path
+    category  KEPT   only when the logger has a subsystem; \`javascript\` and
+                     \`native\` for React Native's own log calls
+    msg       KEPT   a multi-line message arrives as separate records
+    subsystem LOST   the mirror never prints it
+    level     LOST   Default, Error and Fault all render identically, and
+                     Debug is not mirrored at all
+
+  So every device record from a phone is \`raw: true\` and \`info\`, except
+  the lines that name their own severity: an uncaught ObjC exception, a
+  libc++abi termination, an assertion failure, a Swift fatal error, and
+  devicectl's own \`ERROR:\`. Severity cannot be recovered, so it is not
+  guessed. The NOISE_RULES that demote Apple's framework chatter key on
+  subsystem and cannot fire either -- but they have less to do, because
+  --console carries only the app's streams rather than every framework
+  logging inside its process.
+
+  \`log collect --device-udid\` WOULD carry all six fields, in the same NDJSON
+  the simulator path parses. It is not used because it requires root
+  (\`log: Must be root to collect logs from attached device\`) and produces an
+  archive rather than a stream. Streaming with full fidelity needs
+  libimobiledevice or pymobiledevice3, which are third-party installs Stim
+  does not require. See appandflow/stim#179.
   build-ios.ndjson     the xcodebuild / gradle transcript at level debug, the
   build-android.ndjson extracted diagnostics at level error, and the launch as
                        a marker record. One RUN's worth: each build starts the
@@ -1270,6 +1308,20 @@ THE OPTION SURFACE, IN FULL
   for a device and to warm the device cache; use \`stim ios\` with no --device
   for a run that ends with an app on screen.
 
+  THE DEVICE LOG COLLECTOR IS BUILT BUT NOT YET STARTED, for the same reason:
+  on hardware the collector IS the launch. \`devicectl\` connects an app's
+  streams only when it is the process that starts the app, so the collector
+  runs \`devicectl device process launch --console\` itself rather than
+  attaching after the fact the way the simulator collector does. It is spawned
+  with the launch that #178 has still to wire. Once running it is the same
+  process as every other collector -- one per platform per workspace, titled
+  with its --root, killed and replaced on the next \`ios\` run whose pid still
+  proves it is this workspace's, and reaped by \`stop\`. Unplugging the phone
+  ends devicectl, which ends the collector: it writes collector_stopped,
+  removes its own registration and exits, leaving nothing for \`gc\` to find,
+  because a phone is never recorded as a device. See \`guide logs\` for what
+  the device stream can and cannot carry, and appandflow/stim#179.
+
   A VARIANT WHOSE NAME ENDS IN "Release" IS A RELEASE BUILD (\`release\`,
   \`productionRelease\`), and that is the whole opt-in -- there is no second
   flag. It is the Android half of \`ios --configuration Release\` and behaves
@@ -1417,6 +1469,18 @@ WHAT ELSE STOP REAPS
   so \`stop\` is what stands between a teardown and a log stream that outlives
   the device it was reading. A fresh \`ios\` / \`android\` run also kills the
   previous collector for that platform before starting its own.
+
+  A PHYSICAL IPHONE'S COLLECTOR IS THE SAME PROCESS with one difference: on
+  hardware the collector IS the launch. \`devicectl\` connects an app's
+  streams only when it is the process that starts the app, so the collector
+  runs \`devicectl device process launch --console\` itself rather than
+  attaching after the fact. It registers under the same \`ios\` key, carries
+  the same --root in its title, is proven and replaced by the same pid rules,
+  and is reaped by the same \`stop\`. Unplugging the phone ends devicectl,
+  which ends the collector: it writes collector_stopped, unregisters itself
+  and exits, and \`gc\` has nothing to find, because a phone is never recorded
+  as a device. It is not started yet -- the launch it would ride on is
+  appandflow/stim#178. See \`guide logs\` for what it can and cannot carry.
 
   Before signalling a recorded collector pid, \`stop\`, \`gc --delete\`,
   \`worktree remove\`, and a fresh \`ios\` / \`android\` run each read that

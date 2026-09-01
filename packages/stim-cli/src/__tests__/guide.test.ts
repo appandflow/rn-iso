@@ -3,6 +3,7 @@ import { readdirSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'node:url';
 import { topicNames, renderTopic, renderIndex } from '../commands/guide.ts';
 import { ANDROID_AVD_CONFIG_HELP } from '../settings.ts';
+import { CONSOLE_ENV, deviceConsoleArgs } from '../collector/ios-device.ts';
 
 test('every advertised topic renders non-empty content', () => {
   for (const name of topicNames()) {
@@ -289,6 +290,37 @@ test('no topic teaches a command this binary does not have', () => {
   }
   expect(renderTopic('errors')).not.toMatch(/Installed Stim skill/);
   expect(renderTopic('settings')).toMatch(/no `stim config` command/);
+});
+
+test('the guide states the physical-iPhone device-log losses, and states them as losses', () => {
+  const logs = renderTopic('logs');
+  const cleanup = renderTopic('cleanup');
+  assert(logs);
+  assert(cleanup);
+
+  expect(logs).toContain('devicectl device process launch --console');
+  for (const [key, value] of Object.entries(CONSOLE_ENV)) {
+    expect(logs).toContain(key);
+    expect(deviceConsoleArgs({ udid: 'U', bundleId: 'b' }).join(' ')).toContain(`"${key}":"${value}"`);
+  }
+  expect(logs).toMatch(/subsystem LOST/);
+  expect(logs).toMatch(/level {5}LOST/);
+  expect(logs).toMatch(/category {2}KEPT/);
+  expect(logs).toMatch(/Must be root to collect logs from attached device/);
+  expect(logs).toMatch(/libimobiledevice or pymobiledevice3[\s\S]*does not require/);
+  expect(logs).toMatch(/--source device --errors[\s\S]*crash and refusal lines only/);
+  expect(logs).toContain('appandflow/stim#179');
+
+  expect(cleanup).toMatch(/on\s+hardware the collector IS the launch/);
+  expect(cleanup).toMatch(/proven and replaced by the same pid rules/);
+  expect(cleanup).toMatch(/Unplugging the phone[\s\S]*collector_stopped/);
+  expect(cleanup).toContain('appandflow/stim#178');
+
+  const lifecycle = renderTopic('lifecycle');
+  assert(lifecycle);
+  expect(lifecycle).toMatch(/THE DEVICE LOG COLLECTOR IS BUILT BUT NOT YET STARTED/);
+  expect(lifecycle).toMatch(/the collector IS the launch/);
+  expect(lifecycle).toContain('appandflow/stim#179');
 });
 
 test('the errors topic documents every code the build commands and the iOS signing gate can emit', () => {
