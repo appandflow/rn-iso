@@ -1890,6 +1890,7 @@ describe('iosFacts', () => {
       waitedForBuild: null,
       appPath: '/a/b.app',
       bundleId: 'com.x',
+      installSkipped: false,
       launched: true,
       metroPort: 8082,
       logs: { dir: '/w/.stim/logs' },
@@ -3072,4 +3073,25 @@ test('a local hit leaves no provider download directory behind', async () => {
 
   expect(exitCode).toBe(null);
   expect(existsSync(join(workspaceDir(root), 'cache-provider'))).toBe(false);
+});
+
+describe('an app the simulator already holds', () => {
+  test('the skip is named on the install line and carried in the facts', async () => {
+    reserve();
+    const { logs, stderr } = await run(
+      { json: true },
+      { installIosApp: (args) => ({ ok: true, appPath: args.appPath, skipped: true }) },
+    );
+
+    expect(stderr).toMatch(/skipped; .*already holds this app/);
+    expect(parseFirst(logs).installSkipped).toBe(true);
+  });
+
+  test('an install that really ran reports installSkipped false', async () => {
+    reserve();
+    const { logs, stderr } = await run({ json: true });
+
+    expect(stderr).not.toMatch(/skipped/);
+    expect(parseFirst(logs).installSkipped).toBe(false);
+  });
 });

@@ -979,6 +979,7 @@ describe('a cache hit', () => {
       waitedForBuild: null,
       appPath: '/cache/app-debug.apk',
       bundleId: 'com.example.app',
+      installSkipped: false,
       launched: true,
       debugHttpHost: '10.0.2.2:8082',
       debugHttpHostNote: null,
@@ -2123,6 +2124,7 @@ describe('the pure parts', () => {
       waitedForBuild: null,
       appPath: null,
       bundleId: null,
+      installSkipped: false,
       launched: false,
       debugHttpHost: null,
       debugHttpHostNote: null,
@@ -3626,4 +3628,29 @@ test('the wired line reports the reverses that were actually registered', async 
   const wired = labelled(h.stderr, 'wired').join(' ');
   expect(wired).toContain('tcp:8082->tcp:8082');
   expect(wired).not.toContain('tcp:8081');
+});
+
+describe('an APK the device already holds', () => {
+  test('the skip is named on the install line and carried in the facts', async () => {
+    const h = harness({
+      resolveCached: () => '/cache/app-debug.apk',
+      build: never('the build'),
+      install: (args: InstallArgs = {}) => ({ ok: true, apkPath: args.apkPath ?? '', skipped: true }),
+    });
+    const result = await h.run();
+
+    expect(result.ok).toBe(true);
+    expect(labelled(h.stderr, 'install')[0]).toMatch(/skipped; emulator-5584 already holds this APK/);
+    assert(result.facts);
+    expect(result.facts.installSkipped).toBe(true);
+  });
+
+  test('an install that really ran reports installSkipped false', async () => {
+    const h = harness({ resolveCached: () => '/cache/app-debug.apk', build: never('the build') });
+    const result = await h.run();
+
+    assert(result.facts);
+    expect(result.facts.installSkipped).toBe(false);
+    expect(labelled(h.stderr, 'install')[0]).not.toMatch(/skipped/);
+  });
 });

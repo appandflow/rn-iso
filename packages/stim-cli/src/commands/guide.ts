@@ -78,6 +78,9 @@ other line goes to stderr, so it is always safe to pipe.
                   cheaper than a second build). Both commands carry it
   appPath         the .app that was installed
   bundleId        the iOS bundle id that was launched
+  installSkipped  true when the artifact was ALREADY on the device byte for
+                  byte, so nothing was installed and the run went straight to
+                  launch (see \`guide lifecycle\`). false means an install ran
   launched        true, "bundling", or "unverified". THE THREE ARE DIFFERENT
                   FACTS and only the last one is a problem.
                     true         Metro finished the bundle, then the app stayed
@@ -128,7 +131,7 @@ other line goes to stderr, so it is always safe to pipe.
                   \`emulator -avd\`, avdmanager, or a device tool
   deviceName      the same name, matching the iOS payload's field
   fingerprint / cacheKey / cacheHit / cacheSkipped / waitedForBuild /
-  appPath / launched
+  appPath / installSkipped / launched
                   as above -- cacheKey keys on the VARIANT here
                   (<fingerprint>-productionrelease-sim) the way the iOS one
                   keys on the configuration
@@ -952,6 +955,25 @@ and produces an app that cannot load a bundle.
 
 Repeat step 3 whenever a NATIVE input changes. A JS-only edit needs nothing --
 that is what Fast Refresh over the running dev server is for.
+
+AN ARTIFACT THE DEVICE ALREADY HOLDS IS NOT INSTALLED AGAIN
+  Both platforms store the artifact verbatim, so its hash is its identity.
+  Before installing, Stim hashes the artifact it is about to install and the
+  one the device already has -- \`pm path\` then \`sha256sum\` on Android, the
+  \`simctl get_app_container\` bundle on iOS. Byte-identical means the install
+  is skipped and the run goes straight to launch, which is under a second
+  instead of the ~43s a 400MB APK costs over USB.
+
+    install     skipped; emulator-5584 already holds this APK (0.4s)
+
+  The skip needs PROOF. A package that is not installed, a split install, an
+  image without \`sha256sum\`, and any adb or simctl failure all read as
+  "cannot determine", and the run installs exactly as it always did. A release
+  run swaps this workspace's JS into a COPY of the artifact, which is a
+  different artifact and is therefore always installed.
+
+  \`--json\` carries installSkipped so a caller can tell a skipped run from an
+  installed one.
 
 OPTIONAL SIMSLIM PROFILE
   Install SimSlim once on each Mac:

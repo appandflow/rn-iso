@@ -1,6 +1,6 @@
 import assert from 'node:assert';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Executor } from '../exec.ts';
@@ -41,6 +41,7 @@ import {
   reverseMetroPorts,
   writeDebugHttpHost,
 } from '../engine/app-install.ts';
+import { hashFile } from '../engine/installed-artifact.ts';
 
 type LaunchResult = {
   ok?: boolean;
@@ -144,6 +145,7 @@ describe('ios', () => {
       ),
     ).toEqual({ ok: true, appPath });
     expect(exec.calls).toEqual([
+      ['xcrun', 'simctl', 'get_app_container', 'U1', 'com.example.app'],
       ['xcrun', 'simctl', 'install', 'U1', appPath],
       [
         'xcrun',
@@ -1007,6 +1009,7 @@ describe('installAndroidApp: the uninstall-and-retry, exactly once', () => {
     expect(result.note).toMatch(/different signer/);
     expect(result.note).toMatch(/data went with it/);
     expect(calls).toEqual([
+      ['adb', '-s', 'emulator-5584', 'shell', 'pm', 'path', 'com.example.app'],
       ['adb', '-s', 'emulator-5584', 'install', '-r', apkPath],
       ['adb', '-s', 'emulator-5584', 'uninstall', 'com.example.app'],
       ['adb', '-s', 'emulator-5584', 'install', '-r', apkPath],
@@ -1735,5 +1738,95 @@ describe('the 8081 adb reverse is a fallback, not a default', () => {
     const { calls, exec } = execRecording(true);
     launchAndroidApp({ serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8081 }, { exec });
     expect(reverses(calls)).toEqual(['tcp:8081 tcp:8081']);
+  });
+});
+
+describe('skipping an install the device already holds', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'stim-identical-'));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function localApk(body = 'apk bytes') {
+    const path = join(dir, 'app-debug.apk');
+    writeFileSync(path, body);
+    return path;
+  }
+
+  function localApp(name: string, body: string) {
+    const path = join(dir, name);
+    mkdirSync(path, { recursive: true });
+    writeFileSync(join(path, 'Fixture'), body);
+    return path;
+  }
+
+  test('an identical APK is not installed again, and says so', () => {
+    const apkPath = localApk();
+    const exec = recordingExec({
+      outputs: {
+        'pm path': 'package:/data/app/a/base.apk\n',
+        sha256sum: `${hashFile(apkPath)}  /data/app/a/base.apk\n`,
+      },
+    });
+    const result = installAndroidApp({ serial: 'emulator-5584', apkPath, packageName: 'com.example.app' }, { exec });
+    expect(result).toEqual({ ok: true, apkPath, skipped: true });
+    expect(exec.calls.some((c) => c.includes('install'))).toBe(false);
+  });
+
+  test('a RELEASE run installs the swapped APK: fresh JS makes it a different artifact', () => {
+    const cachedApk = localApk('apk with the builders js');
+    const swappedApk = join(dir, 'apk-swap', 'app-production-release.apk');
+    mkdirSync(join(dir, 'apk-swap'), { recursive: true });
+    writeFileSync(swappedApk, 'apk with this workspaces js');
+    const exec = recordingExec({
+      outputs: {
+        'pm path': 'package:/data/app/a/base.apk\n',
+        sha256sum: `${hashFile(cachedApk)}  /data/app/a/base.apk\n`,
+      },
+    });
+    const result = installAndroidApp(
+      { serial: 'emulator-5584', apkPath: swappedApk, packageName: 'com.example.app', allowUninstall: true },
+      { exec },
+    );
+    expect(result).toEqual({ ok: true, apkPath: swappedApk });
+    expect(exec.calls).toContainEqual(['adb', '-s', 'emulator-5584', 'install', '-r', swappedApk]);
+  });
+
+  test('a device without sha256sum installs exactly as before', () => {
+    const apkPath = localApk();
+    const exec = recordingExec({
+      outputs: { 'pm path': 'package:/data/app/a/base.apk\n', sha256sum: 'sha256sum: not found' },
+    });
+    const result = installAndroidApp({ serial: 'emulator-5584', apkPath, packageName: 'com.example.app' }, { exec });
+    expect(result).toEqual({ ok: true, apkPath });
+    expect(exec.calls).toContainEqual(['adb', '-s', 'emulator-5584', 'install', '-r', apkPath]);
+  });
+
+  test('an identical .app is not installed again, but the dev client is still prepared', () => {
+    const installed = localApp('installed.app', 'macho');
+    const appPath = localApp('built.app', 'macho');
+    const exec = recordingExec({ outputs: { get_app_container: `${installed}\n` } });
+    const result = installIosApp(
+      { udid: 'U1', appPath, bundleId: 'com.example.app', devClientScheme: 'myapp' },
+      { exec },
+    );
+    expect(result).toEqual({ ok: true, appPath, skipped: true });
+    expect(exec.calls.some((c) => c.includes('install'))).toBe(false);
+    expect(exec.calls.some((c) => c.includes('EXDevMenuIsOnboardingFinished'))).toBe(true);
+    expect(exec.calls.some((c) => c.includes('com.apple.CoreSimulator.CoreSimulatorBridge-->myapp'))).toBe(true);
+  });
+
+  test('a .app whose JS was swapped is installed: the container holds the other one', () => {
+    const installed = localApp('installed.app', 'macho');
+    const appPath = localApp('js-swap.app', 'macho with this workspaces js');
+    const exec = recordingExec({ outputs: { get_app_container: `${installed}\n` } });
+    const result = installIosApp({ udid: 'U1', appPath, bundleId: 'com.example.app' }, { exec });
+    expect(result).toEqual({ ok: true, appPath });
+    expect(exec.calls).toContainEqual(['xcrun', 'simctl', 'install', 'U1', appPath]);
   });
 });

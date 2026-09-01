@@ -114,6 +114,7 @@ export interface IosFacts {
   waitedForBuild: { pid: number | null; ms: number } | null;
   appPath?: string | null;
   bundleId?: string | null;
+  installSkipped: boolean;
   launched: LaunchStatus;
   metroPort?: number | null;
   logs: LogsInfo;
@@ -135,6 +136,7 @@ export interface AndroidFacts {
   waitedForBuild: { pid: number | null; ms: number } | null;
   appPath: string | null;
   bundleId: string | null;
+  installSkipped: boolean;
   launched: LaunchStatus;
   debugHttpHost: string | null;
   debugHttpHostNote: string | null;

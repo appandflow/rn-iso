@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
 import { parseNdjsonText, type NdjsonRecord } from '../ndjson.ts';
+import { deviceHoldsApk, deviceHoldsBundle } from './installed-artifact.ts';
 
 export const INSTALL_ERROR = 'STIM_INSTALL_FAILED';
 export const LAUNCH_ERROR = 'STIM_LAUNCH_FAILED';
@@ -20,6 +21,7 @@ interface ExecOpt {
 export type IosInstallResult = {
   ok?: boolean;
   appPath?: string;
+  skipped?: boolean;
   failed?: boolean;
   code?: string;
   reason?: string;
@@ -39,6 +41,7 @@ export type IosLaunchResult = {
 export type AndroidInstallResult = {
   ok?: boolean;
   apkPath?: string;
+  skipped?: boolean;
   uninstalled?: boolean;
   note?: string;
   failed?: boolean;
@@ -70,10 +73,13 @@ export function installIosApp(
   { exec = null }: ExecOpt = {},
 ): IosInstallResult {
   const e = exec || getExecutor();
-  try {
-    e.runFile('xcrun', ['simctl', 'install', udid, appPath]);
-  } catch (err) {
-    return { failed: true, code: INSTALL_ERROR, reason: `simctl install failed for ${appPath}: ${describe(err)}` };
+  const skipped = bundleId ? deviceHoldsBundle({ udid, bundleId, appPath }, { exec: e }) : false;
+  if (!skipped) {
+    try {
+      e.runFile('xcrun', ['simctl', 'install', udid, appPath]);
+    } catch (err) {
+      return { failed: true, code: INSTALL_ERROR, reason: `simctl install failed for ${appPath}: ${describe(err)}` };
+    }
   }
   if (bundleId && devClientScheme) {
     try {
@@ -120,7 +126,7 @@ export function installIosApp(
       };
     }
   }
-  return { ok: true, appPath };
+  return skipped ? { ok: true, appPath, skipped: true } : { ok: true, appPath };
 }
 
 export function jsLocationValue(metroPort: number | string): string {
@@ -238,6 +244,9 @@ export function installAndroidApp(
   { exec = null }: ExecOpt = {},
 ): AndroidInstallResult {
   const e = exec || getExecutor();
+  if (packageName && deviceHoldsApk({ serial, packageName, apkPath }, { exec: e })) {
+    return { ok: true, apkPath, skipped: true };
+  }
   const install = () => {
     e.runFile('adb', ['-s', serial, 'install', '-r', apkPath]);
   };
