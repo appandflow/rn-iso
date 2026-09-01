@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { parseNdjsonText } from '../ndjson.ts';
 import { workspaceLogsDir, workspaceStateFile } from '../paths.ts';
 import { parseArgs, readCollectors, registerCollector, runCollector, unregisterCollector } from '../collector/run.ts';
+import { verifyCollectorOwnership } from '../collector/ownership.ts';
 import { writeWorkspaceState } from '../supervisor/run.ts';
 import { makeChildProcess } from './_factories.ts';
 
@@ -107,8 +108,51 @@ describe('parseArgs', () => {
         appName: 'MyApp',
         serial: null,
         packageName: null,
+        physical: false,
+        payloadUrl: null,
       },
     );
+  });
+
+  test('--physical selects the devicectl console; it needs the bundle id, not the app name', () => {
+    expect(
+      parseArgs([
+        '--platform',
+        'ios',
+        '--root',
+        '/abs',
+        '--udid',
+        'U1',
+        '--bundle',
+        'com.example.MyApp',
+        '--physical',
+        '--payload-url',
+        'stim://x',
+      ]),
+    ).toEqual({
+      platform: 'ios',
+      root: '/abs',
+      udid: 'U1',
+      bundleId: 'com.example.MyApp',
+      appName: 'MyApp',
+      serial: null,
+      packageName: null,
+      physical: true,
+      payloadUrl: 'stim://x',
+    });
+  });
+
+  test('--physical is refused on android, and --payload-url without it', () => {
+    expect(
+      parseArgs(['--platform', 'android', '--root', '/abs', '--serial', 'S', '--package', 'com.x', '--physical']).error,
+    ).toMatch(/--physical is an iOS option/);
+    expect(
+      parseArgs(['--platform', 'ios', '--root', '/abs', '--udid', 'U1', '--bundle', 'com.x', '--payload-url', 'u'])
+        .error,
+    ).toMatch(/--payload-url only applies to --physical/);
+    expect(
+      parseArgs(['--platform', 'ios', '--root', '/abs', '--udid', 'U1', '--bundle', 'com.x', '--payload-url']).error,
+    ).toMatch(/--payload-url needs a URL/);
   });
 
   test('an explicit --app-name wins, because the product name is not always the last bundle segment', () => {
@@ -289,6 +333,149 @@ describe('the ios collector, spawned for real against a fake xcrun', () => {
     assert(stopped);
     expect(stopped.msg).toMatch(/device log stream ended/);
     expect('collectors' in (state() || {})).toBe(false);
+  });
+});
+
+describe('the ios device collector, spawned for real against a fake devicectl', () => {
+  const consoleLines = () =>
+    readFileSync(fileURLToPath(new URL('./fixtures/ios-device-console.txt', import.meta.url)), 'utf-8')
+      .split('\n')
+      .filter((l) => l !== '');
+
+  test('launches the app itself, parses BOTH streams, and clears the registration on SIGTERM', async () => {
+    const expected =
+      'devicectl device process launch --quiet --device UDID-1 --console --terminate-existing ' +
+      '--environment-variables {"OS_ACTIVITY_DT_MODE":"enable"} --payload-url stim://open com.example.MyApp';
+    writeShim(
+      'xcrun',
+      [
+        `case "$*" in`,
+        `  '${expected}') ;;`,
+        `  *) echo "unexpected argv: $*" >&2; exit 9 ;;`,
+        `esac`,
+        `echo 'a raw stdout write'`,
+        ...consoleLines().map((l) => `cat >&2 <<'LINE'\n${l}\nLINE`),
+        'exec sleep 30',
+      ].join('\n'),
+    );
+
+    const child = spawnCollector([
+      '--platform',
+      'ios',
+      '--root',
+      root,
+      '--udid',
+      'UDID-1',
+      '--bundle',
+      'com.example.MyApp',
+      '--physical',
+      '--payload-url',
+      'stim://open',
+    ]);
+
+    const registered = await until(() => readCollectors(root).ios as CollectorEntry, {
+      label: 'the device collector registration',
+    });
+    expect(registered.pid).toBe(child.pid);
+
+    const fatals = await until(
+      () => {
+        const r = deviceLog().filter((x) => x.level === 'fatal');
+        return r.length ? r : null;
+      },
+      { label: 'the crash record from the app stderr' },
+    );
+    const crash = fatals[0];
+    assert(crash);
+    expect(crash.msg).toMatch(/Terminating app due to uncaught exception/);
+    expect(crash.proc).toBe('StimFixture(431)');
+    expect(crash.platform).toBe('ios');
+    expect(crash.raw).toBe(true);
+
+    const log = deviceLog();
+    const started = log[0];
+    assert(started);
+    expect(started.event).toBe('collector_started');
+    expect(started.msg).toMatch(/launching com\.example\.MyApp on device UDID-1/);
+    expect(started.msg).toMatch(/subsystem, category and severity are not carried on hardware/);
+    expect(log.some((r) => r.msg === 'a raw stdout write')).toBeTruthy();
+    expect(log.some((r) => r.category === 'javascript' && r.msg === 'counter is 1')).toBeTruthy();
+    expect(log.some((r) => r.event === 'collector_stderr')).toBe(false);
+
+    expect(verifyCollectorOwnership({ pid: childPid(child), platform: 'ios', root })).toEqual({ status: 'ours' });
+
+    process.kill(childPid(child), 'SIGTERM');
+    expect(await exited(child)).toEqual({ code: 0, signal: null });
+    expect('collectors' in (state() || {})).toBe(false);
+    expect(deviceLog().some((r) => r.event === 'collector_empty')).toBe(false);
+  });
+
+  test('a devicectl refusal is a failure, not a silent empty section', async () => {
+    writeShim('xcrun', ['echo "ERROR: The specified device was not found. (Name: UDID-1)" >&2', 'exit 1'].join('\n'));
+    const child = spawnCollector([
+      '--platform',
+      'ios',
+      '--root',
+      root,
+      '--udid',
+      'UDID-1',
+      '--bundle',
+      'com.example.MyApp',
+      '--physical',
+    ]);
+    expect((await exited(child)).code).toBe(1);
+    const log = deviceLog();
+    expect(
+      log.some((r) => r.level === 'error' && String(r.msg).startsWith('ERROR: The specified device')),
+    ).toBeTruthy();
+    const empty = log.find((r) => r.event === 'collector_empty');
+    expect(empty).toBeFalsy();
+    const failed = log.find((r) => r.event === 'collector_failed');
+    assert(failed);
+    expect(failed.level).toBe('error');
+    expect(failed.msg).toMatch(/the devicectl console ended with exit code 1/);
+    expect('collectors' in (state() || {})).toBe(false);
+  });
+
+  test('a stop signal before any output is a stop, not an empty capture', async () => {
+    writeShim('xcrun', 'exec sleep 30\n');
+    const child = spawnCollector([
+      '--platform',
+      'ios',
+      '--root',
+      root,
+      '--udid',
+      'UDID-1',
+      '--bundle',
+      'com.example.MyApp',
+      '--physical',
+    ]);
+    await until(() => readCollectors(root).ios as CollectorEntry, { label: 'the device collector registration' });
+    process.kill(childPid(child), 'SIGTERM');
+    expect(await exited(child)).toEqual({ code: 0, signal: null });
+    expect(deviceLog().some((r) => r.event === 'collector_empty')).toBe(false);
+    expect(deviceLog().some((r) => r.event === 'collector_stopped')).toBeTruthy();
+  });
+
+  test('a clean launch that produced no console output says so rather than reading as a pass', async () => {
+    writeShim('xcrun', 'exit 0\n');
+    const child = spawnCollector([
+      '--platform',
+      'ios',
+      '--root',
+      root,
+      '--udid',
+      'UDID-1',
+      '--bundle',
+      'com.example.MyApp',
+      '--physical',
+    ]);
+    expect((await exited(child)).code).toBe(0);
+    const empty = deviceLog().find((r) => r.event === 'collector_empty');
+    assert(empty);
+    expect(empty.level).toBe('warn');
+    expect(empty.msg).toMatch(/devicectl only connects the app's streams when it starts the app/);
+    expect(deviceLog().some((r) => r.event === 'collector_stopped')).toBeTruthy();
   });
 });
 

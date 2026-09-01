@@ -1,0 +1,30 @@
+2026-09-01 10:03:46.971266-0400 StimFixture[431:1049622] [native] Running application StimFixture ({ initialProps: {}, rootTag: 1 })
+2026-09-01 10:03:46.971897-0400 StimFixture[431:1049622] [javascript] counter is 1
+2026-09-01 10:03:46.971915-0400 StimFixture[431:1049622] [javascript] Warning: componentWillMount has been renamed
+2026-09-01 10:03:46.971926-0400 StimFixture[431:1049622] a line logged with no subsystem
+2026-09-01 10:03:46.971949-0400 StimFixture[431:1049622] an NSLog line
+a raw stdout write
+a raw stderr write
+2026-09-01 10:03:46.971992-0400 StimFixture[431:1049622] [javascript] a message that
+spans two lines
+2026-09-01 10:03:46.972519-0400 StimFixture[431:1049622] *** Terminating app due to uncaught exception 'RCTFatalException: Unhandled JS Exception', reason: 'undefined is not a function'
+*** First throw call stack:
+(
+	0   CoreFoundation                      0x00000001862d11c0 __exceptionPreprocess + 176
+	1   libobjc.A.dylib                     0x0000000185d5a91c objc_exception_throw + 88
+	2   CoreFoundation                      0x00000001862d10b0 +[NSException exceptionWithName:reason:userInfo:] + 0
+	3   StimFixture                            0x0000000100268b28 main + 912
+	4   dyld                                0x0000000185de7e00 start + 6992
+)
+*** Terminating app due to uncaught exception 'RCTFatalException: Unhandled JS Exception', reason: 'undefined is not a function'
+*** First throw call stack:
+(
+	0   CoreFoundation                      0x00000001862d11c0 __exceptionPreprocess + 176
+	1   libobjc.A.dylib                     0x0000000185d5a91c objc_exception_throw + 88
+	2   CoreFoundation                      0x00000001862d10b0 +[NSException exceptionWithName:reason:userInfo:] + 0
+	3   StimFixture                            0x0000000100268b28 main + 912
+	4   dyld                                0x0000000185de7e00 start + 6992
+)
+libc++abi: terminating due to uncaught exception of type NSException
+2026-09-01 10:24:21.163944-0400 My App[512:1049623] [javascript] a product name with a space still mirrors
+2026-09-01 10:24:21.164158-0400 My App[512:1049623] and so does NSLog from it

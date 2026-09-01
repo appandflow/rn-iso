@@ -6,6 +6,7 @@ import type { Executor } from '../exec.ts';
 import { type NdjsonWriter, createNdjsonWriter } from '../ndjson.ts';
 import { workspaceLogsDir } from '../paths.ts';
 import { createLineReader } from '../process-output.ts';
+import { parseDeviceConsoleLine, startIosDeviceConsole } from './ios-device.ts';
 import { appNameFromBundleId, parseLogStreamLine, startIosLogStream } from './ios.ts';
 import { collectorProcessTitle } from './ownership.ts';
 import {
@@ -27,6 +28,8 @@ export interface ParsedCollectorArgs {
   appName?: string;
   serial?: string | null;
   packageName?: string | null;
+  physical?: boolean;
+  payloadUrl?: string | null;
   error?: string;
 }
 
@@ -38,6 +41,8 @@ export function parseArgs(argv: string[]): ParsedCollectorArgs {
   let appName: string | undefined;
   let serial: string | null = null;
   let packageName: string | null = null;
+  let physical = false;
+  let payloadUrl: string | null = null;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--platform') {
@@ -68,6 +73,15 @@ export function parseArgs(argv: string[]): ParsedCollectorArgs {
       packageName = argv[++i] ?? null;
       continue;
     }
+    if (arg === '--physical') {
+      physical = true;
+      continue;
+    }
+    if (arg === '--payload-url') {
+      payloadUrl = argv[++i] ?? null;
+      if (!payloadUrl) return { error: '--payload-url needs a URL.' };
+      continue;
+    }
     return { error: `Unknown collector argument "${arg}".` };
   }
   if (!platform || !PLATFORMS.includes(platform)) {
@@ -81,10 +95,14 @@ export function parseArgs(argv: string[]): ParsedCollectorArgs {
     if (!bundleId) return { error: 'Missing --bundle (required for --platform ios).' };
     if (!appName) appName = appNameFromBundleId(bundleId);
   } else {
+    if (physical) return { error: '--physical is an iOS option; --platform android reads a serial.' };
     if (!serial) return { error: 'Missing --serial (required for --platform android).' };
     if (!packageName) return { error: 'Missing --package (required for --platform android).' };
   }
-  return { platform, root, udid, bundleId, appName, serial, packageName };
+  if (payloadUrl && !physical) {
+    return { error: '--payload-url only applies to --physical, which launches the app itself.' };
+  }
+  return { platform, root, udid, bundleId, appName, serial, packageName, physical, payloadUrl };
 }
 
 import { readCollectors, registerCollector, unregisterCollector } from './state.ts';
@@ -98,12 +116,17 @@ export interface RunCollectorOptions {
   bundleId?: string | null;
   serial?: string | null;
   packageName?: string | null;
+  physical?: boolean;
+  payloadUrl?: string | null;
   startStream?:
     | ((opts: {
         platform: string;
         udid?: string | null;
         appName?: string | null;
+        bundleId?: string | null;
         serial?: string | null;
+        physical?: boolean;
+        payloadUrl?: string | null;
         pid?: number | null;
       }) => ChildProcess)
     | null;
@@ -130,13 +153,44 @@ export interface RunCollectorHandle {
 
 const noopFlush = () => {};
 
+function startMessage({
+  platform,
+  physical,
+  pid,
+  appName,
+  bundleId,
+  udid,
+  packageName,
+  serial,
+  appPid,
+}: {
+  platform: string;
+  physical?: boolean;
+  pid: number;
+  appName?: string | null;
+  bundleId?: string | null;
+  udid?: string | null;
+  packageName?: string | null;
+  serial?: string | null;
+  appPid?: number | null;
+}): string {
+  if (platform !== 'ios') {
+    return `device log collector pid ${pid} streaming ${packageName} (pid ${appPid}) on ${serial}`;
+  }
+  if (!physical) return `device log collector pid ${pid} streaming ${appName} on ${udid}`;
+  return `device log collector pid ${pid} launching ${bundleId} on device ${udid} and streaming its console; subsystem, category and severity are not carried on hardware -- see \`stim guide logs\``;
+}
+
 export async function runCollector({
   platform,
   root,
   udid = null,
   appName = null,
+  bundleId = null,
   serial = null,
   packageName = null,
+  physical = false,
+  payloadUrl = null,
   startStream = null,
   resolvePid = null,
   pidTimeoutMs = 30000,
@@ -152,11 +206,21 @@ export async function runCollector({
   const startedAt = new Date(now()).toISOString();
 
   let finished = false;
+  let captured = 0;
   let watcher: PidWatcher | null = null;
-  const finish = (code: number, level: string, msg: string, event: string) => {
+  const finish = (code: number, level: string, msg: string, event: string, { signalled = false } = {}) => {
     if (finished) return;
     finished = true;
     watcher?.stop();
+    if (physical && captured === 0 && !signalled) {
+      writer.write({
+        src: 'device',
+        platform,
+        level: 'warn',
+        event: 'collector_empty',
+        msg: `the device console produced no output for ${bundleId}; devicectl only connects the app's streams when it starts the app, and os_log below the info level never reaches them`,
+      });
+    }
     writer.write({ src: 'device', platform, level, event, msg });
     try {
       unregisterCollector(root, platform, process.pid);
@@ -175,7 +239,9 @@ export async function runCollector({
       process.on(signal, () => {
         flushReaders();
         killChild(child);
-        finish(0, 'info', `device log collector received ${signal}; detaching`, 'collector_stopped');
+        finish(0, 'info', `device log collector received ${signal}; detaching`, 'collector_stopped', {
+          signalled: true,
+        });
       });
     }
   }
@@ -203,31 +269,55 @@ export async function runCollector({
     platform,
     level: 'info',
     event: 'collector_started',
-    msg:
-      platform === 'ios'
-        ? `device log collector pid ${process.pid} streaming ${appName} on ${udid}`
-        : `device log collector pid ${process.pid} streaming ${packageName} (pid ${pid}) on ${serial}`,
+    msg: startMessage({
+      platform,
+      physical,
+      pid: process.pid,
+      appName,
+      bundleId,
+      udid,
+      packageName,
+      serial,
+      appPid: pid,
+    }),
   });
 
-  const parse = platform === 'ios' ? parseLogStreamLine : parseLogcatLine;
+  const parse = platform === 'ios' ? (physical ? parseDeviceConsoleLine : parseLogStreamLine) : parseLogcatLine;
   const onLine = (line: string) => {
     const record = parse(line, { now });
-    if (record) writer.write({ ...record, platform });
+    if (!record) return;
+    captured++;
+    writer.write({ ...record, platform });
   };
 
   const attach = (streamPid: number | null): ChildProcess => {
     const spawned = startStream
-      ? startStream({ platform, udid, appName, serial, pid: streamPid })
+      ? startStream({ platform, udid, appName, bundleId, serial, physical, payloadUrl, pid: streamPid })
       : platform === 'ios'
-        ? startIosLogStream({ udid: udid as string, appName: appName as string })
+        ? physical
+          ? startIosDeviceConsole({ udid: udid as string, bundleId: bundleId as string, payloadUrl })
+          : startIosLogStream({ udid: udid as string, appName: appName as string })
         : startAndroidLogcat({ serial: serial as string, pid: streamPid as number });
     const outReader = createLineReader(onLine);
-    const errReader = createLineReader((line: string) => {
-      const text = String(line).trimEnd();
-      if (text.trim()) {
-        writer.write({ src: 'device', platform, level: 'debug', raw: true, event: 'collector_stderr', msg: text });
-      }
-    });
+    // devicectl --console connects the app's stderr to its own, and the os_log
+    // mirror and every crash report arrive there rather than on stdout.
+    const errReader = createLineReader(
+      physical
+        ? onLine
+        : (line: string) => {
+            const text = String(line).trimEnd();
+            if (text.trim()) {
+              writer.write({
+                src: 'device',
+                platform,
+                level: 'debug',
+                raw: true,
+                event: 'collector_stderr',
+                msg: text,
+              });
+            }
+          },
+    );
     flushReaders = () => {
       outReader.flush();
       errReader.flush();
@@ -246,6 +336,10 @@ export async function runCollector({
         return;
       }
       const how = signal ? `signal ${signal}` : `exit code ${code}`;
+      if (physical && code) {
+        finish(1, 'error', `the devicectl console ended with ${how}; treat the run as failed`, 'collector_failed');
+        return;
+      }
       finish(0, 'info', `device log stream ended (${how}); the app or device is gone`, 'collector_stopped');
     });
     spawned.on('error', (err) => {

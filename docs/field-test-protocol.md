@@ -133,11 +133,74 @@ is only for shapes the release actually changes and automation cannot model.
 | Release build                 | Release selection, bundling, signing, or cached-artifact swapping changed | iOS `--configuration Release` and/or Android `--variant <name>Release`; prove Metro is skipped, `metroPort` is null, the process stays alive, and the installed artifact contains this workspace's JS.                                                                 |
 | Android flavor                | Variant or APK discovery changed                                          | A repository with real product flavors; prove `assemble<Variant>`, APK selection, application id from the built APK, and a distinct cache key per variant. Do not manufacture a flavor and call it field evidence.                                                     |
 | Launch evidence               | Launch/status/remedy UX changed                                           | Exercise first launch and warm launch on the affected platform, record the JSON value, follow any remedy, and confirm the foreground app and bundle request with the owned device.                                                                                     |
+| Physical iPhone               | `ios --device` build, signing, install, launch, or device logging changed | A cabled, unlocked iPhone with Developer Mode on and a provisioning profile that names it. Run the staged checklist below; a step you did not run is a skip, never a pass.                                                                                             |
 
 For a cached release, use a unique JS sentinel. On iOS, confirm the copied and
 re-signed `.app` contains the regenerated bundle. On Android, confirm the APK
 bundle remains stored rather than deflated, is zipaligned and signed, and that
 a changed asset set refuses the swap and falls back to a full build.
+
+### The staged physical-iPhone checklist
+
+Everything on this list needs a phone and nothing else does, so it is staged
+rather than run every release. Design and reasoning:
+`docs/specs/2026-09-01-ios-device-release-design.md`.
+
+**A. The re-seal acceptance test** (the spec's riskiest unverified assumption;
+run it first, before anything downstream is trusted). Take any signed device
+`.app`, mutate its `ip.txt`, re-seal it with Stim's ladder, then:
+
+```
+codesign --verify --strict <app>   ->   devicectl device install   ->   launch
+```
+
+Record the verify output, the install result, and whether the app ran. A
+failure here invalidates `ip.txt` ownership, the Debug path, and the Release
+JS swap together, so report it as CRITICAL and stop.
+
+**B. Device log capture** (appandflow/stim#179). The collector's parser is
+tested against a real `os_log` stderr mirror captured on macOS, not on a
+phone. What a phone has to settle:
+
+1. **Fields observed live vs. the fixtures.** Run the collector against the
+   app and quote real lines from `device.ndjson`. Confirm each claim the
+   `guide logs` table makes: `ts` is the device's own clock and not the
+   host's; `proc` is `name(pid)`; `category` is present for React Native's
+   `javascript` / `native` calls and absent for `NSLog`; `subsystem` is
+   absent; and an `os_log` call made at the error level is **still recorded
+   at info**, which is the loss the guide claims. A field that survives on
+   hardware but is documented as lost is a HIGH finding, not a bonus.
+2. **The os_log mirror actually mirrors.** Without `OS_ACTIVITY_DT_MODE` the
+   stream carries plain `stdout`/`stderr` writes only. Prove the variable is
+   doing work: a `console.log` from JS must appear. If it does not, the
+   collector is capturing almost nothing and the gap is still open.
+3. **Timeline integration.** `logs --source device` shows the records in one
+   timeline with `metro` and `build`, ordered by `ts` across sources.
+   `logs --errors` with no `--source` still excludes them. A native crash
+   before JS starts appears with level `fatal`.
+4. **Launch coupling.** On hardware the collector performs the launch, so
+   confirm exactly one app instance starts, that `--terminate-existing`
+   replaced a running one, and that a dev-client deep link passed as
+   `--payload-url` opened the right URL.
+5. **Cleanup on unplug.** Pull the cable with the collector running. It must
+   remove its own `collectors.ios` registration and exit; `status` must stop
+   reporting it and `gc` must find nothing, because a phone is never recorded
+   as a device. Then reconnect and run `ios --device` again: the replacement
+   must start cleanly. **Which closing record does it write?** A non-zero
+   devicectl exit becomes `collector_failed`, a zero exit becomes
+   `collector_stopped`, and nobody has observed which one a cable-pull
+   produces. Record the exit code and the record. If unplugging reports a
+   failure, that is a wrong error on a normal action and the classification
+   needs to change.
+6. **Replacement and ownership.** With a collector live, run `ios --device`
+   again and confirm the previous pid was proven this workspace's and
+   signalled, and that `stop` reaps the survivor.
+
+**C. Install, launch and Debug over the LAN**, once #178 wires them: the
+signer-conflict uninstall-and-retry, the device-side process probe that
+replaces the host `process.kill` for release launch proof, and the evidence
+that the phone fetched from Metro rather than falling back to its embedded
+bundle (the run's own `ready: bundle loaded` line).
 
 ## Launch-status contract
 
