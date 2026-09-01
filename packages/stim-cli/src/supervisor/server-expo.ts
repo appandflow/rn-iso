@@ -357,16 +357,10 @@ export async function startExpoServer({
       const dead = new Promise<void>((resolve) => {
         child.once('exit', () => resolve());
       });
-      try {
-        if (!child.kill('SIGTERM')) return;
-      } catch {
-        return;
-      }
+      if (!child.kill('SIGTERM')) return;
       await Promise.race([dead, delay(killTimeoutMs)]);
       if (!exited) {
-        try {
-          child.kill('SIGKILL');
-        } catch {}
+        child.kill('SIGKILL');
         await Promise.race([dead, delay(killTimeoutMs)]);
       }
     },

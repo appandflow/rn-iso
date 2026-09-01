@@ -617,6 +617,20 @@ test('stop refuses to signal a collector pid it cannot prove, and keeps the reco
   ]);
   expect(r.summary).toMatch(/1 collector left unsignalled/);
   expect(reported.join('\n')).toMatch(/refusing to signal ios pid 111/);
+
+  const payload = JSON.parse(JSON.stringify({ root: '/proj/a', ok: r.ok, ...r.outcomes }));
+  expect(payload.collectors).toEqual({
+    status: 'stopped',
+    entries: [
+      {
+        platform: 'ios',
+        pid: 111,
+        status: 'unverified',
+        reason: "pid 111 does not run this workspace's ios log collector",
+      },
+      { platform: 'android', pid: 222, status: 'stopped' },
+    ],
+  });
 });
 
 test('a collector pid that died before the proof is already-stopped, not a refusal', async () => {

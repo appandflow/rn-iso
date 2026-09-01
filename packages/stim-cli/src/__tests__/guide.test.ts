@@ -215,6 +215,19 @@ test('the cleanup guide documents fail-closed EAS orphan recovery', () => {
   expect(cleanup).not.toMatch(/EAS session and local claim stay/i);
 });
 
+test('the cleanup guide documents the collector ownership proof and its upgrade window', () => {
+  const cleanup = renderTopic('cleanup');
+  assert(cleanup);
+
+  expect(cleanup).toMatch(/before signalling a recorded collector pid/i);
+  expect(cleanup).toMatch(/stop[\s\S]*gc --delete[\s\S]*worktree remove[\s\S]*live command/i);
+  expect(cleanup).toMatch(/cannot be proven[^.]*reported and left alone/i);
+  expect(cleanup).toMatch(/kernel reuses pids/i);
+  expect(cleanup).toMatch(/older Stim[^.]*no root[^.]*reports as\s+unverified/i);
+  expect(cleanup).toMatch(/clears itself[\s\S]*log\s+stream ends/i);
+  expect(cleanup).toMatch(/next `ios` \/ `android` run replaces it/i);
+});
+
 test('the cleanup guide documents that the shared Gradle build cache is report-only', () => {
   const cleanup = renderTopic('cleanup');
   assert(cleanup);
