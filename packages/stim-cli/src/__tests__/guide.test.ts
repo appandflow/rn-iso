@@ -352,6 +352,25 @@ test('the guide teaches the device install and launch that #178 phases 3 and 5 w
   expect(errors).toMatch(/FBSOpenApplicationErrorDomain 3/);
   expect(errors).toMatch(/VPN & Device Management/);
   expect(errors).toMatch(/devicectl device uninstall app[\s\S]*data went with it/);
+  expect(errors).toMatch(/THE DEVICE FALLBACKS[\s\S]*building fresh instead/);
+  expect(errors).toMatch(/FRESHLY BUILT app is a code/);
+  expect(errors).toMatch(/an uninstall clears it, including the one Stim's own\s+signer-conflict retry performs/);
+});
+
+// devicectl keeps the app attached to the process that launched it, so the
+// collector holding it is a fact about `stop`, not only about logs.
+test('the guide says a phone loses its running app when the collector ends', () => {
+  const cleanup = renderTopic('cleanup');
+  const lifecycle = renderTopic('lifecycle');
+  assert(cleanup);
+  assert(lifecycle);
+
+  expect(cleanup).toMatch(/THE APP'S LIFETIME IS BOUND TO THAT COLLECTOR/);
+  expect(cleanup).toMatch(/anything that\s+ends the collector ends the APP ON THE PHONE/);
+  expect(cleanup).toMatch(/leaves no RECORD of the\s+phone -- it never had one -- but it does close the app/);
+  expect(cleanup).toMatch(/Nothing is uninstalled/);
+  expect(lifecycle).toMatch(/THE APP RUNS FOR AS LONG AS THE COLLECTOR DOES/);
+  expect(lifecycle).toMatch(/stays INSTALLED/);
 });
 
 test('the errors topic documents every code the build commands and the iOS signing gate can emit', () => {

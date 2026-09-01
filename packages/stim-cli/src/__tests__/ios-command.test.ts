@@ -3764,6 +3764,73 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     expect(errs.join('\n')).toMatch(/not in this keychain[\s\S]*building fresh instead/);
   });
 
+  // The install path routes on the dev-client scheme, so the remedy has to as
+  // well: an Expo project without expo-dev-client takes ip.txt and needs the
+  // stale-fallback warning, not the server picker.
+  // The LAN gate fetches the bundle URL from the HOST, which lands in the same
+  // Metro timeline verifyLaunch reads. If the launch window opened before that
+  // fetch, the gate's own record would prove the phone had launched.
+  test('the launch window opens after the LAN gate and after the install', async () => {
+    reserve();
+    let clock = 1_000_000;
+    let gatedAt = 0;
+    let installedAt = 0;
+    const { calls } = await run(
+      { device: true },
+      {
+        ...connected(),
+        now: () => (clock += 1000),
+        ensureLanReachable: async () => {
+          gatedAt = clock;
+          return { ok: true as const };
+        },
+        installIosDeviceApp: (args) => {
+          installedAt = clock;
+          return { ok: true, appPath: args.appPath };
+        },
+      },
+    );
+    const since = Number((calls.args.verifyLaunch as { since?: unknown }).since);
+    expect(gatedAt).toBeGreaterThan(0);
+    expect(installedAt).toBeGreaterThan(gatedAt);
+    expect(since).toBeGreaterThan(installedAt);
+  });
+
+  test('an Expo app WITHOUT a dev client gets the bare remedy, not the picker', async () => {
+    reserve();
+    const { errs, calls } = await run(
+      { device: true },
+      {
+        ...connected(),
+        detectIsExpo: () => true,
+        devClientScheme: () => undefined,
+        verifyLaunch: async () => ({ verified: false, timedOut: true, waitedMs: 20000 }),
+      },
+    );
+    const out = errs.join('\n');
+    expect(calls.order.includes('sealAppForDevice')).toBe(true);
+    expect(out).toMatch(/carries the JS bundle baked in/);
+    expect(out).not.toMatch(/DEVELOPMENT SERVERS picker/);
+    expect(out).not.toMatch(/Retry the deep link/);
+  });
+
+  test('a dev-client app gets the picker and the deep-link retry, not the bare warning', async () => {
+    reserve();
+    const { errs } = await run(
+      { device: true },
+      {
+        ...connected(),
+        detectIsExpo: () => true,
+        devClientScheme: () => 'com.example.app',
+        verifyLaunch: async () => ({ verified: false, timedOut: true, waitedMs: 20000 }),
+      },
+    );
+    const out = errs.join('\n');
+    expect(out).toMatch(/DEVELOPMENT SERVERS picker/);
+    expect(out).toMatch(/Retry the deep link: xcrun devicectl device process launch/);
+    expect(out).not.toMatch(/carries the JS bundle baked in/);
+  });
+
   test('the unverified remedy names all three causes the LAN gate cannot tell apart', async () => {
     reserve();
     const { errs } = await run(
@@ -3776,7 +3843,7 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     expect(out).toMatch(/same Wi-Fi SSID/);
     expect(out).toMatch(/socketfilterfw --getglobalstate/);
     expect(out).toMatch(/ios\.lanHost/);
-    expect(out).toMatch(/bare Debug device build carries the JS bundle baked in/);
+    expect(out).toMatch(/carries the JS bundle baked in/);
   });
 
   test('a malformed ios.signingIdentitySha1 refuses the same way', async () => {

@@ -928,8 +928,6 @@ async function verifyIosRun({
   remoteDevice,
   metroOrigin,
 }: VerifyIosRunArgs): Promise<boolean | string> {
-  // Invariant 11: a device pid means nothing to the host, so a phone's release
-  // launch is proven by re-probing the phone's own process list.
   const deviceProcess = (): boolean | null => {
     const pid = d.iosDeviceProcess({ udid, appName: appName ?? bundleId });
     return pid === undefined ? null : pid !== null;
@@ -1034,6 +1032,7 @@ async function verifyIosRun({
     mode: isExpo ? MODE_EXPO : MODE_BARE,
     remote: remoteDevice,
     physical,
+    devClient: Boolean(scheme),
     lanOrigin,
     metroOrigin,
   }))
@@ -1349,8 +1348,6 @@ async function finishIosRun({
     const payloadUrl = scheme && metroPort !== null && lanAddress ? devClientUrl(scheme, metroPort, lanAddress) : null;
     const launchTimer = stepTimer(d.now);
     launchedAt = d.now();
-    // On hardware the collector IS the launch: devicectl connects an app's
-    // standard streams only when it is the process that starts the app.
     const collector = await d.replaceCollector({
       root,
       udid,
@@ -2107,10 +2104,6 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     return true;
   }
 
-  // The gate refuses a cached artifact by falling back to a full build, which is
-  // only an answer when the artifact came from the cache: on an app xcodebuild
-  // produced seconds ago the same build would refuse again, so a fresh one exits
-  // on the gate's own code.
   const prepareDeviceApp = async (path: string, { fresh }: { fresh: boolean }): Promise<string | null> => {
     const refuse = (code: string, reason: string, remedy: string): null => {
       if (fresh) {

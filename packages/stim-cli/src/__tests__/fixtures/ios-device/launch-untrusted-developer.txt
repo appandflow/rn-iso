@@ -1,0 +1,11 @@
+ERROR: The application failed to launch. (com.apple.dt.CoreDeviceError error 10002 (0x2712))
+       BundleIdentifier = com.appandflow.trailhead
+       ----------------------------------------
+           The request to open "com.appandflow.trailhead" failed. (FBSOpenApplicationServiceErrorDomain error 1 (0x01))
+           NSLocalizedFailureReason = The request was denied by service delegate (SBMainWorkspace) for reason: Security ("Unable to launch com.appandflow.trailhead because it has an invalid code signature, inadequate entitlements or its profile has not been explicitly trusted by the user").
+           BSErrorCodeDescription = RequestDenied
+           FBSOpenApplicationRequestID = 0xdb32
+       ----------------------------------------
+               The operation couldn't be completed. Unable to launch com.appandflow.trailhead because it has an invalid code signature, inadequate entitlements or its profile has not been explicitly trusted by the user. (FBSOpenApplicationErrorDomain error 3 (0x03))
+               BSErrorCodeDescription = Security
+               NSLocalizedFailureReason = Unable to launch com.appandflow.trailhead because it has an invalid code signature, inadequate entitlements or its profile has not been explicitly trusted by the user.

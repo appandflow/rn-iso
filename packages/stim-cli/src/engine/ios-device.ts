@@ -261,7 +261,10 @@ export function installIosDeviceApp(
       ok: true,
       appPath,
       uninstalled: true,
-      note: `${bundleId} was already installed on ${udid} under a different team, so it was uninstalled (its data went with it) before this app could be installed`,
+      note:
+        `${bundleId} was already installed on ${udid} under a different team, so it was uninstalled (its data went ` +
+        "with it) before this app could be installed. An uninstall also clears the phone's developer trust and its " +
+        'Local Network permission, so the launch below may need Settings > General > VPN & Device Management again',
     };
   }
 }
@@ -326,15 +329,25 @@ export function iosDeviceProcess(
 
 export type IosLaunchRefusalKind = 'untrusted-developer' | 'locked' | 'not-installed' | null;
 
-// Observed on a real phone (appandflow/stim#178): SpringBoard refuses the first
-// launch of a development build whose developer the phone has not trusted with
-// `FBSOpenApplicationErrorDomain 3` and the reason `Security`.
+// Each pattern matches within ONE line of devicectl's output: the domain, the
+// code and the reason are printed on separate lines of the same error block, so
+// testing them against the joined text would let a code from one line pair with
+// a reason from another. The shapes are
+// __tests__/fixtures/ios-device/launch-untrusted-developer.txt.
+const LAUNCH_REFUSALS: Array<[IosLaunchRefusalKind, RegExp]> = [
+  ['untrusted-developer', /profile has not been explicitly trusted by the user/i],
+  ['untrusted-developer', /FBSOpenApplicationErrorDomain error 3\b/],
+  ['untrusted-developer', /denied by service delegate[^\n]*for reason: Security/],
+  ['locked', /device is locked|is locked\b|passcode/i],
+  ['not-installed', /(?:application|app)[^\n]*\b(?:is )?(?:unknown to FrontBoard|not installed)/i],
+];
+
 export function iosLaunchRefusalKind(output: unknown): IosLaunchRefusalKind {
-  const out = String(output ?? '');
-  if (/profile has not been explicitly trusted by the user/i.test(out)) return 'untrusted-developer';
-  if (/FBSOpenApplicationErrorDomain[^\n]*\b3\b/.test(out) && /Security/.test(out)) return 'untrusted-developer';
-  if (/device is locked|is locked\b|passcode/i.test(out)) return 'locked';
-  if (/(?:application|app)[^\n]*\b(?:is )?(?:unknown to FrontBoard|not installed)/i.test(out)) return 'not-installed';
+  for (const line of String(output ?? '').split(/\r?\n/)) {
+    for (const [kind, pattern] of LAUNCH_REFUSALS) {
+      if (pattern.test(line)) return kind;
+    }
+  }
   return null;
 }
 
@@ -381,9 +394,6 @@ function launchEvidence(records: readonly NdjsonRecord[]): string[] {
   return lines.slice(-6);
 }
 
-// The collector this run started is the one whose end means the launch ended:
-// `replaceCollector` signals its predecessor, whose own closing record lands in
-// the same device.ndjson moments later.
 export function collectorRecordsFor(records: readonly NdjsonRecord[], collectorPid: number | null): NdjsonRecord[] {
   if (!collectorPid) return [];
   const marker = new RegExp(`\\bcollector pid ${collectorPid}\\b`);

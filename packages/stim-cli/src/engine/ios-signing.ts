@@ -75,8 +75,6 @@ export interface SigningGateOptions {
   exec?: Executor | null;
 }
 
-// A bundle Stim installs without modifying needs the profile checks only: no
-// re-seal happens, so the keychain is not consulted.
 export function gateProfileForDevice(options: SigningGateOptions): ProfileGateResult {
   const read = readEmbeddedProfile(options.appPath, { exec: options.exec ?? null });
   return profileGate({

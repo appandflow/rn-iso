@@ -94,10 +94,8 @@ export async function ensureLanReachable({
   return { ok: true };
 }
 
-// The cache entry is never modified: the per-run address lives only in the copy
-// that gets installed and deleted. `cp -R` preserves the symlinks and the exec
-// bit a code signature seals over; `-c` clones the blocks when the filesystem
-// can.
+// `cp -R` preserves the symlinks and the exec bit a code signature seals over;
+// `-c` clones the blocks when the filesystem can.
 export function copyAppAside(
   appPath: string,
   {

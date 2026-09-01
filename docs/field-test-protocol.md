@@ -214,8 +214,8 @@ phone has to settle, and what is already settled:
    **PASSED 2026-09-01** on the phone above.
 2. **The device pid, never a host pid.** The run's `launch` line names a pid read
    from `devicectl device info processes`, and a Release run's proof is that
-   probe repeated, not `process.kill`. **PASSED 2026-09-01** (Debug; the Release
-   variant is exercised by the same probe).
+   probe repeated, not `process.kill`. **PASSED 2026-09-01** for Debug;
+   `verifyIosDeviceReleaseLaunch` itself has not run on hardware.
 3. **The two human, one-time steps.** A first launch of a build whose developer
    the phone has not trusted is refused with `FBSOpenApplicationErrorDomain 3`
    and reason `Security`; the remedy must name Settings > General > VPN & Device
@@ -238,6 +238,15 @@ phone has to settle, and what is already settled:
    lands (phase 6), because a cached Release app carries its builder's JS.
    Prove `metroPort` is null, no LAN machinery runs, and the process is alive on
    the phone three seconds after launch.
+7. **The app dies with its collector.** `stop` (or `gc --delete`, or pulling the
+   cable) ends the collector, and because the collector is the launch, the app
+   closes on the phone. Confirm the app is still INSTALLED, that `status` and
+   `gc` report no device, and that the next `ios --device` starts it again.
+   **OBSERVED 2026-09-01**: SIGTERM to the collector alone terminates the app.
+8. **An uninstall costs the developer trust.** After any uninstall -- including
+   the signer-conflict retry -- the next launch is refused until the trust is
+   granted again, and the Local Network permission has to be re-tapped.
+   **OBSERVED 2026-09-01** (issue #178).
 
 ## Launch-status contract
 

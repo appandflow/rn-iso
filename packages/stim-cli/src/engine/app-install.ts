@@ -3,7 +3,6 @@ import { join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
 import { parseNdjsonText, type NdjsonRecord } from '../ndjson.ts';
 import { deviceHoldsApk, deviceHoldsBundle } from './installed-artifact.ts';
-import { MODE_BARE } from '../supervisor/state.ts';
 
 export const INSTALL_ERROR = 'STIM_INSTALL_FAILED';
 export const LAUNCH_ERROR = 'STIM_LAUNCH_FAILED';
@@ -944,6 +943,7 @@ export function unverifiedLaunchLines({
   mode = null,
   remote = false,
   physical = false,
+  devClient = false,
   lanOrigin = null,
   metroOrigin = null,
 }: {
@@ -957,6 +957,7 @@ export function unverifiedLaunchLines({
   mode?: string | null;
   remote?: boolean;
   physical?: boolean;
+  devClient?: boolean;
   lanOrigin?: string | null;
   metroOrigin?: string | null;
   // Explicit return type: isolatedDeclarations requires one at every module
@@ -1002,13 +1003,10 @@ export function unverifiedLaunchLines({
       `If this Mac has several network interfaces, ${target} may not be the one the phone shares: set ios.lanHost in ` +
         '.stim.json to the address it can reach.',
     );
-    if (mode === MODE_BARE) {
-      lines.push(
-        'AND READ THIS: a bare Debug device build carries the JS bundle baked in when the artifact was built, so an ' +
-          'unreachable Metro is silent. The app on screen is not broken -- it is running THAT bundle, which on a cache ' +
-          "hit is another workspace's JS, not this workspace's.",
-      );
-    } else {
+    // The app takes ip.txt when it has no dev-client scheme, which is what the
+    // install path routes on -- an Expo project without expo-dev-client is a
+    // bare app here even though its dev server is expo-child.
+    if (devClient) {
       push(picker);
       if (url && udid) {
         push(
@@ -1016,6 +1014,12 @@ export function unverifiedLaunchLines({
             `--payload-url '${url}' ${bundleId}`,
         );
       }
+    } else {
+      lines.push(
+        'AND READ THIS: a Debug device build with no dev client carries the JS bundle baked in when the artifact was ' +
+          'built, so an unreachable Metro is silent. The app on screen is not broken -- it is running THAT bundle, ' +
+          "which on a cache hit is another workspace's JS, not this workspace's.",
+      );
     }
     lines.push(`Then check \`stim logs --source metro\`${mode ? ` (${mode})` : ''} for a bundle request.`);
     return lines;

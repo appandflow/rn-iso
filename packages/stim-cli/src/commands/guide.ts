@@ -612,6 +612,27 @@ FALLBACK NOTES THAT ARE NOT CODES (release cache hits)
   bug than the one it fixes. A debug run fails with STIM_INSTALL_FAILED and
   hands you the uninstall to run yourself.
 
+  ON A PHONE the same uninstall costs one thing more: iOS drops the Settings >
+  General > VPN & Device Management trust entry when the last app from that
+  developer goes, and it clears the app's Local Network permission with it. The
+  note says so, because the reinstall succeeds and then the LAUNCH is refused
+  until someone taps Trust again. The retry is one uninstall and one install --
+  it is not a way around a tap that has no API.
+
+  THE DEVICE FALLBACKS are the fourth, and both print a \`device app\` note and
+  build fresh rather than failing:
+
+    device app  a cached Release device app carries its builder's JS, and the
+                device JS swap lands with phase 6 of appandflow/stim#178 --
+                building fresh instead, which bakes in this workspace's JS
+
+  and a signing-gate refusal on a CACHED artifact -- an expired or foreign
+  profile, a phone the profile does not name, an identity this keychain does not
+  hold -- which prints the gate's own reason with \`-- building fresh instead\`.
+  The same refusal on a FRESHLY BUILT app is a code (STIM_NO_PROFILE,
+  STIM_PROFILE_MISMATCH, STIM_NO_SIGNING_IDENTITY), not a note: building again
+  would produce the same app and refuse again.
+
 STIM_BUILD_WAIT_TIMEOUT
   This run was waiting for ANOTHER workspace's build of the same fingerprint
   (see \`guide lifecycle\`), and after ~90 minutes that process was still alive
@@ -630,8 +651,11 @@ STIM_INSTALL_FAILED
   trusted, Developer Mode is off, storage is full, or the app already on the
   phone was signed by a different team. Only that last one is retried -- one
   \`devicectl device uninstall app\`, one reinstall, and a warning that the
-  app's data went with it. This is gated on \`--device\` rather than on the
-  configuration, because every device run is signed, Debug included.
+  app's data went with it -- along with the phone's developer trust and its
+  Local Network permission, which iOS clears on an uninstall, so the launch
+  after it may need the trust tap again. This is gated on \`--device\` rather
+  than on the configuration, because every device run is signed, Debug
+  included.
   On Android a signature or downgrade conflict names the package that is really
   installed -- the built APK's applicationId, which on a flavored project is
   the flavor's id and not the gradle namespace -- and gives you the
@@ -649,7 +673,8 @@ STIM_LAUNCH_FAILED
   the only one a human has to perform on the phone: Settings > General >
   VPN & Device Management, tap the developer profile under DEVELOPER APP, tap
   Trust, then run the command again. It is a per-developer-certificate tap, not
-  a per-build one.
+  a per-build one -- but an uninstall clears it, including the one Stim's own
+  signer-conflict retry performs.
 
 STIM_NO_SCHEME
   No buildable Xcode scheme was found in ios/. A scheme has to be shared to be
@@ -1402,6 +1427,12 @@ THE OPTION SURFACE, IN FULL
   cable-pull produce yet. See \`guide logs\` for what the device stream can
   and cannot carry, and appandflow/stim#179.
 
+  THE APP RUNS FOR AS LONG AS THE COLLECTOR DOES. Because the collector is the
+  launch, the app is attached to it: \`stop\` (and any other end of that
+  collector -- a crash, the host sleeping, the cable coming out) closes the app
+  on the phone. It stays INSTALLED and Stim still records nothing about the
+  device; only the running process goes. See \`guide cleanup\`.
+
   THERE IS NO INSTALL SKIP ON A PHONE. The simulator path skips the install
   when the device already holds the same bundle byte for byte, which it proves
   by hashing the installed container; there is no cheap equivalent through
@@ -1562,9 +1593,21 @@ WHAT ELSE STOP REAPS
   runs \`devicectl device process launch --console\` itself rather than
   attaching after the fact. It registers under the same \`ios\` key, carries
   the same --root in its title, is proven and replaced by the same pid rules,
-  and is reaped by the same \`stop\`. Unplugging the phone ends devicectl,
-  which ends the collector: it unregisters itself and exits either way, so
-  \`gc\` has nothing to find, because a phone is never recorded as a device.
+  and is reaped by the same \`stop\`.
+
+  THE APP'S LIFETIME IS BOUND TO THAT COLLECTOR, and this is the one place a
+  phone behaves worse than a simulator. \`devicectl device process launch
+  --console\` keeps the app attached to the launching process, so anything that
+  ends the collector ends the APP ON THE PHONE: \`stop\`, \`gc --delete\`,
+  \`worktree remove\`, a fresh \`ios --device\` run stopping its predecessor,
+  a crash, the host sleeping, or the cable coming out. Measured: SIGTERM to the
+  collector alone terminates the app. \`stop\` therefore leaves no RECORD of the
+  phone -- it never had one -- but it does close the app that was running on it.
+  Nothing is uninstalled, and the next \`ios --device\` starts it again.
+
+  Unplugging the phone ends devicectl, which ends the collector: it unregisters
+  itself and exits either way, so \`gc\` has nothing to find, because a phone is
+  never recorded as a device.
   WHICH record it writes on the way out depends on devicectl's exit code, and
   that code is unverified until someone pulls a cable: a zero exit is
   collector_stopped, a non-zero one is collector_failed, because on hardware

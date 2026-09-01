@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { describe, expect, test } from 'vitest';
@@ -435,15 +435,29 @@ test("a failure that is not a signer conflict never uninstalls the user's app", 
 });
 
 test('iosLaunchRefusalKind reads the untrusted-developer refusal a real phone produced', () => {
-  expect(
-    iosLaunchRefusalKind(
-      'ERROR: The request to open "com.example.app" failed. Underlying error (FBSOpenApplicationErrorDomain, code 3): Security',
-    ),
-  ).toBe('untrusted-developer');
-  expect(iosLaunchRefusalKind('its profile has not been explicitly trusted by the user')).toBe('untrusted-developer');
-  expect(iosLaunchRefusalKind('FBSOpenApplicationErrorDomain, code 3')).toBe(null);
+  const refusal = readFileSync(
+    new URL('./fixtures/ios-device/launch-untrusted-developer.txt', import.meta.url),
+    'utf-8',
+  );
+  expect(iosLaunchRefusalKind(refusal)).toBe('untrusted-developer');
+  const carriers = refusal
+    .split('\n')
+    .filter((line) =>
+      /profile has not been explicitly trusted|FBSOpenApplicationErrorDomain error 3|for reason: Security/.test(line),
+    );
+  expect(carriers.length).toBeGreaterThan(0);
+  for (const line of carriers) expect(iosLaunchRefusalKind(line)).toBe('untrusted-developer');
   expect(iosLaunchRefusalKind('the device is locked')).toBe('locked');
   expect(iosLaunchRefusalKind('nothing recognisable')).toBe(null);
+});
+
+// The domain, the code and the reason are printed on separate lines of one
+// error block, so a classifier that tested the joined text could pair a code
+// from one line with a reason from another.
+test('iosLaunchRefusalKind never pairs a code on one line with a reason on another', () => {
+  expect(iosLaunchRefusalKind('FBSOpenApplicationErrorDomain error 7\nBSErrorCodeDescription = Security')).toBe(null);
+  expect(iosLaunchRefusalKind('the app logged 3 things\nSecurity checks passed')).toBe(null);
+  expect(iosLaunchRefusalKind('BSErrorCodeDescription = Security')).toBe(null);
 });
 
 test('the untrusted-developer remedy names the Settings screen that fixes it', () => {
@@ -488,7 +502,10 @@ test('a console that ends before the app appears is a launch failure with its ow
       { ts: 1, event: 'collector_started', msg: 'device log collector pid 99 launching com.example.app on device X' },
       {
         ts: 2,
-        msg: 'ERROR: The request to open "com.example.app" failed. (FBSOpenApplicationErrorDomain, code 3) Security',
+        msg:
+          'The operation could not be completed. Unable to launch com.example.app because it has an invalid code ' +
+          'signature, inadequate entitlements or its profile has not been explicitly trusted by the user. ' +
+          '(FBSOpenApplicationErrorDomain error 3 (0x03))',
       },
       { ts: 3, event: 'collector_failed', msg: 'the devicectl console ended with exit code 1' },
     ],
