@@ -1132,9 +1132,44 @@ describe('the applicationId comes from the built APK', () => {
     const h = harness();
     const result = await h.run();
     expect(h.calls.readApkPackage.length).toBe(1);
+    expect(h.calls.install[0]?.packageName).toBe('com.example.app');
     expect(h.calls.launch[0]?.packageName).toBe('com.example.app');
     assert(result.facts);
     expect(result.facts.bundleId).toBe('com.example.app');
+  });
+
+  test('the install gets the APK applicationId, not the project namespace', async () => {
+    const h = harness({ readApkPackage: () => 'io.tlon.groups' });
+    const result = await h.run();
+
+    expect(result.ok).toBe(true);
+    expect(h.calls.install[0]?.packageName).toBe('io.tlon.groups');
+  });
+
+  test('a release run hands the uninstall-and-retry the APK applicationId', async () => {
+    const h = harness({ variant: 'productionRelease', readApkPackage: () => 'io.tlon.groups' });
+    await h.run();
+
+    expect(h.calls.install[0]).toMatchObject({ packageName: 'io.tlon.groups', allowUninstall: true });
+  });
+
+  test('a downgrade conflict names the APK applicationId in the uninstall it suggests', async () => {
+    const h = harness({
+      readApkPackage: () => 'io.tlon.groups',
+      install: (args: InstallArgs = {}) => {
+        h.calls.install.push(args);
+        return {
+          failed: true,
+          code: 'STIM_INSTALL_FAILED',
+          reason: 'adb install failed for app.apk: INSTALL_FAILED_VERSION_DOWNGRADE',
+        };
+      },
+    });
+    const result = await h.run();
+
+    expect(result.ok).toBe(false);
+    expect(result.error?.remedy).toContain('adb -s emulator-5584 uninstall io.tlon.groups');
+    expect(result.error?.remedy).not.toContain('com.example.app');
   });
 });
 

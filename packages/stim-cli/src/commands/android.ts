@@ -1087,6 +1087,12 @@ async function finishAndroidRun({
       : `${device.avdName || serial} (${serial}) booted ${bootDuration()}`,
   );
 
+  const packageFromApk = readApkPackage(apkPath);
+  if (packageFromApk && androidPackage && packageFromApk !== androidPackage) {
+    phase('install', chalk.dim(`applicationId ${packageFromApk} (from the APK; project files say ${androidPackage})`));
+  }
+  androidPackage = packageFromApk || androidPackage || detectAndroidPackage(root);
+
   const installTimer = stepTimer(now);
   const installed: InstallResultLike = install({
     serial,
@@ -1096,10 +1102,14 @@ async function finishAndroidRun({
   });
   if (installed.failed) {
     const conflict = installConflictKind(installed.reason);
+    const rerun = useBuildCache
+      ? ' Then run this command again; it installs the APK from cache without building it again.'
+      : ' Then run this command again.';
     const installRemedy = conflict
       ? `${androidPackage} is already installed on ${serial} ` +
         (conflict === 'signature' ? 'with a different signer' : 'at a higher versionCode') +
-        `. Uninstall it first (\`adb -s ${serial} uninstall ${androidPackage}\`); its data goes with it.`
+        `. Uninstall it first (\`adb -s ${serial} uninstall ${androidPackage}\`); its data goes with it.` +
+        rerun
       : `Check that ${serial} is still connected (\`adb devices\`) and has room for the APK.`;
     return fail(installed.code || INSTALL_FAILED, installed.reason, installRemedy, { lastBuildStatus: true });
   }
@@ -1114,11 +1124,6 @@ async function finishAndroidRun({
     } catch {}
   }
 
-  const packageFromApk = readApkPackage(apkPath);
-  if (packageFromApk && androidPackage && packageFromApk !== androidPackage) {
-    phase('launch', chalk.dim(`applicationId ${packageFromApk} (from the APK; project files say ${androidPackage})`));
-  }
-  androidPackage = packageFromApk || androidPackage || detectAndroidPackage(root);
   if (androidPackage) upsertProject(root, { androidPackage });
   record.bundleId = androidPackage;
   if (!androidPackage) {
