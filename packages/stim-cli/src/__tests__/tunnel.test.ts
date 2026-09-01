@@ -1,5 +1,4 @@
 import {
-  readTunnelProcessArgs,
   readTunnelProcessToken,
   startTunnel,
   startTunnelSequence,
@@ -13,7 +12,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resetExecutor, setExecutor } from '../exec.ts';
-import { makeChildProcess } from './_factories.ts';
+import { IMPOSSIBLE_PID, makeChildProcess } from './_factories.ts';
 
 function clock(start = 1_000) {
   let t = start;
@@ -122,7 +121,7 @@ describe('startTunnel: the happy path', () => {
     child.stderr?.emit('data', 'banner |  https://random-words.trycloudflare.com  |\n');
     await expect(promise).resolves.toMatchObject({
       url: 'https://random-words.trycloudflare.com',
-      pid: 4242,
+      pid: IMPOSSIBLE_PID,
       processToken: 'linux:100',
       cleanup: expect.any(Function),
     });
@@ -139,7 +138,7 @@ describe('startTunnel: the happy path', () => {
     child.stdout?.emit('data', `${JSON.stringify({ msg: 'started tunnel', url: 'https://abcd.ngrok-free.app' })}\n`);
     await expect(promise).resolves.toMatchObject({
       url: 'https://abcd.ngrok-free.app',
-      pid: 4242,
+      pid: IMPOSSIBLE_PID,
       cleanup: expect.any(Function),
     });
   });
@@ -435,7 +434,11 @@ describe('startTunnel: nothing here throws -- every failure is a returned value'
     });
     child.stderr?.emit('data', 'https://x.trycloudflare.com\n');
     const result = await promise;
-    expect(result).toMatchObject({ url: 'https://x.trycloudflare.com', pid: 4242, cleanup: expect.any(Function) });
+    expect(result).toMatchObject({
+      url: 'https://x.trycloudflare.com',
+      pid: IMPOSSIBLE_PID,
+      cleanup: expect.any(Function),
+    });
     expect(calls).toBe(3);
   });
 
@@ -835,93 +838,6 @@ describe('stopTunnel: idempotent, never throws', () => {
     });
     expect(result.status).toBe('failed');
     expect(result.reason).toContain('did not exit');
-  });
-});
-
-describe('readTunnelProcessArgs', () => {
-  test('reads a bounded NUL-delimited command from Linux procfs', () => {
-    const reads: Array<{ path: string; maxBytes: number }> = [];
-    const result = readTunnelProcessArgs(4242, {
-      platform: 'linux',
-      readProcCommand: (path, maxBytes) => {
-        reads.push({ path, maxBytes });
-        return Buffer.from(['/usr/bin/ngrok', 'http', '8081', ''].join('\0'));
-      },
-    });
-    expect(result).toEqual(['/usr/bin/ngrok', 'http', '8081']);
-    expect(reads).toEqual([{ path: '/proc/4242/cmdline', maxBytes: expect.any(Number) }]);
-    expect(reads[0]?.maxBytes).toBeLessThanOrEqual(64 * 1024);
-  });
-
-  test('an unreadable Linux procfs command fails closed', () => {
-    expect(
-      readTunnelProcessArgs(4242, {
-        platform: 'linux',
-        readProcCommand: () => {
-          throw new Error('EACCES');
-        },
-      }),
-    ).toBeNull();
-  });
-
-  test('runs ps with a timeout on macOS and parses quoted arguments', () => {
-    const calls: Array<{ pid: number; timeoutMs: number }> = [];
-    const result = readTunnelProcessArgs(4242, {
-      platform: 'darwin',
-      runPsCommand: (pid, timeoutMs) => {
-        calls.push({ pid, timeoutMs });
-        return "'/opt/local/bin/ngrok' http 8081 --url 'https://stable.ngrok.app'";
-      },
-    });
-    expect(result).toEqual(['/opt/local/bin/ngrok', 'http', '8081', '--url', 'https://stable.ngrok.app']);
-    expect(calls).toEqual([{ pid: 4242, timeoutMs: expect.any(Number) }]);
-    expect(calls[0]?.timeoutMs).toBeLessThanOrEqual(5_000);
-  });
-
-  test('uses full-width BSD ps argv and preserves a long stable ngrok URL', () => {
-    const stableUrl = `https://${'a'.repeat(4_000)}.ngrok.app`;
-    const calls: Array<{ file: string; args: string[]; timeoutMs: number | undefined }> = [];
-    setExecutor({
-      runFile(file, args, options) {
-        calls.push({ file, args, timeoutMs: options?.timeoutMs });
-        return `ngrok http 8081 --log=stdout --log-format=json --url ${stableUrl}`;
-      },
-    });
-    try {
-      expect(readTunnelProcessArgs(4242, { platform: 'darwin' })).toEqual([
-        'ngrok',
-        'http',
-        '8081',
-        '--log=stdout',
-        '--log-format=json',
-        '--url',
-        stableUrl,
-      ]);
-    } finally {
-      resetExecutor();
-    }
-    expect(calls).toEqual([
-      { file: 'ps', args: ['-ww', '-o', 'command=', '-p', '4242'], timeoutMs: expect.any(Number) },
-    ]);
-  });
-
-  test.each([
-    [
-      'ps failure',
-      () => {
-        throw new Error('ps failed');
-      },
-    ],
-    [
-      'ps timeout',
-      () => {
-        throw Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' });
-      },
-    ],
-    ['empty output', () => ''],
-    ['malformed output', () => "'/usr/bin/ngrok http 8081"],
-  ])('%s fails closed', (_name, runPsCommand) => {
-    expect(readTunnelProcessArgs(4242, { platform: 'darwin', runPsCommand })).toBeNull();
   });
 });
 

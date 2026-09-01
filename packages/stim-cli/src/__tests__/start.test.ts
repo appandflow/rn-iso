@@ -29,7 +29,7 @@ import {
   tailLines,
   wantsExpoOwnTunnel,
 } from '../commands/start.ts';
-import { asProcessExit, makeChildProcess } from './_factories.ts';
+import { IMPOSSIBLE_PID, asProcessExit, makeChildProcess } from './_factories.ts';
 
 let tmpHome: string;
 let root: string;
@@ -1432,7 +1432,7 @@ describe('action: spawning the supervisor', () => {
     );
 
     expect(result.exitCode).toBe(1);
-    expect(JSON.parse(result.logs[0] ?? '').remedy).toMatch(/unmanaged.*pid 4242/i);
+    expect(JSON.parse(result.logs[0] ?? '').remedy).toMatch(new RegExp(`unmanaged.*pid ${IMPOSSIBLE_PID}`, 'i'));
     expect(exec.calls.spawn).toEqual([]);
   });
 

@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'fs
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { saveConfig, getProject } from '../config.ts';
+import { verifyCollectorOwnership } from '../collector/ownership.ts';
 import { ensureWorkspaceStorage, supervisorPidFile, workspaceStateFile } from '../paths.ts';
 import {
   clearCollectorState,
@@ -124,6 +125,7 @@ function seams(over = {}) {
     signalCollector: (pid: number) => {
       calls.collectorSignals.push(pid);
     },
+    verifyCollector: () => ({ status: 'ours' as const }),
     clearCollectors: () => {
       calls.collectorsCleared += 1;
     },
@@ -487,8 +489,17 @@ test('stopping clears the global supervisor registration', async () => {
 
 test('resolveCollectorTargets signals only live pids recorded for this workspace', () => {
   const targets = resolveCollectorTargets({
+    root: '/w/project',
     collectors: { ios: { pid: 111 }, android: { pid: 222 } },
     isAlive: (pid) => pid === 111,
+    verify: ({ pid, platform, root }) =>
+      verifyCollectorOwnership({
+        pid,
+        platform,
+        root,
+        isAlive: () => true,
+        readArgs: () => [`stim-collector-${platform}`, '--root', root],
+      }),
   });
   expect(targets).toEqual([
     { platform: 'ios', pid: 111, status: 'running' },
@@ -498,10 +509,32 @@ test('resolveCollectorTargets signals only live pids recorded for this workspace
 
 test('resolveCollectorTargets refuses a record with no usable pid, and refuses our own', () => {
   const targets = resolveCollectorTargets({
+    root: '/w/project',
     collectors: { ios: { pid: 'nope' }, android: { pid: process.pid } },
     isAlive: () => true,
   });
   expect(targets.map((t) => t.status)).toEqual(['invalid', 'invalid']);
+});
+
+test('resolveCollectorTargets refuses a live pid that is not this workspace collector', () => {
+  const targets = resolveCollectorTargets({
+    root: '/w/project',
+    collectors: { ios: { pid: 111 }, android: { pid: 222 } },
+    isAlive: () => true,
+    verify: ({ pid, platform, root }) =>
+      verifyCollectorOwnership({
+        pid,
+        platform,
+        root,
+        isAlive: () => true,
+        readArgs: () => (pid === 111 ? ['stim-collector-ios', '--root', '/w/other'] : ['/usr/bin/vitest', 'run']),
+      }),
+  });
+  expect(targets.map((t) => [t.platform, t.status])).toEqual([
+    ['ios', 'unverified'],
+    ['android', 'unverified'],
+  ]);
+  expect(targets[0]?.reason).toMatch(/does not run this workspace's ios log collector/);
 });
 
 test('stop SIGTERMs every recorded collector and clears the key', async () => {
@@ -558,6 +591,58 @@ test('collectors are still reaped when the supervisor could not be verified', as
   expect(calls.collectorSignals).toEqual([111]);
   expect(calls.collectorsCleared).toBe(1);
   expect(calls.teardowns).toEqual([]);
+});
+
+test('stop refuses to signal a collector pid it cannot prove, and keeps the record', async () => {
+  const { calls, opts } = seams({
+    collectors: { ios: { pid: 111 }, android: { pid: 222 } },
+    isAlive: () => true,
+    verifyCollector: ({ pid, platform }: { pid: number; platform: string }) =>
+      platform === 'ios'
+        ? ({ status: 'unverified', reason: `pid ${pid} does not run this workspace's ios log collector` } as const)
+        : ({ status: 'ours' } as const),
+  });
+  const reported: string[] = [];
+  const r = await runStop({ ...opts, report: (line: string) => reported.push(line) });
+  expect(calls.collectorSignals).toEqual([222]);
+  expect(calls.collectorsCleared).toBe(0);
+  expect(r.outcomes.collectors.entries).toEqual([
+    {
+      platform: 'ios',
+      pid: 111,
+      status: 'unverified',
+      reason: "pid 111 does not run this workspace's ios log collector",
+    },
+    { platform: 'android', pid: 222, status: 'stopped' },
+  ]);
+  expect(r.summary).toMatch(/1 collector left unsignalled/);
+  expect(reported.join('\n')).toMatch(/refusing to signal ios pid 111/);
+
+  const payload = JSON.parse(JSON.stringify({ root: '/proj/a', ok: r.ok, ...r.outcomes }));
+  expect(payload.collectors).toEqual({
+    status: 'stopped',
+    entries: [
+      {
+        platform: 'ios',
+        pid: 111,
+        status: 'unverified',
+        reason: "pid 111 does not run this workspace's ios log collector",
+      },
+      { platform: 'android', pid: 222, status: 'stopped' },
+    ],
+  });
+});
+
+test('a collector pid that died before the proof is already-stopped, not a refusal', async () => {
+  const { calls, opts } = seams({
+    collectors: { ios: { pid: 111 } },
+    isAlive: () => true,
+    verifyCollector: () => ({ status: 'gone' }) as const,
+  });
+  const r = await runStop(opts);
+  expect(calls.collectorSignals).toEqual([]);
+  expect(calls.collectorsCleared).toBe(1);
+  expect(r.outcomes.collectors.entries).toEqual([{ platform: 'ios', pid: 111, status: 'already-stopped' }]);
 });
 
 test('nothing recorded means no clear and no signal', async () => {

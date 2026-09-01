@@ -12,6 +12,9 @@ import type { MetroResolution } from '../metro.ts';
 import type { BuildLockInfo } from '../engine/build-lock.ts';
 import type { BuildSlotInfo } from '../engine/build-slots.ts';
 
+// Above every kernel's pid_max (macOS 99999, Linux 2^22): a stray signal fails ESRCH instead of reaching a process.
+export const IMPOSSIBLE_PID = 999999901;
+
 export function makeConfig(overrides: Partial<StimConfig> = {}): StimConfig {
   return { version: 2, projects: {}, repos: {}, ...overrides };
 }
@@ -51,7 +54,7 @@ export function makeBuildLock(overrides: Partial<BuildLockInfo> = {}): BuildLock
     name: 'ios-abc.lock',
     platform: 'ios',
     key: 'abc-debug-sim',
-    pid: 4242,
+    pid: IMPOSSIBLE_PID,
     projectRoot: '/w/project',
     startedAt: '2026-01-01T00:00:00.000Z',
     logFile: '/w/.stim/logs/build.log',
@@ -65,7 +68,7 @@ export function makeBuildSlot(overrides: Partial<BuildSlotInfo> = {}): BuildSlot
     path: '/h/build-slots/slot-0',
     name: 'slot-0',
     index: 0,
-    pid: 4242,
+    pid: IMPOSSIBLE_PID,
     projectRoot: '/w/project',
     startedAt: '2026-01-01T00:00:00.000Z',
     logFile: '/w/.stim/logs/build.log',
@@ -132,7 +135,7 @@ export function makeExecutor(overrides: Partial<Executor> = {}): Executor {
 export function makeChildProcess(overrides: Partial<ChildProcess> = {}): ChildProcess {
   const emitter = new EventEmitter();
   const stub = Object.assign(emitter, {
-    pid: 4242,
+    pid: IMPOSSIBLE_PID,
     stdin: null,
     stdout: new EventEmitter(),
     stderr: new EventEmitter(),

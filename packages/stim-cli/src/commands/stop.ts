@@ -15,6 +15,7 @@ import {
   readRemoteSession,
   readWorkspaceState,
 } from '../supervisor/state.ts';
+import { verifyCollectorOwnership } from '../collector/ownership.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { resolveEasCliBin } from '../engine/remote-cache.ts';
@@ -150,17 +151,22 @@ interface CollectorTarget {
   platform: string;
   pid: number | null;
   status: string;
+  reason?: string;
 }
 
 export function resolveCollectorTargets({
+  root,
   collectors,
   isAlive = isPidAlive,
   selfPid = process.pid,
+  verify = verifyCollectorOwnership,
 }: {
+  root: string;
   collectors?: CollectorStateMap | null;
   isAlive?: (pid: number) => boolean;
   selfPid?: number;
-} = {}): CollectorTarget[] {
+  verify?: typeof verifyCollectorOwnership;
+}): CollectorTarget[] {
   const targets: CollectorTarget[] = [];
   for (const [platform, record] of Object.entries(collectors || {})) {
     const pid = numberOrNull(Number(record?.pid));
@@ -168,7 +174,20 @@ export function resolveCollectorTargets({
       targets.push({ platform, pid: pid ?? null, status: 'invalid' });
       continue;
     }
-    targets.push({ platform, pid, status: isAlive(pid) ? 'running' : 'stale' });
+    if (!isAlive(pid)) {
+      targets.push({ platform, pid, status: 'stale' });
+      continue;
+    }
+    const ownership = verify({ pid, platform, root, isAlive });
+    if (ownership.status === 'gone') {
+      targets.push({ platform, pid, status: 'stale' });
+      continue;
+    }
+    if (ownership.status === 'unverified') {
+      targets.push({ platform, pid, status: 'unverified', reason: ownership.reason });
+      continue;
+    }
+    targets.push({ platform, pid, status: 'running' });
   }
   return targets;
 }
@@ -207,6 +226,7 @@ interface CollectorEntry {
   platform: string;
   pid: number | null;
   status: string;
+  reason?: string;
 }
 
 interface CollectorsOutcome {
@@ -269,6 +289,7 @@ export async function runStop({
   state = undefined,
   collectors = undefined,
   signalCollector = (pid: number) => process.kill(pid, 'SIGTERM'),
+  verifyCollector = verifyCollectorOwnership,
   clearCollectors = clearCollectorState,
   isAlive = isPidAlive,
   killGroup = killMetroTree,
@@ -294,6 +315,7 @@ export async function runStop({
   state?: SupervisorStateRecord | null;
   collectors?: CollectorStateMap | null;
   signalCollector?: (pid: number) => void;
+  verifyCollector?: typeof verifyCollectorOwnership;
   clearCollectors?: (root: string) => void;
   isAlive?: (pid: number) => boolean;
   killGroup?: (leader: number | null | undefined) => boolean;
@@ -353,8 +375,20 @@ export async function runStop({
     }
   }
 
-  outcomes.collectors = reapCollectors(collectorRecords, { isAlive, signal: signalCollector, report });
-  if (outcomes.collectors.entries.length) clearCollectors(root);
+  outcomes.collectors = reapCollectors(root, collectorRecords, {
+    isAlive,
+    signal: signalCollector,
+    report,
+    verify: verifyCollector,
+  });
+  const unverifiedCollectors = outcomes.collectors.entries.filter((e) => e.status === 'unverified');
+  if (unverifiedCollectors.length) {
+    report(
+      chalk.dim(
+        `collectors: keeping the records; ${unverifiedCollectors.length} pid(s) could not be verified, and a later \`ios\` / \`android\` run replaces them`,
+      ),
+    );
+  } else if (outcomes.collectors.entries.length) clearCollectors(root);
 
   const supervisorHandled =
     outcomes.supervisor.status === 'stopped' ||
@@ -454,18 +488,21 @@ export async function runStop({
 }
 
 function reapCollectors(
+  root: string,
   collectors: CollectorStateMap | null | undefined,
   {
     isAlive,
     signal,
     report,
+    verify = verifyCollectorOwnership,
   }: {
     isAlive: (pid: number) => boolean;
     signal: (pid: number) => void;
     report: (line: string) => void;
+    verify?: typeof verifyCollectorOwnership;
   },
 ): CollectorsOutcome {
-  const targets = resolveCollectorTargets({ collectors, isAlive });
+  const targets = resolveCollectorTargets({ root, collectors, isAlive, verify });
   const entries: CollectorEntry[] = [];
   for (const target of targets) {
     if (target.status === 'invalid') {
@@ -476,6 +513,11 @@ function reapCollectors(
     if (target.status === 'stale') {
       entries.push({ platform: target.platform, pid: target.pid, status: 'already-stopped' });
       report(chalk.dim(`collectors: ${target.platform} pid ${target.pid} is already gone`));
+      continue;
+    }
+    if (target.status === 'unverified') {
+      entries.push({ platform: target.platform, pid: target.pid, status: 'unverified', reason: target.reason });
+      report(chalk.yellow(`collectors: refusing to signal ${target.platform} pid ${target.pid}: ${target.reason}`));
       continue;
     }
     try {
@@ -666,6 +708,8 @@ function summarize(root: string, outcomes: StopOutcomes, ok: boolean): string {
     parts.push(`supervisor pid ${outcomes.supervisor.pid} could not be signalled`);
   const reaped = outcomes.collectors.entries.filter((e) => e.status === 'stopped').length;
   if (reaped) parts.push(`${reaped} collector${reaped === 1 ? '' : 's'} stopped`);
+  const unverified = outcomes.collectors.entries.filter((e) => e.status === 'unverified').length;
+  if (unverified) parts.push(`${unverified} collector${unverified === 1 ? '' : 's'} left unsignalled`);
   if (outcomes.metro.status === 'stopped') parts.push(`metro on port ${outcomes.metro.port} stopped`);
   if (outcomes.metro.status === 'forced') parts.push(`port ${outcomes.metro.port} killed (forced)`);
   if (outcomes.metro.status === 'refused') parts.push(`port ${outcomes.metro.port} refused`);

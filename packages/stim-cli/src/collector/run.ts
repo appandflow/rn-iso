@@ -7,6 +7,7 @@ import { type NdjsonWriter, createNdjsonWriter } from '../ndjson.ts';
 import { workspaceLogsDir } from '../paths.ts';
 import { createLineReader } from '../process-output.ts';
 import { appNameFromBundleId, parseLogStreamLine, startIosLogStream } from './ios.ts';
+import { collectorProcessTitle } from './ownership.ts';
 import {
   type PidResolution,
   type PidWatcher,
@@ -328,7 +329,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     process.exit(2);
     return;
   }
-  process.title = `stim-collector-${parsed.platform}`;
+  process.title = collectorProcessTitle(parsed.platform as string, root);
   await runCollector(parsed as RunCollectorOptions);
 }
 
