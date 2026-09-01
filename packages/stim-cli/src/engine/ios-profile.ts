@@ -283,7 +283,12 @@ function signingConfiguration(input: SigningGateInput): string {
   return input.configuration ?? 'Debug';
 }
 
-export function signingGate(input: SigningGateInput): SigningGateResult {
+export type ProfileGateResult = { ok: true; profile: ProvisioningProfile } | SigningRefusal;
+
+// The profile half of the gate, which is all a bundle Stim does not modify
+// needs: it turns an opaque `devicectl install` rejection into a refusal that
+// names the phone and the profile.
+export function profileGate(input: SigningGateInput): ProfileGateResult {
   const now = input.now ?? Date.now();
   if (!input.profilePresent) {
     return {
@@ -332,6 +337,14 @@ export function signingGate(input: SigningGateInput): SigningGateResult {
     };
   }
 
+  return { ok: true, profile };
+}
+
+export function signingGate(input: SigningGateInput): SigningGateResult {
+  const gated = profileGate(input);
+  if (!gated.ok) return gated;
+  const profile = gated.profile;
+  const named = profile.name ? `"${profile.name}"` : 'the embedded profile';
   const identities = Array.isArray(input.identities) ? input.identities : [];
   if (identities.length === 0) {
     return {

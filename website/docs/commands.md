@@ -62,9 +62,9 @@ app, opens it, and checks launch logs. The build always runs on the local
 machine, including remote-device workflows.
 
 - `--configuration <name>` selects an Xcode configuration. The default is Debug.
-- `--device [udid]` selects a connected iPhone instead of the owned simulator.
-  With no UDID the one connected device is used. Stim never creates, boots, or
-  deletes hardware.
+- `--device [udid]` builds, installs, and launches on a connected iPhone instead
+  of the owned simulator. With no UDID the one connected device is used. Stim
+  never creates, boots, or deletes hardware.
 - `--remote proxy` uses a configured Agent Device daemon.
 - `--remote eas` uses an EAS remote simulator.
 - `--no-metro-check` skips the Debug dev-server gate.
@@ -78,10 +78,29 @@ collide with a simulator build, and no build-cache provider or Expo remote cache
 is read or written on a `--device` run, because every entry they hold is keyed
 for the simulator.
 
-`--device` is incomplete. It selects the phone and builds the `iphoneos` slice
-for it, and then refuses: installing and launching on hardware are not
-implemented yet. Run `stim ios` without `--device` for a run that ends with an
-app on screen.
+A `--device` run installs with `devicectl device install app` and launches with
+`devicectl device process launch`. Every device install is signed, Debug
+included, so the app's own `embedded.mobileprovision` must be unexpired and must
+name the phone, and the identity it names must be in this machine's keychain
+whenever Stim modifies the bundle.
+
+In Debug the phone reaches Metro over the LAN, because it shares no loopback
+with the host and USB carries no reverse forward. Stim gates a non-internal IPv4
+address as this workspace's Metro, then hands it to the app: an expo-dev-client
+app through the deep link (`--payload-url`), a bare app by writing
+`<addr>:<port>` into a copy of the bundle's `ip.txt` and re-sealing that copy.
+The cache entry is never modified. Set `ios.lanHost` when this Mac has several
+interfaces and the phone shares one that is not the first.
+
+Two things a phone needs that a simulator does not, both one-time and both
+human: trusting the developer certificate under Settings > General > VPN &
+Device Management, and allowing the Local Network prompt the first time the app
+looks for Metro. Until the second one is granted, `launched` comes back
+`unverified`.
+
+A `--device` run in a Release configuration builds fresh every time: a cached
+Release app carries its builder's JavaScript, and the device JS swap lands with
+a later phase of [#178](https://github.com/appandflow/stim/issues/178).
 
 ## `android`
 

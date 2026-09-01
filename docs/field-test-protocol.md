@@ -158,6 +158,14 @@ Record the verify output, the install result, and whether the app ran. A
 failure here invalidates `ip.txt` ownership, the Debug path, and the Release
 JS swap together, so report it as CRITICAL and stop.
 
+**PASSED 2026-09-01** on an iPhone 12 Pro (iPhone13,3, cabled, iOS Developer
+Mode on), against the real `stim ios --device` artifact: the mutation broke the
+seal, `codesign --force --sign <sha1>
+--preserve-metadata=identifier,entitlements,flags,runtime` re-made it,
+`--verify --strict` passed, and both install and launch were accepted. A
+pristine control behaved identically. Rerun it only when the re-seal ladder
+itself changes.
+
 **B. Device log capture** (appandflow/stim#179). The collector's parser is
 tested against a real `os_log` stderr mirror captured on macOS, not on a
 phone. What a phone has to settle:
@@ -196,11 +204,40 @@ phone. What a phone has to settle:
    again and confirm the previous pid was proven this workspace's and
    signalled, and that `stop` reaps the survivor.
 
-**C. Install, launch and Debug over the LAN**, once #178 wires them: the
-signer-conflict uninstall-and-retry, the device-side process probe that
-replaces the host `process.kill` for release launch proof, and the evidence
-that the phone fetched from Metro rather than falling back to its embedded
-bundle (the run's own `ready: bundle loaded` line).
+**C. Install, launch and Debug over the LAN** (#178 phases 3 and 5). What a
+phone has to settle, and what is already settled:
+
+1. **The dev-client Debug loop, end to end.** `stim ios --device` on a
+   provisioned expo-dev-client project: cache HIT on the `-device` key, install,
+   launch through the collector with the deep link on `--payload-url`, a bundle
+   request from the phone in `logs --source metro`, and `launched: true`.
+   **PASSED 2026-09-01** on the phone above.
+2. **The device pid, never a host pid.** The run's `launch` line names a pid read
+   from `devicectl device info processes`, and a Release run's proof is that
+   probe repeated, not `process.kill`. **PASSED 2026-09-01** (Debug; the Release
+   variant is exercised by the same probe).
+3. **The two human, one-time steps.** A first launch of a build whose developer
+   the phone has not trusted is refused with `FBSOpenApplicationErrorDomain 3`
+   and reason `Security`; the remedy must name Settings > General > VPN & Device
+   Management first. The Local Network permission prompt must be tapped before
+   the phone can reach Metro at all; it cannot be pre-granted from the host and
+   it survives an upgrade install. **Both OBSERVED 2026-09-01**; the refusal
+   classifier is unit-tested against the recorded text rather than re-provoked.
+4. **The bare `ip.txt` path.** NOT YET RUN ON HARDWARE: it needs a bare RN
+   project with a development profile that names the phone, and the available
+   one is a dev-client app. On-disk verification (the copy carries
+   `<addr>:<port>`, the cache entry does not, the copy re-seals and verifies)
+   plus RN's own producer/consumer (`react-native-xcode.sh:16-28`,
+   `RCTBundleURLProvider.mm:70,206`) is what stands behind it today. A phone run
+   is the outstanding evidence.
+5. **The signer-conflict uninstall-and-retry.** NOT YET RUN ON HARDWARE: a
+   genuine `MismatchedApplicationIdentifierEntitlement` needs a second signing
+   team. The classifier and the one-uninstall-one-retry ladder are unit-tested
+   against Apple's documented text.
+6. **The Release device run.** Builds fresh every time until the device JS swap
+   lands (phase 6), because a cached Release app carries its builder's JS.
+   Prove `metroPort` is null, no LAN machinery runs, and the process is alive on
+   the phone three seconds after launch.
 
 ## Launch-status contract
 

@@ -5,8 +5,10 @@ import { getExecutor, type Executor } from '../exec.ts';
 import {
   parseProvisioningProfilePlist,
   parseSigningIdentities,
+  profileGate,
   SIGNING_CODES,
   signingGate,
+  type ProfileGateResult,
   type ProvisioningProfile,
   type SigningGateResult,
   type SigningIdentity,
@@ -71,6 +73,20 @@ export interface SigningGateOptions {
   pinnedSha1?: string | null;
   now?: number;
   exec?: Executor | null;
+}
+
+// A bundle Stim installs without modifying needs the profile checks only: no
+// re-seal happens, so the keychain is not consulted.
+export function gateProfileForDevice(options: SigningGateOptions): ProfileGateResult {
+  const read = readEmbeddedProfile(options.appPath, { exec: options.exec ?? null });
+  return profileGate({
+    profilePresent: read.present,
+    profile: read.profile,
+    identities: [],
+    udid: options.udid,
+    configuration: options.configuration ?? null,
+    ...(options.now === undefined ? {} : { now: options.now }),
+  });
 }
 
 export function gateAppForDevice(options: SigningGateOptions): SigningGateResult {

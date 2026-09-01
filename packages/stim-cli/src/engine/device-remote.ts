@@ -971,7 +971,7 @@ export async function ensureMetroReachable({
   return { ok: true };
 }
 
-function bundleEntryPoint(root: string, isExpo: boolean): string {
+export function bundleEntryPoint(root: string, isExpo: boolean): string {
   if (!isExpo) return 'index';
   try {
     const pkg = JSON.parse(readFileSync(resolvePath(root, 'package.json'), 'utf-8')) as { main?: unknown };

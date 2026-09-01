@@ -315,7 +315,7 @@ test('the guide states the physical-iPhone device-log losses, and states them as
   expect(cleanup).toMatch(/on\s+hardware the collector IS the launch/);
   expect(cleanup).toMatch(/proven and replaced by the same pid rules/);
   expect(cleanup).toMatch(/Unplugging the phone[\s\S]*collector_stopped/);
-  expect(cleanup).toContain('appandflow/stim#178');
+  expect(cleanup).not.toMatch(/not started yet/);
   expect(logs).toMatch(/lines that OPEN with a marker[\s\S]*anchored[\s\S]*app logging ABOUT a crash stays\s+info/);
   expect(logs).toMatch(/only on a line with no mirror\s+prefix/);
   expect(cleanup).toMatch(
@@ -324,9 +324,34 @@ test('the guide states the physical-iPhone device-log losses, and states them as
 
   const lifecycle = renderTopic('lifecycle');
   assert(lifecycle);
-  expect(lifecycle).toMatch(/THE DEVICE LOG COLLECTOR IS BUILT BUT NOT YET STARTED/);
-  expect(lifecycle).toMatch(/the collector IS the launch/);
+  expect(lifecycle).toMatch(/THE DEVICE LOG COLLECTOR IS THE LAUNCH/);
   expect(lifecycle).toContain('appandflow/stim#179');
+});
+
+test('the guide teaches the device install and launch that #178 phases 3 and 5 wired', () => {
+  const lifecycle = renderTopic('lifecycle');
+  const errors = renderTopic('errors');
+  assert(lifecycle);
+  assert(errors);
+
+  expect(lifecycle).not.toMatch(/IT IS NOT FINISHED/);
+  expect(lifecycle).not.toMatch(/REFUSES with\s+STIM_BAD_ARG/);
+  expect(lifecycle).toMatch(/devicectl device install app/);
+  expect(lifecycle).toMatch(/--payload-url/);
+  expect(lifecycle).toMatch(/STORE, THEN COPY, THEN\s+MUTATE/);
+  expect(lifecycle).toMatch(/never consults the compiled RCT_METRO_PORT/);
+  expect(lifecycle).toMatch(/NO INSTALL SKIP ON A PHONE/);
+  expect(lifecycle).toMatch(/device pid means nothing to the host/);
+
+  expect(errors).not.toMatch(/ONE EXCEPTION, and it is temporary/);
+  expect(errors).toMatch(/STIM_NO_LAN_ADDRESS[\s\S]*Deliberately NOT "set metro\.publicUrl"/);
+  expect(errors).toMatch(/STIM_LAN_METRO_UNREACHABLE[\s\S]*ios\.lanHost/);
+  expect(errors).toMatch(
+    /STIM_LAN_METRO_UNREACHABLE[\s\S]*routes a host connection to its own address over\s+loopback/,
+  );
+  expect(errors).toMatch(/FBSOpenApplicationErrorDomain 3/);
+  expect(errors).toMatch(/VPN & Device Management/);
+  expect(errors).toMatch(/devicectl device uninstall app[\s\S]*data went with it/);
 });
 
 test('the errors topic documents every code the build commands and the iOS signing gate can emit', () => {

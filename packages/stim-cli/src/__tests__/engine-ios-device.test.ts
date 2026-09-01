@@ -4,9 +4,20 @@ import { tmpdir } from 'node:os';
 import { describe, expect, test } from 'vitest';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import {
+  awaitIosDeviceLaunch,
+  collectorRecordsFor,
+  deviceProcessPid,
+  installIosDeviceApp,
+  iosDeviceProcess,
+  iosInstallFailureKind,
+  iosInstallRemedy,
+  iosLaunchRefusalKind,
+  iosLaunchRemedy,
   listIosDevices,
   parseDevicectlDevices,
+  parseDeviceProcesses,
   resolveIosPhysicalDevice,
+  verifyIosDeviceReleaseLaunch,
   type IosDeviceEntry,
 } from '../engine/ios-device.ts';
 import { hostLanCandidates, lanCandidates } from '../engine/lan-address.ts';
@@ -271,6 +282,272 @@ function devicectlAvailable(): boolean {
 
 const LIVE = devicectlAvailable() ? false : 'xcrun is not available on this machine';
 
+const APP = '/private/var/containers/Bundle/Application/9C1/Fixture.app/Fixture';
+
+function processPayload(processes: unknown[]): string {
+  return JSON.stringify({
+    info: { outcome: 'success' },
+    result: { deviceIdentifier: 'X', runningProcesses: processes },
+  });
+}
+
+test('parseDeviceProcesses reads the pid and executable devicectl nests, and drops the rest', () => {
+  const parsed = parseDeviceProcesses(
+    processPayload([
+      { executable: 'file:///sbin/launchd', processIdentifier: 1 },
+      { executable: `file://${APP}`, processIdentifier: 767 },
+      { processIdentifier: 88 },
+      { executable: 'file:///usr/libexec/logd' },
+      { executable: 'file:///bin/x', processIdentifier: 0 },
+    ]),
+  );
+  expect(parsed).toEqual([
+    { pid: 1, executable: 'file:///sbin/launchd' },
+    { pid: 767, executable: `file://${APP}` },
+  ]);
+});
+
+test('parseDeviceProcesses tolerates junk instead of throwing', () => {
+  expect(parseDeviceProcesses('not json')).toEqual([]);
+  expect(parseDeviceProcesses({ result: {} })).toEqual([]);
+  expect(parseDeviceProcesses(null)).toEqual([]);
+});
+
+test('deviceProcessPid matches the app bundle, not a process that merely mentions it', () => {
+  const processes = [
+    { pid: 12, executable: 'file:///usr/libexec/Fixture-helper' },
+    { pid: 767, executable: `file://${APP}` },
+  ];
+  expect(deviceProcessPid(processes, 'Fixture')).toBe(767);
+  expect(deviceProcessPid(processes, 'Other')).toBe(null);
+  expect(deviceProcessPid([], 'Fixture')).toBe(null);
+});
+
+test('iosDeviceProcess passes the udid and cleans its temp directory up', () => {
+  const calls: string[][] = [];
+  let outPath = '';
+  setExecutor({
+    runFile(_file: string, args: string[]) {
+      calls.push(args);
+      outPath = args[args.length - 1] as string;
+      writeFileSync(outPath, processPayload([{ executable: `file://${APP}`, processIdentifier: 767 }]));
+      return '';
+    },
+  });
+  try {
+    expect(iosDeviceProcess({ udid: PHONE, appName: 'Fixture' })).toBe(767);
+  } finally {
+    resetExecutor();
+  }
+  expect(calls[0]?.slice(0, 6)).toEqual(['devicectl', 'device', 'info', 'processes', '--device', PHONE]);
+  expect(existsSync(outPath)).toBe(false);
+});
+
+test('iosDeviceProcess reports undefined -- not "gone" -- when the probe itself fails', () => {
+  setExecutor({
+    runFile() {
+      throw new Error('devicectl: device not found');
+    },
+  });
+  try {
+    expect(iosDeviceProcess({ udid: PHONE, appName: 'Fixture' })).toBe(undefined);
+  } finally {
+    resetExecutor();
+  }
+});
+
+test('iosInstallFailureKind names the causes devicectl reports, and nothing it does not', () => {
+  expect(
+    iosInstallFailureKind(
+      "Upgrade's application-identifier entitlement string (TEAM.com.x) does not match installed application's",
+    ),
+  ).toBe('signer');
+  expect(iosInstallFailureKind('MismatchedApplicationIdentifierEntitlement')).toBe('signer');
+  expect(iosInstallFailureKind('The device is locked.')).toBe('locked');
+  expect(iosInstallFailureKind('The device is not paired with this host.')).toBe('untrusted-host');
+  expect(iosInstallFailureKind('Developer Mode is disabled on this device.')).toBe('developer-mode');
+  expect(iosInstallFailureKind('There is not enough disk space on the device.')).toBe('storage');
+  expect(iosInstallFailureKind('some other failure')).toBe(null);
+  expect(iosInstallFailureKind(undefined)).toBe(null);
+});
+
+test('installIosDeviceApp installs once and reports the path it installed', () => {
+  const calls: string[][] = [];
+  setExecutor({
+    runFile(_file: string, args: string[]) {
+      calls.push(args);
+      return '';
+    },
+  });
+  try {
+    expect(installIosDeviceApp({ udid: PHONE, appPath: '/tmp/Fixture.app', bundleId: 'com.example.app' })).toEqual({
+      ok: true,
+      appPath: '/tmp/Fixture.app',
+    });
+  } finally {
+    resetExecutor();
+  }
+  expect(calls).toEqual([['devicectl', 'device', 'install', 'app', '--device', PHONE, '/tmp/Fixture.app']]);
+});
+
+test('a signer conflict uninstalls once, retries once, and says the data went with it', () => {
+  const calls: string[][] = [];
+  setExecutor({
+    runFile(_file: string, args: string[]) {
+      calls.push(args);
+      if (args[2] === 'install' && calls.filter((c) => c[2] === 'install').length === 1) {
+        throw new Error('MismatchedApplicationIdentifierEntitlement');
+      }
+      return '';
+    },
+  });
+  let result;
+  try {
+    result = installIosDeviceApp({ udid: PHONE, appPath: '/tmp/Fixture.app', bundleId: 'com.example.app' });
+  } finally {
+    resetExecutor();
+  }
+  expect(result.ok).toBe(true);
+  expect(result.uninstalled).toBe(true);
+  expect(result.note).toMatch(/its data went with it/);
+  expect(calls.map((c) => c[2])).toEqual(['install', 'uninstall', 'install']);
+  expect(calls[1]).toEqual(['devicectl', 'device', 'uninstall', 'app', '--device', PHONE, 'com.example.app']);
+});
+
+test("a failure that is not a signer conflict never uninstalls the user's app", () => {
+  const calls: string[][] = [];
+  setExecutor({
+    runFile(_file: string, args: string[]) {
+      calls.push(args);
+      throw new Error('The device is locked.');
+    },
+  });
+  let result;
+  try {
+    result = installIosDeviceApp({ udid: PHONE, appPath: '/tmp/Fixture.app', bundleId: 'com.example.app' });
+  } finally {
+    resetExecutor();
+  }
+  expect(result.failed).toBe(true);
+  expect(result.code).toBe('STIM_INSTALL_FAILED');
+  expect(result.remedy).toBe(iosInstallRemedy('locked', { udid: PHONE, bundleId: 'com.example.app' }));
+  expect(calls.map((c) => c[2])).toEqual(['install']);
+});
+
+test('iosLaunchRefusalKind reads the untrusted-developer refusal a real phone produced', () => {
+  expect(
+    iosLaunchRefusalKind(
+      'ERROR: The request to open "com.example.app" failed. Underlying error (FBSOpenApplicationErrorDomain, code 3): Security',
+    ),
+  ).toBe('untrusted-developer');
+  expect(iosLaunchRefusalKind('its profile has not been explicitly trusted by the user')).toBe('untrusted-developer');
+  expect(iosLaunchRefusalKind('FBSOpenApplicationErrorDomain, code 3')).toBe(null);
+  expect(iosLaunchRefusalKind('the device is locked')).toBe('locked');
+  expect(iosLaunchRefusalKind('nothing recognisable')).toBe(null);
+});
+
+test('the untrusted-developer remedy names the Settings screen that fixes it', () => {
+  expect(iosLaunchRemedy('untrusted-developer', { udid: PHONE, bundleId: 'com.example.app' })).toMatch(
+    /Settings > General > VPN & Device Management/,
+  );
+});
+
+test('collectorRecordsFor ignores the predecessor a fresh run just signalled', () => {
+  const records = [
+    { ts: 1, event: 'collector_stopped', msg: 'device log collector received SIGTERM; detaching' },
+    { ts: 2, event: 'collector_started', msg: 'device log collector pid 99 launching com.example.app on device X' },
+    { ts: 3, msg: 'hello' },
+  ];
+  expect(collectorRecordsFor(records, 99).map((r) => r.ts)).toEqual([2, 3]);
+  expect(collectorRecordsFor(records, 12)).toEqual([]);
+  expect(collectorRecordsFor(records, null)).toEqual([]);
+});
+
+test('awaitIosDeviceLaunch returns the device pid as soon as the phone reports it', async () => {
+  const pids = [null, null, 767];
+  const result = await awaitIosDeviceLaunch({
+    udid: PHONE,
+    bundleId: 'com.example.app',
+    appName: 'Fixture',
+    collectorPid: 99,
+    readRecords: () => [],
+    probe: () => pids.shift() ?? null,
+    sleep: async () => {},
+    pollMs: 0,
+  });
+  expect(result).toEqual({ pid: 767 });
+});
+
+test('a console that ends before the app appears is a launch failure with its own evidence', async () => {
+  const result = await awaitIosDeviceLaunch({
+    udid: PHONE,
+    bundleId: 'com.example.app',
+    appName: 'Fixture',
+    collectorPid: 99,
+    readRecords: () => [
+      { ts: 1, event: 'collector_started', msg: 'device log collector pid 99 launching com.example.app on device X' },
+      {
+        ts: 2,
+        msg: 'ERROR: The request to open "com.example.app" failed. (FBSOpenApplicationErrorDomain, code 3) Security',
+      },
+      { ts: 3, event: 'collector_failed', msg: 'the devicectl console ended with exit code 1' },
+    ],
+    probe: () => null,
+    sleep: async () => {},
+  });
+  expect(result.failed).toBe(true);
+  expect(result.remedy).toMatch(/VPN & Device Management/);
+  expect(result.lines?.join('\n')).toMatch(/FBSOpenApplicationErrorDomain/);
+});
+
+test('a launch nothing reports at all times out with the generic devicectl remedy', async () => {
+  let clock = 0;
+  const result = await awaitIosDeviceLaunch({
+    udid: PHONE,
+    bundleId: 'com.example.app',
+    appName: 'Fixture',
+    collectorPid: 99,
+    readRecords: () => [],
+    probe: () => null,
+    timeoutMs: 10,
+    pollMs: 5,
+    now: () => (clock += 5),
+    sleep: async () => {},
+  });
+  expect(result.failed).toBe(true);
+  expect(result.remedy).toMatch(/devicectl device process launch --console/);
+});
+
+test('verifyIosDeviceReleaseLaunch re-probes the phone rather than a host pid', async () => {
+  const alive = await verifyIosDeviceReleaseLaunch({
+    udid: PHONE,
+    appName: 'Fixture',
+    waitMs: 0,
+    probe: () => 767,
+    sleep: async () => {},
+  });
+  expect(alive.verified).toBe(true);
+  expect(alive.pid).toBe(767);
+
+  const gone = await verifyIosDeviceReleaseLaunch({
+    udid: PHONE,
+    appName: 'Fixture',
+    waitMs: 0,
+    probe: () => null,
+    sleep: async () => {},
+  });
+  expect(gone).toMatchObject({ verified: false, reason: 'exited', pid: null });
+
+  const blind = await verifyIosDeviceReleaseLaunch({
+    udid: PHONE,
+    appName: 'Fixture',
+    waitMs: 0,
+    probe: () => undefined,
+    sleep: async () => {},
+  });
+  expect(blind).toMatchObject({ verified: false, reason: 'probe-failed' });
+});
+
 describe('listIosDevices against a real devicectl', { skip: LIVE as unknown as boolean }, () => {
   test('the argv is accepted and every entry it returns is well formed', () => {
     resetExecutor();
@@ -282,4 +559,12 @@ describe('listIosDevices against a real devicectl', { skip: LIVE as unknown as b
     }
     expect(readdirSync(tmpdir()).filter((e) => e.startsWith('stim-devicectl-'))).toEqual([]);
   }, 60_000);
+
+  test('the process-probe argv is accepted by the real devicectl when a phone is connected', () => {
+    resetExecutor();
+    const [connected] = listIosDevices();
+    if (!connected) return;
+    const pid = iosDeviceProcess({ udid: connected.udid, appName: 'NoSuchAppStimWouldEverBuild' });
+    expect(pid).toBe(null);
+  }, 120_000);
 });

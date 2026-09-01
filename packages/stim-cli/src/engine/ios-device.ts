@@ -2,6 +2,8 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
+import type { NdjsonRecord } from '../ndjson.ts';
+import { INSTALL_ERROR } from './app-install.ts';
 
 const DEVICECTL_TIMEOUT_MS = 30_000;
 
@@ -148,4 +150,331 @@ export function resolveIosPhysicalDevice(requested: string | null, devices: IosD
     remedy:
       'Plug the phone in, unlock it, tap Trust, turn on Settings > Privacy & Security > Developer Mode, then check `xcrun devicectl list devices`.',
   };
+}
+
+const DEVICECTL_INSTALL_TIMEOUT_MS = 300_000;
+
+const LOCKED_REMEDY = 'Unlock the phone and keep it awake, then run the command again.';
+
+function errorText(error: unknown): string {
+  const withOutput = error as { stderr?: unknown; stdout?: unknown; message?: unknown };
+  const stderr = String(withOutput?.stderr ?? '').trim();
+  const stdout = String(withOutput?.stdout ?? '').trim();
+  const message = String(withOutput?.message ?? error).trim();
+  return [message, stderr, stdout].filter(Boolean).join('\n');
+}
+
+export type IosInstallFailureKind = 'signer' | 'locked' | 'untrusted-host' | 'developer-mode' | 'storage' | null;
+
+export function iosInstallFailureKind(output: unknown): IosInstallFailureKind {
+  const out = String(output ?? '');
+  if (/MismatchedApplicationIdentifierEntitlement|application-identifier entitlement[^\n]*does not match/i.test(out)) {
+    return 'signer';
+  }
+  if (/device is locked|is locked\b|passcode/i.test(out)) return 'locked';
+  if (/not paired|pairing|trust this computer|untrusted host/i.test(out)) return 'untrusted-host';
+  if (/developer mode/i.test(out)) return 'developer-mode';
+  if (/not enough (?:free )?(?:disk )?space|insufficient (?:disk )?space|storage is full/i.test(out)) return 'storage';
+  return null;
+}
+
+export function iosInstallRemedy(
+  kind: IosInstallFailureKind,
+  { udid, bundleId }: { udid: string; bundleId: string | null },
+): string {
+  switch (kind) {
+    case 'signer':
+      return `${bundleId ?? 'The app'} is already installed on ${udid} under a different team, and Stim could not remove it. Delete the app on the phone (its data goes with it), then run the command again.`;
+    case 'locked':
+      return LOCKED_REMEDY;
+    case 'untrusted-host':
+      return 'Unlock the phone, tap Trust on the pairing prompt, then run the command again.';
+    case 'developer-mode':
+      return 'Turn on Settings > Privacy & Security > Developer Mode on the phone, restart it, then run the command again.';
+    case 'storage':
+      return 'Free space on the phone (Settings > General > iPhone Storage), then run the command again.';
+    default:
+      return `Check that ${udid} is still connected and unlocked (\`xcrun devicectl list devices\`), and that the app was built for the iphoneos SDK.`;
+  }
+}
+
+export interface IosDeviceInstallResult {
+  ok?: boolean;
+  appPath?: string;
+  uninstalled?: boolean;
+  note?: string;
+  failed?: boolean;
+  code?: string;
+  reason?: string;
+  remedy?: string;
+}
+
+export function installIosDeviceApp(
+  { udid, appPath, bundleId = null }: { udid: string; appPath: string; bundleId?: string | null },
+  { exec = null }: { exec?: Executor | null } = {},
+): IosDeviceInstallResult {
+  const e = exec || getExecutor();
+  const install = () => {
+    e.runFile('xcrun', ['devicectl', 'device', 'install', 'app', '--device', udid, appPath], {
+      timeoutMs: DEVICECTL_INSTALL_TIMEOUT_MS,
+    });
+  };
+  try {
+    install();
+    return { ok: true, appPath };
+  } catch (err) {
+    const failure = errorText(err);
+    const kind = iosInstallFailureKind(failure);
+    if (kind !== 'signer' || !bundleId) {
+      return {
+        failed: true,
+        code: INSTALL_ERROR,
+        reason: `devicectl could not install ${appPath} on ${udid}: ${failure}`,
+        remedy: iosInstallRemedy(kind, { udid, bundleId }),
+      };
+    }
+    try {
+      e.runFile('xcrun', ['devicectl', 'device', 'uninstall', 'app', '--device', udid, bundleId], {
+        timeoutMs: DEVICECTL_INSTALL_TIMEOUT_MS,
+      });
+    } catch (uninstallErr) {
+      return {
+        failed: true,
+        code: INSTALL_ERROR,
+        reason:
+          `devicectl refused to install ${appPath} over the copy of ${bundleId} already on ${udid}, ` +
+          `which a different team signed, and the uninstall failed too: ${errorText(uninstallErr)}`,
+        remedy: iosInstallRemedy('signer', { udid, bundleId }),
+      };
+    }
+    try {
+      install();
+    } catch (retryErr) {
+      return {
+        failed: true,
+        code: INSTALL_ERROR,
+        reason: `devicectl could not install ${appPath} on ${udid} even after uninstalling ${bundleId}: ${errorText(retryErr)}`,
+        remedy: iosInstallRemedy(null, { udid, bundleId }),
+      };
+    }
+    return {
+      ok: true,
+      appPath,
+      uninstalled: true,
+      note: `${bundleId} was already installed on ${udid} under a different team, so it was uninstalled (its data went with it) before this app could be installed`,
+    };
+  }
+}
+
+export interface IosDeviceProcess {
+  pid: number;
+  executable: string;
+}
+
+export function parseDeviceProcesses(payload: unknown): IosDeviceProcess[] {
+  let data: unknown = payload;
+  if (typeof payload === 'string') {
+    try {
+      data = JSON.parse(payload);
+    } catch {
+      return [];
+    }
+  }
+  const running = record(record(data).result).runningProcesses;
+  if (!Array.isArray(running)) return [];
+  const out: IosDeviceProcess[] = [];
+  for (const raw of running) {
+    const entry = record(raw);
+    const pid = Number(entry.processIdentifier);
+    const executable = text(entry.executable);
+    if (!Number.isInteger(pid) || pid <= 0 || !executable) continue;
+    out.push({ pid, executable });
+  }
+  return out;
+}
+
+export function deviceProcessPid(processes: readonly IosDeviceProcess[], appName: string): number | null {
+  const marker = `/${appName}.app/`;
+  for (const entry of processes) {
+    if (entry.executable.includes(marker)) return entry.pid;
+  }
+  return null;
+}
+
+export function iosDeviceProcess(
+  { udid, appName }: { udid: string; appName: string },
+  { exec = null }: { exec?: Executor | null } = {},
+): number | null | undefined {
+  const executor = exec || getExecutor();
+  const dir = mkdtempSync(join(tmpdir(), 'stim-devicectl-'));
+  const out = join(dir, 'processes.json');
+  try {
+    executor.runFile(
+      'xcrun',
+      ['devicectl', 'device', 'info', 'processes', '--device', udid, '--quiet', '--json-output', out],
+      {
+        timeoutMs: DEVICECTL_TIMEOUT_MS,
+      },
+    );
+    return deviceProcessPid(parseDeviceProcesses(readFileSync(out, 'utf-8')), appName);
+  } catch {
+    return undefined;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+export type IosLaunchRefusalKind = 'untrusted-developer' | 'locked' | 'not-installed' | null;
+
+// Observed on a real phone (appandflow/stim#178): SpringBoard refuses the first
+// launch of a development build whose developer the phone has not trusted with
+// `FBSOpenApplicationErrorDomain 3` and the reason `Security`.
+export function iosLaunchRefusalKind(output: unknown): IosLaunchRefusalKind {
+  const out = String(output ?? '');
+  if (/profile has not been explicitly trusted by the user/i.test(out)) return 'untrusted-developer';
+  if (/FBSOpenApplicationErrorDomain[^\n]*\b3\b/.test(out) && /Security/.test(out)) return 'untrusted-developer';
+  if (/device is locked|is locked\b|passcode/i.test(out)) return 'locked';
+  if (/(?:application|app)[^\n]*\b(?:is )?(?:unknown to FrontBoard|not installed)/i.test(out)) return 'not-installed';
+  return null;
+}
+
+export function iosLaunchRemedy(
+  kind: IosLaunchRefusalKind,
+  { udid, bundleId }: { udid: string; bundleId: string },
+): string {
+  switch (kind) {
+    case 'untrusted-developer':
+      return (
+        "The phone has not trusted this build's developer certificate, which it refuses to do without a human. " +
+        'On the phone open Settings > General > VPN & Device Management, tap the developer profile under DEVELOPER APP, ' +
+        'tap Trust, then run the command again.'
+      );
+    case 'locked':
+      return LOCKED_REMEDY;
+    case 'not-installed':
+      return `${bundleId} is not installed on ${udid} any more. Run the command again to install it.`;
+    default:
+      return `Run \`xcrun devicectl device process launch --console --device ${udid} ${bundleId}\` to see what the phone reports.`;
+  }
+}
+
+export interface IosDeviceLaunchResult {
+  pid?: number | null;
+  failed?: boolean;
+  reason?: string;
+  remedy?: string;
+  lines?: string[];
+}
+
+const LAUNCH_PROBE_TIMEOUT_MS = 45_000;
+const LAUNCH_PROBE_POLL_MS = 1000;
+const COLLECTOR_ENDED_EVENTS = new Set(['collector_failed', 'collector_stopped']);
+
+function launchEvidence(records: readonly NdjsonRecord[]): string[] {
+  const lines: string[] = [];
+  for (const entry of records) {
+    const msg = typeof entry.msg === 'string' ? entry.msg.trim() : '';
+    if (!msg) continue;
+    if (entry.event === 'collector_started' || entry.event === 'collector_empty') continue;
+    lines.push(msg);
+  }
+  return lines.slice(-6);
+}
+
+// The collector this run started is the one whose end means the launch ended:
+// `replaceCollector` signals its predecessor, whose own closing record lands in
+// the same device.ndjson moments later.
+export function collectorRecordsFor(records: readonly NdjsonRecord[], collectorPid: number | null): NdjsonRecord[] {
+  if (!collectorPid) return [];
+  const marker = new RegExp(`\\bcollector pid ${collectorPid}\\b`);
+  const start = records.findIndex(
+    (entry) => entry.event === 'collector_started' && typeof entry.msg === 'string' && marker.test(entry.msg),
+  );
+  return start < 0 ? [] : records.slice(start);
+}
+
+export async function awaitIosDeviceLaunch({
+  udid,
+  bundleId,
+  appName,
+  collectorPid = null,
+  readRecords,
+  probe,
+  timeoutMs = LAUNCH_PROBE_TIMEOUT_MS,
+  pollMs = LAUNCH_PROBE_POLL_MS,
+  now = Date.now,
+  sleep = (ms: number) => new Promise((r) => setTimeout(r, ms)),
+}: {
+  udid: string;
+  bundleId: string;
+  appName: string;
+  collectorPid?: number | null;
+  readRecords: () => NdjsonRecord[];
+  probe?: () => number | null | undefined;
+  timeoutMs?: number;
+  pollMs?: number;
+  now?: () => number;
+  sleep?: (ms: number) => Promise<unknown>;
+}): Promise<IosDeviceLaunchResult> {
+  const probeProcess = probe ?? (() => iosDeviceProcess({ udid, appName }));
+  const deadline = now() + Math.max(0, timeoutMs);
+  for (;;) {
+    const records = collectorRecordsFor(readRecords(), collectorPid);
+    const ended = records.find((entry) => typeof entry.event === 'string' && COLLECTOR_ENDED_EVENTS.has(entry.event));
+    const pid = probeProcess();
+    if (typeof pid === 'number') return { pid };
+    if (ended) {
+      const lines = launchEvidence(records);
+      const kind = iosLaunchRefusalKind(lines.join('\n'));
+      return {
+        failed: true,
+        reason: `devicectl could not keep ${bundleId} running on ${udid}: the console ended before the app appeared in the device's process list.`,
+        remedy: iosLaunchRemedy(kind, { udid, bundleId }),
+        lines,
+      };
+    }
+    if (now() >= deadline) {
+      const lines = launchEvidence(records);
+      return {
+        failed: true,
+        reason: `${bundleId} did not appear in ${udid}'s process list within ${Math.round(timeoutMs / 1000)}s of the launch.`,
+        remedy: iosLaunchRemedy(iosLaunchRefusalKind(lines.join('\n')), { udid, bundleId }),
+        lines,
+      };
+    }
+    await sleep(Math.min(pollMs, Math.max(0, deadline - now())));
+  }
+}
+
+export interface IosDeviceReleaseVerification {
+  verified: boolean;
+  reason?: 'exited' | 'probe-failed';
+  waitedMs: number;
+  pid?: number | null;
+}
+
+// Invariant 11: a device pid is meaningless to `process.kill` on the host, so a
+// release launch is proven by re-probing the phone's own process list.
+export async function verifyIosDeviceReleaseLaunch({
+  udid,
+  appName,
+  waitMs = 3000,
+  probe,
+  now = Date.now,
+  sleep = (ms: number) => new Promise((r) => setTimeout(r, ms)),
+}: {
+  udid: string;
+  appName: string;
+  waitMs?: number;
+  probe?: () => number | null | undefined;
+  now?: () => number;
+  sleep?: (ms: number) => Promise<unknown>;
+}): Promise<IosDeviceReleaseVerification> {
+  const probeProcess = probe ?? (() => iosDeviceProcess({ udid, appName }));
+  const startedAt = now();
+  await sleep(Math.max(0, waitMs));
+  const pid = probeProcess();
+  const waitedMs = now() - startedAt;
+  if (pid === undefined) return { verified: false, reason: 'probe-failed', waitedMs };
+  return pid === null ? { verified: false, reason: 'exited', waitedMs, pid: null } : { verified: true, waitedMs, pid };
 }
