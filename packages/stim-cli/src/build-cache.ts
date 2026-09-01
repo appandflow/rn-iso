@@ -44,17 +44,48 @@ export type ProjectFingerprint = Fingerprint;
 
 const FINGERPRINT_PLATFORMS = new Set(['ios', 'android']);
 
+/**
+ * Paths a native build never reads, which @expo/fingerprint does not ignore on
+ * its own. The first three exist in a working checkout and not in a fresh one,
+ * so a fingerprint that counts them cannot match across checkouts. The last two
+ * are the bulk of the files a fingerprint walks in a typical app.
+ *
+ * A project's own `.fingerprintignore` still applies and is the place for
+ * entries only that project can judge.
+ */
+export const DEFAULT_FINGERPRINT_IGNORES: string[] = [
+  // Written by Xcode the first time it resolves Swift packages. The pods and
+  // the checked-in project define what compiles.
+  '**/ios/**/Package.resolved',
+  // Generated, and carries this machine's absolute sdk.dir.
+  '**/android/local.properties',
+  // Appears the first time someone opens the project in Android Studio.
+  '**/android/.idea/**',
+  // A debugging artifact for JavaScript.
+  '**/*.map',
+  // Built JavaScript in a dependency. Autolinking reads native sources --
+  // cpp/, apple/, android/, the podspec -- and config plugins live under
+  // plugin/build/, not lib/.
+  '**/node_modules/**/lib/**',
+];
+
 export async function fingerprintProject(
   projectRoot: string,
   {
     platform,
     createFingerprint = expoFingerprint.createFingerprintAsync,
-  }: { platform?: string; createFingerprint?: typeof expoFingerprint.createFingerprintAsync } = {},
+    ignorePaths = DEFAULT_FINGERPRINT_IGNORES,
+  }: {
+    platform?: string;
+    createFingerprint?: typeof expoFingerprint.createFingerprintAsync;
+    ignorePaths?: string[];
+  } = {},
 ): Promise<ProjectFingerprint | null> {
-  const options: FingerprintOptions | undefined =
+  const platforms =
     platform && FINGERPRINT_PLATFORMS.has(platform)
       ? { platforms: [platform] as FingerprintOptions['platforms'] }
       : undefined;
+  const options: FingerprintOptions = { ...platforms, ignorePaths };
   const result = await createFingerprint(projectRoot, options);
   const hash = result?.hash ?? null;
   if (!hash) return null;

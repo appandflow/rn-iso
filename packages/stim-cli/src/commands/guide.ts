@@ -1169,6 +1169,10 @@ WHAT MAKES THE CACHE ACTUALLY HIT: .FINGERPRINTIGNORE
   BUILD is what breaks that, and it fails silently -- a cache that never hits
   looks exactly like a cache that is not there.
 
+  Stim already ignores what a native build never reads and a fresh checkout
+  never has: Package.resolved, android/local.properties, android/.idea, every
+  .map, and lib/ inside a dependency. A project does not repeat those.
+
   \`.fingerprintignore\` at the project root (same syntax as .gitignore) is the
   answer. Put in it only what genuinely cannot change the native build: a
   generated report, a local env file, a lockfile whose checksums embed absolute
