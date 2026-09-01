@@ -102,10 +102,7 @@ When no keep rule clearly applies, delete the comment.
 
 Treat suppressions such as `eslint-disable`, `@ts-ignore`, and
 `@ts-expect-error` as code problems. Keep a suppression only for a faulty,
-pedantic, or style-only rule. If the rule protects correctness or safety, remove
-the suppression and report the exact symbol as `MUST KILL` for a later refactor.
-For a surprising behavior in this codebase, delete the explanation and report
-the exact symbol as `MUST KILL`. Do not add `MUST KILL` markers to source files.
+pedantic, or style-only rule.
 
 ## Required invariants
 
