@@ -1,6 +1,8 @@
 # Stim agent guide
 
-Use this guide when you change this repository. User documentation lives in
+Use this guide when you change this repository. State rules here in the
+present tense: a rule's history lives in issues and commits, not in this
+file. User documentation lives in
 [`packages/stim-cli/README.md`](./packages/stim-cli/README.md).
 
 ## Project
@@ -21,8 +23,8 @@ flags without an explicit product decision. Projects can wrap Stim when they
 need custom behavior.
 
 Runtime state belongs under `$STIM_HOME/workspaces/`, not in the project
-tree. Do not restore `init`, project setup mutations, or the deleted
-`stim-init` skill. `doctor` reports setup that requires project judgment.
+tree. Stim has no init step and never mutates project setup; `doctor`
+reports setup that requires project judgment.
 
 ## Development
 
@@ -119,8 +121,7 @@ that reference text in the skill.
 
 Update `guide` output and its contract tests when commands, flags, defaults, or
 remedies change. Update the skill only when the normal workflow, a permanent
-safety rule, or topic routing changes. Only one skill ships; do not restore
-`stim-init`.
+safety rule, or topic routing changes. Only one skill ships.
 
 Document command invocation once in each main entry point. Show the no-install
 form, `npx stim-cli <command>`, and the global install,
@@ -144,7 +145,7 @@ installs, launches, and reads logs, and nothing more. It records no device, so
 `stop`, `gc`, and `teardown.ts` never see it. Keep it that way: a physical
 serial must never enter the project registry.
 
-### 3. Reimplement; do not reconstruct
+### 3. Fixed invocations; never derive commands from project scripts
 
 Do not infer and rebuild commands from project scripts. Bare React Native hosts
 Metro from the project's dependencies. Expo runs its fixed start command. iOS
