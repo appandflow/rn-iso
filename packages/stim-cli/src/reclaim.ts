@@ -3,6 +3,7 @@ import { existsSync, rmSync } from 'node:fs';
 import { resolveProjectMetro, killMetroTree, isPidAlive } from './metro.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd } from './teardown.ts';
 import { readCollectors } from './collector/state.ts';
+import { verifyCollectorOwnership } from './collector/ownership.ts';
 import {
   clearManagedMetroTunnel,
   clearRemoteSession,
@@ -15,14 +16,26 @@ import { resolveEasCliBin } from './engine/remote-cache.ts';
 import { stopTunnel, type StopTunnelResult } from './engine/tunnel.ts';
 import { workspaceDir } from './paths.ts';
 
-function reapCollectors(root: string): void {
-  for (const record of Object.values(readCollectors(root))) {
+function reapCollectors(root: string): SkippedDevice[] {
+  const skipped: SkippedDevice[] = [];
+  for (const [platform, record] of Object.entries(readCollectors(root))) {
     const pid = (record as { pid?: unknown } | null)?.pid;
     if (typeof pid !== 'number' || pid <= 0 || pid === process.pid || !isPidAlive(pid)) continue;
+    const ownership = verifyCollectorOwnership({ pid, platform, root });
+    if (ownership.status === 'gone') continue;
+    if (ownership.status === 'unverified') {
+      skipped.push({
+        platform: platform === 'android' ? 'android' : 'ios',
+        name: `${platform} log collector (pid ${pid})`,
+        reason: `${ownership.reason}, so it was not signalled -- inspect it with \`ps -p ${pid}\``,
+      });
+      continue;
+    }
     try {
       process.kill(pid, 'SIGTERM');
     } catch {}
   }
+  return skipped;
 }
 
 // eas simulator:stop needs a project cwd, so end the session before removing the worktree.
@@ -207,7 +220,7 @@ export async function reclaimProject(
   const project = getProject(path);
   const dereferenced = describeDereferenced(project);
 
-  reapCollectors(path);
+  const skippedCollectors = reapCollectors(path);
 
   const {
     deletedDevices,
@@ -218,6 +231,7 @@ export async function reclaimProject(
     skippedDevices: SkippedDevice[];
     failedDevices: SkippedDevice[];
   } = deleteOwnedDevices ? reclaimOwnedDevices(project) : { deletedDevices: [], skippedDevices: [], failedDevices: [] };
+  skippedDevices.push(...skippedCollectors);
 
   const remote = reclaimRemoteSession(path, { stopSession });
   if (remote.failed) {

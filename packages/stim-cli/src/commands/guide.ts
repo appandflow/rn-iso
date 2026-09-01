@@ -1327,6 +1327,12 @@ WHAT ELSE STOP REAPS
   the device it was reading. A fresh \`ios\` / \`android\` run also kills the
   previous collector for that platform before starting its own.
 
+  Before signalling a recorded collector pid, \`stop\`, \`gc --delete\` and
+  \`worktree remove\` read that pid's live command and require it to be this
+  workspace's collector for that platform. A pid that cannot be proven is
+  reported and left alone: the kernel reuses pids, and an unreaped record is a
+  smaller problem than a signal delivered to someone else's process.
+
 BUILD LOCKS
   \`gc\` also reports the single-flight build locks (above): the ones whose
   builder is no longer running are debris a reboot or a kill left behind, and

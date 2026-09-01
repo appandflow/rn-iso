@@ -1,3 +1,4 @@
+import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -435,3 +436,114 @@ test('an operator-supplied tunnel (metro.publicUrl) is never recorded, so reclai
   expect(r.stoppedTunnel).toBeNull();
   rmSync(root, { recursive: true, force: true });
 });
+
+function workspaceWithCollector(pid: number, platform = 'ios'): string {
+  const root = mkdtempSync(join(tmpdir(), 'stim-ws-'));
+  ensureWorkspaceStorage(root);
+  writeFileSync(
+    workspaceStateFile(root),
+    JSON.stringify({ collectors: { [platform]: { pid, startedAt: '2026-01-01T00:00:00.000Z' } } }),
+  );
+  upsertProject(root, { label: 'agent-1' });
+  return root;
+}
+
+function processCommand(pid: number): string {
+  try {
+    return execFileSync('ps', ['-ww', '-o', 'command=', '-p', String(pid)], { encoding: 'utf-8' }).trim();
+  } catch {
+    return '';
+  }
+}
+
+async function spawnFakeProcess(title: string | null): Promise<ChildProcess> {
+  const rename = title ? `process.title = ${JSON.stringify(title)};` : '';
+  const child = spawn(process.execPath, ['-e', `${rename} setInterval(() => {}, 1000);`], { stdio: 'ignore' });
+  const expected = title ?? process.execPath;
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline && !processCommand(child.pid as number).startsWith(expected)) {
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  return child;
+}
+
+function stillRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function exits(child: ChildProcess, timeoutMs = 5_000): Promise<boolean> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), timeoutMs);
+    child.once('exit', () => {
+      clearTimeout(timer);
+      resolve(true);
+    });
+  });
+}
+
+test('reclaim SIGTERMs a live pid whose command proves it is this workspace collector', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'stim-ws-'));
+  const child = await spawnFakeProcess(`stim-collector-ios --root ${root}`);
+  ensureWorkspaceStorage(root);
+  writeFileSync(
+    workspaceStateFile(root),
+    JSON.stringify({ collectors: { ios: { pid: child.pid, startedAt: '2026-01-01T00:00:00.000Z' } } }),
+  );
+  upsertProject(root, { label: 'agent-1' });
+
+  const died = exits(child);
+  const r = await reclaimProject(root);
+  expect(await died).toBe(true);
+  expect(r.skippedDevices).toEqual([]);
+  rmSync(root, { recursive: true, force: true });
+}, 20_000);
+
+test('reclaim leaves a live pid it cannot prove, and says so', async () => {
+  const child = await spawnFakeProcess(null);
+  const root = workspaceWithCollector(child.pid as number);
+
+  const r = await reclaimProject(root);
+  expect(stillRunning(child.pid as number)).toBe(true);
+  expect(r.skippedDevices).toEqual([
+    {
+      platform: 'ios',
+      name: `ios log collector (pid ${child.pid})`,
+      reason: expect.stringContaining("does not run this workspace's ios log collector"),
+    },
+  ]);
+  expect(r.skippedDevices[0]?.reason).toMatch(/not signalled/);
+  child.kill('SIGKILL');
+  await exits(child);
+  rmSync(root, { recursive: true, force: true });
+}, 20_000);
+
+test('reclaim leaves a collector recorded for another root alone', async () => {
+  const other = mkdtempSync(join(tmpdir(), 'stim-other-'));
+  const child = await spawnFakeProcess(`stim-collector-ios --root ${other}`);
+  const root = workspaceWithCollector(child.pid as number);
+
+  const r = await reclaimProject(root);
+  expect(stillRunning(child.pid as number)).toBe(true);
+  expect(r.skippedDevices.map((d) => d.name)).toEqual([`ios log collector (pid ${child.pid})`]);
+  child.kill('SIGKILL');
+  await exits(child);
+  rmSync(other, { recursive: true, force: true });
+  rmSync(root, { recursive: true, force: true });
+}, 20_000);
+
+test('reclaim says nothing about a collector pid that is already gone', async () => {
+  const child = await spawnFakeProcess(null);
+  const pid = child.pid as number;
+  child.kill('SIGKILL');
+  await exits(child);
+  const root = workspaceWithCollector(pid);
+
+  const r = await reclaimProject(root);
+  expect(r.skippedDevices).toEqual([]);
+  rmSync(root, { recursive: true, force: true });
+}, 20_000);
