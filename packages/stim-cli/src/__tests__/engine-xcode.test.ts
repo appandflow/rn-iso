@@ -1436,5 +1436,5 @@ describe('buildIos against a real xcodebuild', { skip: LIVE as unknown as boolea
     expect(errors.length).toBe(1);
     expect(errors[0]?.msg).toMatch(/main\.m:5:18: use of undeclared identifier/);
     expect(records.some((r) => r.level === 'debug' && r.msg?.includes('** BUILD FAILED **'))).toBeTruthy();
-  });
+  }, 120_000);
 });
