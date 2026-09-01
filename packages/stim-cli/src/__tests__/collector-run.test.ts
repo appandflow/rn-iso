@@ -150,6 +150,9 @@ describe('parseArgs', () => {
       parseArgs(['--platform', 'ios', '--root', '/abs', '--udid', 'U1', '--bundle', 'com.x', '--payload-url', 'u'])
         .error,
     ).toMatch(/--payload-url only applies to --physical/);
+    expect(
+      parseArgs(['--platform', 'ios', '--root', '/abs', '--udid', 'U1', '--bundle', 'com.x', '--payload-url']).error,
+    ).toMatch(/--payload-url needs a URL/);
   });
 
   test('an explicit --app-name wins, because the product name is not always the last bundle segment', () => {
@@ -393,7 +396,7 @@ describe('the ios device collector, spawned for real against a fake devicectl', 
     const started = log[0];
     assert(started);
     expect(started.event).toBe('collector_started');
-    expect(started.msg).toMatch(/launching com\.example\.MyApp on iPhone UDID-1/);
+    expect(started.msg).toMatch(/launching com\.example\.MyApp on device UDID-1/);
     expect(started.msg).toMatch(/subsystem, category and severity are not carried on hardware/);
     expect(log.some((r) => r.msg === 'a raw stdout write')).toBeTruthy();
     expect(log.some((r) => r.category === 'javascript' && r.msg === 'counter is 1')).toBeTruthy();
@@ -432,6 +435,26 @@ describe('the ios device collector, spawned for real against a fake devicectl', 
     expect(failed.level).toBe('error');
     expect(failed.msg).toMatch(/the devicectl console ended with exit code 1/);
     expect('collectors' in (state() || {})).toBe(false);
+  });
+
+  test('a stop signal before any output is a stop, not an empty capture', async () => {
+    writeShim('xcrun', 'exec sleep 30\n');
+    const child = spawnCollector([
+      '--platform',
+      'ios',
+      '--root',
+      root,
+      '--udid',
+      'UDID-1',
+      '--bundle',
+      'com.example.MyApp',
+      '--physical',
+    ]);
+    await until(() => readCollectors(root).ios as CollectorEntry, { label: 'the device collector registration' });
+    process.kill(childPid(child), 'SIGTERM');
+    expect(await exited(child)).toEqual({ code: 0, signal: null });
+    expect(deviceLog().some((r) => r.event === 'collector_empty')).toBe(false);
+    expect(deviceLog().some((r) => r.event === 'collector_stopped')).toBeTruthy();
   });
 
   test('a clean launch that produced no console output says so rather than reading as a pass', async () => {

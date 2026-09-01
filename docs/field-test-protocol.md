@@ -183,10 +183,15 @@ phone. What a phone has to settle:
    replaced a running one, and that a dev-client deep link passed as
    `--payload-url` opened the right URL.
 5. **Cleanup on unplug.** Pull the cable with the collector running. It must
-   write `collector_stopped`, remove its own `collectors.ios` registration,
-   and exit; `status` must stop reporting it and `gc` must find nothing,
-   because a phone is never recorded as a device. Then reconnect and run
-   `ios --device` again: the replacement must start cleanly.
+   remove its own `collectors.ios` registration and exit; `status` must stop
+   reporting it and `gc` must find nothing, because a phone is never recorded
+   as a device. Then reconnect and run `ios --device` again: the replacement
+   must start cleanly. **Which closing record does it write?** A non-zero
+   devicectl exit becomes `collector_failed`, a zero exit becomes
+   `collector_stopped`, and nobody has observed which one a cable-pull
+   produces. Record the exit code and the record. If unplugging reports a
+   failure, that is a wrong error on a normal action and the classification
+   needs to change.
 6. **Replacement and ownership.** With a collector live, run `ios --device`
    again and confirm the previous pid was proven this workspace's and
    signalled, and that `stop` reaps the survivor.

@@ -26,3 +26,5 @@ spans two lines
 	4   dyld                                0x0000000185de7e00 start + 6992
 )
 libc++abi: terminating due to uncaught exception of type NSException
+2026-09-01 10:24:21.163944-0400 My App[512:1049623] [javascript] a product name with a space still mirrors
+2026-09-01 10:24:21.164158-0400 My App[512:1049623] and so does NSLog from it

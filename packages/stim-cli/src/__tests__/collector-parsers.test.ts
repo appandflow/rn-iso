@@ -28,6 +28,7 @@ import {
   parseDeviceConsoleLine,
   CONSOLE_ENV,
   FATAL_MARKERS,
+  TOOL_ERROR_PREFIX,
 } from '../collector/ios-device.ts';
 import { LEVELS, SOURCES } from '../ndjson.ts';
 
@@ -219,11 +220,29 @@ describe('ios: the physical-device console', () => {
 
   test("devicectl's own refusal is recorded at error rather than as app output", () => {
     const record = parseDeviceConsoleLine(
-      'ERROR: The specified device was not found. (Name: 00008030-DEAD) (com.apple.dt.CoreDeviceError error 1000 (0x3E8))',
+      `${TOOL_ERROR_PREFIX}The specified device was not found. (Name: 00008030-DEAD) (com.apple.dt.CoreDeviceError error 1000 (0x3E8))`,
       { now: at },
     );
     assert(record);
     expect(record.level).toBe('error');
+  });
+
+  test('an app that logs the ERROR: prefix is not devicectl, because the mirror prefixed it', () => {
+    const record = parseDeviceConsoleLine(
+      '2026-09-01 10:03:46.971897-0400 StimFixture[431:1049622] [javascript] ERROR: request failed',
+      { now: at },
+    );
+    assert(record);
+    expect(record.level).toBe('info');
+    expect(record.msg).toBe('ERROR: request failed');
+  });
+
+  test('a product name with a space keeps its process, category and timestamp', () => {
+    const record = parsed.find((r) => r.msg === 'a product name with a space still mirrors');
+    assert(record);
+    expect(record.proc).toBe('My App(512)');
+    expect(record.category).toBe('javascript');
+    expect(record.ts).not.toBe(at());
   });
 
   test('blank lines and non-strings are not records', () => {
@@ -233,9 +252,19 @@ describe('ios: the physical-device console', () => {
     expect(parseDeviceConsoleLine('2026-09-01 10:03:46.971266-0400 App[1:2] ', { now: at })).toBe(null);
   });
 
-  test('every fatal marker is matched by substring, wherever it sits in the line', () => {
-    for (const marker of FATAL_MARKERS) {
-      expect(deviceConsoleLevel(`prefix ${marker} suffix`)).toBe('fatal');
+  test('a fatal marker counts only where the runtime puts it: at the start of the message', () => {
+    const starts = [
+      "*** Terminating app due to uncaught exception 'NSRangeException', reason: '...'",
+      'libc++abi: terminating due to uncaught exception of type NSException',
+      '*** Assertion failure in -[UIView layoutSubviews], UIView.m:1',
+      'Fatal error: Unexpectedly found nil while unwrapping an Optional value',
+      'Screen.swift:42: Fatal error: Unexpectedly found nil while unwrapping an Optional value',
+    ];
+    for (const line of starts) expect(deviceConsoleLevel(line)).toBe('fatal');
+    expect(starts.every((line) => FATAL_MARKERS.some((m) => m.test(line)))).toBeTruthy();
+
+    for (const line of starts) {
+      expect(deviceConsoleLevel(`retrying after a crash report that said "${line}"`)).toBe('info');
     }
     expect(deviceConsoleLevel('nothing alarming')).toBe('info');
     expect(deviceConsoleLevel(42)).toBe('info');

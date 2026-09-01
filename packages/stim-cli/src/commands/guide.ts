@@ -444,10 +444,12 @@ WHAT WRITES WHAT
                      Debug is not mirrored at all
 
   So every device record from a phone is \`raw: true\` and \`info\`, except
-  the lines that name their own severity: an uncaught ObjC exception, a
-  libc++abi termination, an assertion failure, a Swift fatal error, and
-  devicectl's own \`ERROR:\`. Severity cannot be recovered, so it is not
-  guessed. The NOISE_RULES that demote Apple's framework chatter key on
+  the lines that OPEN with a marker the runtime itself prints: an uncaught
+  ObjC exception, a libc++abi termination, an assertion failure, or a Swift
+  fatal error. The match is anchored, so an app logging ABOUT a crash stays
+  info. devicectl's own \`ERROR:\` is read only on a line with no mirror
+  prefix, because that is the only kind devicectl writes. Severity cannot be
+  recovered, so it is not guessed. The NOISE_RULES that demote Apple's framework chatter key on
   subsystem and cannot fire either -- but they have less to do, because
   --console carries only the app's streams rather than every framework
   logging inside its process.
@@ -1317,10 +1319,12 @@ THE OPTION SURFACE, IN FULL
   process as every other collector -- one per platform per workspace, titled
   with its --root, killed and replaced on the next \`ios\` run whose pid still
   proves it is this workspace's, and reaped by \`stop\`. Unplugging the phone
-  ends devicectl, which ends the collector: it writes collector_stopped,
-  removes its own registration and exits, leaving nothing for \`gc\` to find,
-  because a phone is never recorded as a device. See \`guide logs\` for what
-  the device stream can and cannot carry, and appandflow/stim#179.
+  ends devicectl, which ends the collector: it removes its own registration
+  and exits, leaving nothing for \`gc\` to find, because a phone is never
+  recorded as a device. Whether it closes with collector_stopped or
+  collector_failed follows devicectl's exit code, which no one has watched a
+  cable-pull produce yet. See \`guide logs\` for what the device stream can
+  and cannot carry, and appandflow/stim#179.
 
   A VARIANT WHOSE NAME ENDS IN "Release" IS A RELEASE BUILD (\`release\`,
   \`productionRelease\`), and that is the whole opt-in -- there is no second
@@ -1477,10 +1481,14 @@ WHAT ELSE STOP REAPS
   attaching after the fact. It registers under the same \`ios\` key, carries
   the same --root in its title, is proven and replaced by the same pid rules,
   and is reaped by the same \`stop\`. Unplugging the phone ends devicectl,
-  which ends the collector: it writes collector_stopped, unregisters itself
-  and exits, and \`gc\` has nothing to find, because a phone is never recorded
-  as a device. It is not started yet -- the launch it would ride on is
-  appandflow/stim#178. See \`guide logs\` for what it can and cannot carry.
+  which ends the collector: it unregisters itself and exits either way, so
+  \`gc\` has nothing to find, because a phone is never recorded as a device.
+  WHICH record it writes on the way out depends on devicectl's exit code, and
+  that code is unverified until someone pulls a cable: a zero exit is
+  collector_stopped, a non-zero one is collector_failed, because on hardware
+  a non-zero devicectl exit is the only evidence a launch or console failed.
+  It is not started yet -- the launch it would ride on is appandflow/stim#178.
+  See \`guide logs\` for what it can and cannot carry.
 
   Before signalling a recorded collector pid, \`stop\`, \`gc --delete\`,
   \`worktree remove\`, and a fresh \`ios\` / \`android\` run each read that

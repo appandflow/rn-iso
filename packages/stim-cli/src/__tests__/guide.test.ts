@@ -315,6 +315,11 @@ test('the guide states the physical-iPhone device-log losses, and states them as
   expect(cleanup).toMatch(/proven and replaced by the same pid rules/);
   expect(cleanup).toMatch(/Unplugging the phone[\s\S]*collector_stopped/);
   expect(cleanup).toContain('appandflow/stim#178');
+  expect(logs).toMatch(/lines that OPEN with a marker[\s\S]*anchored[\s\S]*app logging ABOUT a crash stays\s+info/);
+  expect(logs).toMatch(/only on a line with no mirror\s+prefix/);
+  expect(cleanup).toMatch(
+    /unverified until someone pulls a cable[\s\S]*collector_stopped, a non-zero one is\s+collector_failed/,
+  );
 
   const lifecycle = renderTopic('lifecycle');
   assert(lifecycle);

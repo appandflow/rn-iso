@@ -79,6 +79,7 @@ export function parseArgs(argv: string[]): ParsedCollectorArgs {
     }
     if (arg === '--payload-url') {
       payloadUrl = argv[++i] ?? null;
+      if (!payloadUrl) return { error: '--payload-url needs a URL.' };
       continue;
     }
     return { error: `Unknown collector argument "${arg}".` };
@@ -177,7 +178,7 @@ function startMessage({
     return `device log collector pid ${pid} streaming ${packageName} (pid ${appPid}) on ${serial}`;
   }
   if (!physical) return `device log collector pid ${pid} streaming ${appName} on ${udid}`;
-  return `device log collector pid ${pid} launching ${bundleId} on iPhone ${udid} and streaming its console; subsystem, category and severity are not carried on hardware -- see \`stim guide logs\``;
+  return `device log collector pid ${pid} launching ${bundleId} on device ${udid} and streaming its console; subsystem, category and severity are not carried on hardware -- see \`stim guide logs\``;
 }
 
 export async function runCollector({
@@ -207,11 +208,11 @@ export async function runCollector({
   let finished = false;
   let captured = 0;
   let watcher: PidWatcher | null = null;
-  const finish = (code: number, level: string, msg: string, event: string) => {
+  const finish = (code: number, level: string, msg: string, event: string, { signalled = false } = {}) => {
     if (finished) return;
     finished = true;
     watcher?.stop();
-    if (physical && captured === 0) {
+    if (physical && captured === 0 && !signalled) {
       writer.write({
         src: 'device',
         platform,
@@ -238,7 +239,9 @@ export async function runCollector({
       process.on(signal, () => {
         flushReaders();
         killChild(child);
-        finish(0, 'info', `device log collector received ${signal}; detaching`, 'collector_stopped');
+        finish(0, 'info', `device log collector received ${signal}; detaching`, 'collector_stopped', {
+          signalled: true,
+        });
       });
     }
   }

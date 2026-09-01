@@ -873,6 +873,28 @@ several is a refusal listing the candidates.
 
 Either way `process.processIdentifier` is read out of the JSON.
 
+**Amendment, 2026-09-01 (#179).** Two details of that sketch are wrong, found
+while interrogating `devicectl` 518.33 for phase 7, and phase 3 should follow
+this paragraph rather than the bullets above.
+
+1. **The deep link is not the positional argument.** `devicectl device process
+launch` documents its positional as "the bundle identifier of or path to the
+   remote application"; a URL for the app to open on launch travels in
+   `--payload-url`. The dev-client launch is therefore
+   `... --device <udid> --terminate-existing --payload-url <devClientUrl(...)>
+<bundleId>`.
+2. **`--json-output` cannot supply the pid when the console is attached.**
+   Phase 7 needs `--console` on the same launch, and `--console` "waits for the
+   app to terminate", so its JSON is written at exit rather than at launch. The
+   device-side process probe this section already specifies —
+   `devicectl device info processes` — becomes the only source of a device pid,
+   for Debug as well as Release. It is no longer release-only plumbing.
+
+Phase 7 also inverts who launches: because `devicectl` connects an app's
+standard streams only when it is the process that starts the app, the log
+collector runs this launch itself rather than attaching after it. Phase 3 wires
+the collector as the launch step; see #179.
+
 **Proof of launch — this is an invariant 11 change, and only for release.**
 `verifyReleaseLaunch` (`app-install.ts:567`) sleeps 3 s then calls
 `process.kill(pid, 0)` on the **host**. That works on a simulator because a

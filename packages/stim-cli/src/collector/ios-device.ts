@@ -7,20 +7,23 @@ import type { NdjsonRecord } from '../ndjson.ts';
 // writes alone, and React Native logs through os_log (React/Base/RCTLog.mm).
 export const CONSOLE_ENV: Record<string, string> = { OS_ACTIVITY_DT_MODE: 'enable' };
 
-export const FATAL_MARKERS: string[] = [
-  '*** Terminating app due to uncaught exception',
-  'libc++abi: terminating',
-  '*** Assertion failure in',
-  'Fatal error: ',
+// Anchored, because a message that merely quotes one of these is an app
+// logging about a crash, not a crash. Swift prints its own file:line first.
+export const FATAL_MARKERS: RegExp[] = [
+  /^\*\*\* Terminating app due to uncaught exception/,
+  /^libc\+\+abi: terminating/,
+  /^\*\*\* Assertion failure in/,
+  /^(?:\S+:\d+: )?Fatal error: /,
 ];
 
+export const TOOL_ERROR_PREFIX = 'ERROR: ';
+
 const MIRROR_LINE =
-  /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+[+-]\d{4}) (\S+)\[(\d+):(\d+)\] ?(?:\[([^\]\s]+)\] )?([\s\S]*)$/;
+  /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+[+-]\d{4}) (.+?)\[(\d+):(\d+)\] ?(?:\[([^\]\s]+)\] )?([\s\S]*)$/;
 
 export function deviceConsoleLevel(message: unknown): string {
   const text = typeof message === 'string' ? message : '';
-  if (FATAL_MARKERS.some((marker) => text.includes(marker))) return 'fatal';
-  return text.startsWith('ERROR: ') ? 'error' : 'info';
+  return FATAL_MARKERS.some((marker) => marker.test(text)) ? 'fatal' : 'info';
 }
 
 export function parseDeviceConsoleLine(
@@ -40,7 +43,9 @@ export function parseDeviceConsoleLine(
     raw: true,
   };
   if (!match) {
-    record.level = deviceConsoleLevel(text);
+    // devicectl's own diagnostics share the app's stderr but never carry a
+    // mirror prefix, so this prefix is only theirs on an unmatched line.
+    record.level = text.startsWith(TOOL_ERROR_PREFIX) ? 'error' : deviceConsoleLevel(text);
     return record;
   }
 
