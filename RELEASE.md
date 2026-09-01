@@ -14,20 +14,13 @@ packages/expo-build-cache    @stim-cli/expo-build-cache    Expo build cache prov
 packages/metro               @stim-cli/metro               shared Metro transform cache + log reporter
 ```
 
-**Every package in this repo carries the same version and is published
-together.** The caches and the CLI are one product -- a cache package registers
-itself through the CLI's manifest, and the CLI trims what the caches wrote -- so
-a version that tells you which CLI a cache was built against is worth more than
-one that counts that package's own changes. A release with no changes to a
-package still publishes it; the cost is a version number, and the alternative is
-a compatibility matrix nobody maintains.
+**Every package carries the same version and is published together** -- the
+caches and the CLI are one product, and a shared version beats a compatibility
+matrix. A release with no changes to a package still publishes it.
 
-Run every command from the repo root unless a step says otherwise. Each package
-has its own README, and each README ships in its own tarball -- npm reads a
-package's README from that package's directory and nowhere else, which is why
-`packages/stim-cli/README.md` exists rather than only the root one. The root
-`README.md` is a landing page pointing at the packages; it does not need to be
-copied anywhere.
+Run every command from the repo root unless a step says otherwise. Each
+package ships its own README in its own tarball; the root README is a landing
+page and is not copied anywhere.
 
 ## 1. Decide the version
 
@@ -47,31 +40,22 @@ else
 fi
 ```
 
-An npm `E404` means this is the first release for that package name. Confirm
-all five names are available, use the intended first version, and review the
-full release diff. Complete the first-publication bootstrap in section 4,
-step 7 before pushing the first tag.
+An npm `E404` means a first release for that package name: complete the
+first-publication bootstrap in
+[docs/release-recovery.md](./docs/release-recovery.md) before pushing the tag.
 
 Use `X.Y.Z-rc.N` for a release candidate. While no stable release exists,
-every publish -- release candidates included -- lands on the npm `latest`
-dist-tag: that is what the workflow does and what installs resolve, so
-`npm view stim-cli version` is always the current release. Once a stable
-1.0.0 ships, the workflow must gain prerelease-aware dist-tag selection
-(prereleases to `next`) BEFORE the next candidate is tagged, so a later
-`1.1.0-rc` cannot replace stable on `latest` -- tracked as issue #165. The
-historical `next` tags on all five packages are stale (rc-era, mutually
-inconsistent) and should be removed as part of that change:
-`npm dist-tag rm <pkg> next` for each package.
-
-When a published version exists, check `git describe --tags --abbrev=0`. If
-that tag is _higher_ than `v$last`, a previous release got tagged but never
-landed on npm. **Retry that publish before bumping again** (re-run section 4,
-step 7 with the existing version) rather than incrementing past it.
+every publish lands on the npm `latest` dist-tag, so
+`npm view stim-cli version` is always the current release. Before the first
+candidate AFTER 1.0.0 stable, the workflow must gain prerelease-aware
+dist-tag selection (issue #165). A tag higher than the published version
+means a release never landed: see
+[docs/release-recovery.md](./docs/release-recovery.md) before bumping.
 
 Look at every commit in the list and decide:
 
 - **Patch** (`0.2.0 -> 0.2.1`) — bug fixes, doc-only changes, internal refactors with no user-visible effect.
-- **Minor** (`0.2.0 -> 0.3.0`) — new commands, new flags, additions to existing commands. **Pre-1.0, breaking changes also go here** (e.g. 0.1 -> 0.2 was a major surface trim that landed as a minor). On 0.x a breaking change does _not_ force a major — bumping to a new major is reserved for 1.0 stabilization or a deliberate grouped-breaking-changes cut.
+- **Minor** (`0.2.0 -> 0.3.0`) — new commands, new flags, additions to existing commands. Pre-1.0, breaking changes also go here; a new major is reserved for 1.0 stabilization or a deliberate grouped-breaking-changes cut.
 - **Major** (`0.x -> 1.0`, `1.x -> 2.0`) — only post-1.0, or when intentionally cutting a 1.0.
 
 If anything in the list is breaking, call it out under "Removed (breaking)" /
@@ -251,36 +235,11 @@ Before continuing:
    ```
 
    Send the `url` (the run page has Review deployments -> `release` ->
-   Approve and deploy). Two learned-the-hard-way requirements: every
-   package.json must carry a `repository` field matching this repo (a
-   provenance publish is REJECTED without it, E422), and a NEW package must
-   be published once by hand first -- npm's trusted-publisher settings live
-   on the package page, which does not exist until then. For the first
-   `stim-cli` release, create the `@stim-cli` npm organization, publish all five
-   packages manually in dependency order, then configure each package's trusted
-   publisher for `appandflow/stim`, workflow `release.yml`, environment
-   `release`. Do this before pushing the first tag. The tagged workflow skips an
-   exact package version that already exists, publishes to the `latest`
-   dist-tag (see section 1 for the pre-stable rationale), then verifies all
-   five registry versions. The same commands are the manual fallback for
-   later releases:
-
-   ```bash
-   npm whoami                                          # confirm login; if 401, `npm login` first
-   pnpm --filter @stim-cli/core publish --access public --otp <code>
-   pnpm --filter @stim-cli/cache publish --access public --otp <code>
-   pnpm --filter @stim-cli/metro publish --access public --otp <code>
-   pnpm --filter @stim-cli/expo-build-cache publish --access public --otp <code>
-   pnpm --filter stim-cli publish --access public --otp <code>
-   ```
-
-   2FA is on for this account, so each `npm publish` will prompt for an OTP.
-   Keeping `--access public` on every scoped publish is harmless and makes the
-   first release explicit. OIDC trusted publishing replaces tokens and OTPs in
-   CI after the package-level trusted publishers are configured.
-
-   If one publish fails after another succeeded, do NOT bump the version to
-   retry — re-run only the failed publish at the same version.
+   Approve and deploy). The workflow skips an exact package version that
+   already exists, publishes to the `latest` dist-tag (section 1), then
+   verifies all five registry versions. A NEW package, a failed publish, or
+   a provenance rejection: see
+   [docs/release-recovery.md](./docs/release-recovery.md).
 
 8. **Smoke-test the published versions** from a scratch directory:
    ```bash
@@ -291,10 +250,8 @@ Before continuing:
    npm view "@stim-cli/expo-build-cache@$version" version
    npm view "@stim-cli/metro@$version" version
    ```
-   `npm view stim-cli` reported "No README data found" for every release up to
-   0.14.0, because the only README lived at the repo root while the package
-   publishes from `packages/stim-cli`. Check it, rather than assuming a README in
-   the repo means a README on npm.
+   A missing README on npm means the package directory lacks one
+   ([docs/release-recovery.md](./docs/release-recovery.md)).
 
 ## 5. After the release
 
