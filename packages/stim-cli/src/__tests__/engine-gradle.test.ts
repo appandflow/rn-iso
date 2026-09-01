@@ -19,7 +19,6 @@ import {
   parseApkFromTranscript,
   parseOutputMetadata,
   pickDebugApk,
-  staleApkRefusal,
   variantNameOf,
 } from '../engine/gradle.ts';
 import { makeWriter } from './_factories.ts';
@@ -278,34 +277,6 @@ describe('locateApk', () => {
     const result = locateApk(root, '');
     expect(result.apkPath).toBe(apk);
     expect(result.note).toBeUndefined();
-  });
-});
-
-describe('staleApkRefusal', () => {
-  const task = 'assembleDebug';
-  const apkPath = '/w/android/app/build/outputs/apk/debug/app-debug.apk';
-
-  test('an APK older than the build that just ran is refused, naming the file', () => {
-    const refusal = staleApkRefusal({ task, apkPath, mtimeMs: 1_000_000, buildStartMs: 2_000_000 });
-    assert(refusal);
-    expect(refusal.code).toBe(BUILD_ERROR);
-    expect(refusal.reason).toMatch(/predates the build/);
-    expect(refusal.reason).toContain(apkPath);
-    expect(refusal.remedy).toMatch(/android\.variant/);
-  });
-
-  test('an APK written during or after the build is fresh', () => {
-    expect(staleApkRefusal({ task, apkPath, mtimeMs: 2_000_500, buildStartMs: 2_000_000 })).toBe(null);
-    expect(staleApkRefusal({ task, apkPath, mtimeMs: 5_000_000, buildStartMs: 2_000_000 })).toBe(null);
-  });
-
-  test('the slop absorbs filesystem timestamp granularity', () => {
-    expect(staleApkRefusal({ task, apkPath, mtimeMs: 1_999_000, buildStartMs: 2_000_000 })).toBe(null);
-    expect(staleApkRefusal({ task, apkPath, mtimeMs: 1_997_000, buildStartMs: 2_000_000 })).not.toBe(null);
-  });
-
-  test('an unreadable mtime never refuses', () => {
-    expect(staleApkRefusal({ task, apkPath, mtimeMs: Number.NaN, buildStartMs: 2_000_000 })).toBe(null);
   });
 });
 
@@ -605,18 +576,22 @@ describe('buildAndroid', () => {
     expect(result.lastLines.some((l) => l.includes('app-production-debug.apk'))).toBeTruthy();
   });
 
-  test('an APK whose mtime predates the build is refused as a stale carried artifact', async () => {
+  test('an UP-TO-DATE variant build installs the APK gradle left in place, whatever its mtime (#154)', async () => {
     makeAndroidProject();
-    const apk = writeApk('app-debug.apk');
+    const apk = writeFlavoredApk('preview', 'debug', 'app-preview-debug.apk');
     const old = (Date.now() - 3_600_000) / 1000;
     utimesSync(apk, old, old);
     const result = await buildAndroid(
-      { root, logWriter: recordingWriter() },
-      { spawnFn: () => fakeChild({ lines: ['BUILD SUCCESSFUL in 1s'] }) },
+      { root, logWriter: recordingWriter(), variant: 'previewDebug' },
+      {
+        spawnFn: () =>
+          fakeChild({
+            lines: ['BUILD SUCCESSFUL in 13s', '1055 actionable tasks: 78 executed, 977 up-to-date'],
+          }),
+      },
     );
-    expect(result.failed).toBe(true);
-    expect(result.code).toBe(BUILD_ERROR);
-    expect(result.reason).toMatch(/predates the build/);
+    expect((result as BuildAndroidResultLike).ok).toBe(true);
+    expect((result as BuildAndroidResultLike).apkPath).toBe(apk);
   });
 
   test('a wrapper that will not execute names the permission bit', async () => {

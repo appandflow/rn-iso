@@ -502,7 +502,7 @@ STIM_DEPS_FAILED
 STIM_BUILD_FAILED
   xcodebuild or gradle failed. The EXTRACTED diagnostics are printed (capped),
   not the transcript. Read the log path on the next line for the rest.
-  Three Android refusals share this code without gradle itself failing:
+  Two Android refusals share this code without gradle itself failing:
   - MORE THAN ONE debug APK under android/app/build/outputs/apk and nothing
     configured to pick one (a project with product flavors, several flavors
     already built). Stim will not guess which flavor to install: the
@@ -511,10 +511,11 @@ STIM_BUILD_FAILED
   - NO APK for the configured variant: the android.variant / --variant value
     does not name a real variant (\`./gradlew :app:tasks\` in android/ lists
     the assemble tasks).
-  - A STALE APK: the build succeeded but the APK's mtime predates the build
-    that just ran, so it is an artifact this run did not produce (a copied
-    build/ directory, a carried worktree). Delete
-    android/app/build/outputs/apk and run again.
+  AN APK OLDER THAN THE BUILD IS NOT A REFUSAL. \`assembleDebug\` packages every
+  flavor, so a later \`--variant previewDebug\` finds a current APK that gradle
+  reports UP-TO-DATE and repackages nothing. Stim installs it. Gradle owns task
+  freshness and the fingerprint owns cache freshness; Stim does not second-guess
+  either from the file's mtime.
 
 FALLBACK NOTES THAT ARE NOT CODES (release cache hits)
   On a release cache hit Stim regenerates this workspace's JS bundle into a

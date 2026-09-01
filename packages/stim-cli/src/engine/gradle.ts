@@ -234,29 +234,6 @@ export function locateApk(root: string, transcript = '', variant: string | null 
   return { apkPath: null };
 }
 
-export function staleApkRefusal({
-  task,
-  apkPath,
-  mtimeMs,
-  buildStartMs,
-  slopMs = 2000,
-}: {
-  task: string;
-  apkPath: string;
-  mtimeMs: number;
-  buildStartMs: number;
-  slopMs?: number;
-}): { code: string; reason: string; remedy: string } | null {
-  if (!Number.isFinite(mtimeMs) || !Number.isFinite(buildStartMs)) return null;
-  if (mtimeMs >= buildStartMs - slopMs) return null;
-  return {
-    code: BUILD_ERROR,
-    reason: `\`./gradlew ${task}\` succeeded, but the APK at ${apkPath} predates the build that just ran, so it is a stale artifact this run did not produce.`,
-    remedy:
-      'Delete android/app/build/outputs/apk and run again so gradle repackages the APK. If the build was UP-TO-DATE because a flavor redirects its output elsewhere, set the android.variant setting.',
-  };
-}
-
 export type BuildAndroidResult = {
   ok?: boolean;
   apkPath?: string;
@@ -420,15 +397,6 @@ export async function buildAndroid(
     };
   }
   const apkPath = located.apkPath;
-
-  let mtimeMs = Number.NaN;
-  try {
-    mtimeMs = statSync(apkPath).mtimeMs;
-  } catch {}
-  const stale = staleApkRefusal({ task, apkPath, mtimeMs, buildStartMs: startedAt });
-  if (stale) {
-    return { failed: true, ...stale, diagnostics: [], truncated: 0, lastLines: tail.slice(), durationMs };
-  }
 
   return { ok: true, apkPath, apkNote: located.note ?? null, durationMs, lastLines: tail.slice() };
 }

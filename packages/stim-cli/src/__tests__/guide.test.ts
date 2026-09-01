@@ -303,6 +303,21 @@ test('the errors topic documents every code the engine can emit under a command'
   }
 });
 
+test('STIM_BUILD_FAILED lists only the Android refusals gradle.ts still raises (#154)', () => {
+  const body = renderTopic('errors');
+  assert(body);
+  const section = body.slice(body.indexOf('STIM_BUILD_FAILED'), body.indexOf('FALLBACK NOTES THAT ARE NOT CODES'));
+  const gradle = readFileSync(new URL('../engine/gradle.ts', import.meta.url), 'utf-8');
+
+  expect(gradle).not.toMatch(/mtime|predates the build/);
+  expect(section).toContain('Two Android refusals');
+  expect(section).toMatch(/MORE THAN ONE debug APK/);
+  expect(section).toMatch(/NO APK for the configured variant/);
+  expect(section).not.toMatch(/STALE APK/);
+  expect(section).toMatch(/AN APK OLDER THAN THE BUILD IS NOT A REFUSAL/);
+  expect(section.replace(/\s+/g, ' ')).toContain('reports UP-TO-DATE');
+});
+
 test('the STIM_DEPS_FAILED ladder names the commands and the gate the engine actually uses (#137)', () => {
   const body = renderTopic('errors');
   assert(body);
