@@ -45,7 +45,8 @@ first-publication bootstrap in
 [docs/release-recovery.md](./docs/release-recovery.md) before pushing the tag.
 
 Use `X.Y.Z-rc.N` for a release candidate. While no stable release exists,
-every publish lands on the npm `latest` dist-tag, so
+every publish lands on the npm `latest` dist-tag -- that is what installs
+resolve, so an rc on `latest` is correct, and
 `npm view stim-cli version` is always the current release. Before the first
 candidate AFTER 1.0.0 stable, the workflow must gain prerelease-aware
 dist-tag selection (issue #165). A tag higher than the published version
@@ -246,6 +247,7 @@ Before continuing:
    version=X.Y.Z
    cd /tmp && npx "stim-cli@$version" --version
    npm view "stim-cli@$version" readme | head -c 200        # NOT "No README data found!"
+   npm view "@stim-cli/core@$version" version
    npm view "@stim-cli/cache@$version" version
    npm view "@stim-cli/expo-build-cache@$version" version
    npm view "@stim-cli/metro@$version" version

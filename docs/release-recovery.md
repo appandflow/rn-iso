@@ -1,6 +1,6 @@
 # Release recovery
 
-Edge cases and one-time procedures pulled out of [RELEASE.md](./RELEASE.md)
+Edge cases and one-time procedures pulled out of [RELEASE.md](../RELEASE.md)
 so the normal path stays short. Come here from the step that failed.
 
 ## A tag exists but npm does not have it
@@ -41,10 +41,11 @@ package's trusted publisher for `appandflow/stim`, workflow `release.yml`,
 environment `release`. The workflow's already-exists skip makes the next
 tagged release pick it up cleanly.
 
-For a from-scratch bootstrap (first release ever): create the `@stim-cli`
-npm organization, publish all five packages manually in dependency order,
-then configure each package's trusted publisher as above -- all before
-pushing the first tag.
+For a from-scratch bootstrap (first release ever): confirm all the package
+names are available, use the intended first version, review the full release
+diff, create the `@stim-cli` npm organization, publish all five packages
+manually in dependency order, then configure each package's trusted
+publisher as above -- all before pushing the first tag.
 
 ## Provenance publish rejected (E422)
 
