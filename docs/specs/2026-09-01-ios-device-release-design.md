@@ -740,8 +740,8 @@ output directly out of derived data. A bare Debug device run cannot: mutating
 `ip.txt` in place would mean either mutating the artifact before it is stored —
 putting a machine-specific, workspace-specific address into the shared cache
 entry, which every later consumer would then have to overwrite anyway — or
-mutating the cache entry after storing it, which invariant 10's "the cache
-entry itself is never modified" forbids outright.
+mutating the cache entry after storing it, which this spec's cache-copy rule
+("the cache entry itself is never modified, exactly as on Android") forbids outright.
 
 So the order is **store, then copy, then mutate**: the pristine artifact is
 stored under the post-mutation cache key exactly as it is today, then copied to
@@ -1295,7 +1295,7 @@ Two remain, and neither blocks phases 1–6.
 
 1. **Is there a `devicectl` invocation that yields the `subsystem` /
    `category` / `messageType` / `processImagePath` fields `collector/ios.ts`
-   parses?** If yes, phase 6 is a port of the existing collector. If no, the
+   parses?** If yes, phase 7 is a port of the existing collector. If no, the
    choice is between a second, lossier parser over an unstructured console
    stream and leaving the gap permanent. This is the follow-up issue.
 
