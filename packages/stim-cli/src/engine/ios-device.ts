@@ -77,9 +77,26 @@ export interface ResolvedIosDevice {
 const DEVELOPER_MODE_REMEDY =
   'Turn on Settings > Privacy & Security > Developer Mode on the phone, restart it, then reconnect.';
 const PAIRING_REMEDY = 'Unlock the phone, tap Trust on the pairing prompt, then reconnect the cable.';
+const CABLE_REMEDY = 'Connect the phone with a cable and check `xcrun devicectl list devices`, then retry.';
+
+// devicectl reports transportType 'wired' for a cabled device and 'localNetwork'
+// for one it reached over Wi-Fi. v1 installs over the cable only, so a device
+// paired only over the network is not a candidate.
+const WIRED_TRANSPORTS = new Set(['wired', 'usb']);
+
+function isWired(device: IosDeviceEntry): boolean {
+  return device.transportType === null || WIRED_TRANSPORTS.has(device.transportType.toLowerCase());
+}
 
 function describe(device: IosDeviceEntry): string {
   return `${device.udid} (${device.name})`;
+}
+
+function wirelessRefusal(device: IosDeviceEntry): ResolvedIosDevice {
+  return {
+    error: `${describe(device)} is paired over ${device.transportType}, not a cable, and Stim installs over the cable only.`,
+    remedy: CABLE_REMEDY,
+  };
 }
 
 function unhealthy(device: IosDeviceEntry): ResolvedIosDevice | null {
@@ -99,27 +116,33 @@ function unhealthy(device: IosDeviceEntry): ResolvedIosDevice | null {
 }
 
 export function resolveIosPhysicalDevice(requested: string | null, devices: IosDeviceEntry[]): ResolvedIosDevice {
-  const connected = Array.isArray(devices) ? devices : [];
+  const listed = Array.isArray(devices) ? devices : [];
+  const cabled = listed.filter(isWired);
+  const wireless = listed.filter((d) => !isWired(d));
   if (requested) {
-    const match = connected.find((d) => d.udid.toLowerCase() === requested.toLowerCase());
+    const match = cabled.find((d) => d.udid.toLowerCase() === requested.toLowerCase());
     if (match) return unhealthy(match) ?? { udid: match.udid, name: match.name };
+    const overNetwork = wireless.find((d) => d.udid.toLowerCase() === requested.toLowerCase());
+    if (overNetwork) return wirelessRefusal(overNetwork);
     return {
-      error: connected.length
-        ? `${requested} is not connected. devicectl reports these devices: ${connected.map(describe).join(', ')}.`
-        : `${requested} is not connected, and devicectl reports no device at all.`,
+      error: cabled.length
+        ? `${requested} is not connected. devicectl reports these cabled devices: ${cabled.map(describe).join(', ')}.`
+        : `${requested} is not connected by cable, and devicectl reports no cabled device at all.`,
       remedy: 'Check the cable and `xcrun devicectl list devices`, then retry with a UDID it lists.',
     };
   }
-  if (connected.length === 1) {
-    const only = connected[0]!;
+  if (cabled.length === 1) {
+    const only = cabled[0]!;
     return unhealthy(only) ?? { udid: only.udid, name: only.name };
   }
-  if (connected.length > 1) {
+  if (cabled.length > 1) {
     return {
-      error: `Several devices are connected: ${connected.map(describe).join(', ')}.`,
+      error: `Several devices are connected: ${cabled.map(describe).join(', ')}.`,
       remedy: 'Name the one to build for with `stim ios --device <udid>`.',
     };
   }
+  const onlyWireless = wireless[0];
+  if (onlyWireless) return wirelessRefusal(onlyWireless);
   return {
     error: 'No physical iOS device is connected.',
     remedy:

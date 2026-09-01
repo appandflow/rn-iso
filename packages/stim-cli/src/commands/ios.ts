@@ -131,6 +131,9 @@ export const PLATFORM = 'ios';
 const GENERIC_SIM_DESTINATION = 'generic/platform=iOS Simulator';
 const IPHONEOS_SDK = 'iphoneos';
 
+const PROVIDER_SKIPPED_ON_DEVICE =
+  'a device build is local-tier only: its cache key names the iphoneos slice, and a remote or provider entry is keyed for the simulator';
+
 interface DeviceLike {
   deviceName?: string | null;
   name?: string | null;
@@ -1591,9 +1594,13 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   let providerName: string | null = null;
   let providerLoad: Promise<LoadCacheProviderResult> | null = null;
   const cacheWarn = createWarnOnce((line) => note(chalk.yellow(phaseLine('cache', line))));
-  const loadProvider = cacheProviderConfig
-    ? () => (providerLoad ??= d.loadCacheProvider({ projectRoot: root, config: cacheProviderConfig }))
-    : null;
+  const loadProvider =
+    cacheProviderConfig && !physical
+      ? () => (providerLoad ??= d.loadCacheProvider({ projectRoot: root, config: cacheProviderConfig }))
+      : null;
+  if (cacheProviderConfig && physical) {
+    note(chalk.dim(phaseLine('cache', PROVIDER_SKIPPED_ON_DEVICE)));
+  }
   let waitedForBuild: WaitedForBuild | null = null;
   let swapDir: string | null = null;
   let swapFellBack = false;
@@ -1763,6 +1770,10 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   }
 
   async function resolveRemoteArtifact(): Promise<void> {
+    if (physical) {
+      if (!appPath) note(chalk.dim(phaseLine('cache', PROVIDER_SKIPPED_ON_DEVICE)));
+      return;
+    }
     if (!appPath) {
       const loaded: LoadProjectProviderResult = await d.loadProjectProvider(root, { isExpo });
       if (loaded?.unavailable) {
@@ -1890,6 +1901,14 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
 
   const installableCachedApp = async (cachedPath: string): Promise<string | null> => {
     if (!release) return cachedPath;
+    if (physical) {
+      phase(
+        'js swap',
+        `skipped for --device: the device swap re-seals with the artifact's own identity, which is not built yet, ` +
+          'so this run stops before installing rather than injecting JS under an ad-hoc signature',
+      );
+      return cachedPath;
+    }
     phase('js swap', `regenerating this workspace's JS for the cached ${configuration} app`);
     const swap = await d.swapJsBundle({ root, isExpo, cachedAppPath: cachedPath, logWriter: logWriter() });
     if (swap?.ok && swap.appPath) {
@@ -2068,7 +2087,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
             note(chalk.yellow(`Could not store the build in the shared cache: ${(e as Error)?.message || e}`));
           }
 
-          if (remote) {
+          if (remote && !physical) {
             uploadPending = d.uploadRemote({
               logWriter: logWriter(),
               provider: remote.provider,

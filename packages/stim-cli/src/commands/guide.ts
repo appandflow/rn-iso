@@ -793,11 +793,14 @@ STIM_BAD_ARG / STIM_NO_PROJECT
   with no package.json above it, or an android/app/build.gradle that
   declares product flavors with
   no variant selected (the refusal names the debug variants).
-  \`ios --device\` also refuses HERE after a successful build, because it
-  selects a phone and builds the iphoneos slice for it but cannot yet install
-  onto one; the message names the cache key the artifact was stored under.
   These errors are caught before the port is reserved and before anything is
   spawned, so nothing was started.
+  ONE EXCEPTION, and it is temporary: \`ios --device\` also refuses with this
+  code AFTER a successful build. It selects a phone and builds the iphoneos
+  slice for it, but installing onto hardware is not implemented yet, so the
+  run stops there and the message names the cache key the artifact was stored
+  under -- the build is kept and the next run reuses it. This exception goes
+  away when device install lands; see appandflow/stim#178.
 
 "@stim-cli/metro is not installed ... so bundler and client logs will not be
 captured"  (in metro.ndjson, bare RN)
@@ -1249,14 +1252,23 @@ THE OPTION SURFACE, IN FULL
   hardware -- there is no capacity check, no simulator creation, no boot wait,
   and no device record, so \`stop\` and \`gc\` never see the phone.
 
+  A device build is LOCAL-TIER ONLY. Its cache key is
+  \`<fingerprint>-<configuration>-device\`, so a device app can never collide
+  with the simulator one, and neither the build-cache provider nor the Expo
+  remote cache is read or written on a \`--device\` run: every entry they hold
+  is keyed for the simulator, so consulting them would either install a
+  simulator slice on a phone or publish an iphoneos app under a key simulator
+  builds resolve.
+
   IT IS NOT FINISHED. Today it builds the \`iphoneos\` slice for the selected
-  phone -- \`-sdk iphoneos\`, the project's own signing settings, cache key
-  \`<fingerprint>-<configuration>-device\` so a device app can never collide
-  with a simulator one -- stores that artifact, and then REFUSES with
+  phone -- \`-sdk iphoneos\`, the project's own signing settings, no signing
+  flags on the argv -- stores that artifact, and then REFUSES with
   STIM_BAD_ARG, because installing and launching on hardware are not wired yet
-  (appandflow/stim#178). Use it to prove a project signs for a device and to
-  warm the device cache; use \`stim ios\` with no --device for a run that ends
-  with an app on screen.
+  (appandflow/stim#178). A release cache hit does not run the JS swap either:
+  the swap ends in a signature, and the device re-seal that would make it
+  installable is not wired in yet. Use \`--device\` to prove a project signs
+  for a device and to warm the device cache; use \`stim ios\` with no --device
+  for a run that ends with an app on screen.
 
   A VARIANT WHOSE NAME ENDS IN "Release" IS A RELEASE BUILD (\`release\`,
   \`productionRelease\`), and that is the whole opt-in -- there is no second

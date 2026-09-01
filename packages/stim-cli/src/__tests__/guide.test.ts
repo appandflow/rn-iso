@@ -291,12 +291,17 @@ test('no topic teaches a command this binary does not have', () => {
   expect(renderTopic('settings')).toMatch(/no `stim config` command/);
 });
 
-test('the errors topic documents every code the build commands can emit', () => {
+test('the errors topic documents every code the build commands and the iOS signing gate can emit', () => {
   const body = renderTopic('errors');
   assert(body);
-  const sources = ['ios.ts', 'android.ts', 'start.ts']
-    .map((f) => readFileSync(new URL(`../commands/${f}`, import.meta.url), 'utf-8'))
-    .join('\n');
+  const sources = [
+    ...['ios.ts', 'android.ts', 'start.ts'].map((f) =>
+      readFileSync(new URL(`../commands/${f}`, import.meta.url), 'utf-8'),
+    ),
+    ...['engine/ios-profile.ts', 'engine/ios-signing.ts'].map((f) =>
+      readFileSync(new URL(`../${f}`, import.meta.url), 'utf-8'),
+    ),
+  ].join('\n');
   const codes = new Set([...sources.matchAll(/STIM_[A-Z_]+/g)].map((m) => m[0]));
   expect(codes.size >= 8).toBeTruthy();
   for (const code of codes) {

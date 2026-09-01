@@ -66,6 +66,31 @@ test('parsePlist reads the container types security cms -D emits', () => {
   });
 });
 
+test('parsePlist fails closed on an out-of-range character reference', () => {
+  expect(parsePlist('<plist version="1.0"><string>&#xFFFFFFF;</string></plist>')).toBe(null);
+  expect(parsePlist('<plist version="1.0"><string>&#1114112;</string></plist>')).toBe(null);
+  expect(parsePlist('<plist version="1.0"><string>&#xD800;</string></plist>')).toBe(null);
+  expect(parsePlist('<plist version="1.0"><string>&#65;&#x42;</string></plist>')).toBe('AB');
+});
+
+test('parsePlist ignores XML comments, including markup hiding inside one', () => {
+  expect(
+    parsePlist(
+      '<plist version="1.0"><dict><!-- <key>ghost</key><string>x</string> -->' +
+        '<key>real</key><string>value</string></dict></plist>',
+    ),
+  ).toEqual({ real: 'value' });
+});
+
+test('a key with no value ends its dict instead of swallowing the parent', () => {
+  expect(
+    parsePlist(
+      '<plist version="1.0"><dict><key>outer</key><dict><key>dangling</key></dict>' +
+        '<key>after</key><string>kept</string></dict></plist>',
+    ),
+  ).toEqual({ outer: {}, after: 'kept' });
+});
+
 test('parsePlist refuses what is not a plist rather than guessing', () => {
   expect(parsePlist('')).toBe(null);
   expect(parsePlist(null)).toBe(null);

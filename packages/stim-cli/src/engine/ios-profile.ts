@@ -24,10 +24,19 @@ const ENTITIES: Record<string, string> = {
   apos: "'",
 };
 
+class PlistError extends Error {}
+
+function codePoint(value: number): string {
+  if (!Number.isInteger(value) || value < 0 || value > 0x10ffff || (value >= 0xd800 && value <= 0xdfff)) {
+    throw new PlistError(`character reference out of range: ${value}`);
+  }
+  return String.fromCodePoint(value);
+}
+
 function decodeEntities(raw: string): string {
   return raw.replace(/&(#x?[0-9A-Fa-f]+|[a-z]+);/g, (match, body: string) => {
-    if (body.startsWith('#x') || body.startsWith('#X')) return String.fromCodePoint(Number.parseInt(body.slice(2), 16));
-    if (body.startsWith('#')) return String.fromCodePoint(Number.parseInt(body.slice(1), 10));
+    if (body.startsWith('#x') || body.startsWith('#X')) return codePoint(Number.parseInt(body.slice(2), 16));
+    if (body.startsWith('#')) return codePoint(Number.parseInt(body.slice(1), 10));
     return ENTITIES[body] ?? match;
   });
 }
@@ -62,8 +71,9 @@ function takeText(cursor: Cursor, name: string): string {
 }
 
 function parseValue(cursor: Cursor): PlistValue | undefined {
-  const tag = takeTag(cursor);
-  if (!tag || tag.closing) return undefined;
+  const peeked = peekTag(cursor);
+  if (!peeked || peeked.closing) return undefined;
+  const tag = takeTag(cursor) as Tag;
   if (tag.selfClosing) {
     if (tag.name === 'true') return true;
     if (tag.name === 'false') return false;
@@ -133,10 +143,15 @@ function parseValue(cursor: Cursor): PlistValue | undefined {
 
 export function parsePlist(xml: unknown): PlistValue | null {
   if (typeof xml !== 'string' || xml.trim() === '') return null;
-  const start = xml.indexOf('<plist');
-  const cursor: Cursor = { xml, pos: start < 0 ? 0 : start };
-  const value = parseValue(cursor);
-  return value === undefined ? null : value;
+  const stripped = xml.replace(/<!--[\s\S]*?-->/g, '');
+  const start = stripped.indexOf('<plist');
+  const cursor: Cursor = { xml: stripped, pos: start < 0 ? 0 : start };
+  try {
+    const value = parseValue(cursor);
+    return value === undefined ? null : value;
+  } catch {
+    return null;
+  }
 }
 
 export interface ProvisioningProfile {

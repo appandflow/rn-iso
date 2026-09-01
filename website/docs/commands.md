@@ -73,10 +73,15 @@ machine, including remote-device workflows.
 
 A non-Debug configuration embeds its JavaScript bundle.
 
+A device build is local-tier only. Its cache key ends `-device`, so it cannot
+collide with a simulator build, and no build-cache provider or Expo remote cache
+is read or written on a `--device` run, because every entry they hold is keyed
+for the simulator.
+
 `--device` is incomplete. It selects the phone and builds the `iphoneos` slice
-for it, under a `-device` cache key that cannot collide with a simulator build,
-and then refuses: installing and launching on hardware are not implemented yet.
-Run `stim ios` without `--device` for a run that ends with an app on screen.
+for it, and then refuses: installing and launching on hardware are not
+implemented yet. Run `stim ios` without `--device` for a run that ends with an
+app on screen.
 
 ## `android`
 

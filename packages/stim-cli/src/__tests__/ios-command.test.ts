@@ -3324,6 +3324,114 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     expect(calls.order.includes('fingerprintProject')).toBe(false);
   });
 
+  test('a device run never touches the Expo provider, in either direction', async () => {
+    reserve();
+    let loadProjectProviderCalls = 0;
+    let resolveRemoteCalls = 0;
+    let uploadCalls = 0;
+    const { calls, errs } = await run(
+      { device: true, configuration: 'Release' },
+      {
+        ...connected(),
+        detectIsExpo: () => true,
+        loadProjectProvider: async () => {
+          loadProjectProviderCalls += 1;
+          return { provider: { plugin: {}, options: {} }, name: 'eas' };
+        },
+        resolveRemote: async () => {
+          resolveRemoteCalls += 1;
+          return { appPath: join(root, 'downloaded', 'Fixture.app') };
+        },
+        uploadRemote: async () => {
+          uploadCalls += 1;
+          return { uploaded: true };
+        },
+      },
+    );
+    expect(loadProjectProviderCalls).toBe(0);
+    expect(resolveRemoteCalls).toBe(0);
+    expect(uploadCalls).toBe(0);
+    expect(calls.order.includes('buildIos')).toBe(true);
+    expect((calls.args.storeBuild as { key: string }).key).toBe(`${FINGERPRINT}-release-device`);
+    expect(errs.join('\n')).toMatch(/local-tier only/);
+  });
+
+  test('a device run never loads the build-cache provider, for the read or the upload', async () => {
+    reserve();
+    let loads = 0;
+    const { calls } = await run(
+      { device: true },
+      {
+        ...connected(),
+        resolveCacheProviderConfig: () => ({ provider: './cache.cjs', options: {}, baseDir: root }),
+        loadCacheProvider: async () => {
+          loads += 1;
+          return { name: './cache.cjs', provider: { builds: {} } };
+        },
+      },
+    );
+    expect(loads).toBe(0);
+    expect(calls.order.filter((c) => ['resolveBuild', 'storeBuild'].includes(c))).toEqual([
+      'resolveBuild',
+      'storeBuild',
+    ]);
+  });
+
+  test('the same providers ARE consulted without --device, so the gate is not vacuous', async () => {
+    reserve();
+    let loadProjectProviderCalls = 0;
+    let resolveRemoteCalls = 0;
+    await run(
+      {},
+      {
+        detectIsExpo: () => true,
+        loadProjectProvider: async () => {
+          loadProjectProviderCalls += 1;
+          return { provider: { plugin: {}, options: {} }, name: 'eas' };
+        },
+        resolveRemote: async () => {
+          resolveRemoteCalls += 1;
+          return null;
+        },
+      },
+    );
+    expect(loadProjectProviderCalls).toBe(1);
+    expect(resolveRemoteCalls).toBe(1);
+
+    let loads = 0;
+    await run(
+      {},
+      {
+        resolveCacheProviderConfig: () => ({ provider: './cache.cjs', options: {}, baseDir: root }),
+        loadCacheProvider: async () => {
+          loads += 1;
+          return { none: true };
+        },
+      },
+    );
+    expect(loads).toBeGreaterThan(0);
+  });
+
+  test('a device release cache hit does not run the JS swap it cannot re-seal yet', async () => {
+    reserve();
+    let swaps = 0;
+    const { calls, errs } = await run(
+      { device: true, configuration: 'Release' },
+      {
+        ...connected(),
+        resolveBuild: () => join(root, 'cached', 'Fixture.app'),
+        swapJsBundle: async () => {
+          swaps += 1;
+          return { ok: true, appPath: join(root, 'js-swap', 'Fixture.app'), tmpDir: null, hermes: true, durationMs: 1 };
+        },
+      },
+    );
+    expect(swaps).toBe(0);
+    expect(calls.order.includes('buildIos')).toBe(false);
+    expect(calls.order.includes('installIosApp')).toBe(false);
+    expect(errs.join('\n')).toMatch(/js swap\s+skipped for --device/);
+  });
+
   test('a malformed ios.signingIdentitySha1 refuses the same way', async () => {
     reserve();
     const { errs, exitCode } = await run(
