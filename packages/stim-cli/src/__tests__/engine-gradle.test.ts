@@ -18,7 +18,10 @@ import {
   locateApk,
   parseApkFromTranscript,
   parseOutputMetadata,
+  parseProductFlavors,
   pickDebugApk,
+  productFlavorRefusal,
+  readProductFlavors,
   variantNameOf,
 } from '../engine/gradle.ts';
 import { makeWriter } from './_factories.ts';
@@ -700,5 +703,217 @@ describe('buildAndroid', () => {
       },
     );
     expect((result as BuildAndroidResultLike).ok).toBe(true);
+  });
+});
+
+const FLAVORED_GRADLE = `apply plugin: "com.android.application"
+
+android {
+    namespace "com.example.app"
+    defaultConfig {
+        applicationId "io.tlon.groups"
+    }
+    productFlavors {
+        production {
+            applicationId "io.tlon.groups"
+        }
+        preview {
+            applicationId "io.tlon.groups.preview"
+        }
+    }
+}
+`;
+
+const PLAIN_GRADLE = `apply plugin: "com.android.application"
+
+android {
+    namespace "com.example.app"
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
+        release {
+            minifyEnabled true
+        }
+    }
+}
+`;
+
+const NESTED_GRADLE = `android {
+    productFlavors {
+        production {
+            manifestPlaceholders = [appName: "Groups"]
+            ndk {
+                abiFilters "arm64-v8a", "x86_64"
+            }
+        }
+        preview {
+            buildConfigField "boolean", "PREVIEW", "true"
+        }
+    }
+}
+`;
+
+const COMMENTED_GRADLE = `android {
+    // productFlavors {
+    //     staging { }
+    // }
+    /* the flavors this project used to ship:
+    productFlavors {
+        legacy { }
+    }
+    */
+    productFlavors {
+        production { } // the store build
+        preview { }
+    }
+}
+`;
+
+const LOOPED_GRADLE = `def flavorNames = ["production", "preview"]
+
+android {
+    productFlavors {
+        flavorNames.each { name ->
+            create(name) {
+                applicationId "io.tlon.groups.\${name}"
+            }
+        }
+    }
+}
+`;
+
+const DIMENSIONED_GRADLE = `android {
+    flavorDimensions "tier", "store"
+    productFlavors {
+        free { dimension "tier" }
+        paid { dimension "tier" }
+        play { dimension "store" }
+        amazon { dimension "store" }
+    }
+}
+`;
+
+describe('parseProductFlavors', () => {
+  test('reads the flavor names of a two-flavor block in declaration order', () => {
+    expect(parseProductFlavors(FLAVORED_GRADLE)).toEqual({ known: true, dimensions: [['production', 'preview']] });
+  });
+
+  test('a project without flavors parses as known and empty', () => {
+    expect(parseProductFlavors(PLAIN_GRADLE)).toEqual({ known: true, dimensions: [] });
+  });
+
+  test('braces nested inside a flavor body do not end the flavor', () => {
+    expect(parseProductFlavors(NESTED_GRADLE)).toEqual({ known: true, dimensions: [['production', 'preview']] });
+  });
+
+  test('commented-out blocks are ignored and the real block is read', () => {
+    expect(parseProductFlavors(COMMENTED_GRADLE)).toEqual({ known: true, dimensions: [['production', 'preview']] });
+  });
+
+  test('flavors built from a variable in a loop are unknown, not a guess', () => {
+    expect(parseProductFlavors(LOOPED_GRADLE)).toEqual({ known: false, dimensions: [] });
+  });
+
+  test('multiple dimensions come back grouped in flavorDimensions order', () => {
+    expect(parseProductFlavors(DIMENSIONED_GRADLE)).toEqual({
+      known: true,
+      dimensions: [
+        ['free', 'paid'],
+        ['play', 'amazon'],
+      ],
+    });
+  });
+
+  test('a variantFilter can drop variants, so the file is unknown', () => {
+    expect(
+      parseProductFlavors(`${FLAVORED_GRADLE}\nandroid.variantFilter { variant -> variant.setIgnore(true) }\n`),
+    ).toEqual({ known: false, dimensions: [] });
+  });
+
+  test('a text that is not a string is unknown', () => {
+    expect(parseProductFlavors(null)).toEqual({ known: false, dimensions: [] });
+  });
+});
+
+describe('productFlavorRefusal', () => {
+  test('names the debug variants when flavors are declared and no variant was selected', () => {
+    const refusal = productFlavorRefusal({ flavors: parseProductFlavors(FLAVORED_GRADLE), variant: null });
+    assert(refusal);
+    expect(refusal.code).toBe('STIM_BAD_ARG');
+    expect(refusal.reason).toMatch(/2 product flavors/);
+    expect(refusal.reason).toMatch(/android\/app\/build\.gradle/);
+    expect(refusal.remedy).toMatch(/productionDebug, previewDebug/);
+  });
+
+  test('every dimension combination is named', () => {
+    const refusal = productFlavorRefusal({ flavors: parseProductFlavors(DIMENSIONED_GRADLE), variant: null });
+    assert(refusal);
+    expect(refusal.remedy).toMatch(/freePlayDebug, freeAmazonDebug, paidPlayDebug, paidAmazonDebug/);
+  });
+
+  test('a selected variant says which flavor to build, so there is nothing to refuse', () => {
+    expect(productFlavorRefusal({ flavors: parseProductFlavors(FLAVORED_GRADLE), variant: 'productionDebug' })).toBe(
+      null,
+    );
+  });
+
+  test('an unreadable declaration falls through to the build', () => {
+    expect(productFlavorRefusal({ flavors: parseProductFlavors(LOOPED_GRADLE), variant: null })).toBe(null);
+  });
+
+  test('a single flavor builds one APK, so there is nothing to refuse', () => {
+    const single = parseProductFlavors('android {\n  productFlavors {\n    production { }\n  }\n}\n');
+    expect(productFlavorRefusal({ flavors: single, variant: null })).toBe(null);
+  });
+
+  test('no flavors at all is nothing to refuse', () => {
+    expect(productFlavorRefusal({ flavors: parseProductFlavors(PLAIN_GRADLE), variant: null })).toBe(null);
+  });
+});
+
+describe('readProductFlavors', () => {
+  test('reads android/app/build.gradle', () => {
+    mkdirSync(join(root, 'android', 'app'), { recursive: true });
+    writeFileSync(join(root, 'android', 'app', 'build.gradle'), FLAVORED_GRADLE);
+    expect(readProductFlavors(root)).toEqual({ known: true, dimensions: [['production', 'preview']] });
+  });
+
+  test('a project whose android/ is not generated yet is unknown', () => {
+    expect(readProductFlavors(root)).toEqual({ known: false, dimensions: [] });
+  });
+});
+
+describe('a real flavored build.gradle', () => {
+  const TLON_GRADLE = `android {
+    flavorDimensions "profile"
+    productFlavors {
+        production {
+            dimension "profile"
+            applicationId "io.tlon.groups"
+        }
+        preview {
+            dimension "profile"
+            applicationId "io.tlon.groups.preview"
+        }
+    }
+}
+`;
+
+  test('one declared dimension groups every flavor into it', () => {
+    expect(parseProductFlavors(TLON_GRADLE)).toEqual({ known: true, dimensions: [['production', 'preview']] });
+  });
+
+  test('flavors that name one dimension with no flavorDimensions statement still group', () => {
+    const text = TLON_GRADLE.replace('    flavorDimensions "profile"\n', '');
+    expect(parseProductFlavors(text)).toEqual({ known: true, dimensions: [['production', 'preview']] });
+  });
+
+  test('flavors that name different dimensions with no declared order are unknown', () => {
+    const text = TLON_GRADLE.replace('    flavorDimensions "profile"\n', '').replace(
+      'dimension "profile"\n            applicationId "io.tlon.groups.preview"',
+      'dimension "store"\n            applicationId "io.tlon.groups.preview"',
+    );
+    expect(parseProductFlavors(text)).toEqual({ known: false, dimensions: [] });
   });
 });

@@ -508,6 +508,9 @@ STIM_BUILD_FAILED
     already built). Stim will not guess which flavor to install: the
     refusal lists the candidates -- pass \`--variant <name>\` or set the
     android.variant setting (e.g. "productionDebug") to the one you want.
+    Flavors declared plainly in android/app/build.gradle are caught before
+    the build instead (STIM_BAD_ARG); this one remains for the declarations
+    that parse cannot read.
   - NO APK for the configured variant: the android.variant / --variant value
     does not name a real variant (\`./gradlew :app:tasks\` in android/ lists
     the assemble tasks).
@@ -730,8 +733,9 @@ STIM_SUPERVISOR_EXITED
 STIM_BAD_ARG / STIM_NO_PROJECT
   The command refused before doing anything: an unusable --wait value, an invalid
   Metro tunnel setting, an invalid android.dataPartitionSizeGb value, an unsafe
-  android.avdConfig key or fragment, or a working directory with no package.json
-  above it.
+  android.avdConfig key or fragment, a working directory with no package.json
+  above it, or an android/app/build.gradle that declares product flavors with
+  no variant selected (the refusal names the debug variants).
   These errors are caught before the port is reserved and before anything is
   spawned, so nothing was started.
 
@@ -1158,6 +1162,12 @@ THE OPTION SURFACE, IN FULL
   setting (see \`guide settings\`), which is the repo-level default; unset,
   the plain \`assembleDebug\` flow is unchanged. The --json payload's
   \`variant\` field reports what was built (null for the default).
+  When neither is set and android/app/build.gradle declares more than one
+  product flavor, \`android\` refuses BEFORE gradle runs and names the debug
+  variants to choose from, because \`assembleDebug\` would build every flavor
+  and leave nothing to pick from. That parse is best-effort: flavors built
+  from a variable, a loop, or an applied script are not detected, and such a
+  project builds as before.
 
   \`android --device [serial]\` installs and launches on a physical device
   connected to this machine instead of this workspace's owned emulator. With

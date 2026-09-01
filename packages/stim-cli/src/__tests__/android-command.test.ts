@@ -1101,6 +1101,55 @@ describe('product flavors (--variant / android.variant)', () => {
     expect(result.facts.variant).toBe(null);
   });
 
+  const FLAVORED_BUILD_GRADLE = `android {
+    productFlavors {
+        production { applicationId "io.tlon.groups" }
+        preview { applicationId "io.tlon.groups.preview" }
+    }
+}
+`;
+
+  const declareFlavors = (text = FLAVORED_BUILD_GRADLE) =>
+    writeFileSync(join(root, 'android', 'app', 'build.gradle'), text);
+
+  test('declared flavors with no variant selected are refused before any device or build work', async () => {
+    declareFlavors();
+    const h = harness({ ensureDevice: never('the device'), build: never('the build') });
+    const result = await h.run();
+
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('STIM_BAD_ARG');
+    expect(result.error?.message).toMatch(/2 product flavors/);
+    expect(result.error?.remedy).toMatch(/productionDebug, previewDebug/);
+    expect(h.calls.ensureDevice).toEqual([]);
+    expect(h.calls.fingerprint).toEqual([]);
+    expect(h.calls.build).toEqual([]);
+  });
+
+  test('a selected variant says which flavor to build, so the flavored project builds', async () => {
+    declareFlavors();
+    const h = harness({ variant: 'productionDebug' });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(h.calls.build[0]?.variant).toBe('productionDebug');
+  });
+
+  test('a flavor declaration Stim cannot read builds, and the post-build refusal still applies', async () => {
+    declareFlavors(`android {
+    namespace "com.example.app"
+    productFlavors {
+        flavorNames.each { name ->
+            create(name) { }
+        }
+    }
+}
+`);
+    const h = harness();
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(h.calls.build.length).toBe(1);
+  });
+
   test("a variant reaches the provider's runOptions, so a flavored resolve is never answered with plain debug", async () => {
     setProjectSetting(root, 'android.variant', 'productionDebug');
     const h = harness({
