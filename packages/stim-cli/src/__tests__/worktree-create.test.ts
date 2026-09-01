@@ -1,5 +1,5 @@
 import { execSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, realpathSync, rmSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, realpathSync, rmSync, symlinkSync } from 'fs';
 import { tmpdir } from 'os';
 import { dirname, join } from 'path';
 import { Command } from 'commander';
@@ -292,10 +292,14 @@ test('create action: --dir places the worktree under that directory, resolved ag
   const repo = join(base, 'repo');
   try {
     initScratchRepo(repo);
-    const { logs } = await runCreateInRepo(repo, 'feat-x', { dir: '.worktrees', install: false });
-    const target = join(repo, '.worktrees', 'feat-x');
+    // Run from a subdirectory: a relative --dir must resolve against the cwd,
+    // not the repository root, or this lands at repo/.worktrees instead.
+    mkdirSync(join(repo, 'sub'));
+    const { logs } = await runCreateInRepo(join(repo, 'sub'), 'feat-x', { dir: '.worktrees', install: false });
+    const target = join(repo, 'sub', '.worktrees', 'feat-x');
     expect(logs).toEqual([target]);
     expect(existsSync(join(target, '.git'))).toBeTruthy();
+    expect(existsSync(join(repo, '.worktrees', 'feat-x'))).toBeFalsy();
     expect(existsSync(join(defaultWorktreeDir(repo), 'feat-x'))).toBeFalsy();
   } finally {
     process.exitCode = 0;
@@ -311,6 +315,46 @@ test('create: rejects a blank --dir instead of falling through to the default di
     await expect(() => program.parseAsync(['node', 'stim', 'create', 'x', '--dir', value])).rejects.toThrow(
       /must name a directory/,
     );
+  }
+});
+
+test('create action: --dir through a symlink yields the real path git will report', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-dir-link-')));
+  const repo = join(base, 'repo');
+  try {
+    initScratchRepo(repo);
+    mkdirSync(join(base, 'real'));
+    symlinkSync(join(base, 'real'), join(base, 'link'));
+    const { logs } = await runCreateInRepo(repo, 'feat-z', { dir: join(base, 'link', 'wts'), install: false });
+    const target = join(base, 'real', 'wts', 'feat-z');
+    expect(logs).toEqual([target]);
+    expect(realpathSync(target)).toBe(target);
+  } finally {
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('create action: --carry-ignored into a nested --dir does not copy the worktree into itself', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-dir-carry-')));
+  const repo = join(base, 'repo');
+  try {
+    initScratchRepo(repo);
+    writeFileSync(join(repo, '.gitignore'), '.worktrees/\n');
+    execSync('git add .gitignore && git commit -q -m ignore', { cwd: repo });
+    const { logs } = await runCreateInRepo(repo, 'feat-nest', {
+      dir: '.worktrees',
+      carryIgnored: true,
+      install: false,
+    });
+    const target = join(repo, '.worktrees', 'feat-nest');
+    expect(logs).toEqual([target]);
+    expect(existsSync(join(target, '.worktrees'))).toBeFalsy();
+  } finally {
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
   }
 });
 
