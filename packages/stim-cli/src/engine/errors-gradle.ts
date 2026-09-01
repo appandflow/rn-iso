@@ -134,7 +134,7 @@ export function extractGradleDiagnostics(text: string): Diagnostic[] {
       continue;
     }
 
-    const orphanCause = line.replace(/^>\s*/, '');
+    const orphanCause = CAUSE_LINE.test(line) ? line.replace(/^>\s*/, '') : '';
     if (JAVA_EXCEPTION.test(orphanCause)) {
       add({ message: orphanCause });
       continue;
