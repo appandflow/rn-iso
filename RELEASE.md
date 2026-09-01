@@ -83,15 +83,20 @@ preparation, `git status --short` may show only the draft
    pnpm run release:prep X.Y.Z
    ```
 
-   The script refuses a malformed version, a tree whose five versions already
-   disagree, and the version they already carry. It rewrites the five `version`
-   fields, runs `pnpm install --lockfile-only`, then re-reads the manifests and
-   the lockfile to prove the bump landed, and leaves the candidate uncommitted
-   and untagged.
+   The script refuses a malformed version, one that does not come after the
+   version the five packages already carry, and a tree whose versions already
+   disagree. It rewrites the five `version` fields together, refreshes the
+   lockfile, then re-reads the manifests to confirm all five landed on the new
+   version and that the lockfile still matches them, and leaves the candidate
+   uncommitted and untagged. If any of that fails it puts the five manifests
+   back at the version they had, so a failed run is never half-bumped.
 
    Nothing else moves. The packages depend on each other through pnpm's
    `workspace:` protocol, so there is no dependency range to bump: pnpm
    substitutes the real version when it packs (verified in step 3).
+   `pnpm run release:prep --check` audits that shape -- five versions in
+   lockstep, every internal range a bare `workspace:` range -- without changing
+   anything.
 
    Confirm all five moved:
 
