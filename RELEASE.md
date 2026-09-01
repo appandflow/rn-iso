@@ -80,20 +80,23 @@ preparation, `git status --short` may show only the draft
    same number, and `dist/cli.mjs` reads it from its own `package.json`:
 
    ```bash
-   pnpm -r --filter './packages/*' exec npm version X.Y.Z --no-git-tag-version
-   pnpm install --lockfile-only
+   pnpm run release:prep X.Y.Z
    ```
 
-   The filtered `exec` bumps all five; `--no-git-tag-version` leaves the
-   candidate uncommitted and untagged. The lockfile duplicates every
-   workspace's version and must move with the manifests.
+   The script refuses a malformed version, a tree whose five versions already
+   disagree, and the version they already carry. It rewrites the five `version`
+   fields, runs `pnpm install --lockfile-only`, then re-reads the manifests and
+   the lockfile to prove the bump landed, and leaves the candidate uncommitted
+   and untagged.
 
-   Confirm all five moved, and that dependency ranges between the packages
-   still name versions that will exist when publishing finishes:
+   Nothing else moves. The packages depend on each other through pnpm's
+   `workspace:` protocol, so there is no dependency range to bump: pnpm
+   substitutes the real version when it packs (verified in step 3).
+
+   Confirm all five moved:
 
    ```bash
    grep -H '"version"' packages/*/package.json
-   grep -H '"@stim-cli/' packages/stim-cli/package.json packages/expo-build-cache/package.json packages/metro/package.json packages/cache/package.json
    ```
 
 2. **Install and run the full pre-flight against those exact files:**
@@ -136,8 +139,10 @@ preparation, `git status --short` may show only the draft
    stop and fix the packing before publishing.
 
 4. **Inspect the candidate diff.** `git status --short` should contain only the
-   five package manifests, `pnpm-lock.yaml`, and the draft
-   release notes. Resolve anything else before QA.
+   five package manifests and the draft release notes. `pnpm-lock.yaml` no
+   longer moves with a version bump -- it records the internal edges as
+   `workspace:` specifiers and `link:` targets, neither of which carries a
+   version. Resolve anything else before QA.
 
 ## 3. Pre-tag QA gate
 
