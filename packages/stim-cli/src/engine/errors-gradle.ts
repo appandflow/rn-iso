@@ -27,7 +27,7 @@ const CAUSE_LINE = /^>\s+\S/;
 const JAVA_EXCEPTION = /^(?:[a-z][A-Za-z0-9_]*\.){2,}[A-Za-z0-9_$]*(?:Exception|Error)\b/;
 const TASK_LINE = /^>\s*Task\s+:/;
 const BUILD_TAIL =
-  /^(?:BUILD (?:FAILED|SUCCESSFUL)\b|Deprecated Gradle features were used\b|You can use '--warning-mode|For more on this, please refer to\b|\d+ actionable task)/;
+  /^(?:BUILD (?:FAILED|SUCCESSFUL) in\b|Deprecated Gradle features were used\b|You can use '--warning-mode|For more on this, please refer to\b|\d+ actionable task)/;
 
 const MAX_CAUSE_LINES = 6;
 
@@ -131,6 +131,12 @@ export function extractGradleDiagnostics(text: string): Diagnostic[] {
 
     if (FATAL_ERROR.test(line)) {
       add({ message: line });
+      continue;
+    }
+
+    const orphanCause = line.replace(/^>\s*/, '');
+    if (JAVA_EXCEPTION.test(orphanCause)) {
+      add({ message: orphanCause });
       continue;
     }
 
@@ -251,7 +257,8 @@ function readWhatWentWrong(lines: string[], start: number): CauseBlock | null {
   for (; j < lines.length; j++) {
     const line = stripCarriage(lines[j]).trim();
     if (SECTION.test(line)) break;
-    if (BUILD_TAIL.test(line) || TASK_LINE.test(line)) break;
+    if (TASK_LINE.test(line)) break;
+    if (BUILD_TAIL.test(line)) continue;
     if (line === '') {
       if (parts.length) break;
       continue;
@@ -275,7 +282,8 @@ function readCauseChain(lines: string[], start: number): CauseBlock {
 }
 
 function highlightsOf(parts: string[]): string[] {
-  return parts.filter((part) => FATAL_ERROR.test(part) || JAVA_EXCEPTION.test(part));
+  const joined = clip(parts.join(' '));
+  return parts.filter((part) => (FATAL_ERROR.test(part) || JAVA_EXCEPTION.test(part)) && !joined.includes(clip(part)));
 }
 
 function stripAaptPrefix(message: string): string {

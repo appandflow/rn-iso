@@ -302,45 +302,77 @@ describe('CMake FATAL_ERROR lines survive the What-went-wrong clip', () => {
 describe('a packaging failure surfaces its cause however gradle interleaves its two streams', () => {
   const nativeLib =
     "java.io.IOException: Failed to copy full contents from '/w/android/app/build/intermediates/stripped_native_libs/debug/out/lib/arm64-v8a/libreactnative.so' to '/w/android/app/build/intermediates/apk/debug/packageDebug/lib/arm64-v8a/libreactnative.so'";
-  const deprecation =
-    "Deprecated Gradle features were used in this build, making it incompatible with Gradle 10. You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.";
-  const report = [
-    'FAILURE: Build failed with an exception.',
-    '* What went wrong:',
+  const chain = [
     "Execution failed for task ':app:packageDebug'.",
     '> A failure occurred while executing com.android.build.gradle.tasks.PackageAndroidArtifact$IncrementalSplitterRunnable',
     `   > ${nativeLib}`,
+  ];
+  const report = [
+    'FAILURE: Build failed with an exception.',
+    '* What went wrong:',
+    ...chain,
     '* Try:',
     '> Run with --stacktrace option to get the stack trace.',
-    '* Get more help at https://help.gradle.org.',
   ];
-  const tail = [deprecation, 'BUILD FAILED in 1m22s', '104 actionable tasks: 104 executed'];
+  const tail = [
+    "Deprecated Gradle features were used in this build, making it incompatible with Gradle 10. You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.",
+    'BUILD FAILED in 1m22s',
+    '104 actionable tasks: 104 executed',
+  ];
 
   test('the cause chain is reported when the report arrives whole', () => {
-    const diagnostics = extractGradleDiagnostics(
+    const messages = extractGradleDiagnostics(
       ['> Task :app:stripDebugDebugSymbols', '> Task :app:packageDebug FAILED', ...report, ...tail].join('\n'),
-    );
-    const messages = diagnostics.map((d) => d.message);
+    ).map((d) => d.message);
     expect(messages[0]).toBe('Task :app:packageDebug FAILED');
-    expect(messages[1]).toMatch(/Execution failed for task ':app:packageDebug'\./);
+    expect(messages[1]).toMatch(/^Execution failed for task ':app:packageDebug'\./);
     expect(messages[1]).toMatch(/PackageAndroidArtifact/);
     expect(messages).toContain(nativeLib);
     expect(messages.some((m) => /Deprecated Gradle features/.test(m))).toBe(false);
   });
 
-  test('the cause chain is reported when the stdout tail lands inside the stderr report', () => {
-    const diagnostics = extractGradleDiagnostics(
-      ['> Task :app:packageDebug FAILED', ...report.slice(0, 2), ...tail, ...report.slice(2)].join('\n'),
-    );
-    const messages = diagnostics.map((d) => d.message);
-    expect(messages[0]).toBe('Task :app:packageDebug FAILED');
-    expect(messages.some((m) => /Execution failed for task ':app:packageDebug'/.test(m))).toBe(true);
-    expect(messages).toContain(nativeLib);
-    expect(messages.some((m) => /Deprecated Gradle features/.test(m))).toBe(false);
-  });
+  for (const at of [0, 1, 2]) {
+    test(`the cause chain is reported when the stdout tail lands after ${at} of its lines`, () => {
+      const messages = extractGradleDiagnostics(
+        [
+          '> Task :app:packageDebug FAILED',
+          'FAILURE: Build failed with an exception.',
+          '* What went wrong:',
+          ...chain.slice(0, at),
+          ...tail,
+          ...chain.slice(at),
+        ].join('\n'),
+      ).map((d) => d.message);
+      expect(messages[0]).toBe('Task :app:packageDebug FAILED');
+      expect(messages[1]).toMatch(/^Execution failed for task ':app:packageDebug'\./);
+      expect(messages[1]).toMatch(/PackageAndroidArtifact/);
+      expect(messages).toContain(nativeLib);
+      expect(messages.some((m) => /Deprecated Gradle features/.test(m))).toBe(false);
+    });
+  }
 
   test('a build result tail on its own is not a diagnostic', () => {
     expect(extractGradleDiagnostics(tail.join('\n'))).toEqual([]);
+  });
+
+  test('an exception line the message already carries whole is not repeated', () => {
+    const messages = extractGradleDiagnostics(
+      ["Execution failed for task ':app:x'.", '> java.lang.IllegalStateException: boom'].join('\n'),
+    ).map((d) => d.message);
+    expect(messages).toEqual(["Execution failed for task ':app:x'. java.lang.IllegalStateException: boom"]);
+  });
+
+  test("a cause that quotes an inner tool's BUILD FAILED keeps the lines under it", () => {
+    const diagnostics = extractGradleDiagnostics(
+      [
+        '* What went wrong:',
+        "Execution failed for task ':app:someWrapper'.",
+        '> Process exited with code 1',
+        '  BUILD FAILED because the inner tool said so',
+        '  real cause: the keystore is missing',
+      ].join('\n'),
+    );
+    expect(diagnostics[0]?.message).toMatch(/the keystore is missing$/);
   });
 
   test('the cause chain stops at the next task line rather than swallowing the build', () => {
@@ -359,13 +391,18 @@ describe('a packaging failure surfaces its cause however gradle interleaves its 
     ]);
   });
 
-  test('a cause chain longer than the cap is cut, not printed whole', () => {
+  test('a cause chain longer than the cap is cut, and what follows is still scanned', () => {
     const deep = Array.from({ length: 12 }, (_, i) => `${' '.repeat(i)}> cause level ${i}`);
-    const diagnostics = extractGradleDiagnostics(
-      ["Execution failed for task ':app:packageDebug'.", ...deep, '* Try:'].join('\n'),
-    );
-    expect(diagnostics.length).toBe(1);
-    expect(diagnostics[0]?.message).toMatch(/cause level 4$/);
-    expect(diagnostics[0]?.message).not.toMatch(/cause level 5/);
+    const messages = extractGradleDiagnostics(
+      [
+        "Execution failed for task ':app:packageDebug'.",
+        ...deep,
+        '> FATAL_ERROR the ndk toolchain is gone',
+        '* Try:',
+      ].join('\n'),
+    ).map((d) => d.message);
+    expect(messages[0]).toMatch(/cause level 4$/);
+    expect(messages[0]).not.toMatch(/cause level 5/);
+    expect(messages).toContain('> FATAL_ERROR the ndk toolchain is gone');
   });
 });
