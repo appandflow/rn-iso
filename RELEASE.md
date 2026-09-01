@@ -26,12 +26,37 @@ page and is not copied anywhere.
 
 The source of truth for "what was last released" is the npm registry, not
 local git tags — a publish can fail after the tag is pushed, leaving the tag
-ahead of what's actually on npm. Pull the published version and list commits
-since the matching tag:
+ahead of what's actually on npm. Post-stable, the highest published version
+can sit on either the `latest` or the `next` dist-tag, so check both and take
+the semver-higher one. Pull it and list commits since the matching tag:
 
 ```bash
 git fetch --tags
-if last=$(npm view stim-cli version 2>/dev/null); then
+if last=$(npm view stim-cli dist-tags --json 2>/dev/null | node -e '
+  const { latest, next } = JSON.parse(require("fs").readFileSync(0, "utf8"));
+  const parse = (v) => {
+    const [core, pre] = v.split("-");
+    return { core: core.split(".").map(Number), pre: pre ? pre.split(".") : null };
+  };
+  const compare = (l, r) => {
+    const a = parse(l), b = parse(r);
+    for (let i = 0; i < 3; i += 1) if (a.core[i] !== b.core[i]) return a.core[i] - b.core[i];
+    if (!a.pre && !b.pre) return 0;
+    if (!a.pre) return 1;
+    if (!b.pre) return -1;
+    for (let i = 0; i < Math.max(a.pre.length, b.pre.length); i += 1) {
+      const x = a.pre[i], y = b.pre[i];
+      if (x === undefined) return -1;
+      if (y === undefined) return 1;
+      if (x === y) continue;
+      return /^\d+$/.test(x) && /^\d+$/.test(y) ? Number(x) - Number(y) : x < y ? -1 : 1;
+    }
+    return 0;
+  };
+  const versions = [latest, next].filter(Boolean);
+  if (!versions.length) process.exit(1);
+  process.stdout.write(versions.reduce((hi, v) => (compare(v, hi) > 0 ? v : hi)));
+'); then
   echo "Last published: v$last"
   git log "v$last..HEAD" --oneline
 else
@@ -45,13 +70,21 @@ first-publication bootstrap in
 [docs/release-recovery.md](./docs/release-recovery.md) before pushing the tag.
 
 Use `X.Y.Z-rc.N` for a release candidate. The workflow computes the publish
-dist-tag itself from the tag and the registry: `npm view stim-cli version`
-is the registry's current release, and a candidate publishes to `next`
-instead of `latest` only when that current release is already stable, so a
-plain `npm install` never regresses to a candidate. Every other publish --
-a stable version, or a candidate published while no stable release exists
-yet, including a first-ever publish (`E404`) -- lands on `latest`, which is
-what installs resolve. A tag higher than the published version
+dist-tag itself from the tag and the registry: it reads `npm view
+@stim-cli/core version` -- the first package every run publishes, not
+`stim-cli`, the last -- as its stable-or-not signal, and a candidate
+publishes to `next` instead of `latest` only when that signal is already a
+stable version, so a plain `npm install` never regresses to a candidate.
+Every other publish -- a stable version, or a candidate published while no
+stable release exists yet, including a first-ever publish (`E404`) -- lands
+on `latest`, which is what installs resolve. Probing the first-published
+package instead of the last fails safe if a release dies mid-run: the worst
+case is a candidate landing on `next` a little early, never a candidate
+stomping `latest` on packages that already went stable. The gate assumes a
+partial release is always completed or recovered (see
+[docs/release-recovery.md](./docs/release-recovery.md)) before the next tag
+lands; the workflow does not check that on its own. A tag higher than the
+published version
 means a release never landed: see
 [docs/release-recovery.md](./docs/release-recovery.md) before bumping.
 
