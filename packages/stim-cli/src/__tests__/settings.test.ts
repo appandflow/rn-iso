@@ -9,6 +9,12 @@ import {
   androidDataPartitionSizeBytes,
   androidDataPartitionSizeGbSetting,
   androidDataPartitionSizeGbSettingError,
+  iosLanHostSetting,
+  iosLanHostSettingError,
+  iosSigningIdentitySetting,
+  iosSigningIdentitySettingError,
+  iosSigningIdentitySha1Setting,
+  iosSigningIdentitySha1SettingError,
   iosSimSlimProfileSetting,
   iosSimSlimProfileSettingError,
   mergeSettingsLayers,
@@ -487,4 +493,65 @@ test('cache.provider and cache.options are known settings', () => {
     unknownSettingKeys({ cache: { provider: './cache.cjs', options: { bucket: 'a', nested: { deep: true } } } }),
   ).toEqual([]);
   expect(unknownSettingKeys({ cache: { unknown: true } })).toEqual(['cache.unknown']);
+});
+
+test('ios.signingIdentity reads a trimmed identity name and refuses a shape codesign cannot take', () => {
+  expect(iosSigningIdentitySetting({ ios: { signingIdentity: '  Apple Development: Jane (TEAMID5678)  ' } })).toBe(
+    'Apple Development: Jane (TEAMID5678)',
+  );
+  expect(iosSigningIdentitySetting({})).toBe(null);
+  expect(iosSigningIdentitySetting({ ios: [] })).toBe(null);
+
+  expect(iosSigningIdentitySettingError({})).toBe(null);
+  expect(iosSigningIdentitySettingError({ ios: { signingIdentity: 'Apple Development: Jane' } })).toBe(null);
+  expect(iosSigningIdentitySettingError({ ios: { signingIdentity: '  ' } })).toMatch(/Invalid ios\.signingIdentity/);
+  expect(iosSigningIdentitySettingError({ ios: { signingIdentity: 42 } })).toMatch(/Invalid ios\.signingIdentity/);
+  expect(iosSigningIdentitySettingError({ ios: { signingIdentity: 'two\nlines' } })).toMatch(
+    /Invalid ios\.signingIdentity/,
+  );
+});
+
+test('ios.signingIdentitySha1 takes exactly the 40-hex hash find-identity prints, upper-cased', () => {
+  const sha1 = '3fe19e227ec5bc2ede3ac52ab02ff46920445c6a';
+  expect(iosSigningIdentitySha1Setting({ ios: { signingIdentitySha1: ` ${sha1} ` } })).toBe(sha1.toUpperCase());
+  expect(iosSigningIdentitySha1Setting({})).toBe(null);
+
+  expect(iosSigningIdentitySha1SettingError({})).toBe(null);
+  expect(iosSigningIdentitySha1SettingError({ ios: { signingIdentitySha1: sha1 } })).toBe(null);
+  expect(iosSigningIdentitySha1SettingError({ ios: { signingIdentitySha1: 'ABCDEF' } })).toMatch(
+    /Invalid ios\.signingIdentitySha1/,
+  );
+  expect(iosSigningIdentitySha1SettingError({ ios: { signingIdentitySha1: `${sha1}00` } })).toMatch(
+    /Invalid ios\.signingIdentitySha1/,
+  );
+});
+
+test('ios.lanHost takes a bare address and refuses everything that would break serverRootWithHostPort', () => {
+  expect(iosLanHostSetting({ ios: { lanHost: ' 192.168.1.42 ' } })).toBe('192.168.1.42');
+  expect(iosLanHostSettingError({ ios: { lanHost: ' 192.168.1.42 ' } })).toBe(null);
+  expect(iosLanHostSetting({ ios: { lanHost: 'mac-studio.local' } })).toBe('mac-studio.local');
+  expect(iosLanHostSetting({})).toBe(null);
+
+  expect(iosLanHostSettingError({})).toBe(null);
+  expect(iosLanHostSettingError({ ios: { lanHost: '192.168.1.42' } })).toBe(null);
+  for (const bad of [
+    'http://192.168.1.42',
+    'https://foo.ngrok.app',
+    '192.168.1.42:8085',
+    '192.168.1.42/',
+    'a b',
+    '',
+    42,
+  ]) {
+    expect(iosLanHostSettingError({ ios: { lanHost: bad } })).toMatch(/Invalid ios\.lanHost/);
+  }
+});
+
+test('the three iOS device settings are known keys', () => {
+  expect(
+    unknownSettingKeys({
+      ios: { signingIdentity: 'a', signingIdentitySha1: 'b', lanHost: 'c' },
+    }),
+  ).toEqual([]);
+  expect(unknownSettingKeys({ ios: { lanPort: 1 } })).toEqual(['ios.lanPort']);
 });

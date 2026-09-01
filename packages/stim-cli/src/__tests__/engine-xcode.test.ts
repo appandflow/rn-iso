@@ -432,6 +432,41 @@ describe('xcodebuildArgs', () => {
     const base = { project, scheme: 'App', udid: 'u', derivedDataPath: '/dd' };
     expect(xcodebuildArgs(base)).toEqual(xcodebuildArgs({ ...base, buildSettings: [] }));
   });
+
+  test('the device slice is -sdk iphoneos plus the phone id, and carries no signing flag', () => {
+    const args = xcodebuildArgs({
+      project,
+      scheme: 'App',
+      udid: '00008030-001A2B3C4D5E802E',
+      sdk: 'iphoneos',
+      configuration: 'Release',
+      derivedDataPath: '/dd',
+    });
+    expect(args).toEqual([
+      '-workspace',
+      '/p/ios/App.xcworkspace',
+      '-scheme',
+      'App',
+      '-configuration',
+      'Release',
+      '-sdk',
+      'iphoneos',
+      '-destination',
+      'id=00008030-001A2B3C4D5E802E',
+      '-derivedDataPath',
+      '/dd',
+      'build',
+    ]);
+    for (const flag of [
+      'CODE_SIGN_IDENTITY',
+      'DEVELOPMENT_TEAM',
+      'PROVISIONING_PROFILE_SPECIFIER',
+      '-allowProvisioningUpdates',
+      'RCT_METRO_PORT',
+    ]) {
+      expect(args.some((a) => a.includes(flag))).toBe(false);
+    }
+  });
 });
 
 describe('compilationCacheSettings', () => {
@@ -1400,6 +1435,34 @@ describe('buildIos against a real xcodebuild', { skip: LIVE as unknown as boolea
     expect(records.at(-1)?.event).toBe('build_done');
     expect(records.filter((r) => r.level === 'error').length).toBe(0);
   }, 120_000);
+
+  test('builds the device slice for real: -sdk iphoneos lands the .app in Debug-iphoneos', async () => {
+    resetExecutor();
+    writeScratchProject(tmp);
+    const logFile = join(workspaceLogsDir(tmp), 'build-ios-device.ndjson');
+    const writer = createNdjsonWriter(logFile);
+    const result = asResult(
+      await buildIos({
+        root: tmp,
+        udid: 'unused-with-an-explicit-destination',
+        sdk: 'iphoneos',
+        destination: 'generic/platform=iOS',
+        logWriter: writer,
+      }),
+    );
+    writer.close();
+
+    expect(result.failed).toBe(undefined);
+    expect(result.appPath).toBe(join(workspaceDerivedData(tmp), 'Build', 'Products', 'Debug-iphoneos', 'Scratch.app'));
+    expect(existsSync(result.appPath)).toBeTruthy();
+    expect(result.bundleId).toBe('com.stimcli.scratch');
+
+    const records = parseNdjsonText(readFileSync(logFile, 'utf-8'));
+    expect(records[0]?.msg).toMatch(/ -sdk iphoneos /);
+    expect(records[0]?.msg).toMatch(/ -destination generic\/platform=iOS /);
+    expect(records[0]?.msg).not.toMatch(/allowProvisioningUpdates|DEVELOPMENT_TEAM|CODE_SIGN_IDENTITY/);
+    expect(records.some((r) => r.msg?.includes('BUILD SUCCEEDED'))).toBeTruthy();
+  }, 180_000);
 
   test('fails for real: a broken source file becomes one diagnostic with file, line and column', async () => {
     resetExecutor();

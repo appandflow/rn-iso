@@ -64,6 +64,7 @@ import {
   remoteIosDeps,
   resolveRemoteContext,
 } from '../engine/device-remote.ts';
+import { listIosDevices, resolveIosPhysicalDevice } from '../engine/ios-device.ts';
 import { detectProviders } from '../engine/metro-reach.ts';
 import { ownedSessionName } from '../engine/eas-simulator.ts';
 import { type Diagnostic, describeDiagnostic } from '../engine/errors-xcode.ts';
@@ -98,6 +99,9 @@ import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../paths
 import { detectBundleId, detectIsExpo, findProjectRoot, isPackageResolvable, projectShortcut } from '../project.ts';
 import {
   cacheProviderSettingError,
+  iosLanHostSettingError,
+  iosSigningIdentitySettingError,
+  iosSigningIdentitySha1SettingError,
   publicUrlSetting,
   REMOTE_DEVICE_BACKENDS,
   remoteDeviceSettingError,
@@ -125,6 +129,7 @@ export const PLATFORM = 'ios';
 
 // xcodebuild cannot target a remote simulator UDID, so remote builds use the generic destination.
 const GENERIC_SIM_DESTINATION = 'generic/platform=iOS Simulator';
+const IPHONEOS_SDK = 'iphoneos';
 
 interface DeviceLike {
   deviceName?: string | null;
@@ -199,6 +204,7 @@ interface IosCommandOptions {
   metroCheck?: boolean;
   buildCache?: boolean;
   configuration?: string;
+  device?: string | boolean;
   remote?: RemoteDeviceBackend;
 }
 
@@ -697,6 +703,7 @@ interface IosDeps {
   podsAreStale: typeof podsAreStale;
   runPodInstall: typeof runPodInstall;
   buildIos: typeof buildIos;
+  listIosDevices: typeof listIosDevices;
   readBundleId: typeof readBundleId;
   swapJsBundle: typeof swapJsBundle;
   installIosApp: typeof installIosApp;
@@ -756,6 +763,7 @@ const DEFAULT_DEPS: IosDeps = {
   podsAreStale,
   runPodInstall,
   buildIos,
+  listIosDevices,
   readBundleId,
   swapJsBundle,
   installIosApp,
@@ -788,7 +796,13 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     )
     .option(
       '--configuration <name>',
-      'Xcode configuration to build (e.g. Release; simulator only). A non-Debug configuration embeds the JS bundle and skips Metro entirely. Overrides the ios.configuration setting. Default: Debug',
+      'Xcode configuration to build (e.g. Release). A non-Debug configuration embeds the JS bundle and skips Metro entirely. Overrides the ios.configuration setting. Default: Debug',
+    )
+    .option(
+      '--device [udid]',
+      "Build the iphoneos slice for a connected iPhone instead of this workspace's owned simulator. With no UDID, " +
+        'the one connected device is used. Stim never creates, boots, or deletes a physical device. ' +
+        'Installing and launching on hardware are not wired yet (appandflow/stim#178), so the run stops after the build.',
     )
     .option(
       '--remote <backend>',
@@ -1113,6 +1127,7 @@ interface FinishIosRunArgs {
   logFile: string;
   device: DeviceLike;
   udid: string;
+  physical: boolean;
   remoteDevice: ReturnType<IosDeps['remoteIosDeps']> | null;
   bootPromise: Promise<IosBootLike | null | undefined>;
   bootDuration: () => string;
@@ -1153,6 +1168,7 @@ async function finishIosRun({
   logFile,
   device,
   udid,
+  physical,
   remoteDevice,
   bootPromise,
   bootDuration,
@@ -1203,7 +1219,23 @@ async function finishIosRun({
       remedy: booted?.remedy || 'Run `stim ios` again to re-establish an owned simulator for this workspace.',
     });
   }
-  phase('device', `${deviceLabel(device, udid)} booted ${bootDuration()}`);
+  phase('device', `${deviceLabel(device, udid)} ${physical ? 'connected' : `booted ${bootDuration()}`}`);
+
+  if (physical) {
+    if (swapDir) {
+      try {
+        rmSync(swapDir, { recursive: true, force: true });
+      } catch {}
+    }
+    return fail({
+      code: 'STIM_BAD_ARG',
+      message:
+        `Built the ${configuration || 'Debug'} iphoneos slice for ${deviceLabel(device, udid)} and cached it under ${storeKey}, ` +
+        'but installing and launching on a phone are not wired yet.',
+      remedy:
+        'Device install and launch land with appandflow/stim#178. Run `stim ios` without --device to install on this workspace owned simulator.',
+    });
+  }
 
   const scheme = release ? undefined : d.devClientScheme(root, appPath);
   const installTimer = stepTimer(d.now);
@@ -1428,11 +1460,42 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     });
   }
 
+  for (const settingError of [
+    iosSigningIdentitySettingError(settings),
+    iosSigningIdentitySha1SettingError(settings),
+    iosLanHostSettingError(settings),
+  ]) {
+    if (settingError) {
+      return fail({
+        code: 'STIM_BAD_ARG',
+        message: settingError,
+        remedy: 'Run `stim guide settings` for the shape each ios.* key takes.',
+      });
+    }
+  }
+
   const configuration = resolveConfiguration(opts.configuration, settings);
   const release = isReleaseConfiguration(configuration);
 
+  const deviceFlag = opts.device;
+  const physical = deviceFlag !== null && deviceFlag !== undefined && deviceFlag !== false;
+  if (physical && deviceFlag === '') {
+    return fail({
+      code: 'STIM_BAD_ARG',
+      message: '--device was given an empty UDID.',
+      remedy: 'Pass `--device` on its own to use the one connected device, or `--device <udid>` to name one.',
+    });
+  }
+  if (physical && opts.remote) {
+    return fail({
+      code: 'STIM_BAD_ARG',
+      message: '--device builds for a phone cabled to this machine, and --remote installs on a remote one.',
+      remedy: 'Pass only one of --device and --remote.',
+    });
+  }
+
   const isExpo = d.detectIsExpo(root);
-  const remoteBackend = opts.remote ?? remoteIosSetting(settings);
+  const remoteBackend = physical ? null : (opts.remote ?? remoteIosSetting(settings));
   const registerProject = () => d.upsertProject(root, { bundleId: d.detectBundleId(root) ?? undefined, isExpo });
   if (remoteBackend !== 'eas') registerProject();
   const proj = d.getProject(root);
@@ -1462,35 +1525,50 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
 
   const limits = d.getConcurrencyLimits();
 
-  const capacity = d.checkDeviceCapacity({
-    platform: PLATFORM,
-    project: proj,
-    max: limits.maxDevices,
-  });
-  if (capacity) return fail(capacity);
+  let physicalDevice: { udid: string; name: string } | null = null;
+  if (physical) {
+    const resolved = resolveIosPhysicalDevice(typeof deviceFlag === 'string' ? deviceFlag : null, d.listIosDevices());
+    if (!resolved.udid) {
+      return fail({ code: 'STIM_NO_DEVICE', message: resolved.error!, remedy: resolved.remedy! });
+    }
+    physicalDevice = { udid: resolved.udid, name: resolved.name ?? resolved.udid };
+  } else {
+    const capacity = d.checkDeviceCapacity({
+      platform: PLATFORM,
+      project: proj,
+      max: limits.maxDevices,
+    });
+    if (capacity) return fail(capacity);
+  }
 
   let metroPort = proj?.metroPort ?? null;
   if (!(await resolveMetroPort())) return null;
 
   let device: Awaited<ReturnType<typeof ensureOwnedDevice>>;
-  try {
-    device = await d.ensureOwnedDevice({
-      platform: PLATFORM,
-      project: proj,
-      projectPath: root,
-      settingsRoot: settingsRepoRoot ?? root,
-      label,
-      settings,
-      flags: {},
-      note,
-      out: note,
-    });
-  } catch (e) {
-    return fail({
-      code: 'STIM_NO_DEVICE',
-      message: `Could not ensure an owned iOS simulator: ${(e as Error)?.message || e}`,
-      remedy: 'Run `stim doctor` to check the simulator toolchain, then try again.',
-    });
+  if (physicalDevice) {
+    device = { deviceUdid: physicalDevice.udid, deviceName: physicalDevice.name, owned: false } as Awaited<
+      ReturnType<typeof ensureOwnedDevice>
+    >;
+  } else {
+    try {
+      device = await d.ensureOwnedDevice({
+        platform: PLATFORM,
+        project: proj,
+        projectPath: root,
+        settingsRoot: settingsRepoRoot ?? root,
+        label,
+        settings,
+        flags: {},
+        note,
+        out: note,
+      });
+    } catch (e) {
+      return fail({
+        code: 'STIM_NO_DEVICE',
+        message: `Could not ensure an owned iOS simulator: ${(e as Error)?.message || e}`,
+        remedy: 'Run `stim doctor` to check the simulator toolchain, then try again.',
+      });
+    }
   }
 
   let bootDuration = '';
@@ -1518,6 +1596,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     : null;
   let waitedForBuild: WaitedForBuild | null = null;
   let swapDir: string | null = null;
+  let swapFellBack = false;
   let buildFailure: BuildFailureFields = {};
 
   async function resolveMetroPort(): Promise<boolean> {
@@ -1582,10 +1661,12 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   async function resolveInitialFingerprint(): Promise<boolean> {
     const bootTimer = stepTimer(d.now);
     const boot = (): Promise<IosBootLike> =>
-      Promise.resolve(d.ensureBooted({ platform: PLATFORM, device, out: note })).catch((e) => ({
-        ok: false,
-        reason: String((e as Error)?.message || e),
-      }));
+      physicalDevice
+        ? Promise.resolve({ ok: true, udid: physicalDevice.udid })
+        : Promise.resolve(d.ensureBooted({ platform: PLATFORM, device, out: note })).catch((e) => ({
+            ok: false,
+            reason: String((e as Error)?.message || e),
+          }));
     bootPromise = (
       remoteDevice?.ctx.backend === 'eas'
         ? d.ensureRemoteBootOwned({
@@ -1630,7 +1711,10 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
       return false;
     }
     fingerprint = computedFingerprint;
-    cacheKey = buildCacheKey(PLATFORM, fingerprint, configuration ? { configuration } : {});
+    cacheKey = buildCacheKey(PLATFORM, fingerprint, {
+      ...(configuration ? { configuration } : {}),
+      isSimulator: !physical,
+    });
     storeHash = fingerprint;
     storeKey = cacheKey;
     storeSources = fingerprintSources;
@@ -1827,6 +1911,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
       ),
     );
     for (const line of swap?.lastLines ?? []) note(chalk.dim(phaseLine('', line)));
+    swapFellBack = true;
     return null;
   };
 
@@ -1911,7 +1996,10 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
           if (after?.moved) {
             storeHash = after.hash;
             storeSources = after.sources;
-            storeKey = buildCacheKey(PLATFORM, after.hash, configuration ? { configuration } : {});
+            storeKey = buildCacheKey(PLATFORM, after.hash, {
+              ...(configuration ? { configuration } : {}),
+              isSimulator: !physical,
+            });
             note(
               chalk.dim(
                 phaseLine(
@@ -1943,6 +2031,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
             root,
             udid,
             destination: remoteDevice ? GENERIC_SIM_DESTINATION : null,
+            ...(physical ? { sdk: IPHONEOS_SDK } : {}),
             logWriter: logWriter(),
             ...(configuration ? { configuration } : {}),
           });
@@ -1970,7 +2059,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
               loadProvider,
               target: { projectRoot: root, platform: PLATFORM, key: storeKey },
               sourcePath: appPath!,
-              overwrite: !useBuildCache,
+              overwrite: !useBuildCache || swapFellBack,
               warn: cacheWarn,
             });
             providerUpload = stored.providerUpload;
@@ -2018,6 +2107,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     logFile,
     device,
     udid,
+    physical,
     remoteDevice,
     bootPromise,
     bootDuration: () => bootDuration,

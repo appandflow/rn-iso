@@ -1,0 +1,3 @@
+  1) 3FE19E227EC5BC2EDE3AC52AB02FF46920445C6A "Apple Development: Jane Fixture (TEAMID5678)"
+  2) A1B2C3D4E5F60718293A4B5C6D7E8F9012345678 "Apple Distribution: Fixture Inc (TEAMID5678)"
+     2 valid identities found

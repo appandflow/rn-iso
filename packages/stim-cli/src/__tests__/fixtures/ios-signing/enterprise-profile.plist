@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>AppIDName</key>
+	<string>Stim Fixture &amp; Co</string>
+	<key>ApplicationIdentifierPrefix</key>
+	<array>
+	<string>TEAMID5678</string>
+	</array>
+	<key>CreationDate</key>
+	<date>2026-01-01T00:00:00Z</date>
+	<key>Platform</key>
+	<array>
+		<string>iOS</string>
+	</array>
+	<key>IsXcodeManaged</key>
+	<false/>
+	<key>ProvisionsAllDevices</key>
+	<true/>
+	<key>DeveloperCertificates</key>
+	<array>
+		<data>
+	MIIDWjCCAkICCQCDIsWed7hq9jANBgkqhkiG9w0BAQsFADBvMTUwMwYDVQQDDCxBcHBs
+	ZSBEZXZlbG9wbWVudDogSmFuZSBGaXh0dXJlIChURUFNSUQ1Njc4KTETMBEGA1UECwwK
+	VEVBTUlENTY3ODEUMBIGA1UECgwLRml4dHVyZSBJbmMxCzAJBgNVBAYTAlVTMB4XDTI2
+	MDkwMTExMzEwNloXDTM2MDgyOTExMzEwNlowbzE1MDMGA1UEAwwsQXBwbGUgRGV2ZWxv
+	cG1lbnQ6IEphbmUgRml4dHVyZSAoVEVBTUlENTY3OCkxEzARBgNVBAsMClRFQU1JRDU2
+	NzgxFDASBgNVBAoMC0ZpeHR1cmUgSW5jMQswCQYDVQQGEwJVUzCCASIwDQYJKoZIhvcN
+	AQEBBQADggEPADCCAQoCggEBAMP5LZGyU1gTvV1QxmyV8VkRQQdvgdEfQZYPNoOaLLt6
+	22ONpdeOoawJfE/DDplwoMeqjzp7fImEF5AHFFlvy21Td2WSxx2EMGffsrLfErr5ViqN
+	2Hf8rDMM5hcytUaDzgdSezcFSVgpbqY6lChuDBTSUn1pN8swqdZy9AtmKdfaWfV5AB1W
+	2KuFDTU0fokuCPMjcf9/l8TfuzUQCVl63uuh7Q7Cte+MCmSX+eKOwP6tppmBokf1k2J8
+	ZNxeR7bkAH55g9mVF/k9hguDfQkH090qATC1ZfViqiiyxEOpz7bAu8wKXhpJ8NTDMyz1
+	jXAxnQTmg+wWWucTqwMKaxajHn0CAwEAATANBgkqhkiG9w0BAQsFAAOCAQEAVbe+sEhl
+	6lozSm0qWESI/z/WPZci0i1CVTqe5FM9dhVTHrDDeZWoGtUm+APakzIRmWlngOmAgexH
+	ZPi1mu1nCIqSPvka06Jb9mL0qS5xg1H0khx5i4/YTZ3Hg2FUhiNSFmL+4CQA77f3wnDE
+	38qjjIGIdVWFsykj9ezkWCTB7mI5haEtfBHVg5cuDs1TxgrjZ9BE2s3cwuyvQdO0ib+q
+	HBIijkzC6tUdpRlzd1bngw7PeegbTDeJYPvO3MdcdGFAkmwVXAlr9r/XgB1jJLgL2D9J
+	JDbbNB5Su5/3VunFgyvTO1XgUoex0NrzPjCuOqDGaBzDrgWXvyTv/zvyvGlE9w==
+		</data>
+	</array>
+	<key>Entitlements</key>
+	<dict>
+		<key>keychain-access-groups</key>
+		<array>
+			<string>TEAMID5678.*</string>
+		</array>
+		<key>get-task-allow</key>
+		<false/>
+		<key>application-identifier</key>
+		<string>TEAMID5678.com.example.stim</string>
+		<key>com.apple.developer.team-identifier</key>
+		<string>TEAMID5678</string>
+	</dict>
+	<key>ExpirationDate</key>
+	<date>2027-06-01T12:00:00Z</date>
+	<key>Name</key>
+	<string>iOS Team Provisioning Profile: com.example.stim</string>
+	<key>TeamIdentifier</key>
+	<array>
+		<string>TEAMID5678</string>
+	</array>
+	<key>TeamName</key>
+	<string>Fixture Inc</string>
+	<key>TimeToLive</key>
+	<integer>365</integer>
+	<key>UUID</key>
+	<string>9d1f8f6a-0e0c-4c33-9a1f-2b6a5c7d8e90</string>
+	<key>Version</key>
+	<integer>1</integer>
+</dict>
+</plist>
