@@ -301,10 +301,12 @@ export async function runCollector({
   return { child, writer, finish, startedAt, pid };
 }
 
+// ChildProcess.kill signals through the handle, so it can only reach a process
+// this collector spawned. process.kill(child.pid) would signal whatever holds
+// that number, including a pid the OS recycled after the child exited.
 function killChild(child: ChildProcess | null): void {
   try {
-    if (child?.pid) process.kill(child.pid, 'SIGTERM');
-    else child?.kill?.('SIGTERM');
+    child?.kill?.('SIGTERM');
   } catch {}
 }
 

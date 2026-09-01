@@ -583,3 +583,54 @@ describe('runCollector reattach seams', () => {
     expect(stopped).toBe(true);
   });
 });
+
+describe('the collector never signals a pid it does not own', () => {
+  test('reattaching kills the stream through its own handle, not process.kill on its pid', async () => {
+    const signalled: [number, string | number][] = [];
+    const killedHandles: (string | number | undefined)[] = [];
+    const origKill = process.kill;
+    process.kill = ((pid: number, sig: string | number) => {
+      signalled.push([pid, sig]);
+      return true;
+    }) as typeof process.kill;
+    try {
+      const started: ChildProcess[] = [];
+      let pid = 3132;
+      const result = await runCollector({
+        platform: 'android',
+        root,
+        serial: 'emulator-5554',
+        packageName: 'com.example.app',
+        resolvePid: async () => ({ ok: true, pid: 3132 }),
+        pidOf: () => pid,
+        pidWatchMs: 60000,
+        startStream: ({ pid: streamPid }) => {
+          const c = makeChildProcess({
+            pid: streamPid ?? undefined,
+            kill: ((sig?: string | number) => {
+              killedHandles.push(sig);
+              return true;
+            }) as ChildProcess['kill'],
+          });
+          started.push(c);
+          return c;
+        },
+        attachSignals: false,
+        onExit: () => {},
+      });
+
+      pid = 4200;
+      const firstStarted = started[0];
+      assert(firstStarted);
+      firstStarted.emit('exit', 0, null);
+
+      expect(killedHandles).toEqual(['SIGTERM']);
+      expect(signalled.filter(([, sig]) => sig !== 0)).toEqual([]);
+
+      assert(result);
+      result.finish(0, 'info', 'done', 'collector_stopped');
+    } finally {
+      process.kill = origKill;
+    }
+  });
+});
