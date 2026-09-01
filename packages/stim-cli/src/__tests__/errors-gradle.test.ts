@@ -367,21 +367,25 @@ describe('a packaging failure surfaces its cause however gradle interleaves its 
     expect(extractGradleDiagnostics(tail.join('\n'))).toEqual([]);
   });
 
-  test('a Configuration cache entry line in the stdout tail does not glue into the cause', () => {
-    const messages = extractGradleDiagnostics(
-      [
-        '> Task :app:packageDebug FAILED',
-        'FAILURE: Build failed with an exception.',
-        '* What went wrong:',
-        ...chain.slice(0, 2),
-        'Configuration cache entry stored.',
-        ...chain.slice(2),
-      ].join('\n'),
-    ).map((d) => d.message);
-    expect(messages[0]).toBe('Task :app:packageDebug FAILED');
-    expect(messages.some((m) => /Configuration cache entry/.test(m))).toBe(false);
-    expect(messages).toContain(nativeLib);
-  });
+  for (const verb of ['stored', 'reused', 'updated', 'discarded']) {
+    test(`a Configuration cache entry ${verb} line in the stdout tail does not glue into the cause`, () => {
+      const messages = extractGradleDiagnostics(
+        [
+          '> Task :app:packageDebug FAILED',
+          'FAILURE: Build failed with an exception.',
+          '* What went wrong:',
+          ...chain.slice(0, 2),
+          `Configuration cache entry ${verb}.`,
+          ...chain.slice(2),
+        ].join('\n'),
+      ).map((d) => d.message);
+      expect(messages[0]).toBe('Task :app:packageDebug FAILED');
+      expect(messages[1]).toMatch(/^Execution failed for task/);
+      expect(messages[1]).toMatch(/PackageAndroidArtifact/);
+      expect(messages.some((m) => /Configuration cache entry/.test(m))).toBe(false);
+      expect(messages).toContain(nativeLib);
+    });
+  }
 
   test('an exception line the message already carries whole is not repeated', () => {
     const messages = extractGradleDiagnostics(

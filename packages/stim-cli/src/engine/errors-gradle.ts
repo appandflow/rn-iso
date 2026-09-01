@@ -27,7 +27,7 @@ const CAUSE_LINE = /^>\s+\S/;
 const JAVA_EXCEPTION = /^(?:[a-z][A-Za-z0-9_]*\.){2,}[A-Za-z0-9_$]*(?:Exception|Error)\b/;
 const TASK_LINE = /^>\s*Task\s+:/;
 const BUILD_TAIL =
-  /^(?:BUILD (?:FAILED|SUCCESSFUL) in\b|Deprecated Gradle features were used\b|You can use '--warning-mode|For more on this, please refer to\b|\d+ actionable task|Configuration cache entry (?:stored|reused)\b)/;
+  /^(?:BUILD (?:FAILED|SUCCESSFUL) in\b|Deprecated Gradle features were used\b|You can use '--warning-mode|For more on this, please refer to\b|\d+ actionable task|Configuration cache entry\b)/;
 
 const MAX_CAUSE_LINES = 6;
 
