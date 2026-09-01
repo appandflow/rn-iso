@@ -135,6 +135,10 @@ export function registerCreate(worktree: Command): void {
       '--base <ref>',
       'base ref: "head" (current HEAD, default), "fresh" (origin/HEAD), or any ref this repo resolves (branch, tag, sha)',
     )
+    .option(
+      '--dir <path>',
+      'directory to create the worktree under, resolved against the current directory; overrides the worktreeDir setting for this run',
+    )
     .option('--label <label>', 'Stim shortcut for the worktree (defaults to the worktree name)')
     .option(
       '--carry-ignored',
@@ -163,7 +167,7 @@ export function registerCreate(worktree: Command): void {
 
       const base = opts.base || settings?.worktree?.baseRef || 'head';
 
-      const dir = settings.worktreeDir || defaultWorktreeDir(root);
+      const dir = opts.dir ? resolve(opts.dir) : settings.worktreeDir || defaultWorktreeDir(root);
       const target = worktreePath({ worktreeDir: dir, name });
 
       if (existsSync(target)) {

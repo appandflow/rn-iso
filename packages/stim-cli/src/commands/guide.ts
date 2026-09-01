@@ -1325,7 +1325,7 @@ THE OPTION SURFACE, IN FULL
   stop            --json --force
   status          --json          (already machine-wide)
   gc              --delete --older-than <days> --cache <name|all>
-  worktree create <name> --carry-ignored --base <ref> --label <label>; remove [path] --force
+  worktree create <name> --carry-ignored --base <ref> --dir <path> --label <label>; remove [path] --force
 
   That is the whole surface today, and it is deliberately small. It can grow
   when a flag is genuinely the best answer -- but project-specific knowledge

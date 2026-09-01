@@ -82,7 +82,7 @@ test('the flags the guide advertises are the flags the commands define', () => {
     'stop.ts': ['--json', '--force'],
     'logs.ts': ['--errors', '--follow', '--since', '--grep', '--tail'],
     'gc.ts': ['--delete', '--older-than', '--cache'],
-    'worktree.ts': ['--carry-ignored', '--base', '--label', '--force'],
+    'worktree.ts': ['--carry-ignored', '--base', '--dir', '--label', '--force'],
   };
   const retired: Record<string, string[]> = { 'gc.ts': ['--all'] };
   for (const [file, flags] of Object.entries(retired)) {

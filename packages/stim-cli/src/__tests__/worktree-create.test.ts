@@ -286,6 +286,39 @@ test('create action: --base takes any ref this repo resolves, and branches from 
   }
 });
 
+test('create action: --dir places the worktree under that directory, resolved against the cwd', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-dir-')));
+  const repo = join(base, 'repo');
+  try {
+    initScratchRepo(repo);
+    const { logs } = await runCreateInRepo(repo, 'feat-x', { dir: '.worktrees', install: false });
+    const target = join(repo, '.worktrees', 'feat-x');
+    expect(logs).toEqual([target]);
+    expect(existsSync(join(target, '.git'))).toBeTruthy();
+    expect(existsSync(join(defaultWorktreeDir(repo), 'feat-x'))).toBeFalsy();
+  } finally {
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('create action: --dir takes precedence over the worktreeDir setting', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-dir-setting-')));
+  const repo = join(base, 'repo');
+  try {
+    initScratchRepo(repo);
+    writeFileSync(join(repo, '.stim.json'), JSON.stringify({ worktreeDir: join(base, 'from-setting') }));
+    const { logs } = await runCreateInRepo(repo, 'feat-y', { dir: join(base, 'from-flag'), install: false });
+    expect(logs).toEqual([join(base, 'from-flag', 'feat-y')]);
+    expect(existsSync(join(base, 'from-setting', 'feat-y'))).toBeFalsy();
+  } finally {
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test('create action: an existing branch is reported as attached, not as branched from --base', async () => {
   resetExecutor();
   const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-reuse-')));
