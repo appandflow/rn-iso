@@ -43,7 +43,13 @@ const NO_SUCH_SCHEME = /does not contain a scheme named/;
 // wrong node kind. See appandflow/stim#138.
 const CAS_CORRUPT = /not a IncludeTreeRoot node kind/;
 
-function remedyFor(message: string, root: string | null): string | null {
+const DEVICE_SIGNING_REMEDY =
+  "Set a team and a Development profile for the target's configuration in Xcode > Signing & Capabilities, then build once from Xcode to install the profile. Stim never passes -allowProvisioningUpdates, because registering a device or minting a profile changes your Apple Developer account.";
+
+const SIMULATOR_SIGNING_REMEDY =
+  "Stim builds for the simulator here, which needs no signing. Check CODE_SIGNING_REQUIRED / DEVELOPMENT_TEAM in the target's configuration, or build for a phone with `stim ios --device`.";
+
+function remedyFor(message: string, root: string | null, sdk: string): string | null {
   if (CAS_CORRUPT.test(message)) {
     return 'The compilation cache holds a damaged object. Run `stim gc --delete --cache "compilation cache"` to empty that cache, then build again. The next build is a cold one.';
   }
@@ -56,7 +62,7 @@ function remedyFor(message: string, root: string | null): string | null {
   }
   for (const pattern of SIGNING) {
     if (pattern.test(message)) {
-      return "Stim builds Debug for the simulator, which needs no signing. Check CODE_SIGNING_REQUIRED / DEVELOPMENT_TEAM in the target's Debug configuration.";
+      return sdk.startsWith('iphoneos') ? DEVICE_SIGNING_REMEDY : SIMULATOR_SIGNING_REMEDY;
     }
   }
   return null;
@@ -86,6 +92,7 @@ function makeDiagnostic(
     message: string;
   },
   root: string | null,
+  sdk: string,
 ): Diagnostic {
   const text = String(message).trim();
   const out: Diagnostic = { message: text };
@@ -93,7 +100,7 @@ function makeDiagnostic(
   if (line !== null && line !== undefined) out.line = line;
   if (column !== null && column !== undefined) out.column = column;
   out.message = text;
-  const remedy = remedyFor(text, root);
+  const remedy = remedyFor(text, root, sdk);
   if (remedy) out.remedy = remedy;
   return out;
 }
@@ -102,7 +109,11 @@ function dedupeKey(d: Diagnostic): string {
   return `${d.file || ''}|${d.line || ''}|${d.column || ''}|${d.message}`;
 }
 
-export function extractXcodeDiagnostics(transcript: string, root: string | null = null): Diagnostic[] {
+export function extractXcodeDiagnostics(
+  transcript: string,
+  root: string | null = null,
+  sdk: string = 'iphonesimulator',
+): Diagnostic[] {
   if (typeof transcript !== 'string' || transcript === '') return [];
 
   const lines = transcript.split('\n');
@@ -129,7 +140,7 @@ export function extractXcodeDiagnostics(transcript: string, root: string | null 
         const sym = UNDEFINED_SYMBOL.exec(symLine.replace(/\r$/, ''));
         if (sym) {
           const symbol = sym[1];
-          if (symbol !== undefined) push(makeDiagnostic({ message: undefinedSymbolMessage(symbol) }, root));
+          if (symbol !== undefined) push(makeDiagnostic({ message: undefinedSymbolMessage(symbol) }, root, sdk));
           continue;
         }
         if (/^\s+\S/.test(symLine) && !/^\S/.test(symLine)) continue;
@@ -141,7 +152,7 @@ export function extractXcodeDiagnostics(transcript: string, root: string | null 
 
     const ld = LD_ERROR.exec(raw);
     if (ld) {
-      push(makeDiagnostic({ message: `ld: ${ld[1]}` }, root));
+      push(makeDiagnostic({ message: `ld: ${ld[1]}` }, root, sdk));
       continue;
     }
 
@@ -158,6 +169,7 @@ export function extractXcodeDiagnostics(transcript: string, root: string | null 
             message: posMsg,
           },
           root,
+          sdk,
         ),
       );
       continue;
@@ -167,7 +179,7 @@ export function extractXcodeDiagnostics(transcript: string, root: string | null 
     if (plain) {
       const plainMsg = plain[2];
       if (plainMsg === undefined) continue;
-      push(makeDiagnostic({ file: fileFromPrefix(plain[1] || ''), message: plainMsg }, root));
+      push(makeDiagnostic({ file: fileFromPrefix(plain[1] || ''), message: plainMsg }, root, sdk));
     }
   }
 

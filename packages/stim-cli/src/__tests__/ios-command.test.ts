@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
 import { collectorProcessTitle } from '../collector/ownership.ts';
-import { upsertProject } from '../config.ts';
+import { getProject, upsertProject } from '../config.ts';
 import { parseNdjsonText } from '../ndjson.ts';
 import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../paths.ts';
 import type { WorkspaceState } from '../supervisor/run.ts';
@@ -694,6 +694,21 @@ describe('the cache', () => {
     reserve();
     const { calls } = await run({});
     expect(calls.args.storeBuild.options).toEqual({ overwrite: false, sources: [] });
+  });
+
+  test('a build that follows a failed swap REPLACES the entry that just failed (Android form)', async () => {
+    reserve();
+    const cached = join(root, 'cached', 'Fixture.app');
+    const { exitCode, calls } = await run(
+      { configuration: 'Release' },
+      {
+        resolveBuild: () => cached,
+        swapJsBundle: async () => ({ ok: false, step: 'codesign', reason: 'the seal would not take', lastLines: [] }),
+      },
+    );
+    expect(exitCode).toBe(null);
+    expect(calls.order.includes('buildIos')).toBeTruthy();
+    expect(calls.args.storeBuild.options).toEqual({ overwrite: true, sources: [] });
   });
 
   test('a cache store that fails does not fail a successful build', async () => {
@@ -3192,5 +3207,264 @@ describe('an app the simulator already holds', () => {
 
     expect(stderr).not.toMatch(/skipped/);
     expect(parseFirst(logs).installSkipped).toBe(false);
+  });
+});
+
+describe('ios --device: selecting a phone and building the device slice', () => {
+  const PHONE = '00008030-001A2B3C4D5E802E';
+
+  function connected(devices: Array<Record<string, unknown>> = [{ udid: PHONE, name: 'Test Phone' }]) {
+    return {
+      listIosDevices: () =>
+        devices.map((d) => ({
+          udid: PHONE,
+          name: 'Test Phone',
+          bootState: 'booted',
+          developerModeStatus: 'enabled',
+          pairingState: 'paired',
+          transportType: 'wired',
+          ...d,
+        })),
+    };
+  }
+
+  test('--device with an empty udid refuses before anything is spawned', async () => {
+    reserve();
+    const { errs, exitCode, calls } = await run({ device: '' }, connected());
+    expect(exitCode).toBe(1);
+    expect(errs.join('\n')).toMatch(/STIM_BAD_ARG/);
+    expect(errs.join('\n')).toMatch(/empty UDID/);
+    expect(calls.order.includes('fingerprintProject')).toBe(false);
+  });
+
+  test('--device and --remote together refuse, because they name two different devices', async () => {
+    reserve();
+    const { errs, exitCode } = await run({ device: true, remote: 'proxy' }, connected());
+    expect(exitCode).toBe(1);
+    expect(errs.join('\n')).toMatch(/STIM_BAD_ARG/);
+    expect(errs.join('\n')).toMatch(/Pass only one of --device and --remote/);
+  });
+
+  test('no connected phone is STIM_NO_DEVICE, and nothing is created to make one', async () => {
+    reserve();
+    const { errs, exitCode, calls } = await run({ device: true }, { listIosDevices: () => [] });
+    expect(exitCode).toBe(1);
+    expect(errs.join('\n')).toMatch(/STIM_NO_DEVICE/);
+    expect(errs.join('\n')).toMatch(/Developer Mode/);
+    expect(calls.order.includes('ensureOwnedDevice')).toBe(false);
+    expect(calls.order.includes('checkDeviceCapacity')).toBe(false);
+  });
+
+  test('several connected phones refuse with the candidate list', async () => {
+    reserve();
+    const { errs, exitCode } = await run(
+      { device: true },
+      connected([{ udid: PHONE }, { udid: '00008120-000A11223C44201E', name: 'Second' }]),
+    );
+    expect(exitCode).toBe(1);
+    expect(errs.join('\n')).toMatch(/STIM_NO_DEVICE/);
+    expect(errs.join('\n')).toMatch(/stim ios --device <udid>/);
+  });
+
+  test('the one connected phone is used, never owned, and never booted', async () => {
+    reserve();
+    const { calls } = await run({ device: true }, connected());
+    expect(calls.order.includes('ensureOwnedDevice')).toBe(false);
+    expect(calls.order.includes('ensureBooted')).toBe(false);
+    expect(calls.order.includes('checkDeviceCapacity')).toBe(false);
+    expect(getProject(root)?.deviceUdid ?? null).toBe(null);
+  });
+
+  test('the build is the iphoneos slice, keyed -device, and carries no signing flag', async () => {
+    reserve();
+    const { calls } = await run({ device: true, configuration: 'Release' }, connected());
+    const build = calls.args.buildIos as Record<string, unknown>;
+    expect(build?.sdk).toBe('iphoneos');
+    expect(build?.udid).toBe(PHONE);
+    expect(build?.destination).toBe(null);
+    expect(build?.configuration).toBe('Release');
+    const store = calls.args.storeBuild as { key: string };
+    expect(store.key).toBe(`${FINGERPRINT}-release-device`);
+    const lookup = calls.args.resolveBuild as { key: string };
+    expect(lookup.key).toBe(`${FINGERPRINT}-release-device`);
+  });
+
+  test('the simulator path is unchanged and still keys -sim, so no cache entry moves', async () => {
+    reserve();
+    const { calls } = await run({ configuration: 'Release' });
+    const store = calls.args.storeBuild as { key: string };
+    expect(store.key).toBe(`${FINGERPRINT}-release-sim`);
+    const build = calls.args.buildIos as Record<string, unknown>;
+    expect(build?.sdk).toBe(undefined);
+  });
+
+  test('it stops at the install boundary rather than sending a device app to simctl', async () => {
+    reserve();
+    const { errs, exitCode, calls } = await run({ device: true }, connected());
+    expect(exitCode).toBe(1);
+    expect(calls.order.includes('buildIos')).toBe(true);
+    expect(calls.order.includes('storeBuild')).toBe(true);
+    expect(calls.order.includes('installIosApp')).toBe(false);
+    expect(calls.order.includes('launchIosApp')).toBe(false);
+    expect(calls.order.includes('replaceCollector')).toBe(false);
+    expect(errs.join('\n')).toMatch(/STIM_BAD_ARG/);
+    expect(errs.join('\n')).toMatch(/not wired yet/);
+    expect(errs.join('\n')).toMatch(new RegExp(`${FINGERPRINT}-debug-device`));
+  });
+
+  test('a malformed ios.lanHost refuses the run before the phone is looked for', async () => {
+    reserve();
+    const { errs, exitCode, calls } = await run(
+      { device: true },
+      { ...connected(), resolveSettings: () => ({ ios: { lanHost: 'http://192.168.1.42' } }) },
+    );
+    expect(exitCode).toBe(1);
+    expect(errs.join('\n')).toMatch(/STIM_BAD_ARG/);
+    expect(errs.join('\n')).toMatch(/Invalid ios\.lanHost/);
+    expect(calls.order.includes('fingerprintProject')).toBe(false);
+  });
+
+  test('a device run never touches the Expo provider, in either direction', async () => {
+    reserve();
+    let loadProjectProviderCalls = 0;
+    let resolveRemoteCalls = 0;
+    let uploadCalls = 0;
+    const { calls, errs } = await run(
+      { device: true, configuration: 'Release' },
+      {
+        ...connected(),
+        detectIsExpo: () => true,
+        loadProjectProvider: async () => {
+          loadProjectProviderCalls += 1;
+          return { provider: { plugin: {}, options: {} }, name: 'eas' };
+        },
+        resolveRemote: async () => {
+          resolveRemoteCalls += 1;
+          return { appPath: join(root, 'downloaded', 'Fixture.app') };
+        },
+        uploadRemote: async () => {
+          uploadCalls += 1;
+          return { uploaded: true };
+        },
+      },
+    );
+    expect(loadProjectProviderCalls).toBe(0);
+    expect(resolveRemoteCalls).toBe(0);
+    expect(uploadCalls).toBe(0);
+    expect(calls.order.includes('buildIos')).toBe(true);
+    expect((calls.args.storeBuild as { key: string }).key).toBe(`${FINGERPRINT}-release-device`);
+    expect(errs.join('\n')).not.toMatch(/local-tier only/);
+  });
+
+  test('a device run never loads the build-cache provider, for the read or the upload', async () => {
+    reserve();
+    let loads = 0;
+    const { calls, errs } = await run(
+      { device: true },
+      {
+        ...connected(),
+        resolveCacheProviderConfig: () => ({ provider: './cache.cjs', options: {}, baseDir: root }),
+        loadCacheProvider: async () => {
+          loads += 1;
+          return { name: './cache.cjs', provider: { builds: {} } };
+        },
+      },
+    );
+    expect(loads).toBe(0);
+    expect(calls.order.filter((c) => ['resolveBuild', 'storeBuild'].includes(c))).toEqual([
+      'resolveBuild',
+      'storeBuild',
+    ]);
+    expect(errs.filter((line) => line.includes('local-tier only'))).toHaveLength(1);
+  });
+
+  test('a device run with no provider configured says nothing about providers', async () => {
+    reserve();
+    const { errs } = await run({ device: true }, connected());
+    expect(errs.join('\n')).not.toMatch(/local-tier only/);
+    expect(errs.join('\n')).not.toMatch(/provider/);
+  });
+
+  test('the refusal says what actually happened: built, or restored from the cache', async () => {
+    reserve();
+    const built = await run({ device: true }, connected());
+    expect(built.errs.join('\n')).toMatch(
+      new RegExp(`Built the Debug iphoneos slice[^\n]*and cached it under ${FINGERPRINT}-debug-device`),
+    );
+
+    const restored = await run(
+      { device: true },
+      { ...connected(), resolveBuild: () => join(root, 'cached', 'Fixture.app') },
+    );
+    expect(restored.calls.order.includes('buildIos')).toBe(false);
+    expect(restored.errs.join('\n')).toMatch(
+      new RegExp(`Restored the Debug iphoneos slice[^\n]*from the cache under ${FINGERPRINT}-debug-device`),
+    );
+    expect(restored.errs.join('\n')).not.toMatch(/Built the/);
+  });
+
+  test('the same providers ARE consulted without --device, so the gate is not vacuous', async () => {
+    reserve();
+    let loadProjectProviderCalls = 0;
+    let resolveRemoteCalls = 0;
+    await run(
+      {},
+      {
+        detectIsExpo: () => true,
+        loadProjectProvider: async () => {
+          loadProjectProviderCalls += 1;
+          return { provider: { plugin: {}, options: {} }, name: 'eas' };
+        },
+        resolveRemote: async () => {
+          resolveRemoteCalls += 1;
+          return null;
+        },
+      },
+    );
+    expect(loadProjectProviderCalls).toBe(1);
+    expect(resolveRemoteCalls).toBe(1);
+
+    let loads = 0;
+    await run(
+      {},
+      {
+        resolveCacheProviderConfig: () => ({ provider: './cache.cjs', options: {}, baseDir: root }),
+        loadCacheProvider: async () => {
+          loads += 1;
+          return { none: true };
+        },
+      },
+    );
+    expect(loads).toBeGreaterThan(0);
+  });
+
+  test('a device release cache hit does not run the JS swap it cannot re-seal yet', async () => {
+    reserve();
+    let swaps = 0;
+    const { calls, errs } = await run(
+      { device: true, configuration: 'Release' },
+      {
+        ...connected(),
+        resolveBuild: () => join(root, 'cached', 'Fixture.app'),
+        swapJsBundle: async () => {
+          swaps += 1;
+          return { ok: true, appPath: join(root, 'js-swap', 'Fixture.app'), tmpDir: null, hermes: true, durationMs: 1 };
+        },
+      },
+    );
+    expect(swaps).toBe(0);
+    expect(calls.order.includes('buildIos')).toBe(false);
+    expect(calls.order.includes('installIosApp')).toBe(false);
+    expect(errs.join('\n')).toMatch(/js swap\s+skipped for --device/);
+  });
+
+  test('a malformed ios.signingIdentitySha1 refuses the same way', async () => {
+    reserve();
+    const { errs, exitCode } = await run(
+      { device: true },
+      { ...connected(), resolveSettings: () => ({ ios: { signingIdentitySha1: 'ABCDEF' } }) },
+    );
+    expect(exitCode).toBe(1);
+    expect(errs.join('\n')).toMatch(/Invalid ios\.signingIdentitySha1/);
   });
 });

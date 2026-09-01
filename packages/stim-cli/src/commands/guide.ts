@@ -182,8 +182,9 @@ RULES
   - Never assume "booted" is your simulator. Other agents have theirs booted
     too.
   - Every device Stim creates or boots is one Stim created, named
-    stim-<label>. The exception is \`android --device\`, which installs on a
-    connected physical device Stim never creates, boots, or deletes.`,
+    stim-<label>. The exceptions are \`android --device\` and
+    \`ios --device\`, which use a connected physical device Stim never
+    creates, boots, or deletes.`,
   },
 
   metro: {
@@ -592,9 +593,62 @@ STIM_NO_SCHEME
   No buildable Xcode scheme was found in ios/. A scheme has to be shared to be
   visible to xcodebuild.
 
+--- iOS SIGNING CODES (\`ios --device\`, and only there) ---
+
+A simulator build needs no signature, which is why none of these can fire on
+the normal path. A device build carries one, and Stim re-seals any bundle it
+modifies with the identity the bundle already names -- so it checks, before
+spending a build or a bundle, that the check can succeed.
+
+STIM_NO_PROFILE
+  The built or cached .app has no embedded.mobileprovision, or
+  \`security cms -D\` could not decode the one it has. The first means the build
+  produced an unsigned app -- almost always a simulator-sliced artifact.
+  Set a team and a Development profile for the target's configuration in
+  Xcode > Signing & Capabilities, then BUILD ONCE FROM XCODE to install the
+  profile. Stim will not do that step: registering a device or minting a
+  profile changes your Apple Developer account, so Stim never passes
+  -allowProvisioningUpdates.
+
+STIM_PROFILE_MISMATCH
+  The profile inside the app cannot admit this phone. Three shapes, and the
+  message names which one and the profile type it found:
+    - it expired, or carries no ExpirationDate at all;
+    - it is an App Store or enterprise profile, which carries no
+      ProvisionedDevices list -- so Stim cannot PROVE the phone is admitted and
+      refuses rather than guessing. Local device runs need a development
+      profile;
+    - it is a development or ad hoc profile whose device list does not name
+      this UDID. Register the UDID at developer.apple.com, regenerate the
+      profile, and build once from Xcode.
+
+STIM_NO_SIGNING_IDENTITY
+  No single keychain identity could be resolved to re-seal with. Either
+  \`security find-identity -v -p codesigning\` lists nothing, or the identity
+  the artifact's own profile names is absent, or two certificates share that
+  common name and Stim -- being non-interactive -- will not pick one.
+  Open Xcode > Settings > Accounts and download your certificates, or unlock
+  the login keychain with \`security unlock-keychain\`. For the two-certificate
+  case, set ios.signingIdentitySha1 to the SHA-1 hash beside the one you want.
+
+STIM_CODESIGN_FAILED
+  \`codesign --force --sign\` or \`codesign --verify --strict\` exited non-zero
+  on the modified copy. The verbatim codesign stderr is quoted, because it is
+  the answer: a locked login keychain reports errSecInternalComponent, an
+  ambiguous identity reports that it matched more than one. Unlock the keychain
+  and confirm exactly one identity matches the name. The cache entry itself is
+  never modified -- the failure is on a temporary copy, and the run builds
+  fresh.
+
 STIM_NO_DEVICE
-  The owned simulator/emulator could not be created or could not reach a booted
-  state. \`stim doctor\` checks the toolchain; \`stim status\` says what
+  With \`--device\`, no physical device answered the selection: none connected,
+  a named serial/UDID that is not connected, several connected with none named
+  (the refusal lists them), or one that is connected but unusable -- an
+  unauthorized Android device, or an iPhone that is unpaired or has Developer
+  Mode off. Hardware is never created or booted, so there is nothing to retry
+  into existence: fix the cable, the trust prompt, or Developer Mode.
+  Otherwise the owned simulator/emulator could not be created or could not
+  reach a booted state. \`stim doctor\` checks the toolchain; \`stim status\` says what
   Stim thinks it owns. Re-running the command creates a fresh owned device
   when the recorded one is gone.
   On iOS a slow first boot is waited out for up to ten minutes while the
@@ -733,11 +787,20 @@ STIM_SUPERVISOR_EXITED
 STIM_BAD_ARG / STIM_NO_PROJECT
   The command refused before doing anything: an unusable --wait value, an invalid
   Metro tunnel setting, an invalid android.dataPartitionSizeGb value, an unsafe
-  android.avdConfig key or fragment, a working directory with no package.json
-  above it, or an android/app/build.gradle that declares product flavors with
+  android.avdConfig key or fragment, a malformed ios.signingIdentity,
+  ios.signingIdentitySha1 or ios.lanHost value, \`--device\` with an empty
+  serial or UDID, \`--device\` together with \`--remote\`, a working directory
+  with no package.json above it, or an android/app/build.gradle that
+  declares product flavors with
   no variant selected (the refusal names the debug variants).
   These errors are caught before the port is reserved and before anything is
   spawned, so nothing was started.
+  ONE EXCEPTION, and it is temporary: \`ios --device\` also refuses with this
+  code AFTER a successful build. It selects a phone and builds the iphoneos
+  slice for it, but installing onto hardware is not implemented yet, so the
+  run stops there and the message names the cache key the artifact was stored
+  under -- the build is kept and the next run reuses it. This exception goes
+  away when device install lands; see appandflow/stim#178.
 
 "@stim-cli/metro is not installed ... so bundler and client logs will not be
 captured"  (in metro.ndjson, bare RN)
@@ -1142,7 +1205,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
 
 THE OPTION SURFACE, IN FULL
   start           --json --wait <seconds> --remote
-  ios             --json --no-metro-check --no-build-cache --configuration <name> --remote <proxy|eas>
+  ios             --json --no-metro-check --no-build-cache --configuration <name> --device [udid] --remote <proxy|eas>
   android         --json --no-metro-check --no-build-cache --variant <name> --device [serial] --remote <proxy|eas>
   logs            --source --level --since --grep --tail --follow --errors --json
   stop            --json --force
@@ -1180,6 +1243,32 @@ THE OPTION SURFACE, IN FULL
   so \`stop\` and \`gc\` never touch the phone. The app is pointed at
   localhost:<port>, which the adb reverse serves, instead of the emulator's
   10.0.2.2. Stim never creates, boots, shuts down, or deletes hardware.
+
+  \`ios --device [udid]\` selects a connected iPhone, the same way
+  \`android --device\` selects a connected phone: with no UDID the one
+  connected device is used, several is a refusal listing them, and an iPhone
+  that is unpaired or has Developer Mode off is refused with the fix. It
+  cannot be combined with --remote, and it never creates, boots, or deletes
+  hardware -- there is no capacity check, no simulator creation, no boot wait,
+  and no device record, so \`stop\` and \`gc\` never see the phone.
+
+  A device build is LOCAL-TIER ONLY. Its cache key is
+  \`<fingerprint>-<configuration>-device\`, so a device app can never collide
+  with the simulator one, and neither the build-cache provider nor the Expo
+  remote cache is read or written on a \`--device\` run: every entry they hold
+  is keyed for the simulator, so consulting them would either install a
+  simulator slice on a phone or publish an iphoneos app under a key simulator
+  builds resolve.
+
+  IT IS NOT FINISHED. Today it builds the \`iphoneos\` slice for the selected
+  phone -- \`-sdk iphoneos\`, the project's own signing settings, no signing
+  flags on the argv -- stores that artifact, and then REFUSES with
+  STIM_BAD_ARG, because installing and launching on hardware are not wired yet
+  (appandflow/stim#178). A release cache hit does not run the JS swap either:
+  the swap ends in a signature, and the device re-seal that would make it
+  installable is not wired in yet. Use \`--device\` to prove a project signs
+  for a device and to warm the device cache; use \`stim ios\` with no --device
+  for a run that ends with an app on screen.
 
   A VARIANT WHOSE NAME ENDS IN "Release" IS A RELEASE BUILD (\`release\`,
   \`productionRelease\`), and that is the whole opt-in -- there is no second
@@ -1250,8 +1339,10 @@ THE OPTION SURFACE, IN FULL
   re-signs it and installs that; any swap failure falls back to a full build
   rather than ever installing stale JS. Device logs are still collected, so
   \`logs --errors\` answers "does it repro in release/Hermes bytecode".
-  Simulator only -- device builds, signing and distribution stay out of
-  scope.
+  A run with no \`--device\` installs on the simulator only. \`ios --device\`
+  builds the \`iphoneos\` slice for a cabled iPhone and keys its cache
+  \`-device\` instead of \`-sim\`, but does not install it yet. Archives,
+  \`.ipa\` export, store signing and distribution stay out of scope.
 
 DESTRUCTIVE COMMANDS -- ask the user first
   gc --delete             deletes orphaned stim-* devices, tens of GB
@@ -1493,6 +1584,31 @@ KEYS STIM READS
                         symlink escapes, and missing files are refused before
                         simulator creation. Remote and unowned simulators are
                         never changed.
+  ios.signingIdentity   e.g. "Apple Development: Jane (TEAMID5678)" -- the
+                        keychain identity to re-seal a \`--device\` build with,
+                        overriding the one Stim derives from the artifact's own
+                        embedded.mobileprovision. Discovery is zero-config, so
+                        this exists only for the case discovery cannot cover.
+                        The name must be one \`security find-identity -v -p
+                        codesigning\` prints.
+  ios.signingIdentitySha1
+                        the 40-character hex SHA-1 hash printed beside that
+                        name. Set it when two certificates share one common
+                        name: Stim is non-interactive, so it refuses an
+                        ambiguous identity rather than picking one. It wins
+                        over ios.signingIdentity.
+  ios.lanHost           e.g. "192.168.1.42" -- the address a phone uses to
+                        reach this workspace's Metro on an \`ios --device\`
+                        Debug run, pinning the interface on a multi-NIC Mac
+                        whose en0 is not the one the phone shares. A bare
+                        address or hostname ONLY: never a scheme, a port, or a
+                        URL, because the channels that carry it to the phone
+                        (the dev-client deep link and the bundle's ip.txt)
+                        compose the URL themselves. Unset means Stim orders the
+                        host's non-internal IPv4 interfaces en0 first, then the
+                        remaining en* by index -- react-native-xcode.sh's own
+                        heuristic, so Stim and a plain Xcode run pick the same
+                        interface.
   android.systemImage   e.g. "system-images;android-36;google_apis;arm64-v8a"
   android.dataPartitionSizeGb
                         whole GiB for a newly created owned AVD's data

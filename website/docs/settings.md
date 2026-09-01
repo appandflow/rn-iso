@@ -30,6 +30,9 @@ keys produce a warning.
 | `ios.configuration`           | Xcode configuration, such as `Debug` or `Release`    |
 | `ios.remote`                  | Default remote backend, `proxy` or `eas`             |
 | `ios.simslimProfile`          | SimSlim profile for local iOS devices                |
+| `ios.signingIdentity`         | Keychain identity used to re-seal a device build     |
+| `ios.signingIdentitySha1`     | SHA-1 of that identity, when two share a name        |
+| `ios.lanHost`                 | Address a phone uses to reach this workspace's Metro |
 | `android.systemImage`         | Android SDK system image                             |
 | `android.dataPartitionSizeGb` | AVD data partition size                              |
 | `android.avdConfigFile`       | Additional AVD config file                           |

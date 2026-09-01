@@ -53,7 +53,7 @@ project is reused.
 ## `ios`
 
 ```text
-stim ios [--configuration <name>] [--remote <proxy|eas>]
+stim ios [--configuration <name>] [--device [udid]] [--remote <proxy|eas>]
          [--no-metro-check] [--no-build-cache] [--json]
 ```
 
@@ -62,14 +62,26 @@ app, opens it, and checks launch logs. The build always runs on the local
 machine, including remote-device workflows.
 
 - `--configuration <name>` selects an Xcode configuration. The default is Debug.
+- `--device [udid]` selects a connected iPhone instead of the owned simulator.
+  With no UDID the one connected device is used. Stim never creates, boots, or
+  deletes hardware.
 - `--remote proxy` uses a configured Agent Device daemon.
 - `--remote eas` uses an EAS remote simulator.
 - `--no-metro-check` skips the Debug dev-server gate.
 - `--no-build-cache` ignores cached artifacts and replaces the matching entry.
 - `--json` prints one stable result object on stdout.
 
-A non-Debug configuration embeds its JavaScript bundle and supports iOS
-Simulator targets only.
+A non-Debug configuration embeds its JavaScript bundle.
+
+A device build is local-tier only. Its cache key ends `-device`, so it cannot
+collide with a simulator build, and no build-cache provider or Expo remote cache
+is read or written on a `--device` run, because every entry they hold is keyed
+for the simulator.
+
+`--device` is incomplete. It selects the phone and builds the `iphoneos` slice
+for it, and then refuses: installing and launching on hardware are not
+implemented yet. Run `stim ios` without `--device` for a run that ends with an
+app on screen.
 
 ## `android`
 

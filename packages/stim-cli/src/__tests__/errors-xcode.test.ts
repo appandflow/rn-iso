@@ -227,12 +227,22 @@ describe('real transcripts', () => {
     expect(extractXcodeDiagnostics(REAL_PODS_FAILURE).length).toBe(1);
   });
 
-  test('a signing failure is recognized as one, and told it should not be signing', () => {
+  test('a signing failure on the simulator slice is told it should not be signing at all', () => {
     const found = extractXcodeDiagnostics(REAL_SIGNING_FAILURE);
     expect(found.length).toBe(1);
     expect(found[0]?.file).toBe('/tmp/stim-xc/Scratch.xcodeproj');
     expect(found[0]?.message).toMatch(/No profiles for 'com\.stimcli\.scratch' were found/);
-    expect(found[0]?.remedy).toMatch(/simulator, which needs no signing/);
+    expect(found[0]?.remedy).toMatch(/simulator here, which needs no signing/);
+    expect(found[0]?.remedy).toMatch(/stim ios --device/);
+  });
+
+  test('the same failure on the device slice is told to set up signing, in Xcode', () => {
+    const found = extractXcodeDiagnostics(REAL_SIGNING_FAILURE, null, 'iphoneos');
+    expect(found.length).toBe(1);
+    expect(found[0]?.remedy).toMatch(/Signing & Capabilities/);
+    expect(found[0]?.remedy).toMatch(/build once from Xcode/);
+    expect(found[0]?.remedy).toMatch(/-allowProvisioningUpdates/);
+    expect(found[0]?.remedy).not.toMatch(/needs no signing/);
   });
 
   test('an xcodebuild invocation error survives its own timestamped log line', () => {

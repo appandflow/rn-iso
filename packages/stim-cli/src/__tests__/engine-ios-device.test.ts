@@ -1,0 +1,285 @@
+import { existsSync, readdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { describe, expect, test } from 'vitest';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import {
+  listIosDevices,
+  parseDevicectlDevices,
+  resolveIosPhysicalDevice,
+  type IosDeviceEntry,
+} from '../engine/ios-device.ts';
+import { hostLanCandidates, lanCandidates } from '../engine/lan-address.ts';
+
+const PHONE = '00008030-001A2B3C4D5E802E';
+const OTHER = '00008120-000A11223C44201E';
+
+function payload(devices: unknown[]): string {
+  return JSON.stringify({
+    info: { jsonVersion: 3, outcome: 'success' },
+    result: { devices },
+  });
+}
+
+function device(udid: string, overrides: Record<string, unknown> = {}): unknown {
+  return {
+    hardwareProperties: { udid, platform: 'iOS' },
+    deviceProperties: { name: `Phone ${udid.slice(-4)}`, bootState: 'booted', developerModeStatus: 'enabled' },
+    connectionProperties: { pairingState: 'paired', transportType: 'wired' },
+    ...overrides,
+  };
+}
+
+function entry(overrides: Partial<IosDeviceEntry> = {}): IosDeviceEntry {
+  return {
+    udid: PHONE,
+    name: 'Test Phone',
+    bootState: 'booted',
+    developerModeStatus: 'enabled',
+    pairingState: 'paired',
+    transportType: 'wired',
+    ...overrides,
+  };
+}
+
+test('parseDevicectlDevices reads the fields devicectl -j actually nests', () => {
+  expect(parseDevicectlDevices(payload([device(PHONE)]))).toEqual([
+    {
+      udid: PHONE,
+      name: 'Phone 802E',
+      bootState: 'booted',
+      developerModeStatus: 'enabled',
+      pairingState: 'paired',
+      transportType: 'wired',
+    },
+  ]);
+});
+
+test('parseDevicectlDevices tolerates the empty list a Mac with no phone produces', () => {
+  expect(parseDevicectlDevices(payload([]))).toEqual([]);
+  expect(parseDevicectlDevices('{"info":{}}')).toEqual([]);
+  expect(parseDevicectlDevices('not json')).toEqual([]);
+  expect(parseDevicectlDevices(null)).toEqual([]);
+});
+
+test('parseDevicectlDevices drops entries with no udid and defaults a missing name', () => {
+  const parsed = parseDevicectlDevices(
+    payload([{ deviceProperties: { name: 'nameless' } }, { hardwareProperties: { udid: OTHER } }]),
+  );
+  expect(parsed).toHaveLength(1);
+  expect(parsed[0]).toMatchObject({ udid: OTHER, name: OTHER, developerModeStatus: null, pairingState: null });
+});
+
+test('parseDevicectlDevices accepts an already-parsed object', () => {
+  expect(parseDevicectlDevices(JSON.parse(payload([device(PHONE)])))).toHaveLength(1);
+});
+
+test('resolveIosPhysicalDevice uses the one connected device when none is named', () => {
+  expect(resolveIosPhysicalDevice(null, [entry()])).toEqual({ udid: PHONE, name: 'Test Phone' });
+});
+
+test('resolveIosPhysicalDevice refuses an ambiguous selection and lists the candidates', () => {
+  const refusal = resolveIosPhysicalDevice(null, [entry(), entry({ udid: OTHER, name: 'Second' })]);
+  expect(refusal.udid).toBeUndefined();
+  expect(refusal.error).toContain(PHONE);
+  expect(refusal.error).toContain(OTHER);
+  expect(refusal.remedy).toContain('stim ios --device <udid>');
+});
+
+test('resolveIosPhysicalDevice refuses when nothing is connected', () => {
+  const refusal = resolveIosPhysicalDevice(null, []);
+  expect(refusal.udid).toBeUndefined();
+  expect(refusal.error).toMatch(/No physical iOS device/);
+  expect(refusal.remedy).toMatch(/Developer Mode/);
+});
+
+test('resolveIosPhysicalDevice matches a named udid case-insensitively', () => {
+  expect(resolveIosPhysicalDevice(PHONE.toLowerCase(), [entry()])).toEqual({ udid: PHONE, name: 'Test Phone' });
+});
+
+test('resolveIosPhysicalDevice names what is connected when the requested udid is not', () => {
+  const refusal = resolveIosPhysicalDevice(OTHER, [entry()]);
+  expect(refusal.error).toContain(OTHER);
+  expect(refusal.error).toContain(PHONE);
+  const empty = resolveIosPhysicalDevice(OTHER, []);
+  expect(empty.error).toMatch(/no cabled device at all/);
+});
+
+test('resolveIosPhysicalDevice refuses an unpaired phone and a phone without Developer Mode', () => {
+  const unpaired = resolveIosPhysicalDevice(null, [entry({ pairingState: 'unpaired' })]);
+  expect(unpaired.udid).toBeUndefined();
+  expect(unpaired.remedy).toMatch(/Trust/);
+
+  const noDevMode = resolveIosPhysicalDevice(null, [entry({ developerModeStatus: 'disabled' })]);
+  expect(noDevMode.udid).toBeUndefined();
+  expect(noDevMode.remedy).toMatch(/Developer Mode/);
+});
+
+test('resolveIosPhysicalDevice does not invent a health problem from absent fields', () => {
+  expect(resolveIosPhysicalDevice(null, [entry({ pairingState: null, developerModeStatus: null })])).toEqual({
+    udid: PHONE,
+    name: 'Test Phone',
+  });
+});
+
+test('lanCandidates orders en0 first and the remaining en* by index', () => {
+  expect(
+    lanCandidates({
+      en3: [{ family: 'IPv4', address: '10.0.3.5', internal: false }],
+      en0: [{ family: 'IPv4', address: '10.0.0.5', internal: false }],
+      en10: [{ family: 'IPv4', address: '10.0.10.5', internal: false }],
+      en1: [{ family: 'IPv4', address: '10.0.1.5', internal: false }],
+    }).map((c) => c.interfaceName),
+  ).toEqual(['en0', 'en1', 'en3', 'en10']);
+});
+
+test('lanCandidates keeps a non-en interface but ranks it after every en*', () => {
+  expect(
+    lanCandidates({
+      anpi0: [{ family: 'IPv4', address: '10.9.9.9', internal: false }],
+      en1: [{ family: 'IPv4', address: '10.0.1.5', internal: false }],
+    }).map((c) => c.interfaceName),
+  ).toEqual(['en1', 'anpi0']);
+});
+
+test('lanCandidates drops loopback, IPv6, link-local, and the tunnel interfaces', () => {
+  expect(
+    lanCandidates({
+      lo0: [{ family: 'IPv4', address: '127.0.0.1', internal: true }],
+      en0: [
+        { family: 'IPv6', address: 'fe80::1', internal: false },
+        { family: 'IPv4', address: '169.254.10.1', internal: false },
+      ],
+      utun4: [{ family: 'IPv4', address: '100.72.66.29', internal: false }],
+      bridge0: [{ family: 'IPv4', address: '192.168.64.1', internal: false }],
+      awdl0: [{ family: 'IPv4', address: '169.254.9.9', internal: false }],
+      en1: [{ family: 'IPv4', address: '10.0.0.132', internal: false }],
+    }),
+  ).toEqual([{ interfaceName: 'en1', address: '10.0.0.132' }]);
+});
+
+test('lanCandidates accepts the numeric family newer Node reports and dedupes addresses', () => {
+  expect(
+    lanCandidates({
+      en0: [
+        { family: 4, address: '10.0.0.7', internal: false },
+        { family: 4, address: '10.0.0.7', internal: false },
+      ],
+      en2: [{ family: 4, address: '10.0.0.7', internal: false }],
+    }),
+  ).toEqual([{ interfaceName: 'en0', address: '10.0.0.7' }]);
+});
+
+test('lanCandidates returns nothing for an offline host', () => {
+  expect(lanCandidates({ lo0: [{ family: 'IPv4', address: '127.0.0.1', internal: true }] })).toEqual([]);
+  expect(lanCandidates(null)).toEqual([]);
+});
+
+test('hostLanCandidates is lanCandidates over the host os.networkInterfaces()', () => {
+  const interfaces = {
+    en0: [{ family: 'IPv4', address: '10.1.2.3', internal: false }],
+    lo0: [{ family: 'IPv4', address: '127.0.0.1', internal: true }],
+  };
+  expect(hostLanCandidates(() => interfaces as never)).toEqual([{ interfaceName: 'en0', address: '10.1.2.3' }]);
+  for (const candidate of hostLanCandidates()) {
+    expect(candidate.address).toMatch(/^\d+\.\d+\.\d+\.\d+$/);
+    expect(candidate.interfaceName.length).toBeGreaterThan(0);
+  }
+});
+
+test('a phone reachable only over the network is refused: v1 installs over the cable', () => {
+  const wireless = entry({ transportType: 'localNetwork' });
+  const refused = resolveIosPhysicalDevice(null, [wireless]);
+  expect(refused.udid).toBeUndefined();
+  expect(refused.error).toContain('localNetwork');
+  expect(refused.remedy).toMatch(/cable/);
+
+  const named = resolveIosPhysicalDevice(PHONE, [wireless]);
+  expect(named.udid).toBeUndefined();
+  expect(named.error).toContain('not a cable');
+});
+
+test('a wireless phone is not a candidate, so a single cabled one is still unambiguous', () => {
+  expect(
+    resolveIosPhysicalDevice(null, [entry({ udid: OTHER, name: 'Wireless', transportType: 'localNetwork' }), entry()]),
+  ).toEqual({ udid: PHONE, name: 'Test Phone' });
+});
+
+test('an absent transportType is not treated as wireless', () => {
+  expect(resolveIosPhysicalDevice(null, [entry({ transportType: null })])).toEqual({ udid: PHONE, name: 'Test Phone' });
+  expect(resolveIosPhysicalDevice(null, [entry({ transportType: 'USB' })])).toEqual({
+    udid: PHONE,
+    name: 'Test Phone',
+  });
+});
+
+test('listIosDevices runs devicectl into a temp file, parses it, and removes the directory', () => {
+  const calls: Array<{ file: string; args: string[] }> = [];
+  let outPath = '';
+  setExecutor({
+    runFile(file: string, args: string[]) {
+      calls.push({ file, args });
+      outPath = args[args.length - 1] as string;
+      writeFileSync(outPath, payload([device(PHONE)]));
+      return '';
+    },
+  });
+  try {
+    expect(listIosDevices()).toEqual([
+      {
+        udid: PHONE,
+        name: 'Phone 802E',
+        bootState: 'booted',
+        developerModeStatus: 'enabled',
+        pairingState: 'paired',
+        transportType: 'wired',
+      },
+    ]);
+  } finally {
+    resetExecutor();
+  }
+  expect(calls).toHaveLength(1);
+  expect(calls[0]?.file).toBe('xcrun');
+  expect(calls[0]?.args.slice(0, 4)).toEqual(['devicectl', 'list', 'devices', '-j']);
+  expect(outPath.startsWith(tmpdir()) || outPath.startsWith('/private')).toBe(true);
+  expect(existsSync(outPath)).toBe(false);
+  expect(readdirSync(tmpdir()).some((e) => e.startsWith('stim-devicectl-') && existsSync(join(tmpdir(), e)))).toBe(
+    false,
+  );
+});
+
+test('listIosDevices reports no devices when devicectl fails, and still cleans up', () => {
+  let outPath = '';
+  setExecutor({
+    runFile(_file: string, args: string[]) {
+      outPath = args[args.length - 1] as string;
+      throw new Error('xcrun: devicectl is not available');
+    },
+  });
+  try {
+    expect(listIosDevices()).toEqual([]);
+  } finally {
+    resetExecutor();
+  }
+  expect(existsSync(outPath)).toBe(false);
+});
+
+function devicectlAvailable(): boolean {
+  if (process.platform !== 'darwin') return false;
+  return getExecutor().runQuiet('command -v xcrun') !== null;
+}
+
+const LIVE = devicectlAvailable() ? false : 'xcrun is not available on this machine';
+
+describe('listIosDevices against a real devicectl', { skip: LIVE as unknown as boolean }, () => {
+  test('the argv is accepted and every entry it returns is well formed', () => {
+    resetExecutor();
+    const devices = listIosDevices();
+    expect(Array.isArray(devices)).toBe(true);
+    for (const found of devices) {
+      expect(found.udid.length).toBeGreaterThan(0);
+      expect(found.name.length).toBeGreaterThan(0);
+    }
+    expect(readdirSync(tmpdir()).filter((e) => e.startsWith('stim-devicectl-'))).toEqual([]);
+  }, 60_000);
+});

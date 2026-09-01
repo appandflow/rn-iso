@@ -31,6 +31,9 @@ const KNOWN_SETTINGS = new Set([
   'ios.configuration',
   'ios.remote',
   'ios.simslimProfile',
+  'ios.signingIdentity',
+  'ios.signingIdentitySha1',
+  'ios.lanHost',
   'android.systemImage',
   'android.dataPartitionSizeGb',
   'android.avdConfigFile',
@@ -329,6 +332,60 @@ export function iosSimSlimProfileSettingError(settings: unknown, settingsRoot: s
   } catch (error) {
     return String((error as Error)?.message || error);
   }
+}
+
+function iosString(settings: unknown, key: string): unknown {
+  if (!isPlainObject(settings) || !isPlainObject(settings.ios)) return undefined;
+  return settings.ios[key];
+}
+
+export function iosSigningIdentitySetting(settings: unknown): string | null {
+  const raw = iosString(settings, 'signingIdentity');
+  return typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : null;
+}
+
+export function iosSigningIdentitySettingError(settings: unknown): string | null {
+  const raw = iosString(settings, 'signingIdentity');
+  if (raw === undefined) return null;
+  if (typeof raw !== 'string' || raw.trim() === '' || /[\r\n\0]/.test(raw)) {
+    return `Invalid ios.signingIdentity setting ${JSON.stringify(raw)}. Expected the identity name \`security find-identity -v -p codesigning\` prints, such as "Apple Development: Jane (TEAMID5678)".`;
+  }
+  return null;
+}
+
+const SIGNING_IDENTITY_SHA1 = /^[0-9A-Fa-f]{40}$/;
+
+export function iosSigningIdentitySha1Setting(settings: unknown): string | null {
+  const raw = iosString(settings, 'signingIdentitySha1');
+  return typeof raw === 'string' && SIGNING_IDENTITY_SHA1.test(raw.trim()) ? raw.trim().toUpperCase() : null;
+}
+
+export function iosSigningIdentitySha1SettingError(settings: unknown): string | null {
+  const raw = iosString(settings, 'signingIdentitySha1');
+  if (raw === undefined) return null;
+  if (typeof raw !== 'string' || !SIGNING_IDENTITY_SHA1.test(raw.trim())) {
+    return `Invalid ios.signingIdentitySha1 setting ${JSON.stringify(raw)}. Expected the 40-character hex SHA-1 hash \`security find-identity -v -p codesigning\` prints beside the identity name.`;
+  }
+  return null;
+}
+
+// RCTBundleURLProvider.mm:70 serverRootWithHostPort prefixes the scheme itself
+// and appends the compiled default port when the value carries no colon, so
+// this setting holds a bare host and never a URL.
+const LAN_HOST = /^(?!-)[A-Za-z0-9-]+(?:\.(?!-)[A-Za-z0-9-]+)*$/;
+
+export function iosLanHostSetting(settings: unknown): string | null {
+  const raw = iosString(settings, 'lanHost');
+  return typeof raw === 'string' && LAN_HOST.test(raw.trim()) ? raw.trim() : null;
+}
+
+export function iosLanHostSettingError(settings: unknown): string | null {
+  const raw = iosString(settings, 'lanHost');
+  if (raw === undefined) return null;
+  if (typeof raw !== 'string' || !LAN_HOST.test(raw.trim())) {
+    return `Invalid ios.lanHost setting ${JSON.stringify(raw)}. Expected a bare address or hostname the phone can reach, such as "192.168.1.42" -- never a URL, a scheme, or a port.`;
+  }
+  return null;
 }
 
 export function unknownSettingKeys(settings: unknown, prefix = ''): string[] {
