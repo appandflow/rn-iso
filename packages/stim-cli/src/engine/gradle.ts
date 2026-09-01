@@ -234,6 +234,178 @@ export function locateApk(root: string, transcript = '', variant: string | null 
   return { apkPath: null };
 }
 
+export interface ProductFlavors {
+  known: boolean;
+  dimensions: string[][];
+}
+
+const UNKNOWN_FLAVORS: ProductFlavors = { known: false, dimensions: [] };
+
+function stripGroovyComments(text: string): string {
+  let out = '';
+  let quote = '';
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i]!;
+    const next = text[i + 1];
+    if (quote) {
+      out += ch;
+      if (ch === '\\') {
+        out += next ?? '';
+        i += 2;
+        continue;
+      }
+      if (ch === quote) quote = '';
+      i += 1;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      out += ch;
+      i += 1;
+      continue;
+    }
+    if (ch === '/' && next === '/') {
+      while (i < text.length && text[i] !== '\n') i += 1;
+      continue;
+    }
+    if (ch === '/' && next === '*') {
+      i += 2;
+      while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i += 1;
+      i += 2;
+      out += ' ';
+      continue;
+    }
+    out += ch;
+    i += 1;
+  }
+  return out;
+}
+
+function closingBrace(text: string, open: number): number {
+  let depth = 1;
+  let quote = '';
+  for (let i = open; i < text.length; i += 1) {
+    const ch = text[i]!;
+    if (quote) {
+      if (ch === '\\') i += 1;
+      else if (ch === quote) quote = '';
+      continue;
+    }
+    if (ch === '"' || ch === "'") quote = ch;
+    else if (ch === '{') depth += 1;
+    else if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+function productFlavorsBody(text: string): string | null {
+  const match = /(?:^|[^\w.])productFlavors\s*\{/.exec(text);
+  if (!match) return null;
+  const open = match.index + match[0].length;
+  const close = closingBrace(text, open);
+  return close < 0 ? null : text.slice(open, close);
+}
+
+function parseFlavorBlocks(body: string): { name: string; body: string }[] | null {
+  const entry = /([A-Za-z_][A-Za-z0-9_]*)\s*\{/y;
+  const blocks: { name: string; body: string }[] = [];
+  let i = 0;
+  while (i < body.length) {
+    if (/\s/.test(body[i]!)) {
+      i += 1;
+      continue;
+    }
+    entry.lastIndex = i;
+    const match = entry.exec(body);
+    if (!match) return null;
+    const open = i + match[0].length;
+    const close = closingBrace(body, open);
+    if (close < 0) return null;
+    blocks.push({ name: match[1]!, body: body.slice(open, close) });
+    i = close + 1;
+  }
+  return blocks;
+}
+
+function parseDimensionNames(text: string): string[] | null | undefined {
+  const statements = [...text.matchAll(/\bflavorDimensions\b([^\n]*)/g)];
+  if (statements.length === 0) return undefined;
+  const names: string[] = [];
+  for (const statement of statements) {
+    const line = statement[1] ?? '';
+    for (const quoted of line.matchAll(/(["'])([^"']*)\1/g)) names.push(quoted[2]!);
+    const rest = line.replace(/(["'])[^"']*\1/g, '').replace(/[[\]()=+,;]/g, '');
+    if (rest.trim() !== '') return null;
+  }
+  return names.length ? names : null;
+}
+
+function declaredDimensionOf(flavorBody: string): string | null {
+  const match = /\bdimension\b\s*=?\s*(["'])([^"']*)\1/.exec(flavorBody);
+  return match ? match[2]! : null;
+}
+
+export function parseProductFlavors(source: unknown): ProductFlavors {
+  if (typeof source !== 'string') return UNKNOWN_FLAVORS;
+  const text = stripGroovyComments(source);
+  if (/\bvariantFilter\b/.test(text)) return UNKNOWN_FLAVORS;
+  if (!/\bproductFlavors\b/.test(text)) return { known: true, dimensions: [] };
+  const body = productFlavorsBody(text);
+  if (body === null) return UNKNOWN_FLAVORS;
+  const flavors = parseFlavorBlocks(body);
+  if (!flavors) return UNKNOWN_FLAVORS;
+  if (flavors.length === 0) return { known: true, dimensions: [] };
+
+  const declared = parseDimensionNames(text);
+  if (declared === null) return UNKNOWN_FLAVORS;
+  const named = flavors.map((flavor) => declaredDimensionOf(flavor.body));
+  const used = [...new Set(named.filter((name) => name !== null))];
+  if (!declared || declared.length === 1) {
+    const only = declared ? declared[0] : used[0];
+    if (used.some((name) => name !== only)) return UNKNOWN_FLAVORS;
+    return { known: true, dimensions: [flavors.map((flavor) => flavor.name)] };
+  }
+  if (named.some((name) => name === null || !declared.includes(name))) return UNKNOWN_FLAVORS;
+  const dimensions: string[][] = [];
+  for (const dimension of declared) {
+    const group = flavors.filter((_, i) => named[i] === dimension).map((flavor) => flavor.name);
+    if (group.length === 0) return UNKNOWN_FLAVORS;
+    dimensions.push(group);
+  }
+  return { known: true, dimensions };
+}
+
+export function readProductFlavors(root: string): ProductFlavors {
+  return parseProductFlavors(readOrNull(join(androidDir(root), 'app', 'build.gradle')));
+}
+
+export function productFlavorRefusal({
+  flavors,
+  variant,
+}: {
+  flavors: ProductFlavors;
+  variant?: string | null;
+}): { code: string; reason: string; remedy: string } | null {
+  if (variant) return null;
+  if (!flavors.known || flavors.dimensions.length === 0) return null;
+  let combinations: string[][] = [[]];
+  for (const group of flavors.dimensions) {
+    combinations = combinations.flatMap((combination) => group.map((flavor) => combination.concat(flavor)));
+  }
+  if (combinations.length < 2) return null;
+  const count = flavors.dimensions.reduce((total, group) => total + group.length, 0);
+  const variants = combinations.map((combination) => variantNameOf(combination.concat('debug')));
+  return {
+    code: 'STIM_BAD_ARG',
+    reason: `android/app/build.gradle declares ${count} product flavors, so \`./gradlew ${ASSEMBLE_TASK}\` builds an APK for each of them and nothing says which flavor to install.`,
+    remedy: `Pass \`--variant ${variants[0]}\` or set the android.variant setting -- e.g. {"android": {"variant": "${variants[0]}"}} in .stim.json. The debug variants are: ${variants.join(', ')}.`,
+  };
+}
+
 export type BuildAndroidResult = {
   ok?: boolean;
   apkPath?: string;

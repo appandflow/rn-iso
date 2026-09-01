@@ -558,3 +558,15 @@ test('the guide documents the project cache provider as the tier between local a
   expect(settings).toMatch(/sharedCacheStores\(\)[\s\S]*stays local-only/);
   expect(lifecycle).toMatch(/--no-build-cache looks nothing up -- not the local cache, not either/);
 });
+
+test('the guide documents the flavor refusal that lands before the build', () => {
+  const lifecycle = renderTopic('lifecycle');
+  const errors = renderTopic('errors');
+  assert(lifecycle);
+  assert(errors);
+
+  expect(lifecycle).toMatch(/refuses BEFORE gradle runs and names the debug\s+variants/);
+  expect(lifecycle).toMatch(/best-effort[\s\S]*variable, a loop, or an applied script/);
+  expect(errors).toMatch(/STIM_BAD_ARG[\s\S]*declares product flavors with\s+no variant selected/);
+  expect(errors).toMatch(/caught before\s+the build instead \(STIM_BAD_ARG\)/);
+});

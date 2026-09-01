@@ -111,7 +111,7 @@ import { detectProviders } from '../engine/metro-reach.ts';
 import { ownedSessionName } from '../engine/eas-simulator.ts';
 import type { OwnedDeviceRecord } from '../engine/device.ts';
 import { needsPrebuild, runPrebuild } from '../engine/prebuild.ts';
-import { buildAndroid } from '../engine/gradle.ts';
+import { buildAndroid, productFlavorRefusal, readProductFlavors } from '../engine/gradle.ts';
 import { resolveKeystore, swapApkBundle } from '../engine/apk-swap.ts';
 import { captureAssetManifest } from '../engine/asset-manifest.ts';
 import {
@@ -1585,6 +1585,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     );
   }
   const variant = resolveVariant(variantFlag, settings);
+  const flavorRefusal = productFlavorRefusal({ flavors: readProductFlavors(root), variant });
+  if (flavorRefusal) return fail(flavorRefusal.code, flavorRefusal.reason, flavorRefusal.remedy);
   const release = isReleaseVariant(variant);
   const isExpo = detectIsExpo(root);
   const physical = deviceFlag !== null && deviceFlag !== undefined && deviceFlag !== false;
