@@ -170,22 +170,32 @@ describe('Contract 5: the registration', () => {
     registerCollector(root, 'ios', { pid: 1, startedAt: 'a' });
     registerCollector(root, 'android', { pid: 2, startedAt: 'b' });
     expect(Object.keys(readCollectors(root)).toSorted()).toEqual(['android', 'ios']);
-    unregisterCollector(root, 'ios');
+    unregisterCollector(root, 'ios', 1);
     expect(readCollectors(root)).toEqual({ android: { pid: 2, startedAt: 'b' } });
   });
 
   test('the last collector out removes the key entirely rather than leaving an empty object', () => {
     writeWorkspaceState(root, { supervisor: { pid: 123 } });
     registerCollector(root, 'ios', { pid: 1, startedAt: 'a' });
-    unregisterCollector(root, 'ios');
+    unregisterCollector(root, 'ios', 1);
     expect('collectors' in state()).toBe(false);
     expect(state().supervisor).toEqual({ pid: 123 });
   });
 
   test('unregistering a platform that was never registered is a no-op', () => {
     registerCollector(root, 'android', { pid: 2, startedAt: 'b' });
-    unregisterCollector(root, 'ios');
+    unregisterCollector(root, 'ios', 999);
     expect(readCollectors(root)).toEqual({ android: { pid: 2, startedAt: 'b' } });
+  });
+
+  test('a stale unregister from a replaced collector does not clobber the newer registration', () => {
+    // #182: a replaced collector (proven unverified) is left running instead of signalled, so
+    // it can still reach its own finish() -> unregisterCollector after a newer collector has
+    // registered over the same platform key. Its own pid must not match the current record.
+    registerCollector(root, 'ios', { pid: 1, startedAt: 'a' });
+    registerCollector(root, 'ios', { pid: 2, startedAt: 'b' });
+    unregisterCollector(root, 'ios', 1);
+    expect(readCollectors(root)).toEqual({ ios: { pid: 2, startedAt: 'b' } });
   });
 });
 

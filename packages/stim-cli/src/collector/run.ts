@@ -159,7 +159,7 @@ export async function runCollector({
     watcher?.stop();
     writer.write({ src: 'device', platform, level, event, msg });
     try {
-      unregisterCollector(root, platform);
+      unregisterCollector(root, platform, process.pid);
     } catch {}
     const closed = writer.close();
     if (closed.dropped > 0) {

@@ -1,4 +1,4 @@
-import { closeSync, openSync, readSync } from 'node:fs';
+import { closeSync, openSync, readFileSync, readSync } from 'node:fs';
 import { getExecutor } from './exec.ts';
 
 export const PROCESS_COMMAND_TIMEOUT_MS: number = 1_000;
@@ -6,6 +6,7 @@ export const PROCESS_COMMAND_MAX_BYTES: number = 32 * 1024;
 
 export type ReadProcCommand = (path: string, maxBytes: number) => Buffer;
 export type RunPsCommand = (pid: number, timeoutMs: number) => string;
+export type ReadUptimeSeconds = () => number | null;
 
 export function readProcFile(path: string, maxBytes: number): Buffer {
   const fd = openSync(path, 'r');
@@ -108,6 +109,79 @@ export function readProcessArgs(
     }
     if (platform === 'win32') return null;
     return parsePsCommand(runPsCommand(pid, PROCESS_COMMAND_TIMEOUT_MS));
+  } catch {
+    return null;
+  }
+}
+
+export function runPsStartCommand(pid: number, timeoutMs: number): string {
+  return getExecutor().runFile('ps', ['-ww', '-o', 'lstart=', '-p', String(pid)], { timeoutMs });
+}
+
+export function parseLstartOutput(output: string): string | null {
+  const trimmed = output.trim();
+  if (!trimmed || trimmed.includes('\0') || trimmed.includes('\n') || trimmed.includes('\r')) return null;
+  const normalized = trimmed.replace(/\s+/g, ' ');
+  return normalized || null;
+}
+
+export function parseLinuxStartTicks(data: Buffer, maxBytes: number): number | null {
+  if (data.length === 0 || data.length > maxBytes || data.includes(0)) return null;
+  const stat = data.toString('utf-8').trim();
+  const commandEnd = stat.lastIndexOf(')');
+  if (commandEnd < 2 || stat[commandEnd + 1] !== ' ') return null;
+  const fields = stat.slice(commandEnd + 2).split(' ');
+  const startTicks = fields[19];
+  return startTicks && /^\d+$/.test(startTicks) ? Number(startTicks) : null;
+}
+
+// glibc's sysconf(_SC_CLK_TCK) is fixed at 100 on Linux regardless of the kernel's actual HZ,
+// so /proc/[pid]/stat's starttime field (in clock ticks since boot) converts with a flat /100.
+const LINUX_CLK_TCK = 100;
+
+function defaultReadUptimeSeconds(): number | null {
+  try {
+    const raw = readFileSync('/proc/uptime', 'utf-8');
+    const first = Number.parseFloat(raw.split(' ')[0] ?? '');
+    return Number.isFinite(first) ? first : null;
+  } catch {
+    return null;
+  }
+}
+
+export function readProcessStartTime(
+  pid: number,
+  {
+    platform = process.platform,
+    readProcStat = readProcFile,
+    readUptimeSeconds = defaultReadUptimeSeconds,
+    runPsCommand = runPsStartCommand,
+    now = Date.now,
+  }: {
+    platform?: NodeJS.Platform;
+    readProcStat?: ReadProcCommand;
+    readUptimeSeconds?: ReadUptimeSeconds;
+    runPsCommand?: RunPsCommand;
+    now?: () => number;
+  } = {},
+): Date | null {
+  try {
+    if (platform === 'linux') {
+      const ticks = parseLinuxStartTicks(
+        readProcStat(`/proc/${pid}/stat`, PROCESS_COMMAND_MAX_BYTES),
+        PROCESS_COMMAND_MAX_BYTES,
+      );
+      if (ticks === null) return null;
+      const uptimeSeconds = readUptimeSeconds();
+      if (uptimeSeconds === null) return null;
+      const bootMs = now() - uptimeSeconds * 1000;
+      return new Date(bootMs + (ticks / LINUX_CLK_TCK) * 1000);
+    }
+    if (platform === 'win32') return null;
+    const raw = parseLstartOutput(runPsCommand(pid, PROCESS_COMMAND_TIMEOUT_MS));
+    if (!raw) return null;
+    const parsed = new Date(raw);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
   } catch {
     return null;
   }

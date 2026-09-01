@@ -1,8 +1,10 @@
 import assert from 'node:assert';
+import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
+import { collectorProcessTitle } from '../collector/ownership.ts';
 import { loadConfig, setProjectSetting, upsertProject } from '../config.ts';
 import { parseNdjsonText } from '../ndjson.ts';
 import { emulatorLogFile, workspaceLogsDir, workspaceStateFile } from '../paths.ts';
@@ -2001,6 +2003,39 @@ describe('Contract 4: state.json.lastBuild', () => {
   });
 });
 
+function collectorProcessCommand(pid: number): string {
+  try {
+    return execFileSync('ps', ['-ww', '-o', 'command=', '-p', String(pid)], { encoding: 'utf-8' }).trim();
+  } catch {
+    return '';
+  }
+}
+
+// Spawns a real detached process so the default `verifyCollectorOwnership` reads its actual
+// live command (via ps on darwin, via /proc/[pid]/cmdline on linux) instead of a mocked
+// executor, which only exercises the darwin ps path and fails closed for the wrong reason on
+// Linux CI.
+async function spawnFakeCollector(title: string | null): Promise<ChildProcess> {
+  const rename = title ? `process.title = ${JSON.stringify(title)};` : '';
+  const child = spawn(process.execPath, ['-e', `${rename} setInterval(() => {}, 1000);`], { stdio: 'ignore' });
+  const expected = title ?? process.execPath;
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline && !collectorProcessCommand(child.pid as number).startsWith(expected)) {
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  return child;
+}
+
+function collectorExits(child: ChildProcess, timeoutMs = 5_000): Promise<boolean> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), timeoutMs);
+    child.once('exit', () => {
+      clearTimeout(timer);
+      resolve(true);
+    });
+  });
+}
+
 describe('Contract 5: the device-log collector', () => {
   test("is spawned detached and unreferenced with this platform's identity", async () => {
     const h = harness();
@@ -2028,15 +2063,77 @@ describe('Contract 5: the device-log collector', () => {
     expect(unrefed).toBe(true);
   });
 
-  test('the previous android collector is killed first -- replaced, not duplicated', async () => {
+  test('the previous android collector, proven ours, is killed first -- replaced, not duplicated', async () => {
     writeWorkspaceState(root, {
       collectors: { android: { pid: 4242, startedAt: 'then' }, ios: { pid: 777, startedAt: 'then' } },
     });
-    const h = harness();
+    const h = harness({ verifyCollector: () => ({ status: 'ours' as const }) });
     await h.run();
     expect(h.calls.kill).toEqual([[4242, 'SIGTERM']]);
     expect(h.calls.spawn.length).toBe(1);
   });
+
+  test('a previous android collector proven gone is left alone, never signalled', async () => {
+    writeWorkspaceState(root, { collectors: { android: { pid: 4242, startedAt: 'then' } } });
+    const h = harness({ verifyCollector: () => ({ status: 'gone' as const }) });
+    await h.run();
+    expect(h.calls.kill).toEqual([]);
+    expect(h.calls.spawn.length).toBe(1);
+  });
+
+  test('a previous android collector that cannot be proven ours is left running, noted, and replaced anyway', async () => {
+    writeWorkspaceState(root, { collectors: { android: { pid: 4242, startedAt: 'then' } } });
+    const h = harness({
+      verifyCollector: () => ({
+        status: 'unverified' as const,
+        reason: "pid 4242 does not run this workspace's android log collector",
+      }),
+    });
+    await h.run();
+    expect(h.calls.kill).toEqual([]);
+    expect(h.calls.spawn.length).toBe(1);
+    expect(h.stderr.some((l) => /pid 4242/.test(l) && /not signalled/.test(l))).toBeTruthy();
+  });
+
+  test('the default ownership check is wired through: a live process titled for this workspace is signalled', async () => {
+    const child = await spawnFakeCollector(collectorProcessTitle('android', root));
+    try {
+      const signalled: Array<[number, NodeJS.Signals]> = [];
+      const result = killPreviousCollector(root, {
+        collectors: { android: { pid: child.pid as number } },
+        kill: (pid, sig) => {
+          signalled.push([pid, sig]);
+          return true;
+        },
+      });
+      expect(result).toBe(child.pid);
+      expect(signalled).toEqual([[child.pid, 'SIGTERM']]);
+    } finally {
+      child.kill('SIGKILL');
+      await collectorExits(child);
+    }
+  }, 20_000);
+
+  test('the default ownership check is wired through: a live process that cannot be proven is left running and noted', async () => {
+    const child = await spawnFakeCollector(null);
+    try {
+      const notes: string[] = [];
+      const result = killPreviousCollector(root, {
+        collectors: { android: { pid: child.pid as number } },
+        isAlive: () => true,
+        note: (line) => notes.push(line),
+        kill: () => {
+          throw new Error('must not be called');
+        },
+      });
+      expect(result).toBe(null);
+      expect(notes.length).toBe(1);
+      expect(notes[0]).toMatch(/not signalled/);
+    } finally {
+      child.kill('SIGKILL');
+      await collectorExits(child);
+    }
+  }, 20_000);
 
   test('the ios collector is left alone', async () => {
     writeWorkspaceState(root, { collectors: { ios: { pid: 777, startedAt: 'then' } } });
@@ -2212,11 +2309,13 @@ describe('the pure parts', () => {
     expect(lastBuildRecord({ startedAt: 'now', status: 'failed', errorCode: BUILD_ERROR }).errorCode).toBe(BUILD_ERROR);
   });
 
-  test('killPreviousCollector signals a recorded pid and tolerates a dead one', () => {
+  test('killPreviousCollector signals a pid proven ours and tolerates a dead one', () => {
     const signalled: Array<[number, NodeJS.Signals]> = [];
+    const ours = () => ({ status: 'ours' as const });
     expect(
       killPreviousCollector(root, {
         collectors: { android: { pid: 4242 } },
+        verify: ours,
         kill: (pid, sig) => {
           signalled.push([pid, sig]);
           return true;
@@ -2227,6 +2326,7 @@ describe('the pure parts', () => {
     expect(
       killPreviousCollector(root, {
         collectors: { android: { pid: 4242 } },
+        verify: ours,
         kill: () => {
           throw new Error('ESRCH');
         },
@@ -2235,6 +2335,7 @@ describe('the pure parts', () => {
     expect(
       killPreviousCollector(root, {
         collectors: {},
+        verify: ours,
         kill: () => {
           throw new Error('must not be called');
         },
@@ -2243,11 +2344,40 @@ describe('the pure parts', () => {
     expect(
       killPreviousCollector(root, {
         collectors: { android: { pid: process.pid } },
+        verify: ours,
         kill: () => {
           throw new Error('must not be called');
         },
       }),
     ).toBe(null);
+  });
+
+  test('killPreviousCollector leaves a pid proven gone alone, and never signals it', () => {
+    expect(
+      killPreviousCollector(root, {
+        collectors: { android: { pid: 4242 } },
+        verify: () => ({ status: 'gone' as const }),
+        kill: () => {
+          throw new Error('must not be called');
+        },
+      }),
+    ).toBe(null);
+  });
+
+  test('killPreviousCollector leaves an unverified pid running, notes it, and does not signal it', () => {
+    const notes: string[] = [];
+    expect(
+      killPreviousCollector(root, {
+        collectors: { android: { pid: 4242 } },
+        verify: () => ({ status: 'unverified' as const, reason: "pid 4242 does not run this workspace's collector" }),
+        note: (line) => notes.push(line),
+        kill: () => {
+          throw new Error('must not be called');
+        },
+      }),
+    ).toBe(null);
+    expect(notes.length).toBe(1);
+    expect(notes[0]).toMatch(/not signalled/);
   });
 });
 
@@ -3240,6 +3370,7 @@ test('a new android collector waits for the previous one to exit before it is sp
       order.push('alive');
       return liveChecks < 3;
     },
+    verify: () => ({ status: 'ours' as const }),
     sleep: async () => {},
     out: () => {},
   });

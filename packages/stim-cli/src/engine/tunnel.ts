@@ -10,8 +10,11 @@ import {
   PROCESS_COMMAND_TIMEOUT_MS,
   type ReadProcCommand,
   type RunPsCommand,
+  parseLinuxStartTicks,
+  parseLstartOutput,
   readProcFile,
   readProcessArgs as readProcessArgsDefault,
+  runPsStartCommand,
 } from '../process-args.ts';
 import { createLineReader } from '../process-output.ts';
 import type { ManagedProvider } from './metro-reach.ts';
@@ -581,24 +584,13 @@ function isEsrch(err: unknown): boolean {
   return (err as NodeJS.ErrnoException)?.code === 'ESRCH';
 }
 
-function defaultRunPsStartCommand(pid: number, timeoutMs: number): string {
-  return getExecutor().runFile('ps', ['-ww', '-o', 'lstart=', '-p', String(pid)], { timeoutMs });
+function linuxStartToken(data: Buffer, maxBytes: number): string | null {
+  const ticks = parseLinuxStartTicks(data, maxBytes);
+  return ticks === null ? null : `linux:${ticks}`;
 }
 
-function parseLinuxStartToken(data: Buffer, maxBytes: number): string | null {
-  if (data.length === 0 || data.length > maxBytes || data.includes(0)) return null;
-  const stat = data.toString('utf-8').trim();
-  const commandEnd = stat.lastIndexOf(')');
-  if (commandEnd < 2 || stat[commandEnd + 1] !== ' ') return null;
-  const fields = stat.slice(commandEnd + 2).split(' ');
-  const startTime = fields[19];
-  return startTime && /^\d+$/.test(startTime) ? `linux:${startTime}` : null;
-}
-
-function parsePsStartToken(output: string): string | null {
-  const trimmed = output.trim();
-  if (!trimmed || trimmed.includes('\0') || trimmed.includes('\n') || trimmed.includes('\r')) return null;
-  const normalized = trimmed.replace(/\s+/g, ' ');
+function psStartToken(output: string): string | null {
+  const normalized = parseLstartOutput(output);
   return normalized ? `ps-lstart:${normalized}` : null;
 }
 
@@ -607,7 +599,7 @@ export function readTunnelProcessToken(
   {
     platform = process.platform,
     readProcStat = readProcFile,
-    runPsStartCommand = defaultRunPsStartCommand,
+    runPsStartCommand: runPsCommand = runPsStartCommand,
   }: {
     platform?: NodeJS.Platform;
     readProcStat?: ReadProcCommand;
@@ -616,13 +608,10 @@ export function readTunnelProcessToken(
 ): string | null {
   try {
     if (platform === 'linux') {
-      return parseLinuxStartToken(
-        readProcStat(`/proc/${pid}/stat`, PROCESS_COMMAND_MAX_BYTES),
-        PROCESS_COMMAND_MAX_BYTES,
-      );
+      return linuxStartToken(readProcStat(`/proc/${pid}/stat`, PROCESS_COMMAND_MAX_BYTES), PROCESS_COMMAND_MAX_BYTES);
     }
     if (platform === 'win32') return null;
-    return parsePsStartToken(runPsStartCommand(pid, PROCESS_COMMAND_TIMEOUT_MS));
+    return psStartToken(runPsCommand(pid, PROCESS_COMMAND_TIMEOUT_MS));
   } catch {
     return null;
   }

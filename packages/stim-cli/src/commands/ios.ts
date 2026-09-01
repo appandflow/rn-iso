@@ -30,6 +30,7 @@ import {
 } from '../build-cache.ts';
 import type { FingerprintSource } from '@expo/fingerprint';
 import { formatDuration, phaseLine, shortHash } from '../command-output.ts';
+import { verifyCollectorOwnership } from '../collector/ownership.ts';
 import { getConcurrencyLimits, getProject, upsertProject } from '../config.ts';
 import {
   DEFAULT_METRO_PORT,
@@ -574,6 +575,7 @@ interface ReplaceCollectorArgs {
   kill?: (pid: number, signal: NodeJS.Signals) => boolean;
   alive?: (pid: number) => boolean;
   readState?: typeof readWorkspaceState;
+  verify?: typeof verifyCollectorOwnership;
   waitMs?: number;
   note?: (line: string) => void;
 }
@@ -587,6 +589,7 @@ export async function replaceCollector({
   kill = (pid, signal) => process.kill(pid, signal),
   alive = isPidAlive,
   readState = readWorkspaceState,
+  verify = verifyCollectorOwnership,
   waitMs = COLLECTOR_EXIT_WAIT_MS,
   note = (_line: string) => {},
 }: ReplaceCollectorArgs): Promise<{ killed: number | null; pid: number | null }> {
@@ -595,21 +598,30 @@ export async function replaceCollector({
   let killed: number | null = null;
 
   if (previousPid) {
-    try {
-      kill(previousPid, 'SIGTERM');
-      killed = previousPid;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException)?.code !== 'ESRCH') {
-        note(
-          chalk.yellow(
-            `Could not stop the previous ${PLATFORM} log collector (pid ${previousPid}): ${(err as Error)?.message || err}`,
-          ),
-        );
+    const ownership = verify({ pid: previousPid, platform: PLATFORM, root, isAlive: alive });
+    if (ownership.status === 'ours') {
+      try {
+        kill(previousPid, 'SIGTERM');
+        killed = previousPid;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException)?.code !== 'ESRCH') {
+          note(
+            chalk.yellow(
+              `Could not stop the previous ${PLATFORM} log collector (pid ${previousPid}): ${(err as Error)?.message || err}`,
+            ),
+          );
+        }
       }
-    }
-    const deadline = Date.now() + waitMs;
-    while (Date.now() < deadline && alive(previousPid)) {
-      await sleep(COLLECTOR_POLL_MS);
+      const deadline = Date.now() + waitMs;
+      while (Date.now() < deadline && alive(previousPid)) {
+        await sleep(COLLECTOR_POLL_MS);
+      }
+    } else if (ownership.status === 'unverified') {
+      note(
+        chalk.dim(
+          `Previous ${PLATFORM} log collector (pid ${previousPid}): ${ownership.reason}, so it was not signalled -- starting a replacement anyway`,
+        ),
+      );
     }
   }
 

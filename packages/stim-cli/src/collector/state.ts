@@ -12,11 +12,12 @@ export function registerCollector(
   });
 }
 
-export function unregisterCollector(root: string, platform: string): Record<string, unknown> {
+export function unregisterCollector(root: string, platform: string, pid: number): Record<string, unknown> {
   return withWorkspaceStateLock(root, () => {
     const state = readWorkspaceState(root);
     const collectors: Record<string, unknown> = { ...state?.collectors };
-    if (!(platform in collectors)) return collectors;
+    const record = collectors[platform] as { pid?: unknown } | undefined;
+    if (!(platform in collectors) || record?.pid !== pid) return collectors;
     delete collectors[platform];
     writeWorkspaceState(root, { collectors: Object.keys(collectors).length ? collectors : undefined });
     return collectors;

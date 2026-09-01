@@ -1,8 +1,10 @@
 import assert from 'node:assert';
+import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
+import { collectorProcessTitle } from '../collector/ownership.ts';
 import { upsertProject } from '../config.ts';
 import { parseNdjsonText } from '../ndjson.ts';
 import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../paths.ts';
@@ -1578,17 +1580,53 @@ describe('Contract 6: the dev-client scheme', () => {
   });
 });
 
+function collectorProcessCommand(pid: number): string {
+  try {
+    return execFileSync('ps', ['-ww', '-o', 'command=', '-p', String(pid)], { encoding: 'utf-8' }).trim();
+  } catch {
+    return '';
+  }
+}
+
+// Spawns a real detached process so the default `verifyCollectorOwnership` reads its actual
+// live command (via ps on darwin, via /proc/[pid]/cmdline on linux) instead of a mocked
+// executor, which only exercises the darwin ps path and fails closed for the wrong reason on
+// Linux CI.
+async function spawnFakeCollector(title: string | null): Promise<ChildProcess> {
+  const rename = title ? `process.title = ${JSON.stringify(title)};` : '';
+  const child = spawn(process.execPath, ['-e', `${rename} setInterval(() => {}, 1000);`], { stdio: 'ignore' });
+  const expected = title ?? process.execPath;
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline && !collectorProcessCommand(child.pid as number).startsWith(expected)) {
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  return child;
+}
+
+function collectorExits(child: ChildProcess, timeoutMs = 5_000): Promise<boolean> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), timeoutMs);
+    child.once('exit', () => {
+      clearTimeout(timer);
+      resolve(true);
+    });
+  });
+}
+
 describe('the collector', () => {
   function collectorHarness({
     state = null,
     killImpl = null,
+    verify = () => ({ status: 'ours' as const }),
   }: {
     state?: WorkspaceState | null;
     killImpl?: ((pid: number, signal: NodeJS.Signals) => void) | null;
+    verify?: NonNullable<ReplaceCollectorArgs['verify']>;
   } = {}) {
     if (state) writeWorkspaceState(root, state);
     const spawns: { cmd: string; args: readonly string[]; opts: Record<string, unknown> }[] = [];
     const kills: { pid: number; signal: NodeJS.Signals }[] = [];
+    const notes: string[] = [];
     const opts: ReplaceCollectorArgs = {
       root,
       udid: UDID,
@@ -1604,12 +1642,14 @@ describe('the collector', () => {
         return true;
       },
       alive: () => false,
+      verify,
       waitMs: 0,
+      note: (line) => notes.push(line),
     };
-    return { spawns, kills, opts };
+    return { spawns, kills, notes, opts };
   }
 
-  test('a previous collector is SIGTERMed and replaced, not duplicated', async () => {
+  test('a previous collector proven ours is SIGTERMed and replaced, not duplicated', async () => {
     const h = collectorHarness({ state: { collectors: { ios: { pid: 999, startedAt: 'T' } } } });
     const result = await replaceCollector(h.opts);
     expect(h.kills).toEqual([{ pid: 999, signal: 'SIGTERM' }]);
@@ -1629,6 +1669,65 @@ describe('the collector', () => {
     expect(result.killed).toBe(null);
     expect(h.spawns.length).toBe(1);
   });
+
+  test('a previous collector proven gone is left alone, never signalled, and not noted', async () => {
+    const h = collectorHarness({
+      state: { collectors: { ios: { pid: 999 } } },
+      verify: () => ({ status: 'gone' }),
+    });
+    const result = await replaceCollector(h.opts);
+    expect(h.kills).toEqual([]);
+    expect(result.killed).toBe(null);
+    expect(h.notes).toEqual([]);
+    expect(h.spawns.length).toBe(1);
+    expect(result.pid).toBe(7001);
+  });
+
+  test('a previous collector that cannot be proven ours is left running, noted once, and replaced anyway', async () => {
+    const h = collectorHarness({
+      state: { collectors: { ios: { pid: 999 } } },
+      verify: () => ({ status: 'unverified', reason: "pid 999 does not run this workspace's ios log collector" }),
+    });
+    const result = await replaceCollector(h.opts);
+    expect(h.kills).toEqual([]);
+    expect(result.killed).toBe(null);
+    expect(h.notes.length).toBe(1);
+    expect(h.notes[0]).toMatch(/pid 999/);
+    expect(h.notes[0]).toMatch(/not signalled/);
+    expect(h.spawns.length).toBe(1);
+    expect(result.pid).toBe(7001);
+  });
+
+  test('the default ownership check is wired through: a live process titled for this workspace is signalled', async () => {
+    const child = await spawnFakeCollector(collectorProcessTitle('ios', root));
+    try {
+      const h = collectorHarness({ state: { collectors: { ios: { pid: child.pid, startedAt: 'T' } } } });
+      h.opts.verify = undefined;
+      const result = await replaceCollector(h.opts);
+      expect(h.kills).toEqual([{ pid: child.pid, signal: 'SIGTERM' }]);
+      expect(result.killed).toBe(child.pid);
+    } finally {
+      child.kill('SIGKILL');
+      await collectorExits(child);
+    }
+  }, 20_000);
+
+  test('the default ownership check is wired through: a live process that cannot be proven is left running and noted', async () => {
+    const child = await spawnFakeCollector(null);
+    try {
+      const h = collectorHarness({ state: { collectors: { ios: { pid: child.pid, startedAt: 'T' } } } });
+      h.opts.verify = undefined;
+      h.opts.alive = () => true;
+      const result = await replaceCollector(h.opts);
+      expect(h.kills).toEqual([]);
+      expect(result.killed).toBe(null);
+      expect(h.notes.length).toBe(1);
+      expect(h.notes[0]).toMatch(/not signalled/);
+    } finally {
+      child.kill('SIGKILL');
+      await collectorExits(child);
+    }
+  }, 20_000);
 
   test('the collector is spawned detached, unref-ed, with the REAL app name from the .app path', async () => {
     const h = collectorHarness();

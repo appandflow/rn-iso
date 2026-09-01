@@ -4,6 +4,7 @@ import { resolveProjectMetro, killMetroTree, isPidAlive } from './metro.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd } from './teardown.ts';
 import { readCollectors } from './collector/state.ts';
 import { verifyCollectorOwnership } from './collector/ownership.ts';
+import { readProcessStartTime } from './process-args.ts';
 import {
   clearManagedMetroTunnel,
   clearRemoteSession,
@@ -16,26 +17,93 @@ import { resolveEasCliBin } from './engine/remote-cache.ts';
 import { stopTunnel, type StopTunnelResult } from './engine/tunnel.ts';
 import { workspaceDir } from './paths.ts';
 
-function reapCollectors(root: string): SkippedDevice[] {
-  const skipped: SkippedDevice[] = [];
+// #183: fail closed toward "keep" for an unverified live pid unless its own start time proves
+// it recycled the number. RECYCLED_PID_TOLERANCE_MS absorbs NTP steps and lstart's one-second
+// truncation so a genuinely-ours collector never flips to "recycled" on a near-equal timestamp.
+const RECYCLED_PID_TOLERANCE_MS = 5_000;
+
+type StartTimeVerdict =
+  | { recycled: true }
+  | { recycled: false; cause: 'no-recorded-start' }
+  | { recycled: false; cause: 'unreadable-live-start' }
+  | { recycled: false; cause: 'started-at-or-before' };
+
+function classifyPidAgainstRecord(
+  recordedStartedAt: unknown,
+  pid: number,
+  readStartTime: (pid: number) => Date | null,
+): StartTimeVerdict {
+  if (typeof recordedStartedAt !== 'string') return { recycled: false, cause: 'no-recorded-start' };
+  const recordedMs = Date.parse(recordedStartedAt);
+  if (!Number.isFinite(recordedMs)) return { recycled: false, cause: 'no-recorded-start' };
+  let liveStart: Date | null;
+  try {
+    liveStart = readStartTime(pid);
+  } catch {
+    liveStart = null;
+  }
+  if (!liveStart) return { recycled: false, cause: 'unreadable-live-start' };
+  if (liveStart.getTime() > recordedMs + RECYCLED_PID_TOLERANCE_MS) return { recycled: true };
+  return { recycled: false, cause: 'started-at-or-before' };
+}
+
+function keptReason(
+  cause: 'no-recorded-start' | 'unreadable-live-start' | 'started-at-or-before',
+  pid: number,
+): string {
+  if (cause === 'started-at-or-before') {
+    return `it started at or before this record's startedAt, so it may still be ours; inspect it with \`ps -p ${pid}\` and retry`;
+  }
+  if (cause === 'unreadable-live-start') {
+    return `pid ${pid}'s start time could not be read, so it may still be ours; inspect it with \`ps -p ${pid}\` and retry`;
+  }
+  return `this record has no usable startedAt to compare against, so pid ${pid} may still be ours; inspect it with \`ps -p ${pid}\` and retry`;
+}
+
+function reapCollectors(
+  root: string,
+  {
+    verify = verifyCollectorOwnership,
+    readStartTime = readProcessStartTime,
+  }: {
+    verify?: typeof verifyCollectorOwnership;
+    readStartTime?: (pid: number) => Date | null;
+  } = {},
+): { skippedDevices: SkippedDevice[]; failedDevices: SkippedDevice[] } {
+  const skippedDevices: SkippedDevice[] = [];
+  const failedDevices: SkippedDevice[] = [];
   for (const [platform, record] of Object.entries(readCollectors(root))) {
-    const pid = (record as { pid?: unknown } | null)?.pid;
+    const rec = record as { pid?: unknown; startedAt?: unknown } | null;
+    const pid = rec?.pid;
     if (typeof pid !== 'number' || pid <= 0 || pid === process.pid || !isPidAlive(pid)) continue;
-    const ownership = verifyCollectorOwnership({ pid, platform, root });
+    const ownership = verify({ pid, platform, root });
     if (ownership.status === 'gone') continue;
     if (ownership.status === 'unverified') {
-      skipped.push({
-        platform: platform === 'android' ? 'android' : 'ios',
-        name: `${platform} log collector (pid ${pid})`,
-        reason: `${ownership.reason}, so it was not signalled -- inspect it with \`ps -p ${pid}\``,
-      });
+      const name = `${platform} log collector (pid ${pid})`;
+      const platformLabel = platform === 'android' ? 'android' : 'ios';
+      const verdict = classifyPidAgainstRecord(rec?.startedAt, pid, readStartTime);
+      if (verdict.recycled) {
+        skippedDevices.push({
+          platform: platformLabel,
+          name,
+          reason: `${ownership.reason}, so it was not signalled -- inspect it with \`ps -p ${pid}\``,
+        });
+      } else {
+        const entry: SkippedDevice = {
+          platform: platformLabel,
+          name,
+          reason: `${ownership.reason}, so it was not signalled -- ${keptReason(verdict.cause, pid)}`,
+        };
+        skippedDevices.push(entry);
+        failedDevices.push(entry);
+      }
       continue;
     }
     try {
       process.kill(pid, 'SIGTERM');
     } catch {}
   }
-  return skipped;
+  return { skippedDevices, failedDevices };
 }
 
 // eas simulator:stop needs a project cwd, so end the session before removing the worktree.
@@ -210,17 +278,24 @@ export async function reclaimProject(
     preserveProjectRecord = false,
     stopSession = defaultStopSession,
     stopMetroTunnel = defaultStopMetroTunnel,
+    verifyCollector = verifyCollectorOwnership,
+    readCollectorStartTime = readProcessStartTime,
   }: {
     deleteOwnedDevices?: boolean;
     preserveProjectRecord?: boolean;
     stopSession?: StopSession;
     stopMetroTunnel?: StopMetroTunnelFn;
+    verifyCollector?: typeof verifyCollectorOwnership;
+    readCollectorStartTime?: (pid: number) => Date | null;
   } = {},
 ): Promise<ReclaimResult> {
   const project = getProject(path);
   const dereferenced = describeDereferenced(project);
 
-  const skippedCollectors = reapCollectors(path);
+  const { skippedDevices: skippedCollectors, failedDevices: failedCollectors } = reapCollectors(path, {
+    verify: verifyCollector,
+    readStartTime: readCollectorStartTime,
+  });
 
   const {
     deletedDevices,
@@ -232,6 +307,7 @@ export async function reclaimProject(
     failedDevices: SkippedDevice[];
   } = deleteOwnedDevices ? reclaimOwnedDevices(project) : { deletedDevices: [], skippedDevices: [], failedDevices: [] };
   skippedDevices.push(...skippedCollectors);
+  failedDevices.push(...failedCollectors);
 
   const remote = reclaimRemoteSession(path, { stopSession });
   if (remote.failed) {
