@@ -294,6 +294,22 @@ per-phone: `on-<serial>` is deliberately not used, because an
 devices those are is a property of the signature, and the gate below is where
 that gets checked.
 
+**Existing keys do not move.** Every key minted so far ends `-sim`, and the
+simulator path keeps passing `isSimulator: true`, which `buildTarget` maps to
+the same `'sim'` it produces today from an absent option. No cache entry is
+orphaned and no rebuild is forced by this change; the device slice is purely
+additive.
+
+**Pass `isSimulator`, never `device`.** `buildTarget`
+(`packages/core/index.ts:200`) reads `isSimulator` first, but falls through to
+`options.device` — and a string that is neither a simulator UUID
+(`SIMULATOR_UDID`, the 8-4-4-4-12 form, line 185) nor an `emulator-N` serial
+returns `on-<slug>`. A physical iPhone UDID is `00008030-001A2B3C4D5E802E` or a
+40-character hex string, so it matches neither regex, so passing
+`{device: udid}` would silently mint a **per-phone** key — the exact fork
+Decision 6 rules out, arriving through a plausible-looking parameter. The
+device path passes `{configuration, isSimulator: false}` and nothing else.
+
 **No port segment, and that is a decision, not an omission.** The Metro port
 never enters a compiled input, because Stim declines to set `RCT_METRO_PORT`
 and puts the port in `ip.txt` instead — the reasoning is in "The port, which is
@@ -376,6 +392,15 @@ The full sequence, in order, with the failure mode of each step:
      gives the identity name (Rock's method, `provisioningProfile.ts:95`).
      That name must appear in `security find-identity -v -p codesigning`.
 
+   **A gate failure on a freshly built app is terminal.** The fallback for a
+   refused cache hit is "build fresh", which is only an answer when the
+   artifact came from the cache. On an app `xcodebuild` produced thirty seconds
+   ago, building again produces the same app and refuses again, so the run must
+   exit on the gate's own `STIM_*` code — `STIM_NO_PROFILE`,
+   `STIM_PROFILE_MISMATCH` or `STIM_NO_SIGNING_IDENTITY` — and never re-enter
+   the build. The distinction is one boolean at the call site and it is the
+   difference between a clear refusal and a loop that burns a build each pass.
+
    Each failure is a **refusal**, not an error: the same
    `{assetMismatch: true, reason}` shape `apk-swap.ts` uses, renamed. The run
    prints why and does a full build. This is the answer to "what about an
@@ -441,18 +466,29 @@ forever. This matters much more once a gate exists that can refuse.
 
 Discovery is zero-config, so the settings exist only for the case discovery
 cannot cover: a project whose Release configuration signs with an identity the
-developer wants to override, or a machine with two certificates sharing a CN.
-Following the `android.keystore` / `ios.configuration` precedent in
-`settings.ts`, two new `KNOWN_SETTINGS` keys:
+developer wants to override, a machine with two certificates sharing a CN, or a
+multi-NIC Mac whose `en0` is not the interface the phone shares. Following the
+`android.keystore` / `ios.configuration` precedent in `settings.ts`, three new
+`KNOWN_SETTINGS` keys:
 
 ```json
-{ "ios": { "signingIdentity": "Apple Development: Jane (TEAMID5678)", "signingIdentitySha1": "ABCDEF…" } }
+{
+  "ios": {
+    "signingIdentity": "Apple Development: Jane (TEAMID5678)",
+    "signingIdentitySha1": "ABCDEF…",
+    "lanHost": "192.168.1.42"
+  }
+}
 ```
 
 `ios.signingIdentity` names the identity for the re-seal, overriding the one
 derived from the profile. `ios.signingIdentitySha1` disambiguates two
 certificates with the same common name by SHA-1 hash — the field
-`parseSigningIdentities` already captures and Rock throws away. Both take the
+`parseSigningIdentities` already captures and Rock throws away. `ios.lanHost`
+pins the address written into `ip.txt` and the dev-client deep link, for the
+multi-NIC case that interface ordering cannot solve and the host-side gate
+cannot detect; it takes an address only, never a URL, for the reason given
+under "`metro.publicUrl` does not participate". All three take the
 `iosConfigurationSetting` shape: a reader, a paired `…Error` reporter, an entry
 in `KNOWN_SETTINGS`, and a line in the `settings` guide topic (which a contract
 test enforces).
@@ -488,9 +524,30 @@ So the new pure function is small: `os.networkInterfaces()` filtered to
 `family === 'IPv4' && !internal`, with link-local `169.254/16` and the
 `utun`/`bridge`/`awdl` interfaces excluded, preferring `en0`. It returns a list,
 not a value, because a Mac on Wi-Fi and Ethernet has two and there is no way to
-know from the host which one the phone shares. Selection is: if exactly one
-candidate, use it; if several, gate each in turn and use the first that answers;
-if none, refuse.
+know from the host which one the phone shares.
+
+**Selection is ordering, not gating, and that is worth saying plainly because
+the obvious design does not work.** The tempting idea is to gate each candidate
+and keep the first that answers. It discriminates nothing: as "the gate proves
+less than it looks like it proves" explains below, macOS routes a host's
+connection to any of its own addresses over loopback, so **every** local
+candidate answers, including one on an interface the phone cannot see. A
+per-candidate gate would return the first entry of the list and present that as
+a measurement.
+
+So the list order is the decision. Prefer `en0`, then the remaining `en*` by
+index — deliberately RN's own heuristic from `react-native-xcode.sh`, so that
+Stim and a plain Xcode run pick the same interface and a developer comparing
+the two is not chasing a difference Stim invented. If exactly one candidate
+survives filtering, use it; if none, refuse.
+
+The gate still runs, once, on the chosen address — it is worth keeping for what
+it does prove, that the origin is this workspace's Metro on the reserved port
+rather than a stale server. It is not worth pretending it proves reachability.
+A multi-NIC Mac whose `en0` is not the shared interface is the case ordering
+cannot solve, and it gets a settings escape hatch (`ios.lanHost`) rather than a
+heuristic. The real discriminator is downstream and always was: the phone's own
+fetch, reported by `verifyLaunch`.
 
 ### Does Metro actually listen on that address?
 
@@ -654,6 +711,15 @@ RN bakes an address at build time. That value is wrong more often than it looks:
   shares.
 - It never carries the port, per above.
 
+**The file's contents are exact.** `guessPackagerHost` trims
+`[NSCharacterSet newlineCharacterSet]` and nothing else — not spaces, not tabs
+— and hands the result to `serverRootWithHostPort`, which interpolates it into
+a URL string verbatim. So the file holds precisely `<addr>:<port>`, ASCII, with
+an optional trailing newline and no other whitespace, no scheme, no path, no
+trailing slash. A stray space produces `http://192.168.1.5:8085 /` and a
+silent fall-through to the embedded bundle, which is the stale-JS failure below
+wearing a different hat. Worth a unit test on the writer rather than a comment.
+
 Stim knows the right answer: its LAN discovery picked an address and
 `gateMetroOrigin` proved Metro answers on it. So **Stim writes `ip.txt` itself
 on every bare Debug device install — cached or freshly built — and re-seals**,
@@ -667,6 +733,24 @@ afterwards.
 the neat part: **it needs precisely the re-seal step the Release swap already
 needs.** Debug and Release device installs converge on one code path, and the
 signing gate applies in full to both.
+
+**A fresh build therefore gains a copy-aside step it does not have today, and
+the ordering is not free to choose.** The simulator path installs the build
+output directly out of derived data. A bare Debug device run cannot: mutating
+`ip.txt` in place would mean either mutating the artifact before it is stored —
+putting a machine-specific, workspace-specific address into the shared cache
+entry, which every later consumer would then have to overwrite anyway — or
+mutating the cache entry after storing it, which invariant 10's "the cache
+entry itself is never modified" forbids outright.
+
+So the order is **store, then copy, then mutate**: the pristine artifact is
+stored under the post-mutation cache key exactly as it is today, then copied to
+a `mkdtemp` directory, and only the copy gets the new `ip.txt` and the re-seal.
+That is the same shape the Release swap already uses (`js-swap.ts` copies with
+`cp -c -R` before touching anything), so it is an existing step moved onto a
+new path rather than a new mechanism. The cached entry stays generic and
+shareable; the per-run address lives only in the copy that gets installed and
+deleted.
 
 ### The stale-fallback trap, and why `'unverified'` earns its keep
 
@@ -717,6 +801,36 @@ guarantee #141 leaned on. What changes is the **remedy attached to
 gate cannot distinguish — the phone is on a different network (cellular, a guest
 SSID, a VPN), or the macOS firewall is blocking inbound — with the concrete
 checks for each.
+
+### `metro.publicUrl` does not participate, and that needs saying
+
+The reach table above lists `metro.publicUrl` as existing machinery, which
+invites the assumption that a tunnel is the fallback when there is no LAN
+address. It is not, in v1, and the reason is mechanical: **neither channel to
+the phone can carry a URL.** Both carry a `host:port`.
+
+- `devClientUrl` (`app-install.ts:136`) composes
+  `http://${host}:${metroPort}` — scheme hardcoded, port appended.
+- `ip.txt` is fed to `serverRootWithHostPort`
+  (`RCTBundleURLProvider.mm:70`), which prefixes the scheme itself. Handing it
+  `https://foo.ngrok.app` yields `http://https://foo.ngrok.app/`; stripping the
+  scheme to `foo.ngrok.app` leaves no colon, so the compiled
+  `kRCTBundleURLProviderDefaultPort` — 8081, since Stim does not set it — gets
+  appended instead. The scheme override that would fix the first case,
+  `RCT_packager_scheme`, is another `NSUserDefaults` key and is as
+  hardware-unreachable as `RCT_jsLocation`.
+
+So an `https` tunnel cannot be expressed to a phone through either channel
+without changing RN or writing device-side defaults, and a remedy that
+suggested one would send a user somewhere that cannot work. **`--device`
+ignores `metro.publicUrl`, `metro.tunnel` and `metro.ngrokUrl` entirely, and
+says so when any of them is set alongside `--device` in Debug** — a note, not a
+refusal, because those settings are there for `--remote` and a workspace may
+legitimately carry both.
+
+Tunnelled device Debug is therefore a deferred item, not a fallback that
+happens to be untested. It would need `devClientUrl` to accept a full origin
+and RN to learn a scheme it can read from a bundled resource.
 
 ### The residual constraint, stated plainly
 
@@ -832,7 +946,7 @@ Exact sentences, in the manner of #141.
 > no device, so `stop`, `gc`, and `teardown.ts` never see them. Keep it that
 > way: a physical serial or UDID must never enter the project registry.
 
-### Invariant 3 — four sentences
+### Invariant 3 — five sentences, one of which is easy to miss
 
 > ~~`android --device [serial]` selects a connected physical device; there is
 > no iOS equivalent, because that needs code signing.~~
@@ -844,6 +958,21 @@ Exact sentences, in the manner of #141.
 > writing `<addr>:<port>` into the app bundle's `ip.txt` and re-sealing it.
 > Never by setting `RCT_METRO_PORT`, which would put the reserved port into a
 > compiled input and fork the cache per workspace.
+
+**The sentence between them.** `Do not add install flows.` sits directly
+between the two rewrites above and below, and it is the one an implementer will
+read last and obey first. Taken literally it forbids this entire spec: install
+onto a device is an install flow. It cannot be left standing unamended, and it
+should not simply be deleted, because what it was written to prevent is real —
+Stim reconstructing a project's own delivery pipeline. So it is narrowed to
+what it meant:
+
+> ~~Do not add install flows.~~
+>
+> Stim installs only onto a device it is driving in this run — an owned
+> simulator or emulator, or a physical device named by `--device`. Do not add
+> distribution flows: no store upload, no TestFlight, no over-the-air install
+> page, no reconstruction of the project's own delivery pipeline.
 
 > Android swaps require an emitted-asset manifest match, then `zipalign`
 > before `apksigner`. **An iOS device build is always signed, Debug included,
@@ -886,9 +1015,9 @@ changed is only that `--device` no longer implies a non-Debug configuration.
 ### Invariant 1 — no text change, but four obligations
 
 `guide cleanup` (the iOS release paragraph and the physical-device paragraph),
-`guide errors` (four new codes, which the contract test _enforces_ — it
+`guide errors` (six new codes, which the contract test _enforces_ — it
 scrapes `/STIM_[A-Z_]+/g` out of `commands/ios.ts` and fails if any is
-undocumented), `guide settings` (two new keys, likewise enforced), `guide
+undocumented), `guide settings` (three new keys, likewise enforced), `guide
 facts` (the payload gains a device field and `logs` gains a caveat). And
 `guide.test.ts`'s flag-list assertion pins
 `ios.ts: ['--json','--no-metro-check','--no-build-cache','--configuration','--remote']`,
@@ -911,10 +1040,10 @@ Signing — four:
 
 Debug reachability — two:
 
-| code                         | when                                                                                                              | remedy                                                                                                                                                       |
-| ---------------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `STIM_NO_LAN_ADDRESS`        | a Debug `--device` run found no non-internal IPv4 interface — the Mac is offline, or on nothing but `utun`/`awdl` | "The phone reaches Metro over the network you share. Join a Wi-Fi or Ethernet network, or set `metro.publicUrl` to a tunnel you already run."                |
-| `STIM_LAN_METRO_UNREACHABLE` | every LAN candidate failed `gateMetroOrigin`                                                                      | Reuses `describeMiss`'s three shapes (no answer / 5xx / wrong dev server) with the candidate address named, plus "`stim start` prints the port it reserved." |
+| code                         | when                                                                                                              | remedy                                                                                                                                                                         |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `STIM_NO_LAN_ADDRESS`        | a Debug `--device` run found no non-internal IPv4 interface — the Mac is offline, or on nothing but `utun`/`awdl` | "The phone reaches Metro over the network you share. Join a Wi-Fi or Ethernet network, or connect the Mac by cable." Deliberately **not** "set `metro.publicUrl`" — see below. |
+| `STIM_LAN_METRO_UNREACHABLE` | every LAN candidate failed `gateMetroOrigin`                                                                      | Reuses `describeMiss`'s three shapes (no answer / 5xx / wrong dev server) with the candidate address named, plus "`stim start` prints the port it reserved."                   |
 
 Reused rather than invented:
 
@@ -1046,15 +1175,16 @@ device-side process probe that replaces the host `process.kill` in
 `verifyReleaseLaunch`. After this phase **Release works end to end** with the
 cache-hit path disabled — a full build every run, which is correct if slow.
 _Testable:_ the classifiers and the process-list parser are pure; the calls go
-through the existing mock executor. _Invariant 9 requires a real iPhone from
-here on, and there is no way around it_ — an unlocked, trusted,
-Developer-Mode device on a cable.
+through the existing mock executor. _Invariant 9:_ a real install, a real
+launch, and a real signer-conflict uninstall-and-retry — the first phase that
+cannot be finished without a phone.
 
 **4 — The re-seal primitive.** Deliberately ahead of the Release swap that used
 to own it, because Debug needs it too: the `security cms -D` decode, the X509
 CN extraction, the `find-identity` membership check, the `ProvisionedDevices`
 and expiry checks, `codesign --force --sign … --preserve-metadata=…` with its
-`--entitlements` fallback, `codesign --verify --strict`, the two settings, the
+`--entitlements` fallback, `codesign --verify --strict`, the two signing
+settings, the
 four signing codes, `doctor`. Exposed as one function taking a bundle path and
 returning sealed-or-refused, with no opinion about why the bundle was modified.
 _Testable:_ the plist and certificate parsing are pure and get fixtures (a
@@ -1065,7 +1195,8 @@ phone.
 
 **5 — Debug on the device.** `ensureLanReachable` reusing `gateMetroOrigin`;
 `writeIpTxt(appCopy, addr, port)` plus the phase-4 re-seal on every bare Debug
-install, cached or fresh; the deep-link launch through
+install, cached or fresh — with the store-then-copy-then-mutate ordering a
+fresh build now needs; `ios.lanHost`; the deep-link launch through
 `devClientUrl(scheme, port, lanAddr)` for dev-client apps; the two reachability
 codes; the `'unverified'` remedy naming the stale-fallback consequence. After
 this phase **Debug works end to end**, bare and dev-client. _Testable:_ the
@@ -1091,6 +1222,51 @@ phase 3 Release runs (uncached), and after phase 5 Debug runs — two useful
 halves that do not depend on each other, rather than one long march through the
 signing work before anything installs.
 
+### Which phases need hardware
+
+Invariant 9 needs a real device somewhere in this work, and an earlier draft
+said so with a blanket "from here on", which is both imprecise and
+discouraging: it reads as though four phases are blocked on borrowing a phone.
+Three are not, and they are the three worth starting.
+
+| phase                         | hardware  | what specifically needs it                                                                                                                |
+| ----------------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| 1 — device slice              | **none**  | `generic/platform=iOS` compiles and signs with nothing attached                                                                           |
+| 2 — discovery, selection, LAN | **none**  | `devicectl list devices` runs and returns an empty list; `os.networkInterfaces()` is local; the `lsof` bind check needs only a supervisor |
+| 3 — install and launch        | **phone** | `devicectl install` / `process launch` / `uninstall`, the signer-conflict retry, the device-side process probe                            |
+| 4 — re-seal primitive         | **none**  | `security cms -D`, `security find-identity`, `codesign` in both forms, `codesign --verify --strict` all run on a bundle sitting on disk   |
+| 5 — Debug on the device       | **phone** | the only proof that matters is the phone fetching from Metro rather than falling back to the embedded bundle                              |
+| 6 — Release swap              | **phone** | installing and launching a swapped, re-sealed app                                                                                         |
+| 7 — device logs               | **phone** | deferred anyway (#179-shaped)                                                                                                             |
+
+So **phases 1, 2 and 4 are fully hardware-free and should be built first.**
+They are also the majority of the pure, unit-testable surface: argv and key
+composition, `devicectl` JSON parsing, LAN candidate ordering, profile plist and
+X509 parsing, and the whole codesign ladder.
+
+**The first hardware experiment is not phase 3 in full.** It is the re-seal
+acceptance test, and it should run the moment phase 4 compiles, before any of
+phase 5 or 6 is wired:
+
+```
+take any signed device .app  ->  mutate ip.txt  ->  re-seal
+  ->  codesign --verify --strict  ->  devicectl install  ->  launch
+```
+
+That five-step run is the riskiest unverified assumption in this document.
+Everything downstream assumes a bundle whose sealed resources were rewritten
+and re-signed with its own identity is accepted by a phone; every design choice
+here — Debug and Release converging, `ip.txt` ownership, the JS swap — collapses
+back to a different shape if it is not. It costs one afternoon with a phone and
+it should be spent before the code that depends on it exists.
+
+**The first host-testable unknown is smaller and comes even earlier:** phase 2's
+`lsof -nP -iTCP:<port>` check on a live bare supervisor, settling whether Metro
+binds all interfaces or only loopback (see "Does Metro actually listen on that
+address?"). It needs no phone, it takes minutes, and a negative result adds a
+one-line change to `server-bare.ts` that is much cheaper to make before phase 5
+than during it.
+
 ## Decisions
 
 Six questions went to the maintainer with the first draft; all were answered on
@@ -1115,7 +1291,7 @@ in circulation.
 
 ## Open questions
 
-Two remain, and neither blocks phases 1–5.
+Two remain, and neither blocks phases 1–6.
 
 1. **Is there a `devicectl` invocation that yields the `subsystem` /
    `category` / `messageType` / `processImagePath` fields `collector/ios.ts`
