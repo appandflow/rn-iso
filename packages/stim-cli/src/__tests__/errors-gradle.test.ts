@@ -93,6 +93,18 @@ BUILD FAILED in 41s
     ]);
   });
 
+  test('an exception-shaped file:line:col string without a `> ` prefix still parses as a structured error', () => {
+    const diagnostics = extractGradleDiagnostics('org.gradle.api.GradleException.java:12:5: error: cannot find symbol');
+    expect(diagnostics).toEqual([
+      {
+        message: 'cannot find symbol',
+        file: 'org.gradle.api.GradleException.java',
+        line: 12,
+        column: 5,
+      },
+    ]);
+  });
+
   test('aapt2 resource errors keep the resource file, line and column', () => {
     const diagnostics = extractGradleDiagnostics(
       '> Task :app:processDebugResources FAILED\n' +
@@ -355,6 +367,22 @@ describe('a packaging failure surfaces its cause however gradle interleaves its 
     expect(extractGradleDiagnostics(tail.join('\n'))).toEqual([]);
   });
 
+  test('a Configuration cache entry line in the stdout tail does not glue into the cause', () => {
+    const messages = extractGradleDiagnostics(
+      [
+        '> Task :app:packageDebug FAILED',
+        'FAILURE: Build failed with an exception.',
+        '* What went wrong:',
+        ...chain.slice(0, 2),
+        'Configuration cache entry stored.',
+        ...chain.slice(2),
+      ].join('\n'),
+    ).map((d) => d.message);
+    expect(messages[0]).toBe('Task :app:packageDebug FAILED');
+    expect(messages.some((m) => /Configuration cache entry/.test(m))).toBe(false);
+    expect(messages).toContain(nativeLib);
+  });
+
   test('an exception line the message already carries whole is not repeated', () => {
     const messages = extractGradleDiagnostics(
       ["Execution failed for task ':app:x'.", '> java.lang.IllegalStateException: boom'].join('\n'),
@@ -388,6 +416,20 @@ describe('a packaging failure surfaces its cause however gradle interleaves its 
       "Execution failed for task ':app:packageDebug'. A failure occurred while executing PackageAndroidArtifact",
       'Task :app:packageRelease FAILED',
       'Unresolved reference: foo',
+    ]);
+  });
+
+  test('a cause line orphaned by an intervening `> Task :` line is still recovered', () => {
+    const diagnostics = extractGradleDiagnostics(
+      [
+        "Execution failed for task ':app:packageDebug'.",
+        '> Task :app:otherTask',
+        '> com.android.build.gradle.tasks.PackageException: native lib copy failed',
+      ].join('\n'),
+    );
+    expect(diagnostics.map((d) => d.message)).toEqual([
+      "Execution failed for task ':app:packageDebug'.",
+      'com.android.build.gradle.tasks.PackageException: native lib copy failed',
     ]);
   });
 
