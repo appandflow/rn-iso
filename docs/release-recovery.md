@@ -23,16 +23,18 @@ so re-running the whole workflow is also safe.
 For when the workflow cannot run: the same five publishes, by hand and in
 dependency order. `pnpm publish` packs with pnpm, so it substitutes the
 `workspace:` ranges the packages declare -- a bare `npm publish` from a package
-directory would upload them verbatim. `--tag latest` matches what the workflow
-does (RELEASE.md section 1). 2FA is on, so each publish prompts for an OTP:
+directory would upload them verbatim. Compute the dist-tag exactly as the
+workflow does (RELEASE.md section 1): `latest`, unless this version is a
+release candidate AND `npm view stim-cli version` is already a stable
+release, in which case `next`. 2FA is on, so each publish prompts for an OTP:
 
 ```bash
 npm whoami                                          # confirm login; if 401, `npm login` first
-pnpm --filter @stim-cli/core publish --access public --tag latest --otp <code>
-pnpm --filter @stim-cli/cache publish --access public --tag latest --otp <code>
-pnpm --filter @stim-cli/metro publish --access public --tag latest --otp <code>
-pnpm --filter @stim-cli/expo-build-cache publish --access public --tag latest --otp <code>
-pnpm --filter stim-cli publish --access public --tag latest --otp <code>
+pnpm --filter @stim-cli/core publish --access public --tag <dist-tag> --otp <code>
+pnpm --filter @stim-cli/cache publish --access public --tag <dist-tag> --otp <code>
+pnpm --filter @stim-cli/metro publish --access public --tag <dist-tag> --otp <code>
+pnpm --filter @stim-cli/expo-build-cache publish --access public --tag <dist-tag> --otp <code>
+pnpm --filter stim-cli publish --access public --tag <dist-tag> --otp <code>
 ```
 
 ## First publication of a NEW package
@@ -64,7 +66,8 @@ fires, the package directory is missing its README.
 
 ## Stale or wrong dist-tags
 
-While no stable exists, everything publishes to `latest` (see RELEASE.md
-section 1). The historical `next` tags went stale twice under the old
-instructions and were removed on 2026-09-01. Post-stable dist-tag selection
-is tracked as issue #165. Repairs are `npm dist-tag add|rm` with an OTP.
+The workflow computes the publish dist-tag itself (RELEASE.md section 1): a
+release candidate lands on `next` only when the registry's current
+`stim-cli` release is already stable; every other publish -- including every
+publish before 1.0.0 stable ships -- lands on `latest`. If a dist-tag still
+ends up stale or wrong, repair it with `npm dist-tag add|rm` and an OTP.

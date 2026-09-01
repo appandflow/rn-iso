@@ -44,12 +44,14 @@ An npm `E404` means a first release for that package name: complete the
 first-publication bootstrap in
 [docs/release-recovery.md](./docs/release-recovery.md) before pushing the tag.
 
-Use `X.Y.Z-rc.N` for a release candidate. While no stable release exists,
-every publish lands on the npm `latest` dist-tag -- that is what installs
-resolve, so an rc on `latest` is correct, and
-`npm view stim-cli version` is always the current release. Before the first
-candidate AFTER 1.0.0 stable, the workflow must gain prerelease-aware
-dist-tag selection (issue #165). A tag higher than the published version
+Use `X.Y.Z-rc.N` for a release candidate. The workflow computes the publish
+dist-tag itself from the tag and the registry: `npm view stim-cli version`
+is the registry's current release, and a candidate publishes to `next`
+instead of `latest` only when that current release is already stable, so a
+plain `npm install` never regresses to a candidate. Every other publish --
+a stable version, or a candidate published while no stable release exists
+yet, including a first-ever publish (`E404`) -- lands on `latest`, which is
+what installs resolve. A tag higher than the published version
 means a release never landed: see
 [docs/release-recovery.md](./docs/release-recovery.md) before bumping.
 
@@ -258,8 +260,9 @@ Before continuing:
    Send the `url` (the run page has Review deployments -> `release` ->
    Approve and deploy). The workflow packs the five tarballs with pnpm, checks
    that no `workspace:` range survived the pack, skips an exact package version
-   that already exists, publishes to the `latest` dist-tag (section 1), then
-   verifies all five registry versions. A NEW package, a failed publish, or
+   that already exists, computes the dist-tag (section 1) and publishes every
+   package to it, then verifies all five registry versions and that dist-tag.
+   A NEW package, a failed publish, or
    a provenance rejection: see
    [docs/release-recovery.md](./docs/release-recovery.md).
 
