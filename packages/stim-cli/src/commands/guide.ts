@@ -1327,14 +1327,24 @@ WHAT ELSE STOP REAPS
   the device it was reading. A fresh \`ios\` / \`android\` run also kills the
   previous collector for that platform before starting its own.
 
-  Before signalling a recorded collector pid, \`stop\`, \`gc --delete\` and
-  \`worktree remove\` read that pid's live command and require it to be this
-  workspace's collector for that platform. A pid that cannot be proven is
-  reported and left alone: the kernel reuses pids, and an unreaped record is a
-  smaller problem than a signal delivered to someone else's process. A collector
-  started by an older Stim states no root in its command, so it reports as
-  unverified until it clears itself -- which it does when its device's log
-  stream ends, or when the next \`ios\` / \`android\` run replaces it.
+  Before signalling a recorded collector pid, \`stop\`, \`gc --delete\`,
+  \`worktree remove\`, and a fresh \`ios\` / \`android\` run each read that
+  pid's live command and require it to be this workspace's collector for
+  that platform. A pid that cannot be proven is reported and left alone: the
+  kernel reuses pids, and an unreaped record is a smaller problem than a
+  signal delivered to someone else's process. A fresh \`ios\` / \`android\`
+  run starts its replacement anyway, leaving the unproven pid to clear on its
+  own. A collector started by an older Stim states no root in its command, so
+  it reports as unverified until it clears itself -- which it does when its
+  device's log stream ends, or when the next \`ios\` / \`android\` run replaces it.
+
+  \`stop\`, \`gc --delete\`, and \`worktree remove\` weigh an unproven live
+  pid against the record's own startedAt claim: a pid that started AFTER that
+  claim is a newer process that recycled the number, so the record is
+  genuinely stale and gets dropped, as before. A pid that started at or
+  before that claim may still be the collector Stim registered, so the
+  record is kept and reported for a retry, the same way a device teardown
+  that could not be confirmed keeps its record.
 
 BUILD LOCKS
   \`gc\` also reports the single-flight build locks (above): the ones whose

@@ -4,6 +4,7 @@ import { resolveProjectMetro, killMetroTree, isPidAlive } from './metro.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd } from './teardown.ts';
 import { readCollectors } from './collector/state.ts';
 import { verifyCollectorOwnership } from './collector/ownership.ts';
+import { readProcessStartTime } from './process-args.ts';
 import {
   clearManagedMetroTunnel,
   clearRemoteSession,
@@ -16,26 +17,70 @@ import { resolveEasCliBin } from './engine/remote-cache.ts';
 import { stopTunnel, type StopTunnelResult } from './engine/tunnel.ts';
 import { workspaceDir } from './paths.ts';
 
-function reapCollectors(root: string): SkippedDevice[] {
-  const skipped: SkippedDevice[] = [];
+// A record's startedAt is the collector's own claim about when it started. If the live pid we
+// cannot otherwise verify started AFTER that claim, it is a newer, unrelated process that
+// recycled the pid -- the record is genuinely stale and safe to drop. If it started at or
+// before that claim, the live process predates the record and may still be the collector we
+// registered (e.g. a rename or a delayed registration write); keep the record for a retry
+// rather than orphaning a pid Stim can no longer see. An unreadable start time on either side
+// fails closed to "keep".
+function isRecycledPid(recordedStartedAt: unknown, pid: number, readStartTime: (pid: number) => Date | null): boolean {
+  if (typeof recordedStartedAt !== 'string') return false;
+  const recordedMs = Date.parse(recordedStartedAt);
+  if (!Number.isFinite(recordedMs)) return false;
+  let liveStart: Date | null;
+  try {
+    liveStart = readStartTime(pid);
+  } catch {
+    liveStart = null;
+  }
+  if (!liveStart) return false;
+  return liveStart.getTime() > recordedMs;
+}
+
+function reapCollectors(
+  root: string,
+  {
+    verify = verifyCollectorOwnership,
+    readStartTime = readProcessStartTime,
+  }: {
+    verify?: typeof verifyCollectorOwnership;
+    readStartTime?: (pid: number) => Date | null;
+  } = {},
+): { skippedDevices: SkippedDevice[]; failedDevices: SkippedDevice[] } {
+  const skippedDevices: SkippedDevice[] = [];
+  const failedDevices: SkippedDevice[] = [];
   for (const [platform, record] of Object.entries(readCollectors(root))) {
-    const pid = (record as { pid?: unknown } | null)?.pid;
+    const rec = record as { pid?: unknown; startedAt?: unknown } | null;
+    const pid = rec?.pid;
     if (typeof pid !== 'number' || pid <= 0 || pid === process.pid || !isPidAlive(pid)) continue;
-    const ownership = verifyCollectorOwnership({ pid, platform, root });
+    const ownership = verify({ pid, platform, root });
     if (ownership.status === 'gone') continue;
     if (ownership.status === 'unverified') {
-      skipped.push({
-        platform: platform === 'android' ? 'android' : 'ios',
-        name: `${platform} log collector (pid ${pid})`,
-        reason: `${ownership.reason}, so it was not signalled -- inspect it with \`ps -p ${pid}\``,
-      });
+      const name = `${platform} log collector (pid ${pid})`;
+      const platformLabel = platform === 'android' ? 'android' : 'ios';
+      if (isRecycledPid(rec?.startedAt, pid, readStartTime)) {
+        skippedDevices.push({
+          platform: platformLabel,
+          name,
+          reason: `${ownership.reason}, so it was not signalled -- inspect it with \`ps -p ${pid}\``,
+        });
+      } else {
+        const entry: SkippedDevice = {
+          platform: platformLabel,
+          name,
+          reason: `${ownership.reason}, so it was not signalled -- it started at or before this record's startedAt, so it may still be ours; inspect it with \`ps -p ${pid}\` and retry`,
+        };
+        skippedDevices.push(entry);
+        failedDevices.push(entry);
+      }
       continue;
     }
     try {
       process.kill(pid, 'SIGTERM');
     } catch {}
   }
-  return skipped;
+  return { skippedDevices, failedDevices };
 }
 
 // eas simulator:stop needs a project cwd, so end the session before removing the worktree.
@@ -210,17 +255,24 @@ export async function reclaimProject(
     preserveProjectRecord = false,
     stopSession = defaultStopSession,
     stopMetroTunnel = defaultStopMetroTunnel,
+    verifyCollector = verifyCollectorOwnership,
+    readCollectorStartTime = readProcessStartTime,
   }: {
     deleteOwnedDevices?: boolean;
     preserveProjectRecord?: boolean;
     stopSession?: StopSession;
     stopMetroTunnel?: StopMetroTunnelFn;
+    verifyCollector?: typeof verifyCollectorOwnership;
+    readCollectorStartTime?: (pid: number) => Date | null;
   } = {},
 ): Promise<ReclaimResult> {
   const project = getProject(path);
   const dereferenced = describeDereferenced(project);
 
-  const skippedCollectors = reapCollectors(path);
+  const { skippedDevices: skippedCollectors, failedDevices: failedCollectors } = reapCollectors(path, {
+    verify: verifyCollector,
+    readStartTime: readCollectorStartTime,
+  });
 
   const {
     deletedDevices,
@@ -232,6 +284,7 @@ export async function reclaimProject(
     failedDevices: SkippedDevice[];
   } = deleteOwnedDevices ? reclaimOwnedDevices(project) : { deletedDevices: [], skippedDevices: [], failedDevices: [] };
   skippedDevices.push(...skippedCollectors);
+  failedDevices.push(...failedCollectors);
 
   const remote = reclaimRemoteSession(path, { stopSession });
   if (remote.failed) {

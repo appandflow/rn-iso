@@ -2028,14 +2028,36 @@ describe('Contract 5: the device-log collector', () => {
     expect(unrefed).toBe(true);
   });
 
-  test('the previous android collector is killed first -- replaced, not duplicated', async () => {
+  test('the previous android collector, proven ours, is killed first -- replaced, not duplicated', async () => {
     writeWorkspaceState(root, {
       collectors: { android: { pid: 4242, startedAt: 'then' }, ios: { pid: 777, startedAt: 'then' } },
     });
-    const h = harness();
+    const h = harness({ verifyCollector: () => ({ status: 'ours' as const }) });
     await h.run();
     expect(h.calls.kill).toEqual([[4242, 'SIGTERM']]);
     expect(h.calls.spawn.length).toBe(1);
+  });
+
+  test('a previous android collector proven gone is left alone, never signalled', async () => {
+    writeWorkspaceState(root, { collectors: { android: { pid: 4242, startedAt: 'then' } } });
+    const h = harness({ verifyCollector: () => ({ status: 'gone' as const }) });
+    await h.run();
+    expect(h.calls.kill).toEqual([]);
+    expect(h.calls.spawn.length).toBe(1);
+  });
+
+  test('a previous android collector that cannot be proven ours is left running, noted, and replaced anyway', async () => {
+    writeWorkspaceState(root, { collectors: { android: { pid: 4242, startedAt: 'then' } } });
+    const h = harness({
+      verifyCollector: () => ({
+        status: 'unverified' as const,
+        reason: "pid 4242 does not run this workspace's android log collector",
+      }),
+    });
+    await h.run();
+    expect(h.calls.kill).toEqual([]);
+    expect(h.calls.spawn.length).toBe(1);
+    expect(h.stderr.some((l) => /pid 4242/.test(l) && /not signalled/.test(l))).toBeTruthy();
   });
 
   test('the ios collector is left alone', async () => {
@@ -2212,11 +2234,13 @@ describe('the pure parts', () => {
     expect(lastBuildRecord({ startedAt: 'now', status: 'failed', errorCode: BUILD_ERROR }).errorCode).toBe(BUILD_ERROR);
   });
 
-  test('killPreviousCollector signals a recorded pid and tolerates a dead one', () => {
+  test('killPreviousCollector signals a pid proven ours and tolerates a dead one', () => {
     const signalled: Array<[number, NodeJS.Signals]> = [];
+    const ours = () => ({ status: 'ours' as const });
     expect(
       killPreviousCollector(root, {
         collectors: { android: { pid: 4242 } },
+        verify: ours,
         kill: (pid, sig) => {
           signalled.push([pid, sig]);
           return true;
@@ -2227,6 +2251,7 @@ describe('the pure parts', () => {
     expect(
       killPreviousCollector(root, {
         collectors: { android: { pid: 4242 } },
+        verify: ours,
         kill: () => {
           throw new Error('ESRCH');
         },
@@ -2235,6 +2260,7 @@ describe('the pure parts', () => {
     expect(
       killPreviousCollector(root, {
         collectors: {},
+        verify: ours,
         kill: () => {
           throw new Error('must not be called');
         },
@@ -2243,11 +2269,40 @@ describe('the pure parts', () => {
     expect(
       killPreviousCollector(root, {
         collectors: { android: { pid: process.pid } },
+        verify: ours,
         kill: () => {
           throw new Error('must not be called');
         },
       }),
     ).toBe(null);
+  });
+
+  test('killPreviousCollector leaves a pid proven gone alone, and never signals it', () => {
+    expect(
+      killPreviousCollector(root, {
+        collectors: { android: { pid: 4242 } },
+        verify: () => ({ status: 'gone' as const }),
+        kill: () => {
+          throw new Error('must not be called');
+        },
+      }),
+    ).toBe(null);
+  });
+
+  test('killPreviousCollector leaves an unverified pid running, notes it, and does not signal it', () => {
+    const notes: string[] = [];
+    expect(
+      killPreviousCollector(root, {
+        collectors: { android: { pid: 4242 } },
+        verify: () => ({ status: 'unverified' as const, reason: "pid 4242 does not run this workspace's collector" }),
+        note: (line) => notes.push(line),
+        kill: () => {
+          throw new Error('must not be called');
+        },
+      }),
+    ).toBe(null);
+    expect(notes.length).toBe(1);
+    expect(notes[0]).toMatch(/not signalled/);
   });
 });
 
@@ -3240,6 +3295,7 @@ test('a new android collector waits for the previous one to exit before it is sp
       order.push('alive');
       return liveChecks < 3;
     },
+    verify: () => ({ status: 'ours' as const }),
     sleep: async () => {},
     out: () => {},
   });

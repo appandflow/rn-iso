@@ -226,6 +226,18 @@ test('the cleanup guide documents the collector ownership proof and its upgrade 
   expect(cleanup).toMatch(/older Stim[^.]*no root[^.]*reports as\s+unverified/i);
   expect(cleanup).toMatch(/clears itself[\s\S]*log\s+stream ends/i);
   expect(cleanup).toMatch(/next `ios` \/ `android` run replaces it/i);
+  expect(cleanup).toMatch(/a fresh `ios` \/ `android`\s+run[^.]*starts its replacement anyway/i);
+});
+
+test('the cleanup guide documents the keep-and-retry split for a live, unverified collector pid', () => {
+  const cleanup = renderTopic('cleanup');
+  assert(cleanup);
+
+  expect(cleanup).toMatch(/weigh an unproven live\s+pid against the record's own startedAt claim/i);
+  expect(cleanup).toMatch(/started AFTER that\s+claim[^.]*recycled the number[^.]*genuinely stale[^.]*dropped/i);
+  expect(cleanup).toMatch(
+    /started at or\s+before that claim[^.]*may still be the collector[^.]*kept and reported for a retry/i,
+  );
 });
 
 test('the cleanup guide documents that the shared Gradle build cache is report-only', () => {

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
 import { upsertProject } from '../config.ts';
+import { resetExecutor, setExecutor } from '../exec.ts';
 import { parseNdjsonText } from '../ndjson.ts';
 import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../paths.ts';
 import type { WorkspaceState } from '../supervisor/run.ts';
@@ -1582,13 +1583,16 @@ describe('the collector', () => {
   function collectorHarness({
     state = null,
     killImpl = null,
+    verify = () => ({ status: 'ours' as const }),
   }: {
     state?: WorkspaceState | null;
     killImpl?: ((pid: number, signal: NodeJS.Signals) => void) | null;
+    verify?: NonNullable<ReplaceCollectorArgs['verify']>;
   } = {}) {
     if (state) writeWorkspaceState(root, state);
     const spawns: { cmd: string; args: readonly string[]; opts: Record<string, unknown> }[] = [];
     const kills: { pid: number; signal: NodeJS.Signals }[] = [];
+    const notes: string[] = [];
     const opts: ReplaceCollectorArgs = {
       root,
       udid: UDID,
@@ -1604,12 +1608,14 @@ describe('the collector', () => {
         return true;
       },
       alive: () => false,
+      verify,
       waitMs: 0,
+      note: (line) => notes.push(line),
     };
-    return { spawns, kills, opts };
+    return { spawns, kills, notes, opts };
   }
 
-  test('a previous collector is SIGTERMed and replaced, not duplicated', async () => {
+  test('a previous collector proven ours is SIGTERMed and replaced, not duplicated', async () => {
     const h = collectorHarness({ state: { collectors: { ios: { pid: 999, startedAt: 'T' } } } });
     const result = await replaceCollector(h.opts);
     expect(h.kills).toEqual([{ pid: 999, signal: 'SIGTERM' }]);
@@ -1628,6 +1634,71 @@ describe('the collector', () => {
     const result = await replaceCollector(h.opts);
     expect(result.killed).toBe(null);
     expect(h.spawns.length).toBe(1);
+  });
+
+  test('a previous collector proven gone is left alone, never signalled, and not noted', async () => {
+    const h = collectorHarness({
+      state: { collectors: { ios: { pid: 999 } } },
+      verify: () => ({ status: 'gone' }),
+    });
+    const result = await replaceCollector(h.opts);
+    expect(h.kills).toEqual([]);
+    expect(result.killed).toBe(null);
+    expect(h.notes).toEqual([]);
+    expect(h.spawns.length).toBe(1);
+    expect(result.pid).toBe(7001);
+  });
+
+  test('a previous collector that cannot be proven ours is left running, noted once, and replaced anyway', async () => {
+    const h = collectorHarness({
+      state: { collectors: { ios: { pid: 999 } } },
+      verify: () => ({ status: 'unverified', reason: "pid 999 does not run this workspace's ios log collector" }),
+    });
+    const result = await replaceCollector(h.opts);
+    expect(h.kills).toEqual([]);
+    expect(result.killed).toBe(null);
+    expect(h.notes.length).toBe(1);
+    expect(h.notes[0]).toMatch(/pid 999/);
+    expect(h.notes[0]).toMatch(/not signalled/);
+    expect(h.spawns.length).toBe(1);
+    expect(result.pid).toBe(7001);
+  });
+
+  test('the default ownership check is wired through: a ps-proven previous collector is signalled', async () => {
+    setExecutor(
+      makeExecutor({
+        runFile: (cmd, args) => {
+          expect(cmd).toBe('ps');
+          expect(args?.slice(0, 3)).toEqual(['-ww', '-o', 'command=']);
+          return `stim-collector-ios --root ${root}`;
+        },
+      }),
+    );
+    try {
+      const h = collectorHarness({ state: { collectors: { ios: { pid: 999, startedAt: 'T' } } } });
+      h.opts.verify = undefined;
+      const result = await replaceCollector(h.opts);
+      expect(h.kills).toEqual([{ pid: 999, signal: 'SIGTERM' }]);
+      expect(result.killed).toBe(999);
+    } finally {
+      resetExecutor();
+    }
+  });
+
+  test('the default ownership check is wired through: a ps mismatch is left running and noted', async () => {
+    setExecutor(makeExecutor({ runFile: () => 'node server.js' }));
+    try {
+      const h = collectorHarness({ state: { collectors: { ios: { pid: 999, startedAt: 'T' } } } });
+      h.opts.verify = undefined;
+      h.opts.alive = () => true;
+      const result = await replaceCollector(h.opts);
+      expect(h.kills).toEqual([]);
+      expect(result.killed).toBe(null);
+      expect(h.notes.length).toBe(1);
+      expect(h.notes[0]).toMatch(/not signalled/);
+    } finally {
+      resetExecutor();
+    }
   });
 
   test('the collector is spawned detached, unref-ed, with the REAL app name from the .app path', async () => {

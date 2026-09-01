@@ -14,6 +14,7 @@ import {
 } from '@stim-cli/cache';
 import type { AndroidFacts, RemoteDeviceBackend, SettingsObject, WaitedForBuild } from '../types.ts';
 import { formatDuration, phaseLine, shortHash } from '../command-output.ts';
+import { verifyCollectorOwnership } from '../collector/ownership.ts';
 import { getConcurrencyLimits, getProject, upsertProject } from '../config.ts';
 import { getExecutor } from '../exec.ts';
 import {
@@ -555,15 +556,31 @@ export function killPreviousCollector(
     platform = PLATFORM,
     kill = (pid: number, signal: NodeJS.Signals) => process.kill(pid, signal),
     collectors = null,
+    verify = verifyCollectorOwnership,
+    isAlive = isPidAlive,
+    note = (_line: string) => {},
   }: {
     platform?: string;
     kill?: (pid: number, signal: NodeJS.Signals) => boolean;
     collectors?: Record<string, { pid?: number }> | null;
+    verify?: typeof verifyCollectorOwnership;
+    isAlive?: (pid: number) => boolean;
+    note?: (line: string) => void;
   } = {},
 ): number | null {
   const record = (collectors ?? readCollectors(root))?.[platform] as { pid?: number } | undefined;
   const pid = Number(record?.pid);
   if (!Number.isFinite(pid) || pid <= 0 || pid === process.pid) return null;
+  const ownership = verify({ pid, platform, root, isAlive });
+  if (ownership.status === 'gone') return null;
+  if (ownership.status === 'unverified') {
+    note(
+      chalk.dim(
+        `Previous ${platform} log collector (pid ${pid}): ${ownership.reason}, so it was not signalled -- starting a replacement anyway`,
+      ),
+    );
+    return null;
+  }
   try {
     kill(pid, 'SIGTERM');
     return pid;
@@ -658,6 +675,7 @@ interface RunAndroidOptions {
   resolveMetroRetrying?: typeof resolveMetroWithRetry;
   readState?: typeof readWorkspaceState;
   pidAlive?: typeof isPidAlive;
+  verifyCollector?: typeof verifyCollectorOwnership;
   verifyLaunched?: typeof verifyLaunch;
   ensureStorage?: typeof ensureWorkspaceStorageSafely;
   fingerprint?: typeof fingerprintProject;
@@ -1018,6 +1036,8 @@ interface FinishAndroidRunArgs {
   verifyReleaseLaunched: typeof verifyAndroidReleaseLaunch;
   spawn: (cmd: string, args: readonly string[], opts: Record<string, unknown>) => ChildProcess;
   kill: (pid: number, signal: NodeJS.Signals) => boolean;
+  pidAlive: typeof isPidAlive;
+  verifyCollector: typeof verifyCollectorOwnership;
   writeState: typeof writeWorkspaceState;
   now: () => number;
   out: (line: string) => void;
@@ -1066,6 +1086,8 @@ async function finishAndroidRun({
   verifyReleaseLaunched,
   spawn,
   kill,
+  pidAlive,
+  verifyCollector,
   writeState,
   now,
   out,
@@ -1210,7 +1232,16 @@ async function finishAndroidRun({
 
   const remoteRelease = Boolean(remoteDevice && release);
   if (!remoteRelease) {
-    const collectorPid = await startCollector({ root, serial, packageName: androidPackage, spawn, kill, out });
+    const collectorPid = await startCollector({
+      root,
+      serial,
+      packageName: androidPackage,
+      spawn,
+      kill,
+      alive: pidAlive,
+      verify: verifyCollector,
+      out,
+    });
     phase('logs', `${displayPath(root, logsDir)}${collectorPid ? ` (collector pid ${collectorPid})` : ''}`);
   }
 
@@ -1300,6 +1331,7 @@ function resolveRunAndroidOptions(
     resolveMetroRetrying = resolveMetroWithRetry,
     readState = readWorkspaceState,
     pidAlive = isPidAlive,
+    verifyCollector = verifyCollectorOwnership,
     verifyLaunched = verifyLaunch,
     ensureStorage = ensureWorkspaceStorageSafely,
     fingerprint = fingerprintProject,
@@ -1364,6 +1396,7 @@ function resolveRunAndroidOptions(
     resolveMetroRetrying,
     readState,
     pidAlive,
+    verifyCollector,
     verifyLaunched,
     ensureStorage,
     fingerprint,
@@ -1430,6 +1463,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     resolveMetroRetrying,
     readState,
     pidAlive,
+    verifyCollector,
     verifyLaunched,
     ensureStorage,
     fingerprint,
@@ -2241,6 +2275,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     verifyReleaseLaunched,
     spawn,
     kill,
+    pidAlive,
+    verifyCollector,
     writeState,
     now,
     out,
@@ -2289,6 +2325,7 @@ export async function startCollector({
   spawn,
   kill,
   alive = isPidAlive,
+  verify = verifyCollectorOwnership,
   waitMs = COLLECTOR_EXIT_WAIT_MS,
   sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms)),
   out,
@@ -2299,11 +2336,17 @@ export async function startCollector({
   spawn: (cmd: string, args: readonly string[], opts: Record<string, unknown>) => ChildProcess;
   kill: (pid: number, signal: NodeJS.Signals) => boolean;
   alive?: (pid: number) => boolean;
+  verify?: typeof verifyCollectorOwnership;
   waitMs?: number;
   sleep?: (ms: number) => Promise<void>;
   out: (line: string) => void;
 }): Promise<number | null> {
-  const previousPid = killPreviousCollector(root, { kill });
+  const previousPid = killPreviousCollector(root, {
+    kill,
+    isAlive: alive,
+    verify,
+    note: (line) => out(phaseLine('logs', line)),
+  });
   if (previousPid) {
     const deadline = Date.now() + waitMs;
     while (Date.now() < deadline && alive(previousPid)) {
