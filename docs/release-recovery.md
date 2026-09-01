@@ -20,18 +20,19 @@ so re-running the whole workflow is also safe.
 
 ## Manual publish fallback
 
-The same commands the workflow runs, for when it cannot. 2FA is on, so each
-publish prompts for an OTP. These use `pnpm publish`, which packs with pnpm
-and therefore substitutes the `workspace:` ranges the packages declare; a bare
-`npm publish` from a package directory would upload them verbatim:
+For when the workflow cannot run: the same five publishes, by hand and in
+dependency order. `pnpm publish` packs with pnpm, so it substitutes the
+`workspace:` ranges the packages declare -- a bare `npm publish` from a package
+directory would upload them verbatim. `--tag latest` matches what the workflow
+does (RELEASE.md section 1). 2FA is on, so each publish prompts for an OTP:
 
 ```bash
 npm whoami                                          # confirm login; if 401, `npm login` first
-pnpm --filter @stim-cli/core publish --access public --otp <code>
-pnpm --filter @stim-cli/cache publish --access public --otp <code>
-pnpm --filter @stim-cli/metro publish --access public --otp <code>
-pnpm --filter @stim-cli/expo-build-cache publish --access public --otp <code>
-pnpm --filter stim-cli publish --access public --otp <code>
+pnpm --filter @stim-cli/core publish --access public --tag latest --otp <code>
+pnpm --filter @stim-cli/cache publish --access public --tag latest --otp <code>
+pnpm --filter @stim-cli/metro publish --access public --tag latest --otp <code>
+pnpm --filter @stim-cli/expo-build-cache publish --access public --tag latest --otp <code>
+pnpm --filter stim-cli publish --access public --tag latest --otp <code>
 ```
 
 ## First publication of a NEW package

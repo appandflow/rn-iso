@@ -3,12 +3,10 @@
 # credential minted for exactly this repo + workflow + environment, and the
 # `release` environment requires a manual approval, which replaces the OTP.
 #
-# The tarballs are built by `pnpm pack`, not by `npm publish`, because the
-# packages declare their edges to each other with pnpm's `workspace:` protocol.
-# pnpm substitutes the real version when it packs; npm does not understand the
-# protocol and would upload a literal `workspace:^` range. npm still performs
-# every publish, from the packed tarball, so the OIDC and provenance path is
-# unchanged.
+# The tarballs come from `pnpm pack`: the packages declare their edges to each
+# other with pnpm's `workspace:` protocol, which only pnpm substitutes with the
+# real version. npm would upload the range verbatim, so npm only publishes the
+# already-packed tarball.
 #
 # Third-party actions are pinned by commit SHA and the job is deliberately
 # minimal -- nothing here may run code that could tamper with the tarballs.
@@ -28,6 +26,8 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    env:
+      PACKAGE_DIRS: core cache metro expo-build-cache stim-cli
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -51,7 +51,7 @@ jobs:
       - name: Tag matches the package versions
         run: |
           tag="${GITHUB_REF_NAME#v}"
-          for p in core cache stim-cli expo-build-cache metro; do
+          for p in $PACKAGE_DIRS; do
             v=$(node -p "require('./packages/$p/package.json').version")
             if [ "$v" != "$tag" ]; then
               echo "packages/$p is $v but the tag is $tag"; exit 1
@@ -59,27 +59,36 @@ jobs:
           done
       - name: Pack the tarballs with pnpm
         run: |
-          mkdir -p "$RUNNER_TEMP/tarballs"
-          for p in core cache metro expo-build-cache stim-cli; do
+          for p in $PACKAGE_DIRS; do
             tarball=$(cd "packages/$p" && pnpm pack --pack-destination "$RUNNER_TEMP/tarballs" | tail -1)
             mv "$tarball" "$RUNNER_TEMP/tarballs/$p.tgz"
             tar -xzOf "$RUNNER_TEMP/tarballs/$p.tgz" package/package.json > "$RUNNER_TEMP/tarballs/$p.package.json"
           done
-      - name: Packed manifests name real versions
+      - name: Packed manifests name the tag, not a workspace range
         run: |
           tag="${GITHUB_REF_NAME#v}"
-          for p in core cache metro expo-build-cache stim-cli; do
+          for p in $PACKAGE_DIRS; do
             manifest="$RUNNER_TEMP/tarballs/$p.package.json"
-            if grep -q '"workspace:' "$manifest"; then
-              echo "packages/$p packed an unsubstituted workspace: range"
-              grep '"workspace:' "$manifest"
-              exit 1
+            if grep -nE '"[^"]*": *"workspace:' "$manifest"; then
+              echo "packages/$p packed an unsubstituted workspace: range"; exit 1
             fi
-            v=$(node -p "require('$manifest').version")
-            if [ "$v" != "$tag" ]; then
-              echo "packages/$p packed $v but the tag is $tag"; exit 1
-            fi
-            node -e "const m=require('$manifest');const d={...m.dependencies,...m.devDependencies};for(const [n,r] of Object.entries(d)) if(n==='stim-cli'||n.startsWith('@stim-cli/')) console.log(m.name,'->',n,r);"
+            node -e '
+              const manifest = require(process.argv[1]);
+              const tag = process.argv[2];
+              const accepted = new Set([tag, `^${tag}`, `~${tag}`]);
+              const groups = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"];
+              let bad = manifest.version === tag ? 0 : 1;
+              if (bad) console.log(`${manifest.name} is ${manifest.version} but the tag is ${tag}`);
+              for (const group of groups) {
+                for (const [name, range] of Object.entries(manifest[group] ?? {})) {
+                  if (name !== "stim-cli" && !name.startsWith("@stim-cli/")) continue;
+                  const ok = accepted.has(range);
+                  console.log(`${manifest.name} ${group}.${name} ${range} ${ok ? "ok" : "MISMATCH"}`);
+                  if (!ok) bad += 1;
+                }
+              }
+              process.exit(bad === 0 ? 0 : 1);
+            ' "$manifest" "$tag"
           done
       - name: Publish @stim-cli/core
         run: |
@@ -128,7 +137,8 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           max_attempts=12
           retry_delay=10
-          for p in @stim-cli/core @stim-cli/cache stim-cli @stim-cli/expo-build-cache @stim-cli/metro; do
+          for d in $PACKAGE_DIRS; do
+            p=$(node -p "require('$RUNNER_TEMP/tarballs/$d.package.json').name")
             for attempt in $(seq 1 "$max_attempts"); do
               if v=$(npm view "$p@$version" version 2>/dev/null) && [ "$v" = "$version" ]; then
                 echo "$p -> $v"
