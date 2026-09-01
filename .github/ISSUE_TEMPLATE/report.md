@@ -21,9 +21,5 @@ a confident wrong cause is worse than an honest gap. -->
 ## Fix idea
 
 <!-- Optional direction, not a mandate. Name what it would preserve and
-what it trades away. -->
-
-## Acceptance criteria
-
-<!-- What must be true to close this issue. Closing needs verification
-evidence, not just a merged commit. -->
+what it trades away. Closing the issue needs verification evidence, not
+just a merged commit. -->
