@@ -52,9 +52,16 @@ all five names are available, use the intended first version, and review the
 full release diff. Complete the first-publication bootstrap in section 4,
 step 7 before pushing the first tag.
 
-Use `X.Y.Z-rc.N` for a release candidate. Publish prereleases under the npm
-`next` dist-tag and query the current candidate with
-`npm view stim-cli@next version`. Stable releases use the `latest` dist-tag.
+Use `X.Y.Z-rc.N` for a release candidate. While no stable release exists,
+every publish -- release candidates included -- lands on the npm `latest`
+dist-tag: that is what the workflow does and what installs resolve, so
+`npm view stim-cli version` is always the current release. Once a stable
+1.0.0 ships, the workflow must gain prerelease-aware dist-tag selection
+(prereleases to `next`) BEFORE the next candidate is tagged, so a later
+`1.1.0-rc` cannot replace stable on `latest` -- tracked as issue #165. The
+historical `next` tags on all five packages are stale (rc-era, mutually
+inconsistent) and should be removed as part of that change:
+`npm dist-tag rm <pkg> next` for each package.
 
 When a published version exists, check `git describe --tags --abbrev=0`. If
 that tag is _higher_ than `v$last`, a previous release got tagged but never
@@ -232,7 +239,7 @@ Before continuing:
    Do not add claims here. Once the tag is remote, a correction requires a new
    version; never move or force-push the published tag.
 7. **Publish to npm.** Pushing the tag in step 5 triggers the
-   `Release` workflow, which publishes all FOUR packages via OIDC trusted
+   `Release` workflow, which publishes all FIVE packages via OIDC trusted
    publishing (no token, `--provenance`) once you APPROVE the run in the
    `release` environment on GitHub (Actions -> the waiting run -> Review
    deployments -> check `release` -> Approve and deploy) -- that approval
@@ -253,10 +260,10 @@ Before continuing:
    packages manually in dependency order, then configure each package's trusted
    publisher for `appandflow/stim`, workflow `release.yml`, environment
    `release`. Do this before pushing the first tag. The tagged workflow skips an
-   exact package version that already exists, uses the npm `next` dist-tag for
-   prereleases, then verifies all five registry versions. The same commands are
-   the manual fallback for later releases. Add `--tag next` to every command
-   when publishing a prerelease:
+   exact package version that already exists, publishes to the `latest`
+   dist-tag (see section 1 for the pre-stable rationale), then verifies all
+   five registry versions. The same commands are the manual fallback for
+   later releases:
 
    ```bash
    npm whoami                                          # confirm login; if 401, `npm login` first
