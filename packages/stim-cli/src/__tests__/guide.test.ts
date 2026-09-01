@@ -224,8 +224,9 @@ test('the cleanup guide documents the collector ownership proof and its upgrade 
   expect(cleanup).toMatch(/cannot be proven[^.]*reported and left alone/i);
   expect(cleanup).toMatch(/kernel reuses pids/i);
   expect(cleanup).toMatch(/older Stim[^.]*no root[^.]*reports as\s+unverified/i);
-  expect(cleanup).toMatch(/clears itself[\s\S]*log\s+stream ends/i);
-  expect(cleanup).toMatch(/next `ios` \/ `android` run replaces it/i);
+  expect(cleanup).toMatch(/record clears[\s\S]*log\s+stream ends[^.]*unregisters itself/i);
+  expect(cleanup).toMatch(/next\s+`ios` \/ `android` run overwrites the record with its own/i);
+  expect(cleanup).toMatch(/the old process itself keeps running until it exits on its own/i);
   expect(cleanup).toMatch(/a fresh `ios` \/ `android`\s+run[^.]*starts its replacement anyway/i);
 });
 

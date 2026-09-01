@@ -1335,8 +1335,10 @@ WHAT ELSE STOP REAPS
   signal delivered to someone else's process. A fresh \`ios\` / \`android\`
   run starts its replacement anyway, leaving the unproven pid to clear on its
   own. A collector started by an older Stim states no root in its command, so
-  it reports as unverified until it clears itself -- which it does when its
-  device's log stream ends, or when the next \`ios\` / \`android\` run replaces it.
+  it reports as unverified until its record clears -- which happens when its
+  own device's log stream ends and it unregisters itself, or when the next
+  \`ios\` / \`android\` run overwrites the record with its own, whichever
+  comes first; the old process itself keeps running until it exits on its own.
 
   \`stop\`, \`gc --delete\`, and \`worktree remove\` weigh an unproven live
   pid against the record's own startedAt claim: a pid that started AFTER that

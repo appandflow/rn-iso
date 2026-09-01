@@ -114,9 +114,6 @@ export function readProcessArgs(
   }
 }
 
-// The single place that shells out for a process's start time (`ps -ww -o lstart=`); every
-// caller that needs a process's start time, whether as an opaque token or a parsed Date, goes
-// through this so there is exactly one `ps -o lstart=` call site.
 export function runPsStartCommand(pid: number, timeoutMs: number): string {
   return getExecutor().runFile('ps', ['-ww', '-o', 'lstart=', '-p', String(pid)], { timeoutMs });
 }

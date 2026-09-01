@@ -17,25 +17,47 @@ import { resolveEasCliBin } from './engine/remote-cache.ts';
 import { stopTunnel, type StopTunnelResult } from './engine/tunnel.ts';
 import { workspaceDir } from './paths.ts';
 
-// A record's startedAt is the collector's own claim about when it started. If the live pid we
-// cannot otherwise verify started AFTER that claim, it is a newer, unrelated process that
-// recycled the pid -- the record is genuinely stale and safe to drop. If it started at or
-// before that claim, the live process predates the record and may still be the collector we
-// registered (e.g. a rename or a delayed registration write); keep the record for a retry
-// rather than orphaning a pid Stim can no longer see. An unreadable start time on either side
-// fails closed to "keep".
-function isRecycledPid(recordedStartedAt: unknown, pid: number, readStartTime: (pid: number) => Date | null): boolean {
-  if (typeof recordedStartedAt !== 'string') return false;
+// #183: fail closed toward "keep" for an unverified live pid unless its own start time proves
+// it recycled the number. RECYCLED_PID_TOLERANCE_MS absorbs NTP steps and lstart's one-second
+// truncation so a genuinely-ours collector never flips to "recycled" on a near-equal timestamp.
+const RECYCLED_PID_TOLERANCE_MS = 5_000;
+
+type StartTimeVerdict =
+  | { recycled: true }
+  | { recycled: false; cause: 'no-recorded-start' }
+  | { recycled: false; cause: 'unreadable-live-start' }
+  | { recycled: false; cause: 'started-at-or-before' };
+
+function classifyPidAgainstRecord(
+  recordedStartedAt: unknown,
+  pid: number,
+  readStartTime: (pid: number) => Date | null,
+): StartTimeVerdict {
+  if (typeof recordedStartedAt !== 'string') return { recycled: false, cause: 'no-recorded-start' };
   const recordedMs = Date.parse(recordedStartedAt);
-  if (!Number.isFinite(recordedMs)) return false;
+  if (!Number.isFinite(recordedMs)) return { recycled: false, cause: 'no-recorded-start' };
   let liveStart: Date | null;
   try {
     liveStart = readStartTime(pid);
   } catch {
     liveStart = null;
   }
-  if (!liveStart) return false;
-  return liveStart.getTime() > recordedMs;
+  if (!liveStart) return { recycled: false, cause: 'unreadable-live-start' };
+  if (liveStart.getTime() > recordedMs + RECYCLED_PID_TOLERANCE_MS) return { recycled: true };
+  return { recycled: false, cause: 'started-at-or-before' };
+}
+
+function keptReason(
+  cause: 'no-recorded-start' | 'unreadable-live-start' | 'started-at-or-before',
+  pid: number,
+): string {
+  if (cause === 'started-at-or-before') {
+    return `it started at or before this record's startedAt, so it may still be ours; inspect it with \`ps -p ${pid}\` and retry`;
+  }
+  if (cause === 'unreadable-live-start') {
+    return `pid ${pid}'s start time could not be read, so it may still be ours; inspect it with \`ps -p ${pid}\` and retry`;
+  }
+  return `this record has no usable startedAt to compare against, so pid ${pid} may still be ours; inspect it with \`ps -p ${pid}\` and retry`;
 }
 
 function reapCollectors(
@@ -59,7 +81,8 @@ function reapCollectors(
     if (ownership.status === 'unverified') {
       const name = `${platform} log collector (pid ${pid})`;
       const platformLabel = platform === 'android' ? 'android' : 'ios';
-      if (isRecycledPid(rec?.startedAt, pid, readStartTime)) {
+      const verdict = classifyPidAgainstRecord(rec?.startedAt, pid, readStartTime);
+      if (verdict.recycled) {
         skippedDevices.push({
           platform: platformLabel,
           name,
@@ -69,7 +92,7 @@ function reapCollectors(
         const entry: SkippedDevice = {
           platform: platformLabel,
           name,
-          reason: `${ownership.reason}, so it was not signalled -- it started at or before this record's startedAt, so it may still be ours; inspect it with \`ps -p ${pid}\` and retry`,
+          reason: `${ownership.reason}, so it was not signalled -- ${keptReason(verdict.cause, pid)}`,
         };
         skippedDevices.push(entry);
         failedDevices.push(entry);

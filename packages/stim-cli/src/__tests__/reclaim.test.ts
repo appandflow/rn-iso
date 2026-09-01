@@ -625,6 +625,35 @@ describe('the unverified-collector start-time split (mocked verify and start tim
     rmSync(root, { recursive: true, force: true });
   }, 20_000);
 
+  test('possibly ours: a live process a few seconds after the record is within the clock-skew tolerance -- keep it', async () => {
+    const child = await spawnFakeProcess(null);
+    const root = workspaceWithCollector(child.pid as number); // startedAt: 2026-01-01T00:00:00.000Z
+    const r = await reclaimProject(root, {
+      verifyCollector: () => ({ status: 'unverified', reason: 'stubbed' }),
+      readCollectorStartTime: () => new Date('2026-01-01T00:00:02.000Z'), // 2s after, inside the tolerance
+    });
+    expect(r.keptEntry).toBe(true);
+    expect(r.failedDevices.length).toBe(1);
+    child.kill('SIGKILL');
+    await exits(child);
+    rmSync(root, { recursive: true, force: true });
+  }, 20_000);
+
+  test('recycled: a live process comfortably past the clock-skew tolerance is still dropped', async () => {
+    const child = await spawnFakeProcess(null);
+    const root = workspaceWithCollector(child.pid as number); // startedAt: 2026-01-01T00:00:00.000Z
+    const r = await reclaimProject(root, {
+      verifyCollector: () => ({ status: 'unverified', reason: 'stubbed' }),
+      readCollectorStartTime: () => new Date('2026-01-01T00:00:10.000Z'), // 10s after, past the tolerance
+    });
+    expect(r.keptEntry).toBe(false);
+    expect(r.failedDevices).toEqual([]);
+    expect(getProject(root)).toBe(null);
+    child.kill('SIGKILL');
+    await exits(child);
+    rmSync(root, { recursive: true, force: true });
+  }, 20_000);
+
   test('a record with no startedAt at all fails closed to keep', async () => {
     const child = await spawnFakeProcess(null);
     const root = mkdtempSync(join(tmpdir(), 'stim-ws-'));

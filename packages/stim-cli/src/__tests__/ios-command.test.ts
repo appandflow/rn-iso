@@ -1,10 +1,11 @@
 import assert from 'node:assert';
+import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
+import { collectorProcessTitle } from '../collector/ownership.ts';
 import { upsertProject } from '../config.ts';
-import { resetExecutor, setExecutor } from '../exec.ts';
 import { parseNdjsonText } from '../ndjson.ts';
 import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../paths.ts';
 import type { WorkspaceState } from '../supervisor/run.ts';
@@ -1579,6 +1580,39 @@ describe('Contract 6: the dev-client scheme', () => {
   });
 });
 
+function collectorProcessCommand(pid: number): string {
+  try {
+    return execFileSync('ps', ['-ww', '-o', 'command=', '-p', String(pid)], { encoding: 'utf-8' }).trim();
+  } catch {
+    return '';
+  }
+}
+
+// Spawns a real detached process so the default `verifyCollectorOwnership` reads its actual
+// live command (via ps on darwin, via /proc/[pid]/cmdline on linux) instead of a mocked
+// executor, which only exercises the darwin ps path and fails closed for the wrong reason on
+// Linux CI.
+async function spawnFakeCollector(title: string | null): Promise<ChildProcess> {
+  const rename = title ? `process.title = ${JSON.stringify(title)};` : '';
+  const child = spawn(process.execPath, ['-e', `${rename} setInterval(() => {}, 1000);`], { stdio: 'ignore' });
+  const expected = title ?? process.execPath;
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline && !collectorProcessCommand(child.pid as number).startsWith(expected)) {
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  return child;
+}
+
+function collectorExits(child: ChildProcess, timeoutMs = 5_000): Promise<boolean> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), timeoutMs);
+    child.once('exit', () => {
+      clearTimeout(timer);
+      resolve(true);
+    });
+  });
+}
+
 describe('the collector', () => {
   function collectorHarness({
     state = null,
@@ -1664,31 +1698,24 @@ describe('the collector', () => {
     expect(result.pid).toBe(7001);
   });
 
-  test('the default ownership check is wired through: a ps-proven previous collector is signalled', async () => {
-    setExecutor(
-      makeExecutor({
-        runFile: (cmd, args) => {
-          expect(cmd).toBe('ps');
-          expect(args?.slice(0, 3)).toEqual(['-ww', '-o', 'command=']);
-          return `stim-collector-ios --root ${root}`;
-        },
-      }),
-    );
+  test('the default ownership check is wired through: a live process titled for this workspace is signalled', async () => {
+    const child = await spawnFakeCollector(collectorProcessTitle('ios', root));
     try {
-      const h = collectorHarness({ state: { collectors: { ios: { pid: 999, startedAt: 'T' } } } });
+      const h = collectorHarness({ state: { collectors: { ios: { pid: child.pid, startedAt: 'T' } } } });
       h.opts.verify = undefined;
       const result = await replaceCollector(h.opts);
-      expect(h.kills).toEqual([{ pid: 999, signal: 'SIGTERM' }]);
-      expect(result.killed).toBe(999);
+      expect(h.kills).toEqual([{ pid: child.pid, signal: 'SIGTERM' }]);
+      expect(result.killed).toBe(child.pid);
     } finally {
-      resetExecutor();
+      child.kill('SIGKILL');
+      await collectorExits(child);
     }
-  });
+  }, 20_000);
 
-  test('the default ownership check is wired through: a ps mismatch is left running and noted', async () => {
-    setExecutor(makeExecutor({ runFile: () => 'node server.js' }));
+  test('the default ownership check is wired through: a live process that cannot be proven is left running and noted', async () => {
+    const child = await spawnFakeCollector(null);
     try {
-      const h = collectorHarness({ state: { collectors: { ios: { pid: 999, startedAt: 'T' } } } });
+      const h = collectorHarness({ state: { collectors: { ios: { pid: child.pid, startedAt: 'T' } } } });
       h.opts.verify = undefined;
       h.opts.alive = () => true;
       const result = await replaceCollector(h.opts);
@@ -1697,9 +1724,10 @@ describe('the collector', () => {
       expect(h.notes.length).toBe(1);
       expect(h.notes[0]).toMatch(/not signalled/);
     } finally {
-      resetExecutor();
+      child.kill('SIGKILL');
+      await collectorExits(child);
     }
-  });
+  }, 20_000);
 
   test('the collector is spawned detached, unref-ed, with the REAL app name from the .app path', async () => {
     const h = collectorHarness();
