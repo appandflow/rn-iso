@@ -3,6 +3,13 @@
 # credential minted for exactly this repo + workflow + environment, and the
 # `release` environment requires a manual approval, which replaces the OTP.
 #
+# The tarballs are built by `pnpm pack`, not by `npm publish`, because the
+# packages declare their edges to each other with pnpm's `workspace:` protocol.
+# pnpm substitutes the real version when it packs; npm does not understand the
+# protocol and would upload a literal `workspace:^` range. npm still performs
+# every publish, from the packed tarball, so the OIDC and provenance path is
+# unchanged.
+#
 # Third-party actions are pinned by commit SHA and the job is deliberately
 # minimal -- nothing here may run code that could tamper with the tarballs.
 name: Release
@@ -50,52 +57,71 @@ jobs:
               echo "packages/$p is $v but the tag is $tag"; exit 1
             fi
           done
-      - name: Publish @stim-cli/core
-        working-directory: packages/core
+      - name: Pack the tarballs with pnpm
         run: |
-          version=$(node -p "require('./package.json').version")
+          mkdir -p "$RUNNER_TEMP/tarballs"
+          for p in core cache metro expo-build-cache stim-cli; do
+            tarball=$(cd "packages/$p" && pnpm pack --pack-destination "$RUNNER_TEMP/tarballs" | tail -1)
+            mv "$tarball" "$RUNNER_TEMP/tarballs/$p.tgz"
+            tar -xzOf "$RUNNER_TEMP/tarballs/$p.tgz" package/package.json > "$RUNNER_TEMP/tarballs/$p.package.json"
+          done
+      - name: Packed manifests name real versions
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          for p in core cache metro expo-build-cache stim-cli; do
+            manifest="$RUNNER_TEMP/tarballs/$p.package.json"
+            if grep -q '"workspace:' "$manifest"; then
+              echo "packages/$p packed an unsubstituted workspace: range"
+              grep '"workspace:' "$manifest"
+              exit 1
+            fi
+            v=$(node -p "require('$manifest').version")
+            if [ "$v" != "$tag" ]; then
+              echo "packages/$p packed $v but the tag is $tag"; exit 1
+            fi
+            node -e "const m=require('$manifest');const d={...m.dependencies,...m.devDependencies};for(const [n,r] of Object.entries(d)) if(n==='stim-cli'||n.startsWith('@stim-cli/')) console.log(m.name,'->',n,r);"
+          done
+      - name: Publish @stim-cli/core
+        run: |
+          version=$(node -p "require('$RUNNER_TEMP/tarballs/core.package.json').version")
           if npm view "@stim-cli/core@$version" version >/dev/null 2>&1; then
             echo "@stim-cli/core@$version is already published"
           else
             # latest-on-purpose while no stable exists (RELEASE.md section 1); issue #165
             # gates the prerelease-aware selection required after 1.0.0 stable.
-            npm publish --provenance --access public --tag latest
+            npm publish "$RUNNER_TEMP/tarballs/core.tgz" --provenance --access public --tag latest
           fi
       - name: Publish @stim-cli/cache
-        working-directory: packages/cache
         run: |
-          version=$(node -p "require('./package.json').version")
+          version=$(node -p "require('$RUNNER_TEMP/tarballs/cache.package.json').version")
           if npm view "@stim-cli/cache@$version" version >/dev/null 2>&1; then
             echo "@stim-cli/cache@$version is already published"
           else
-            npm publish --provenance --access public --tag latest
+            npm publish "$RUNNER_TEMP/tarballs/cache.tgz" --provenance --access public --tag latest
           fi
       - name: Publish @stim-cli/metro
-        working-directory: packages/metro
         run: |
-          version=$(node -p "require('./package.json').version")
+          version=$(node -p "require('$RUNNER_TEMP/tarballs/metro.package.json').version")
           if npm view "@stim-cli/metro@$version" version >/dev/null 2>&1; then
             echo "@stim-cli/metro@$version is already published"
           else
-            npm publish --provenance --access public --tag latest
+            npm publish "$RUNNER_TEMP/tarballs/metro.tgz" --provenance --access public --tag latest
           fi
       - name: Publish @stim-cli/expo-build-cache
-        working-directory: packages/expo-build-cache
         run: |
-          version=$(node -p "require('./package.json').version")
+          version=$(node -p "require('$RUNNER_TEMP/tarballs/expo-build-cache.package.json').version")
           if npm view "@stim-cli/expo-build-cache@$version" version >/dev/null 2>&1; then
             echo "@stim-cli/expo-build-cache@$version is already published"
           else
-            npm publish --provenance --access public --tag latest
+            npm publish "$RUNNER_TEMP/tarballs/expo-build-cache.tgz" --provenance --access public --tag latest
           fi
       - name: Publish stim-cli
-        working-directory: packages/stim-cli
         run: |
-          version=$(node -p "require('./package.json').version")
+          version=$(node -p "require('$RUNNER_TEMP/tarballs/stim-cli.package.json').version")
           if npm view "stim-cli@$version" version >/dev/null 2>&1; then
             echo "stim-cli@$version is already published"
           else
-            npm publish --provenance --access public --tag latest
+            npm publish "$RUNNER_TEMP/tarballs/stim-cli.tgz" --provenance --access public --tag latest
           fi
       - name: Smoke-test the registry
         run: |

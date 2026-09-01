@@ -112,18 +112,28 @@ preparation, `git status --short` may show only the draft
    test "$(node packages/stim-cli/dist/cli.mjs --version)" = "X.Y.Z"
    ```
 
-3. **Verify each npm tarball** ships only what should ship, and that each one
-   carries its own README:
+3. **Verify each npm tarball** ships only what should ship, that each one
+   carries its own README, and that every `@stim-cli/*` line names a real
+   version. Pack with `pnpm`, never `npm`: the release workflow publishes
+   pnpm-packed tarballs, and `npm pack` prints the unsubstituted `workspace:`
+   ranges rather than what actually publishes.
 
    ```bash
-   for p in core stim-cli expo-build-cache metro; do
-     echo "== $p"; (cd "packages/$p" && npm pack --dry-run 2>&1 | grep -E 'README|Tarball|total files')
+   out=$(mktemp -d)
+   for p in core cache metro expo-build-cache stim-cli; do
+     tgz=$(cd "packages/$p" && pnpm pack --pack-destination "$out" | tail -1)
+     echo "== $p ($(tar -tzf "$tgz" | wc -l | tr -d ' ') files)"
+     tar -tzf "$tgz" | grep -E 'README|LICENSE'
+     tar -xzOf "$tgz" package/package.json | grep -E '"version"|"@stim-cli/'
    done
+   rm -rf "$out"
    ```
 
    Keep the `files` whitelists tight (`dist`, `shim`, `skill`, `LICENSE`,
    `README.md` for the CLI; `dist`, `README.md`, `LICENSE` for the other
-   packages). Every published JavaScript entry lives under `dist/`.
+   packages). Every published JavaScript entry lives under `dist/`. A
+   `workspace:` range in that output means the tarball was not packed by pnpm;
+   stop and fix the packing before publishing.
 
 4. **Inspect the candidate diff.** `git status --short` should contain only the
    five package manifests, `pnpm-lock.yaml`, and the draft
@@ -236,8 +246,9 @@ Before continuing:
    ```
 
    Send the `url` (the run page has Review deployments -> `release` ->
-   Approve and deploy). The workflow skips an exact package version that
-   already exists, publishes to the `latest` dist-tag (section 1), then
+   Approve and deploy). The workflow packs the five tarballs with pnpm, checks
+   that no `workspace:` range survived the pack, skips an exact package version
+   that already exists, publishes to the `latest` dist-tag (section 1), then
    verifies all five registry versions. A NEW package, a failed publish, or
    a provenance rejection: see
    [docs/release-recovery.md](./docs/release-recovery.md).
@@ -264,6 +275,7 @@ Before continuing:
 ## Don't
 
 - Force-push tags. Cut a new version.
-- Skip the `npm pack --dry-run` step. Untracked files have shipped before.
+- Skip the tarball check in section 2, step 3. Untracked files have shipped
+  before, and it is the only place a `workspace:` range would be caught by hand.
 - Publish one package at a new version and leave the others behind. The shared
   version is the compatibility statement; a partial release makes it a lie.

@@ -21,7 +21,9 @@ so re-running the whole workflow is also safe.
 ## Manual publish fallback
 
 The same commands the workflow runs, for when it cannot. 2FA is on, so each
-publish prompts for an OTP:
+publish prompts for an OTP. These use `pnpm publish`, which packs with pnpm
+and therefore substitutes the `workspace:` ranges the packages declare; a bare
+`npm publish` from a package directory would upload them verbatim:
 
 ```bash
 npm whoami                                          # confirm login; if 401, `npm login` first
