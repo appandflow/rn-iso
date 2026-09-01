@@ -553,9 +553,11 @@ FALLBACK NOTES THAT ARE NOT CODES (release cache hits)
                 so it was uninstalled (its data went with it) before this APK
                 could be installed
 
-  Debug runs never do this: every debug artifact is debug-keystore-signed, the
-  conflict cannot arise, and losing a dev app's data to a silent uninstall
-  would be a worse bug than the one it fixes.
+  Debug runs never do this. A debug run meets the conflict on a physical
+  device that already carries a store build, and there the colliding package is
+  the user's real app: losing its data to a silent uninstall would be a worse
+  bug than the one it fixes. A debug run fails with STIM_INSTALL_FAILED and
+  hands you the uninstall to run yourself.
 
 STIM_BUILD_WAIT_TIMEOUT
   This run was waiting for ANOTHER workspace's build of the same fingerprint
@@ -569,6 +571,11 @@ STIM_BUILD_WAIT_TIMEOUT
 STIM_INSTALL_FAILED
   The artifact built or came from cache, but \`simctl install\` / \`adb install\`
   refused it. A signature or architecture mismatch, or a full device.
+  On Android a signature or downgrade conflict names the package that is really
+  installed -- the built APK's applicationId, which on a flavored project is
+  the flavor's id and not the gradle namespace -- and gives you the
+  \`adb -s <serial> uninstall <applicationId>\` that clears it. Re-running after
+  that is a cache hit: one install, no build.
 
 STIM_LAUNCH_FAILED
   Installed, but the app would not start. On Android this usually means no
