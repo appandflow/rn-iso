@@ -1,8 +1,7 @@
 # Stim agent guide
 
 Use this guide when you change this repository. State rules here in the
-present tense: a rule's history lives in issues and commits, not in this
-file. User documentation lives in
+present tense: a rule's history lives in issues and commits, not here. User documentation lives in
 [`packages/stim-cli/README.md`](./packages/stim-cli/README.md).
 
 ## Project
@@ -23,8 +22,8 @@ flags without an explicit product decision. Projects can wrap Stim when they
 need custom behavior.
 
 Runtime state belongs under `$STIM_HOME/workspaces/`, not in the project
-tree. Stim has no init step and never mutates project setup; `doctor`
-reports setup that requires project judgment.
+tree. Stim has no init step and never mutates project setup; do not add
+either. `doctor` reports setup that requires project judgment.
 
 ## Development
 
@@ -49,8 +48,8 @@ commit. Run `pnpm run test:e2e` when a change affects an end-to-end workflow.
 
 When you find a bug or improvement, search the open GitHub issues first. If no
 issue already describes it, create one before implementation, following the
-shape in `.github/ISSUE_TEMPLATE/report.md`. Refresh the
-remote refs, then confirm that an existing issue still applies to current
+shape in `.github/ISSUE_TEMPLATE/report.md`. Refresh the remote refs, then
+confirm that an existing issue still applies to current
 `origin/main`; close stale issues with the fixing commit and verification
 evidence instead of creating duplicate work.
 
