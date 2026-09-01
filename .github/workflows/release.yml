@@ -57,6 +57,8 @@ jobs:
           if npm view "@stim-cli/core@$version" version >/dev/null 2>&1; then
             echo "@stim-cli/core@$version is already published"
           else
+            # latest-on-purpose while no stable exists (RELEASE.md section 1); issue #165
+            # gates the prerelease-aware selection required after 1.0.0 stable.
             npm publish --provenance --access public --tag latest
           fi
       - name: Publish @stim-cli/cache

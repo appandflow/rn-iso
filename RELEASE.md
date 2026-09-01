@@ -58,7 +58,10 @@ dist-tag: that is what the workflow does and what installs resolve, so
 `npm view stim-cli version` is always the current release. Once a stable
 1.0.0 ships, the workflow must gain prerelease-aware dist-tag selection
 (prereleases to `next`) BEFORE the next candidate is tagged, so a later
-`1.1.0-rc` cannot replace stable on `latest`.
+`1.1.0-rc` cannot replace stable on `latest` -- tracked as issue #165. The
+historical `next` tags on all five packages are stale (rc-era, mutually
+inconsistent) and should be removed as part of that change:
+`npm dist-tag rm <pkg> next` for each package.
 
 When a published version exists, check `git describe --tags --abbrev=0`. If
 that tag is _higher_ than `v$last`, a previous release got tagged but never
