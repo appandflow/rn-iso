@@ -41,6 +41,18 @@ import { asProcessExit, makeChildProcess, makeError, makeExecutor, makeMetroReso
 
 const UDID = 'BF2A1C3D-4E5F-6071-8293-A4B5C6D7E8F9';
 const FINGERPRINT = 'a3f9b1c2d3e4f5';
+const DEVICE_PID = 4242;
+const IDENTITY = { sha1: 'A'.repeat(40), name: 'Apple Development: Tester (TEAMID5678)' };
+const PROFILE = {
+  name: 'Stim Development',
+  uuid: 'a-uuid',
+  teamIdentifier: 'TEAMID5678',
+  expirationDate: new Date('2099-01-01T00:00:00Z'),
+  provisionedDevices: ['00008030-001A2B3C4D5E802E'],
+  provisionsAllDevices: false,
+  getTaskAllow: true,
+  certificates: [],
+};
 
 type IosDeps = NonNullable<Parameters<typeof registerIos>[1]>;
 
@@ -235,6 +247,10 @@ function harness(overrides: LooseDeps = {}) {
       record('replaceCollector', args);
       return { killed: null, pid: 5150 };
     },
+    stopPreviousCollector: async (args) => {
+      record('stopPreviousCollector', args);
+      return { killed: null };
+    },
     resolveMetroWithRetry: (resolve, port, path, opts) =>
       resolveMetroWithRetry(resolve, port, path, { ...opts, sleep: async () => {} }),
     verifyLaunch: async (args) => {
@@ -254,6 +270,35 @@ function harness(overrides: LooseDeps = {}) {
     verifyReleaseLaunch: async (args) => {
       record('verifyReleaseLaunch', args);
       return { verified: true, waitedMs: 3000 };
+    },
+    hostLanCandidates: () => [{ interfaceName: 'en0', address: '192.168.1.5' }],
+    ensureLanReachable: async (args) => {
+      record('ensureLanReachable', args);
+      return { ok: true as const };
+    },
+    gateProfileForDevice: (args) => {
+      record('gateProfileForDevice', args);
+      return { ok: true as const, profile: PROFILE };
+    },
+    sealAppForDevice: (args) => {
+      record('sealAppForDevice', args);
+      return { ok: true as const, identity: IDENTITY, mode: 'preserve-metadata' as const };
+    },
+    installIosDeviceApp: (args) => {
+      record('installIosDeviceApp', args);
+      return { ok: true, appPath: args.appPath };
+    },
+    awaitIosDeviceLaunch: async (args) => {
+      record('awaitIosDeviceLaunch', args);
+      return { pid: DEVICE_PID };
+    },
+    iosDeviceProcess: (args) => {
+      record('iosDeviceProcess', args);
+      return DEVICE_PID;
+    },
+    verifyIosDeviceReleaseLaunch: async (args) => {
+      record('verifyIosDeviceReleaseLaunch', args);
+      return { verified: true, waitedMs: 3000, pid: DEVICE_PID };
     },
     ensureWorkspaceStorage: async (dir) => {
       record('ensureWorkspaceStorage', dir);
@@ -3213,6 +3258,12 @@ describe('an app the simulator already holds', () => {
 describe('ios --device: selecting a phone and building the device slice', () => {
   const PHONE = '00008030-001A2B3C4D5E802E';
 
+  // The device path copies the bundle aside with the real `cp`, so the fixture
+  // has to exist on disk.
+  beforeEach(() => {
+    mkdirSync(join(root, 'build', 'Fixture.app'), { recursive: true });
+  });
+
   function connected(devices: Array<Record<string, unknown>> = [{ udid: PHONE, name: 'Test Phone' }]) {
     return {
       listIosDevices: () =>
@@ -3298,18 +3349,97 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     expect(build?.sdk).toBe(undefined);
   });
 
-  test('it stops at the install boundary rather than sending a device app to simctl', async () => {
+  test('it installs and launches with devicectl, never with simctl', async () => {
     reserve();
-    const { errs, exitCode, calls } = await run({ device: true }, connected());
-    expect(exitCode).toBe(1);
+    const { errs, exitCode, calls, logs } = await run({ device: true, json: true }, connected());
+    expect(exitCode).toBe(null);
     expect(calls.order.includes('buildIos')).toBe(true);
     expect(calls.order.includes('storeBuild')).toBe(true);
+    expect(calls.order.includes('installIosDeviceApp')).toBe(true);
     expect(calls.order.includes('installIosApp')).toBe(false);
     expect(calls.order.includes('launchIosApp')).toBe(false);
-    expect(calls.order.includes('replaceCollector')).toBe(false);
-    expect(errs.join('\n')).toMatch(/STIM_BAD_ARG/);
-    expect(errs.join('\n')).toMatch(/not wired yet/);
-    expect(errs.join('\n')).toMatch(new RegExp(`${FINGERPRINT}-debug-device`));
+    expect(calls.order.includes('replaceCollector')).toBe(true);
+    expect(errs.join('\n')).not.toMatch(/STIM_BAD_ARG/);
+    const facts = parseFirst(logs);
+    expect(facts.udid).toBe(PHONE);
+    expect(facts.launched).toBe(true);
+    expect(facts.cacheKey).toBe(`${FINGERPRINT}-debug-device`);
+  });
+
+  test('the collector is the launch: it carries --physical and the run reads the device pid', async () => {
+    reserve();
+    const { calls } = await run({ device: true }, connected());
+    const collector = calls.args.replaceCollector as Record<string, unknown>;
+    expect(collector.physical).toBe(true);
+    expect(collector.udid).toBe(PHONE);
+    const launch = calls.args.awaitIosDeviceLaunch as Record<string, unknown>;
+    expect(launch.udid).toBe(PHONE);
+    expect(calls.order.indexOf('replaceCollector')).toBeLessThan(calls.order.indexOf('awaitIosDeviceLaunch'));
+  });
+
+  // An upgrade install terminates the running app, which ends the console the
+  // previous collector holds: stopping it first keeps a normal reinstall from
+  // recording a failure.
+  test('the previous collector is stopped BEFORE the install, not as part of the launch', async () => {
+    reserve();
+    const { calls } = await run({ device: true }, connected());
+    expect(calls.order.indexOf('stopPreviousCollector')).toBeLessThan(calls.order.indexOf('installIosDeviceApp'));
+    expect(calls.order.indexOf('installIosDeviceApp')).toBeLessThan(calls.order.indexOf('replaceCollector'));
+  });
+
+  test('the simulator path does not stop its collector early: nothing there holds a console', async () => {
+    reserve();
+    const { calls } = await run({});
+    expect(calls.order.includes('stopPreviousCollector')).toBe(false);
+    expect(calls.order.includes('replaceCollector')).toBe(true);
+  });
+
+  test('a dev-client app is launched on the LAN payload URL and its ip.txt is left alone', async () => {
+    reserve();
+    const { calls, errs } = await run(
+      { device: true },
+      { ...connected(), detectIsExpo: () => true, devClientScheme: () => 'com.example.app' },
+    );
+    const collector = calls.args.replaceCollector as Record<string, unknown>;
+    expect(collector.payloadUrl).toBe(
+      `com.example.app://expo-development-client/?url=${encodeURIComponent('http://192.168.1.5:8082')}`,
+    );
+    expect(calls.order.includes('sealAppForDevice')).toBe(false);
+    expect(calls.order.includes('gateProfileForDevice')).toBe(true);
+    expect(errs.join('\n')).not.toMatch(/ip\.txt/);
+  });
+
+  test('a bare app gets <addr>:<port> in ip.txt on a copy, re-sealed, and no payload URL', async () => {
+    reserve();
+    let sealedIpTxt: string | null = null;
+    const { calls, errs } = await run(
+      { device: true },
+      {
+        ...connected(),
+        sealAppForDevice: (args) => {
+          sealedIpTxt = readFileSync(join(args.appPath, 'ip.txt'), 'utf-8');
+          return { ok: true as const, identity: IDENTITY, mode: 'preserve-metadata' as const };
+        },
+      },
+    );
+    expect(sealedIpTxt).toBe('192.168.1.5:8082\n');
+    const sealed = calls.args.installIosDeviceApp as Record<string, unknown>;
+    expect(String(sealed.appPath)).not.toBe(join(root, 'build', 'Fixture.app'));
+    expect(String(sealed.appPath).endsWith('Fixture.app')).toBe(true);
+    const collector = calls.args.replaceCollector as Record<string, unknown>;
+    expect(collector.payloadUrl).toBe(null);
+    expect(errs.join('\n')).toMatch(/ip\.txt\s+192\.168\.1\.5:8082 written into the install copy/);
+  });
+
+  test('the pristine artifact is stored before the copy is mutated, and the copy is deleted', async () => {
+    reserve();
+    const { calls } = await run({ device: true }, connected());
+    expect(calls.order.indexOf('storeBuild')).toBeLessThan(calls.order.indexOf('sealAppForDevice'));
+    const stored = calls.args.storeBuild as { path: string };
+    expect(stored.path).toBe(join(root, 'build', 'Fixture.app'));
+    expect(existsSync(join(root, 'build', 'Fixture.app', 'ip.txt'))).toBe(false);
+    const installed = calls.args.installIosDeviceApp as { appPath: string };
+    expect(existsSync(installed.appPath)).toBe(false);
   });
 
   test('a malformed ios.lanHost refuses the run before the phone is looked for', async () => {
@@ -3385,22 +3515,17 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     expect(errs.join('\n')).not.toMatch(/provider/);
   });
 
-  test('the refusal says what actually happened: built, or restored from the cache', async () => {
+  test('a cached device app installs without building, and the cache entry is not the copy', async () => {
     reserve();
-    const built = await run({ device: true }, connected());
-    expect(built.errs.join('\n')).toMatch(
-      new RegExp(`Built the Debug iphoneos slice[^\n]*and cached it under ${FINGERPRINT}-debug-device`),
-    );
-
-    const restored = await run(
-      { device: true },
-      { ...connected(), resolveBuild: () => join(root, 'cached', 'Fixture.app') },
-    );
-    expect(restored.calls.order.includes('buildIos')).toBe(false);
-    expect(restored.errs.join('\n')).toMatch(
-      new RegExp(`Restored the Debug iphoneos slice[^\n]*from the cache under ${FINGERPRINT}-debug-device`),
-    );
-    expect(restored.errs.join('\n')).not.toMatch(/Built the/);
+    const cached = join(root, 'cached', 'Fixture.app');
+    mkdirSync(cached, { recursive: true });
+    const { calls, exitCode } = await run({ device: true }, { ...connected(), resolveBuild: () => cached });
+    expect(exitCode).toBe(null);
+    expect(calls.order.includes('buildIos')).toBe(false);
+    const sealed = calls.args.sealAppForDevice as { appPath: string };
+    expect(sealed.appPath).not.toBe(cached);
+    expect(existsSync(join(cached, 'ip.txt'))).toBe(false);
+    expect(calls.order.includes('installIosDeviceApp')).toBe(true);
   });
 
   test('the same providers ARE consulted without --device, so the gate is not vacuous', async () => {
@@ -3438,7 +3563,7 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     expect(loads).toBeGreaterThan(0);
   });
 
-  test('a device release cache hit does not run the JS swap it cannot re-seal yet', async () => {
+  test('a device release cache hit is refused and rebuilt, so no builder JS reaches the phone', async () => {
     reserve();
     let swaps = 0;
     const { calls, errs } = await run(
@@ -3453,9 +3578,272 @@ describe('ios --device: selecting a phone and building the device slice', () => 
       },
     );
     expect(swaps).toBe(0);
-    expect(calls.order.includes('buildIos')).toBe(false);
+    expect(calls.order.includes('buildIos')).toBe(true);
     expect(calls.order.includes('installIosApp')).toBe(false);
-    expect(errs.join('\n')).toMatch(/js swap\s+skipped for --device/);
+    expect(calls.order.includes('installIosDeviceApp')).toBe(true);
+    expect(errs.join('\n')).toMatch(/carries its builder's JS[\s\S]*building fresh instead/);
+  });
+
+  test('a release device run proves the launch with a device process, never a host pid', async () => {
+    reserve();
+    const { calls, logs } = await run({ device: true, configuration: 'Release', json: true }, connected());
+    expect(calls.order.includes('verifyReleaseLaunch')).toBe(false);
+    const verified = calls.args.verifyIosDeviceReleaseLaunch as Record<string, unknown>;
+    expect(verified.udid).toBe(PHONE);
+    expect(verified.appName).toBe('Fixture');
+    const facts = parseFirst(logs);
+    expect(facts.launched).toBe(true);
+    expect(facts.metroPort).toBe(null);
+    const collector = calls.args.replaceCollector as Record<string, unknown>;
+    expect(collector.payloadUrl).toBe(null);
+  });
+
+  test('a phone is used, never recorded: no device claim survives a full install and launch', async () => {
+    reserve();
+    const { exitCode } = await run({ device: true }, connected());
+    expect(exitCode).toBe(null);
+    expect(getProject(root)?.deviceUdid ?? null).toBe(null);
+    expect(getProject(root)?.deviceName ?? null).toBe(null);
+  });
+
+  test('an install refusal keeps its remedy, and a signer conflict is reported as a data loss', async () => {
+    reserve();
+    const refused = await run(
+      { device: true },
+      {
+        ...connected(),
+        installIosDeviceApp: () => ({
+          failed: true,
+          code: 'STIM_INSTALL_FAILED',
+          reason: 'devicectl could not install the app: the device is locked',
+          remedy: 'Unlock the phone and keep it awake, then run the command again.',
+        }),
+      },
+    );
+    expect(refused.exitCode).toBe(1);
+    expect(refused.errs.join('\n')).toMatch(/STIM_INSTALL_FAILED/);
+    expect(refused.errs.join('\n')).toMatch(/Unlock the phone/);
+    expect(refused.calls.order.includes('replaceCollector')).toBe(false);
+
+    const retried = await run(
+      { device: true },
+      {
+        ...connected(),
+        installIosDeviceApp: (args) => ({
+          ok: true,
+          appPath: args.appPath,
+          uninstalled: true,
+          note: 'com.example.app was already installed on the phone under a different team, so it was uninstalled (its data went with it) before this app could be installed',
+        }),
+      },
+    );
+    expect(retried.exitCode).toBe(null);
+    expect(retried.errs.join('\n')).toMatch(/its data went with it/);
+  });
+
+  test('a launch the phone refuses fails with the trust remedy and the devicectl evidence', async () => {
+    reserve();
+    const { errs, exitCode } = await run(
+      { device: true },
+      {
+        ...connected(),
+        awaitIosDeviceLaunch: async () => ({
+          failed: true,
+          reason: 'devicectl could not keep com.example.app running on the phone.',
+          remedy:
+            "The phone has not trusted this build's developer certificate. On the phone open Settings > General > VPN & Device Management, tap the developer profile under DEVELOPER APP, tap Trust, then run the command again.",
+          lines: ['ERROR: FBSOpenApplicationErrorDomain error 3 (Security)'],
+        }),
+      },
+    );
+    expect(exitCode).toBe(1);
+    expect(errs.join('\n')).toMatch(/STIM_LAUNCH_FAILED/);
+    expect(errs.join('\n')).toMatch(/VPN & Device Management/);
+    expect(errs.join('\n')).toMatch(/FBSOpenApplicationErrorDomain error 3/);
+  });
+
+  test('no LAN address refuses before the build, and names the shared network', async () => {
+    reserve();
+    const { errs, exitCode, calls } = await run({ device: true }, { ...connected(), hostLanCandidates: () => [] });
+    expect(exitCode).toBe(1);
+    expect(errs.join('\n')).toMatch(/STIM_NO_LAN_ADDRESS/);
+    expect(errs.join('\n')).toMatch(/Join a Wi-Fi or Ethernet network/);
+    expect(calls.order.includes('fingerprintProject')).toBe(false);
+  });
+
+  test('a LAN origin that is not this workspace Metro refuses before the build', async () => {
+    reserve();
+    const { errs, exitCode, calls } = await run(
+      { device: true },
+      {
+        ...connected(),
+        ensureLanReachable: async () => ({
+          failed: 'http://192.168.1.5:8082 answered 200, but the request never reached THIS workspace Metro.',
+          remedy: '`stim start` prints the port it reserved.',
+        }),
+      },
+    );
+    expect(exitCode).toBe(1);
+    expect(errs.join('\n')).toMatch(/STIM_LAN_METRO_UNREACHABLE/);
+    expect(calls.order.includes('fingerprintProject')).toBe(false);
+  });
+
+  test('ios.lanHost pins the address written into ip.txt and gated', async () => {
+    reserve();
+    let sealedIpTxt: string | null = null;
+    const { calls, errs } = await run(
+      { device: true },
+      {
+        ...connected(),
+        resolveSettings: () => ({ ios: { lanHost: '10.0.0.9' } }),
+        sealAppForDevice: (args) => {
+          sealedIpTxt = readFileSync(join(args.appPath, 'ip.txt'), 'utf-8');
+          return { ok: true as const, identity: IDENTITY, mode: 'preserve-metadata' as const };
+        },
+      },
+    );
+    const gate = calls.args.ensureLanReachable as Record<string, unknown>;
+    expect(gate.origin).toBe('http://10.0.0.9:8082');
+    expect(sealedIpTxt).toBe('10.0.0.9:8082\n');
+    expect(errs.join('\n')).toMatch(/lan\s+http:\/\/10\.0\.0\.9:8082 \(ios\.lanHost\)/);
+  });
+
+  test('a refused signing gate on a fresh build exits on its own code instead of building again', async () => {
+    reserve();
+    let builds = 0;
+    const { errs, exitCode } = await run(
+      { device: true },
+      {
+        ...connected(),
+        buildIos: async () => {
+          builds += 1;
+          return { appPath: join(root, 'build', 'Fixture.app'), bundleId: 'com.example.app', durationMs: 1000 };
+        },
+        sealAppForDevice: () => ({
+          ok: false as const,
+          code: 'STIM_PROFILE_MISMATCH',
+          reason: 'The development profile lists 1 device and this phone is not one of them.',
+          remedy: 'Register the UDID at developer.apple.com, regenerate the profile, then build once from Xcode.',
+          lastLines: [],
+        }),
+      },
+    );
+    expect(builds).toBe(1);
+    expect(exitCode).toBe(1);
+    expect(errs.join('\n')).toMatch(/STIM_PROFILE_MISMATCH/);
+    expect(errs.join('\n')).toMatch(/developer\.apple\.com/);
+  });
+
+  test('a refused signing gate on a CACHED app falls back to a full build', async () => {
+    reserve();
+    let seals = 0;
+    const cached = join(root, 'cached', 'Fixture.app');
+    mkdirSync(cached, { recursive: true });
+    const { calls, errs, exitCode } = await run(
+      { device: true },
+      {
+        ...connected(),
+        resolveBuild: () => cached,
+        sealAppForDevice: (args) => {
+          seals += 1;
+          if (seals === 1) {
+            return {
+              ok: false as const,
+              code: 'STIM_NO_SIGNING_IDENTITY',
+              reason: 'The app was signed by "Apple Development: Someone Else", which is not in this keychain.',
+              remedy: 'Open Xcode > Settings > Accounts and download your certificates.',
+              lastLines: [],
+            };
+          }
+          return { ok: true as const, identity: IDENTITY, mode: 'preserve-metadata' as const, appPath: args.appPath };
+        },
+      },
+    );
+    expect(exitCode).toBe(null);
+    expect(calls.order.includes('buildIos')).toBe(true);
+    expect(errs.join('\n')).toMatch(/not in this keychain[\s\S]*building fresh instead/);
+  });
+
+  // The install path routes on the dev-client scheme, so the remedy has to as
+  // well: an Expo project without expo-dev-client takes ip.txt and needs the
+  // stale-fallback warning, not the server picker.
+  // The LAN gate fetches the bundle URL from the HOST, which lands in the same
+  // Metro timeline verifyLaunch reads. If the launch window opened before that
+  // fetch, the gate's own record would prove the phone had launched.
+  test('the launch window opens after the LAN gate and after the install', async () => {
+    reserve();
+    let clock = 1_000_000;
+    let gatedAt = 0;
+    let installedAt = 0;
+    const { calls } = await run(
+      { device: true },
+      {
+        ...connected(),
+        now: () => (clock += 1000),
+        ensureLanReachable: async () => {
+          gatedAt = clock;
+          return { ok: true as const };
+        },
+        installIosDeviceApp: (args) => {
+          installedAt = clock;
+          return { ok: true, appPath: args.appPath };
+        },
+      },
+    );
+    const since = Number((calls.args.verifyLaunch as { since?: unknown }).since);
+    expect(gatedAt).toBeGreaterThan(0);
+    expect(installedAt).toBeGreaterThan(gatedAt);
+    expect(since).toBeGreaterThan(installedAt);
+  });
+
+  test('an Expo app WITHOUT a dev client gets the bare remedy, not the picker', async () => {
+    reserve();
+    const { errs, calls } = await run(
+      { device: true },
+      {
+        ...connected(),
+        detectIsExpo: () => true,
+        devClientScheme: () => undefined,
+        verifyLaunch: async () => ({ verified: false, timedOut: true, waitedMs: 20000 }),
+      },
+    );
+    const out = errs.join('\n');
+    expect(calls.order.includes('sealAppForDevice')).toBe(true);
+    expect(out).toMatch(/carries the JS bundle baked in/);
+    expect(out).not.toMatch(/DEVELOPMENT SERVERS picker/);
+    expect(out).not.toMatch(/Retry the deep link/);
+  });
+
+  test('a dev-client app gets the picker and the deep-link retry, not the bare warning', async () => {
+    reserve();
+    const { errs } = await run(
+      { device: true },
+      {
+        ...connected(),
+        detectIsExpo: () => true,
+        devClientScheme: () => 'com.example.app',
+        verifyLaunch: async () => ({ verified: false, timedOut: true, waitedMs: 20000 }),
+      },
+    );
+    const out = errs.join('\n');
+    expect(out).toMatch(/DEVELOPMENT SERVERS picker/);
+    expect(out).toMatch(/Retry the deep link: xcrun devicectl device process launch/);
+    expect(out).not.toMatch(/carries the JS bundle baked in/);
+  });
+
+  test('the unverified remedy names all three causes the LAN gate cannot tell apart', async () => {
+    reserve();
+    const { errs } = await run(
+      { device: true },
+      { ...connected(), verifyLaunch: async () => ({ verified: false, timedOut: true, waitedMs: 20000 }) },
+    );
+    const out = errs.join('\n');
+    expect(out).toMatch(/UNVERIFIED/);
+    expect(out).toMatch(/Local Network/);
+    expect(out).toMatch(/same Wi-Fi SSID/);
+    expect(out).toMatch(/socketfilterfw --getglobalstate/);
+    expect(out).toMatch(/ios\.lanHost/);
+    expect(out).toMatch(/carries the JS bundle baked in/);
   });
 
   test('a malformed ios.signingIdentitySha1 refuses the same way', async () => {

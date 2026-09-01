@@ -919,6 +919,10 @@ export function readMetroRecords(logsDir: string | undefined): NdjsonRecord[] {
   return readNdjson(logsDir, 'metro.ndjson');
 }
 
+export function readCollectorRecords(logsDir: string | undefined): NdjsonRecord[] {
+  return readNdjson(logsDir, 'device.ndjson');
+}
+
 function readNdjson(logsDir: string | undefined, name: string): NdjsonRecord[] {
   if (!logsDir) return [];
   try {
@@ -938,6 +942,9 @@ export function unverifiedLaunchLines({
   devClientUrl: url = null,
   mode = null,
   remote = false,
+  physical = false,
+  devClient = false,
+  lanOrigin = null,
   metroOrigin = null,
 }: {
   platform: string;
@@ -949,6 +956,9 @@ export function unverifiedLaunchLines({
   devClientUrl?: string | null;
   mode?: string | null;
   remote?: boolean;
+  physical?: boolean;
+  devClient?: boolean;
+  lanOrigin?: string | null;
   metroOrigin?: string | null;
   // Explicit return type: isolatedDeclarations requires one at every module
   // boundary.
@@ -969,6 +979,48 @@ export function unverifiedLaunchLines({
     push(
       'If an "Open in <app>?" alert or the expo-dev-launcher picker is showing on the remote device, confirm it with your device tool (`agent-device snapshot -i`, then `agent-device press`).',
     );
+    lines.push(`Then check \`stim logs --source metro\`${mode ? ` (${mode})` : ''} for a bundle request.`);
+    return lines;
+  }
+  if (platform === 'ios' && physical) {
+    const target = lanOrigin || origin;
+    push(
+      `Tap Allow on the phone's "would like to find and connect to devices on your local network" prompt if it is showing, ` +
+        'or turn the app on under Settings > Privacy & Security > Local Network. iOS gates every LAN connection behind ' +
+        'that permission, it cannot be granted from this machine, and until it is granted nothing the app sends reaches ' +
+        `${target}.`,
+    );
+    push(
+      'Check the phone is on the same network as this Mac -- the same Wi-Fi SSID, not cellular, not a VPN -- and that ' +
+        'the network does not isolate clients from each other.',
+    );
+    push(
+      'Check macOS is not blocking inbound connections: System Settings > Network > Firewall, or ' +
+        '`/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate`. The gate on this machine passes either way, ' +
+        'because macOS routes a host connection to its own address over loopback.',
+    );
+    push(
+      `If this Mac has several network interfaces, ${target} may not be the one the phone shares: set ios.lanHost in ` +
+        '.stim.json to the address it can reach.',
+    );
+    // The app takes ip.txt when it has no dev-client scheme, which is what the
+    // install path routes on -- an Expo project without expo-dev-client is a
+    // bare app here even though its dev server is expo-child.
+    if (devClient) {
+      push(picker);
+      if (url && udid) {
+        push(
+          `Retry the deep link: xcrun devicectl device process launch --device ${udid} --terminate-existing ` +
+            `--payload-url '${url}' ${bundleId}`,
+        );
+      }
+    } else {
+      lines.push(
+        'AND READ THIS: a Debug device build with no dev client carries the JS bundle baked in when the artifact was ' +
+          'built, so an unreachable Metro is silent. The app on screen is not broken -- it is running THAT bundle, ' +
+          "which on a cache hit is another workspace's JS, not this workspace's.",
+      );
+    }
     lines.push(`Then check \`stim logs --source metro\`${mode ? ` (${mode})` : ''} for a bundle request.`);
     return lines;
   }

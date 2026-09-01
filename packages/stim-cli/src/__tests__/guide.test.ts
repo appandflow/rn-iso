@@ -315,7 +315,7 @@ test('the guide states the physical-iPhone device-log losses, and states them as
   expect(cleanup).toMatch(/on\s+hardware the collector IS the launch/);
   expect(cleanup).toMatch(/proven and replaced by the same pid rules/);
   expect(cleanup).toMatch(/Unplugging the phone[\s\S]*collector_stopped/);
-  expect(cleanup).toContain('appandflow/stim#178');
+  expect(cleanup).not.toMatch(/not started yet/);
   expect(logs).toMatch(/lines that OPEN with a marker[\s\S]*anchored[\s\S]*app logging ABOUT a crash stays\s+info/);
   expect(logs).toMatch(/only on a line with no mirror\s+prefix/);
   expect(cleanup).toMatch(
@@ -324,9 +324,53 @@ test('the guide states the physical-iPhone device-log losses, and states them as
 
   const lifecycle = renderTopic('lifecycle');
   assert(lifecycle);
-  expect(lifecycle).toMatch(/THE DEVICE LOG COLLECTOR IS BUILT BUT NOT YET STARTED/);
-  expect(lifecycle).toMatch(/the collector IS the launch/);
+  expect(lifecycle).toMatch(/THE DEVICE LOG COLLECTOR IS THE LAUNCH/);
   expect(lifecycle).toContain('appandflow/stim#179');
+});
+
+test('the guide teaches the device install and launch that #178 phases 3 and 5 wired', () => {
+  const lifecycle = renderTopic('lifecycle');
+  const errors = renderTopic('errors');
+  assert(lifecycle);
+  assert(errors);
+
+  expect(lifecycle).not.toMatch(/IT IS NOT FINISHED/);
+  expect(lifecycle).not.toMatch(/REFUSES with\s+STIM_BAD_ARG/);
+  expect(lifecycle).toMatch(/devicectl device install app/);
+  expect(lifecycle).toMatch(/--payload-url/);
+  expect(lifecycle).toMatch(/STORE, THEN COPY, THEN\s+MUTATE/);
+  expect(lifecycle).toMatch(/never consults the compiled RCT_METRO_PORT/);
+  expect(lifecycle).toMatch(/NO INSTALL SKIP ON A PHONE/);
+  expect(lifecycle).toMatch(/device pid means nothing to the host/);
+
+  expect(errors).not.toMatch(/ONE EXCEPTION, and it is temporary/);
+  expect(errors).toMatch(/STIM_NO_LAN_ADDRESS[\s\S]*Deliberately NOT "set metro\.publicUrl"/);
+  expect(errors).toMatch(/STIM_LAN_METRO_UNREACHABLE[\s\S]*ios\.lanHost/);
+  expect(errors).toMatch(
+    /STIM_LAN_METRO_UNREACHABLE[\s\S]*routes a host connection to its own address over\s+loopback/,
+  );
+  expect(errors).toMatch(/FBSOpenApplicationErrorDomain 3/);
+  expect(errors).toMatch(/VPN & Device Management/);
+  expect(errors).toMatch(/devicectl device uninstall app[\s\S]*data went with it/);
+  expect(errors).toMatch(/THE DEVICE FALLBACKS[\s\S]*building fresh instead/);
+  expect(errors).toMatch(/FRESHLY BUILT app is a code/);
+  expect(errors).toMatch(/an uninstall clears it, including the one Stim's own\s+signer-conflict retry performs/);
+});
+
+// devicectl keeps the app attached to the process that launched it, so the
+// collector holding it is a fact about `stop`, not only about logs.
+test('the guide says a phone loses its running app when the collector ends', () => {
+  const cleanup = renderTopic('cleanup');
+  const lifecycle = renderTopic('lifecycle');
+  assert(cleanup);
+  assert(lifecycle);
+
+  expect(cleanup).toMatch(/THE APP'S LIFETIME IS BOUND TO THAT COLLECTOR/);
+  expect(cleanup).toMatch(/anything that\s+ends the collector ends the APP ON THE PHONE/);
+  expect(cleanup).toMatch(/leaves no RECORD of the\s+phone -- it never had one -- but it does close the app/);
+  expect(cleanup).toMatch(/Nothing is uninstalled/);
+  expect(lifecycle).toMatch(/THE APP RUNS FOR AS LONG AS THE COLLECTOR DOES/);
+  expect(lifecycle).toMatch(/stays INSTALLED/);
 });
 
 test('the errors topic documents every code the build commands and the iOS signing gate can emit', () => {

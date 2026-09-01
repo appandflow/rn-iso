@@ -7,6 +7,7 @@ import {
   EMBEDDED_PROFILE,
   findSigningIdentities,
   gateAppForDevice,
+  gateProfileForDevice,
   readEmbeddedProfile,
   resealBundle,
   sealAppForDevice,
@@ -20,6 +21,7 @@ import {
   parsePlist,
   parseProvisioningProfilePlist,
   parseSigningIdentities,
+  profileGate,
   provisioningProfileKind,
   signingGate,
   type ProvisioningProfile,
@@ -150,6 +152,21 @@ function gate(overrides: Partial<Parameters<typeof signingGate>[0]> = {}) {
 
 test('the gate admits a development profile that names the phone and an identity in the keychain', () => {
   expect(gate()).toEqual({ ok: true, identity: { sha1: JANE_SHA1, name: JANE } });
+});
+
+test('profileGate stops at the profile: an install that modifies nothing needs no identity', () => {
+  const admitted = profileGate({
+    profilePresent: true,
+    profile: profile(),
+    identities: [],
+    udid: PHONE,
+    now: BEFORE_EXPIRY,
+  });
+  expect(admitted).toMatchObject({ ok: true });
+  expect('profile' in admitted && admitted.profile.name).toBe(profile().name);
+  expect(
+    profileGate({ profilePresent: true, profile: profile(), identities: [], udid: STRANGER, now: BEFORE_EXPIRY }),
+  ).toMatchObject({ ok: false, code: 'STIM_PROFILE_MISMATCH' });
 });
 
 test('a bundle with no embedded.mobileprovision is STIM_NO_PROFILE, not a codesign attempt', () => {
@@ -509,6 +526,64 @@ describe('the re-seal primitive against the real codesign and security', { skip:
     expect(modes).toContain(sealed.mode);
     expect(sealed.identity).toEqual(AD_HOC);
   });
+
+  test('gateProfileForDevice decodes the real profile and never asks the keychain', () => {
+    const exec = getExecutor();
+    const key = join(dir, 'gate.key');
+    const pem = join(dir, 'gate.pem');
+    exec.runFile('openssl', [
+      'req',
+      '-x509',
+      '-newkey',
+      'rsa:2048',
+      '-keyout',
+      key,
+      '-out',
+      pem,
+      '-days',
+      '30',
+      '-nodes',
+      '-subj',
+      `/CN=${JANE}/OU=TEAMID5678/O=Fixture Inc/C=US`,
+    ]);
+    const plist = join(dir, 'gate-profile.plist');
+    writeFileSync(plist, fixture('development-profile.plist'));
+    exec.runFile('openssl', [
+      'smime',
+      '-sign',
+      '-nodetach',
+      '-binary',
+      '-in',
+      plist,
+      '-signer',
+      pem,
+      '-inkey',
+      key,
+      '-outform',
+      'DER',
+      '-out',
+      join(appPath, EMBEDDED_PROFILE),
+    ]);
+
+    const calls: string[][] = [];
+    const real = getExecutor();
+    setExecutor({
+      runFile(file: string, args: string[], opts?: Record<string, unknown>) {
+        calls.push([file, ...args]);
+        return real.runFile(file, args, opts as never);
+      },
+    });
+    let gated;
+    try {
+      gated = gateProfileForDevice({ appPath, udid: PHONE, now: BEFORE_EXPIRY });
+    } finally {
+      resetExecutor();
+    }
+    expect(gated).toMatchObject({ ok: true });
+    expect(calls.some((c) => c.includes('cms'))).toBe(true);
+    expect(calls.some((c) => c.includes('find-identity'))).toBe(false);
+    expect(sealIsValid()).toBe(false);
+  }, 60_000);
 
   test('findSigningIdentities parses whatever this machine really has in its keychain', () => {
     for (const identity of findSigningIdentities()) {

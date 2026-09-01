@@ -241,6 +241,18 @@ anything anywhere. The artifact never leaves the machine that built it.
 Developer Mode on, or delete a phone. It installs, launches, and observes. The
 UDID never enters the project registry.
 
+**Amendment, 2026-09-01 (#189).** "Observes" is weaker than what the
+implementation does, and the difference is worth stating: `devicectl device
+process launch --console` keeps the launched app attached to the launching
+process, and on hardware that process is the log collector (#186). So **the
+app's lifetime is bound to the observing collector** — `stop`, `gc --delete`,
+`worktree remove`, the next `ios --device` stopping its predecessor, a crash,
+the host sleeping, or the cable coming out all close the app on the phone.
+Measured: SIGTERM to the collector alone terminates the app; a detached launch
+without `--console` survives, which is the trade the log collector buys. Nothing
+is uninstalled and nothing is recorded, so "used, never owned" holds — but
+"Stim never touches a phone's state" would not.
+
 ## The build: one new slice
 
 `xcodebuildArgs()` in `engine/xcode.ts:265` already takes `sdk` and
@@ -967,6 +979,13 @@ Exact sentences, in the manner of #141.
 > install, launch, and read what logs they can, and nothing more. They record
 > no device, so `stop`, `gc`, and `teardown.ts` never see them. Keep it that
 > way: a physical serial or UDID must never enter the project registry.
+
+**Amendment, 2026-09-01 (#189).** "`stop` never sees them" is about the
+registry, not about the phone: on iOS the log read _is_ the launch, so ending
+the collector ends the running app. The delta above stays as written — nothing
+is recorded and nothing is deleted — but an implementer reading it as "`stop`
+leaves the phone untouched" would be wrong. `guide cleanup` and `guide
+lifecycle` state the consequence.
 
 ### Invariant 3 — five sentences, one of which is easy to miss
 

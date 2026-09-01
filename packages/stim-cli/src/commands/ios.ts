@@ -41,6 +41,7 @@ import {
   installIosApp,
   iosAppProcess,
   launchIosApp,
+  readCollectorRecords,
   unverifiedLaunchLines,
   verifyLaunch,
   verifyReleaseLaunch,
@@ -64,7 +65,17 @@ import {
   remoteIosDeps,
   resolveRemoteContext,
 } from '../engine/device-remote.ts';
-import { listIosDevices, resolveIosPhysicalDevice } from '../engine/ios-device.ts';
+import {
+  awaitIosDeviceLaunch,
+  installIosDeviceApp,
+  iosDeviceProcess,
+  listIosDevices,
+  resolveIosPhysicalDevice,
+  verifyIosDeviceReleaseLaunch,
+} from '../engine/ios-device.ts';
+import { gateProfileForDevice, sealAppForDevice } from '../engine/ios-signing.ts';
+import { chooseLanAddress, copyAppAside, ensureLanReachable, lanOriginUrlFor, writeIpTxt } from '../engine/ios-lan.ts';
+import { hostLanCandidates } from '../engine/lan-address.ts';
 import { detectProviders } from '../engine/metro-reach.ts';
 import { ownedSessionName } from '../engine/eas-simulator.ts';
 import { type Diagnostic, describeDiagnostic } from '../engine/errors-xcode.ts';
@@ -99,8 +110,11 @@ import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../paths
 import { detectBundleId, detectIsExpo, findProjectRoot, isPackageResolvable, projectShortcut } from '../project.ts';
 import {
   cacheProviderSettingError,
+  iosLanHostSetting,
   iosLanHostSettingError,
+  iosSigningIdentitySetting,
   iosSigningIdentitySettingError,
+  iosSigningIdentitySha1Setting,
   iosSigningIdentitySha1SettingError,
   publicUrlSetting,
   REMOTE_DEVICE_BACKENDS,
@@ -580,6 +594,8 @@ interface ReplaceCollectorArgs {
   udid: string;
   bundleId: string;
   appName?: string | null;
+  physical?: boolean;
+  payloadUrl?: string | null;
   spawn?: (cmd: string, args: readonly string[], opts: Record<string, unknown>) => ChildProcess;
   kill?: (pid: number, signal: NodeJS.Signals) => boolean;
   alive?: (pid: number) => boolean;
@@ -589,19 +605,27 @@ interface ReplaceCollectorArgs {
   note?: (line: string) => void;
 }
 
-export async function replaceCollector({
+// On hardware the collector holds the devicectl console of a running app, and
+// an upgrade install terminates that app -- which ends devicectl non-zero and
+// records a failure for a normal action. So a device run stops the previous
+// collector before it installs, rather than as part of starting its own.
+export async function stopPreviousCollector({
   root,
-  udid,
-  bundleId,
-  appName,
-  spawn = (cmd, args, opts) => getExecutor().spawn(cmd, args, opts),
   kill = (pid, signal) => process.kill(pid, signal),
   alive = isPidAlive,
   readState = readWorkspaceState,
   verify = verifyCollectorOwnership,
   waitMs = COLLECTOR_EXIT_WAIT_MS,
   note = (_line: string) => {},
-}: ReplaceCollectorArgs): Promise<{ killed: number | null; pid: number | null }> {
+}: {
+  root: string;
+  kill?: (pid: number, signal: NodeJS.Signals) => boolean;
+  alive?: (pid: number) => boolean;
+  readState?: typeof readWorkspaceState;
+  verify?: typeof verifyCollectorOwnership;
+  waitMs?: number;
+  note?: (line: string) => void;
+}): Promise<{ killed: number | null }> {
   const previous = (readState(root)?.collectors as Record<string, { pid?: number }> | undefined)?.[PLATFORM] || null;
   const previousPid = Number(previous?.pid) || null;
   let killed: number | null = null;
@@ -633,9 +657,30 @@ export async function replaceCollector({
       );
     }
   }
+  return { killed };
+}
+
+export async function replaceCollector({
+  root,
+  udid,
+  bundleId,
+  appName,
+  physical = false,
+  payloadUrl = null,
+  spawn = (cmd, args, opts) => getExecutor().spawn(cmd, args, opts),
+  kill = (pid, signal) => process.kill(pid, signal),
+  alive = isPidAlive,
+  readState = readWorkspaceState,
+  verify = verifyCollectorOwnership,
+  waitMs = COLLECTOR_EXIT_WAIT_MS,
+  note = (_line: string) => {},
+}: ReplaceCollectorArgs): Promise<{ killed: number | null; pid: number | null }> {
+  const { killed } = await stopPreviousCollector({ root, kill, alive, readState, verify, waitMs, note });
 
   const args = [collectorEntry(), '--platform', PLATFORM, '--root', root, '--udid', udid, '--bundle', bundleId];
   if (appName) args.push('--app-name', appName);
+  if (physical) args.push('--physical');
+  if (payloadUrl) args.push('--payload-url', payloadUrl);
 
   let stdio: 'ignore' | (number | 'ignore')[] = 'ignore';
   try {
@@ -707,6 +752,14 @@ interface IosDeps {
   runPodInstall: typeof runPodInstall;
   buildIos: typeof buildIos;
   listIosDevices: typeof listIosDevices;
+  hostLanCandidates: typeof hostLanCandidates;
+  ensureLanReachable: typeof ensureLanReachable;
+  gateProfileForDevice: typeof gateProfileForDevice;
+  sealAppForDevice: typeof sealAppForDevice;
+  installIosDeviceApp: typeof installIosDeviceApp;
+  awaitIosDeviceLaunch: typeof awaitIosDeviceLaunch;
+  iosDeviceProcess: typeof iosDeviceProcess;
+  verifyIosDeviceReleaseLaunch: typeof verifyIosDeviceReleaseLaunch;
   readBundleId: typeof readBundleId;
   swapJsBundle: typeof swapJsBundle;
   installIosApp: typeof installIosApp;
@@ -715,6 +768,7 @@ interface IosDeps {
   verifyReleaseLaunch: typeof verifyReleaseLaunch;
   ensureWorkspaceStorage: typeof ensureWorkspaceStorageSafely;
   replaceCollector: typeof replaceCollector;
+  stopPreviousCollector: typeof stopPreviousCollector;
   writeWorkspaceState: typeof writeWorkspaceState;
   createWriter: typeof createNdjsonWriter;
   now: () => number;
@@ -767,6 +821,14 @@ const DEFAULT_DEPS: IosDeps = {
   runPodInstall,
   buildIos,
   listIosDevices,
+  hostLanCandidates,
+  ensureLanReachable,
+  gateProfileForDevice,
+  sealAppForDevice,
+  installIosDeviceApp,
+  awaitIosDeviceLaunch,
+  iosDeviceProcess,
+  verifyIosDeviceReleaseLaunch,
   readBundleId,
   swapJsBundle,
   installIosApp,
@@ -775,6 +837,7 @@ const DEFAULT_DEPS: IosDeps = {
   verifyReleaseLaunch,
   ensureWorkspaceStorage: ensureWorkspaceStorageSafely,
   replaceCollector,
+  stopPreviousCollector,
   writeWorkspaceState,
   createWriter: createNdjsonWriter,
   now: () => Date.now(),
@@ -803,9 +866,9 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     )
     .option(
       '--device [udid]',
-      "Build the iphoneos slice for a connected iPhone instead of this workspace's owned simulator. With no UDID, " +
-        'the one connected device is used. Stim never creates, boots, or deletes a physical device. ' +
-        'Installing and launching on hardware are not wired yet (appandflow/stim#178), so the run stops after the build.',
+      "Build the iphoneos slice for a connected iPhone, install it, and launch it, instead of using this workspace's " +
+        'owned simulator. With no UDID, the one connected device is used. In Debug the app is wired to this ' +
+        "workspace's Metro over the LAN. Stim never creates, boots, or deletes a physical device.",
     )
     .option(
       '--remote <backend>',
@@ -835,6 +898,10 @@ interface VerifyIosRunArgs {
   bundleId: string;
   udid: string;
   scheme?: string;
+  physical: boolean;
+  appName: string | null;
+  lanAddress: string | null;
+  lanOrigin: string | null;
   remoteDevice: boolean;
   metroOrigin: string | null;
 }
@@ -854,11 +921,22 @@ async function verifyIosRun({
   bundleId,
   udid,
   scheme,
+  physical,
+  appName,
+  lanAddress,
+  lanOrigin,
   remoteDevice,
   metroOrigin,
 }: VerifyIosRunArgs): Promise<boolean | string> {
+  const deviceProcess = (): boolean | null => {
+    const pid = d.iosDeviceProcess({ udid, appName: appName ?? bundleId });
+    return pid === undefined ? null : pid !== null;
+  };
+
   if (release) {
-    const processCheck = await d.verifyReleaseLaunch({ pid: launched?.pid ?? null });
+    const processCheck = physical
+      ? await d.verifyIosDeviceReleaseLaunch({ udid, appName: appName ?? bundleId })
+      : await d.verifyReleaseLaunch({ pid: launched?.pid ?? null });
     if (processCheck?.verified) {
       phase(
         'verify',
@@ -871,7 +949,9 @@ async function verifyIosRun({
       chalk.yellow(
         processCheck?.reason === 'exited'
           ? `UNVERIFIED: the app process exited within ${formatDuration(processCheck.waitedMs ?? 0)} of launch`
-          : 'UNVERIFIED: simctl launch reported no process id to check',
+          : physical
+            ? `UNVERIFIED: devicectl could not read ${udid}'s process list`
+            : 'UNVERIFIED: simctl launch reported no process id to check',
       ),
     );
     note(
@@ -894,11 +974,13 @@ async function verifyIosRun({
         mode: isExpo ? MODE_EXPO : MODE_BARE,
         processAlive: remoteDevice
           ? null
-          : () => {
-              if (launched?.pid) return d.isPidAlive(launched.pid);
-              const pid = iosAppProcess(udid, bundleId);
-              return pid === undefined ? null : pid !== null;
-            },
+          : physical
+            ? deviceProcess
+            : () => {
+                if (launched?.pid) return d.isPidAlive(launched.pid);
+                const pid = iosAppProcess(udid, bundleId);
+                return pid === undefined ? null : pid !== null;
+              },
       })
     : { verified: false, skipped: true };
   if (verification?.fatal) {
@@ -946,9 +1028,12 @@ async function verifyIosRun({
     waitedMs: verification?.waitedMs,
     bundleId,
     udid,
-    devClientUrl: scheme ? devClientUrl(scheme, metroPort ?? DEFAULT_METRO_PORT) : null,
+    devClientUrl: scheme ? devClientUrl(scheme, metroPort ?? DEFAULT_METRO_PORT, lanAddress ?? undefined) : null,
     mode: isExpo ? MODE_EXPO : MODE_BARE,
     remote: remoteDevice,
+    physical,
+    devClient: Boolean(scheme),
+    lanOrigin,
     metroOrigin,
   }))
     note(chalk.yellow(phaseLine('', line)));
@@ -1131,6 +1216,8 @@ interface FinishIosRunArgs {
   device: DeviceLike;
   udid: string;
   physical: boolean;
+  lanAddress: string | null;
+  lanOriginUrl: string | null;
   remoteDevice: ReturnType<IosDeps['remoteIosDeps']> | null;
   bootPromise: Promise<IosBootLike | null | undefined>;
   bootDuration: () => string;
@@ -1172,6 +1259,8 @@ async function finishIosRun({
   device,
   udid,
   physical,
+  lanAddress,
+  lanOriginUrl,
   remoteDevice,
   bootPromise,
   bootDuration,
@@ -1224,60 +1313,122 @@ async function finishIosRun({
   }
   phase('device', `${deviceLabel(device, udid)} ${physical ? 'connected' : `booted ${bootDuration()}`}`);
 
-  if (physical) {
-    if (swapDir) {
-      try {
-        rmSync(swapDir, { recursive: true, force: true });
-      } catch {}
-    }
-    return fail({
-      code: 'STIM_BAD_ARG',
-      message:
-        `${cacheHit ? 'Restored' : 'Built'} the ${configuration || 'Debug'} iphoneos slice for ` +
-        `${deviceLabel(device, udid)} ${cacheHit ? 'from the cache under' : 'and cached it under'} ${storeKey}, ` +
-        'but installing and launching on a phone are not wired yet.',
-      remedy:
-        'Device install and launch land with appandflow/stim#178. Run `stim ios` without --device to install on this workspace owned simulator.',
-    });
-  }
-
   const scheme = release ? undefined : d.devClientScheme(root, appPath);
-  const installTimer = stepTimer(d.now);
-  const installed = d.installIosApp({ udid, appPath: appPath!, bundleId, devClientScheme: scheme });
-  if (installed?.failed) {
-    return fail({
-      code: installed.code || 'STIM_INSTALL_FAILED',
-      message: installed.reason,
-      remedy: 'Check that the simulator is booted and that the app was built for the simulator SDK.',
-      build: { ...buildFailure, appPath, bundleId },
-    });
-  }
-  const installSkipped = Boolean(installed?.skipped);
-  phase(
-    'install',
-    installSkipped
-      ? `skipped; ${deviceLabel(device, udid)} already holds this app ${installTimer()}`
-      : `-> ${deviceLabel(device, udid)} ${installTimer()}`,
-  );
-
-  if (swapDir) {
+  const appName = appNameFromPath(appPath);
+  const dropSwapDir = () => {
+    if (!swapDir) return;
     try {
       rmSync(swapDir, { recursive: true, force: true });
     } catch {}
-  }
+  };
+  let installSkipped = false;
+  let launched: ReturnType<IosDeps['launchIosApp']> | null = null;
+  let launchedAt = d.now();
 
-  const launchTimer = stepTimer(d.now);
-  const launchedAt = d.now();
-  const launched = d.launchIosApp({ udid, bundleId: bundleId!, metroPort, devClientScheme: scheme });
-  if (launched?.failed) {
-    return fail({
-      code: launched.code || 'STIM_LAUNCH_FAILED',
-      message: launched.reason,
-      remedy: `Run \`xcrun simctl launch --console ${udid} ${bundleId}\` to see what the app reports, and check ${logFile}.`,
-      build: { ...buildFailure, appPath, bundleId },
+  if (physical) {
+    await d.stopPreviousCollector({ root, note });
+    const installTimer = stepTimer(d.now);
+    const installed = d.installIosDeviceApp({ udid, appPath: appPath!, bundleId });
+    if (installed?.failed) {
+      dropSwapDir();
+      return fail({
+        code: installed.code || 'STIM_INSTALL_FAILED',
+        message: installed.reason ?? `devicectl could not install ${appPath} on ${udid}.`,
+        remedy: installed.remedy ?? null,
+        build: { ...buildFailure, appPath, bundleId },
+      });
+    }
+    phase('install', `-> ${deviceLabel(device, udid)} ${installTimer()}`);
+    if (installed?.note) {
+      note(chalk.yellow(phaseLine('install', installed.note)));
+      logWriter().write({ src: 'build', level: 'warn', event: 'install_uninstalled_first', msg: installed.note });
+    }
+    dropSwapDir();
+
+    const payloadUrl = scheme && metroPort !== null && lanAddress ? devClientUrl(scheme, metroPort, lanAddress) : null;
+    const launchTimer = stepTimer(d.now);
+    launchedAt = d.now();
+    const collector = await d.replaceCollector({
+      root,
+      udid,
+      bundleId: bundleId!,
+      appName,
+      physical: true,
+      payloadUrl,
+      note,
     });
+    if (!collector?.pid) {
+      return fail({
+        code: 'STIM_LAUNCH_FAILED',
+        message: `The device log collector, which is what launches ${bundleId} on a phone, could not be started.`,
+        remedy: `Check ${logFile} and the workspace collector log, then run the command again.`,
+        build: { ...buildFailure, appPath, bundleId },
+      });
+    }
+    const started = await d.awaitIosDeviceLaunch({
+      udid,
+      bundleId: bundleId!,
+      appName: appName ?? bundleId!,
+      collectorPid: collector.pid,
+      readRecords: () => readCollectorRecords(logsDir).filter((entry) => Number(entry.ts) >= launchedAt),
+    });
+    if (started.failed || !started.pid) {
+      return fail({
+        code: 'STIM_LAUNCH_FAILED',
+        message: started.reason ?? `${bundleId} did not start on ${udid}.`,
+        remedy: started.remedy ?? null,
+        lines: started.lines ?? [],
+        logPath: logsDir,
+        build: { ...buildFailure, appPath, bundleId },
+      });
+    }
+    launched = {
+      ok: true,
+      mode: payloadUrl ? 'payload-url' : 'launch',
+      pid: started.pid,
+      ...(payloadUrl ? { url: payloadUrl } : {}),
+      ...(lanOriginUrl ? { jsLocation: lanOriginUrl } : {}),
+    };
+    phase(
+      'launch',
+      `${bundleId!} pid ${started.pid} on the phone` +
+        (payloadUrl ? ', opened on the dev-client URL' : '') +
+        ` ${launchTimer()}`,
+    );
+  } else {
+    const installTimer = stepTimer(d.now);
+    const installed = d.installIosApp({ udid, appPath: appPath!, bundleId, devClientScheme: scheme });
+    if (installed?.failed) {
+      return fail({
+        code: installed.code || 'STIM_INSTALL_FAILED',
+        message: installed.reason,
+        remedy: 'Check that the simulator is booted and that the app was built for the simulator SDK.',
+        build: { ...buildFailure, appPath, bundleId },
+      });
+    }
+    installSkipped = Boolean(installed?.skipped);
+    phase(
+      'install',
+      installSkipped
+        ? `skipped; ${deviceLabel(device, udid)} already holds this app ${installTimer()}`
+        : `-> ${deviceLabel(device, udid)} ${installTimer()}`,
+    );
+
+    dropSwapDir();
+
+    const launchTimer = stepTimer(d.now);
+    launchedAt = d.now();
+    launched = d.launchIosApp({ udid, bundleId: bundleId!, metroPort, devClientScheme: scheme });
+    if (launched?.failed) {
+      return fail({
+        code: launched.code || 'STIM_LAUNCH_FAILED',
+        message: launched.reason,
+        remedy: `Run \`xcrun simctl launch --console ${udid} ${bundleId}\` to see what the app reports, and check ${logFile}.`,
+        build: { ...buildFailure, appPath, bundleId },
+      });
+    }
+    phase('launch', `${bundleId!} ${launchTimer()}`);
   }
-  phase('launch', `${bundleId!} ${launchTimer()}`);
 
   logWriter().write({
     src: 'build',
@@ -1286,11 +1437,11 @@ async function finishIosRun({
     event: 'launch',
     msg: release
       ? `launched ${bundleId} on ${udid} (${configuration}, embedded JS bundle, no Metro)`
-      : `launched ${bundleId} on ${udid} against Metro port ${metroPort}` +
-        (launched?.mode === 'openurl' ? ' (expo-dev-client)' : ''),
+      : `launched ${bundleId} on ${udid} against Metro ${lanOriginUrl ?? `port ${metroPort}`}` +
+        (launched?.mode === 'openurl' || launched?.mode === 'payload-url' ? ' (expo-dev-client)' : ''),
   });
 
-  await d.replaceCollector({ root, udid, bundleId: bundleId!, appName: appNameFromPath(appPath), note });
+  if (!physical) await d.replaceCollector({ root, udid, bundleId: bundleId!, appName, note });
 
   const launchState = await verifyIosRun({
     d,
@@ -1307,6 +1458,10 @@ async function finishIosRun({
     bundleId: bundleId!,
     udid,
     scheme,
+    physical,
+    appName,
+    lanAddress,
+    lanOrigin: lanOriginUrl,
     remoteDevice: Boolean(remoteDevice),
     metroOrigin: typeof launched?.jsLocation === 'string' ? launched.jsLocation : null,
   });
@@ -1546,6 +1701,8 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   }
 
   let metroPort = proj?.metroPort ?? null;
+  let lanAddress: string | null = null;
+  let lanOriginUrl: string | null = null;
   if (!(await resolveMetroPort())) return null;
 
   let device: Awaited<ReturnType<typeof ensureOwnedDevice>>;
@@ -1645,6 +1802,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
       metroPort = DEFAULT_METRO_PORT;
       note(chalk.yellow(`No Metro port is reserved for this workspace; wiring the app to ${metroPort}.`));
     }
+    if (physical && metroPort !== null && !(await resolveLanOrigin())) return false;
     if (remoteDevice && metroPort !== null) {
       const reachable = await d.ensureMetroReachable({
         ctx: remoteDevice.ctx,
@@ -1663,6 +1821,55 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
         return false;
       }
     }
+    return true;
+  }
+
+  async function resolveLanOrigin(): Promise<boolean> {
+    const port = metroPort as number;
+    const pinned = iosLanHostSetting(settings);
+    const candidates = d.hostLanCandidates();
+    const chosen = chooseLanAddress({ pinned, candidates });
+    if (!chosen) {
+      fail({
+        code: 'STIM_NO_LAN_ADDRESS',
+        message:
+          'A Debug run on a phone needs an address the phone can reach, and this Mac has no non-internal IPv4 interface.',
+        remedy:
+          'The phone reaches Metro over the network you share, because USB carries no reverse forward. ' +
+          'Join a Wi-Fi or Ethernet network, or connect this Mac by cable, then run the command again.',
+      });
+      return false;
+    }
+    lanAddress = chosen.address;
+    lanOriginUrl = lanOriginUrlFor(chosen.address, port);
+    const source = chosen.pinned
+      ? 'ios.lanHost'
+      : `${chosen.interfaceName ?? 'interface'}${chosen.candidates > 1 ? ` of ${chosen.candidates} candidates` : ''}`;
+    phase('lan', `${lanOriginUrl} (${source})`);
+    if (publicUrlSetting(settings) || tunnelModeSetting(settings)) {
+      note(
+        chalk.dim(
+          phaseLine(
+            'lan',
+            'metro.publicUrl and metro.tunnel are ignored on --device: neither channel to a phone carries a URL, ' +
+              'only a host and a port. They still apply to --remote.',
+          ),
+        ),
+      );
+    }
+    if (!metroCheck) return true;
+    const reachable = await d.ensureLanReachable({
+      origin: lanOriginUrl,
+      metroPort: port,
+      root,
+      isExpo,
+      logsDir,
+    });
+    if ('failed' in reachable) {
+      fail({ code: 'STIM_LAN_METRO_UNREACHABLE', message: reachable.failed, remedy: reachable.remedy });
+      return false;
+    }
+    phase('lan', `gated: ${lanOriginUrl} answered as this workspace's Metro`);
     return true;
   }
 
@@ -1897,16 +2104,84 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     return true;
   }
 
-  const installableCachedApp = async (cachedPath: string): Promise<string | null> => {
-    if (!release) return cachedPath;
-    if (physical) {
-      phase(
-        'js swap',
-        `skipped for --device: the device swap re-seals with the artifact's own identity, which is not built yet, ` +
-          'so this run stops before installing rather than injecting JS under an ad-hoc signature',
-      );
-      return cachedPath;
+  const prepareDeviceApp = async (path: string, { fresh }: { fresh: boolean }): Promise<string | null> => {
+    const refuse = (code: string, reason: string, remedy: string): null => {
+      if (fresh) {
+        fail({ code, message: reason, remedy, build: { ...buildFailure, appPath: path } });
+        return null;
+      }
+      note(chalk.yellow(phaseLine('device app', `${reason} -- building fresh instead`)));
+      note(chalk.dim(phaseLine('', remedy)));
+      swapFellBack = true;
+      return null;
+    };
+    const gateProfile = (): string | null => {
+      const gate = d.gateProfileForDevice({ appPath: path, udid, configuration });
+      return gate.ok ? path : refuse(gate.code, gate.reason, gate.remedy);
+    };
+
+    if (release) {
+      if (!fresh) {
+        note(
+          chalk.yellow(
+            phaseLine(
+              'device app',
+              `a cached ${configuration} device app carries its builder's JS, and the device JS swap lands with ` +
+                "phase 6 of appandflow/stim#178 -- building fresh instead, which bakes in this workspace's JS",
+            ),
+          ),
+        );
+        swapFellBack = true;
+        return null;
+      }
+      return gateProfile();
     }
+
+    const scheme = d.devClientScheme(root, path);
+    if (scheme) return gateProfile();
+
+    let copy: { tmpDir: string; appPath: string };
+    try {
+      copy = copyAppAside(path);
+    } catch (e) {
+      return refuse(
+        'STIM_INSTALL_FAILED',
+        `Could not copy ${path} aside to write its ip.txt: ${(e as Error)?.message || e}`,
+        'Free space in the temporary directory and run the command again.',
+      );
+    }
+    writeIpTxt(copy.appPath, lanAddress as string, metroPort as number);
+    const sealed = d.sealAppForDevice({
+      appPath: copy.appPath,
+      udid,
+      configuration,
+      pinnedName: iosSigningIdentitySetting(settings),
+      pinnedSha1: iosSigningIdentitySha1Setting(settings),
+    });
+    if (!sealed.ok) {
+      try {
+        rmSync(copy.tmpDir, { recursive: true, force: true });
+      } catch {}
+      for (const line of sealed.lastLines ?? []) note(chalk.dim(phaseLine('', line)));
+      return refuse(sealed.code, sealed.reason, sealed.remedy);
+    }
+    if (swapDir) {
+      try {
+        rmSync(swapDir, { recursive: true, force: true });
+      } catch {}
+    }
+    swapDir = copy.tmpDir;
+    phase(
+      'ip.txt',
+      `${lanAddress}:${metroPort} written into the install copy and re-sealed with "${sealed.identity.name}"` +
+        `${sealed.mode === 'preserve-metadata' ? '' : ` (${sealed.mode})`}`,
+    );
+    return copy.appPath;
+  };
+
+  const installableCachedApp = async (cachedPath: string): Promise<string | null> => {
+    if (physical) return prepareDeviceApp(cachedPath, { fresh: false });
+    if (!release) return cachedPath;
     phase('js swap', `regenerating this workspace's JS for the cached ${configuration} app`);
     const swap = await d.swapJsBundle({ root, isExpo, cachedAppPath: cachedPath, logWriter: logWriter() });
     if (swap?.ok && swap.appPath) {
@@ -2085,6 +2360,12 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
             note(chalk.yellow(`Could not store the build in the shared cache: ${(e as Error)?.message || e}`));
           }
 
+          if (physical) {
+            const prepared = await prepareDeviceApp(appPath!, { fresh: true });
+            if (!prepared) return false;
+            appPath = prepared;
+          }
+
           if (remote && !physical) {
             uploadPending = d.uploadRemote({
               logWriter: logWriter(),
@@ -2125,6 +2406,8 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     device,
     udid,
     physical,
+    lanAddress,
+    lanOriginUrl,
     remoteDevice,
     bootPromise,
     bootDuration: () => bootDuration,

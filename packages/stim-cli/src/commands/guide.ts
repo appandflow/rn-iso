@@ -27,7 +27,10 @@ other line goes to stderr, so it is always safe to pipe.
   stim ios --json
 
   platform        "ios"
-  udid            the owned simulator this workspace installed onto
+  udid            the owned simulator this workspace installed onto, or the
+                  phone's UDID on \`--device\` -- reported, never recorded: a
+                  physical device gets no config entry, so \`stop\` and \`gc\`
+                  never see it
   deviceName      its name, or null
   fingerprint     the @expo/fingerprint hash of the native inputs, AS STORED.
                   A run that had to \`expo prebuild\` or \`pod install\`
@@ -80,7 +83,9 @@ other line goes to stderr, so it is always safe to pipe.
   bundleId        the iOS bundle id that was launched
   installSkipped  true when the artifact was ALREADY on the device byte for
                   byte, so nothing was installed and the run went straight to
-                  launch (see \`guide lifecycle\`). false means an install ran
+                  launch (see \`guide lifecycle\`). false means an install ran.
+                  Always false on \`--device\`: proving a phone already holds
+                  the bundle would cost more than installing it
   launched        true, "bundling", or "unverified". THE THREE ARE DIFFERENT
                   FACTS and only the last one is a problem.
                     true         Metro finished the bundle, then the app stayed
@@ -607,6 +612,27 @@ FALLBACK NOTES THAT ARE NOT CODES (release cache hits)
   bug than the one it fixes. A debug run fails with STIM_INSTALL_FAILED and
   hands you the uninstall to run yourself.
 
+  ON A PHONE the same uninstall costs one thing more: iOS drops the Settings >
+  General > VPN & Device Management trust entry when the last app from that
+  developer goes, and it clears the app's Local Network permission with it. The
+  note says so, because the reinstall succeeds and then the LAUNCH is refused
+  until someone taps Trust again. The retry is one uninstall and one install --
+  it is not a way around a tap that has no API.
+
+  THE DEVICE FALLBACKS are the fourth, and both print a \`device app\` note and
+  build fresh rather than failing:
+
+    device app  a cached Release device app carries its builder's JS, and the
+                device JS swap lands with phase 6 of appandflow/stim#178 --
+                building fresh instead, which bakes in this workspace's JS
+
+  and a signing-gate refusal on a CACHED artifact -- an expired or foreign
+  profile, a phone the profile does not name, an identity this keychain does not
+  hold -- which prints the gate's own reason with \`-- building fresh instead\`.
+  The same refusal on a FRESHLY BUILT app is a code (STIM_NO_PROFILE,
+  STIM_PROFILE_MISMATCH, STIM_NO_SIGNING_IDENTITY), not a note: building again
+  would produce the same app and refuse again.
+
 STIM_BUILD_WAIT_TIMEOUT
   This run was waiting for ANOTHER workspace's build of the same fingerprint
   (see \`guide lifecycle\`), and after ~90 minutes that process was still alive
@@ -617,8 +643,19 @@ STIM_BUILD_WAIT_TIMEOUT
   building, remove that directory and run the command again.
 
 STIM_INSTALL_FAILED
-  The artifact built or came from cache, but \`simctl install\` / \`adb install\`
-  refused it. A signature or architecture mismatch, or a full device.
+  The artifact built or came from cache, but \`simctl install\` / \`adb install\` /
+  \`devicectl device install app\` refused it. A signature or architecture
+  mismatch, or a full device.
+  On a PHONE (\`ios --device\`) the message carries devicectl's own text and the
+  remedy names the cause it recognises: the phone is locked, the host is not
+  trusted, Developer Mode is off, storage is full, or the app already on the
+  phone was signed by a different team. Only that last one is retried -- one
+  \`devicectl device uninstall app\`, one reinstall, and a warning that the
+  app's data went with it -- along with the phone's developer trust and its
+  Local Network permission, which iOS clears on an uninstall, so the launch
+  after it may need the trust tap again. This is gated on \`--device\` rather
+  than on the configuration, because every device run is signed, Debug
+  included.
   On Android a signature or downgrade conflict names the package that is really
   installed -- the built APK's applicationId, which on a flavored project is
   the flavor's id and not the gradle namespace -- and gives you the
@@ -628,6 +665,16 @@ STIM_INSTALL_FAILED
 STIM_LAUNCH_FAILED
   Installed, but the app would not start. On Android this usually means no
   launchable activity resolved.
+  On a PHONE it means the app never appeared in the device's own process list
+  after \`devicectl device process launch\`, and the devicectl lines that
+  explain it are quoted under the message. The refusal a first launch usually
+  hits is the DEVELOPER TRUST one -- SpringBoard reports
+  FBSOpenApplicationErrorDomain 3 with the reason Security -- and its remedy is
+  the only one a human has to perform on the phone: Settings > General >
+  VPN & Device Management, tap the developer profile under DEVELOPER APP, tap
+  Trust, then run the command again. It is a per-developer-certificate tap, not
+  a per-build one -- but an uninstall clears it, including the one Stim's own
+  signer-conflict retry performs.
 
 STIM_NO_SCHEME
   No buildable Xcode scheme was found in ios/. A scheme has to be shared to be
@@ -679,6 +726,33 @@ STIM_CODESIGN_FAILED
   and confirm exactly one identity matches the name. The cache entry itself is
   never modified -- the failure is on a temporary copy, and the run builds
   fresh.
+
+--- iOS DEVICE DEBUG REACHABILITY CODES (\`ios --device\` in Debug) ---
+
+A phone does not share the host's loopback and USB carries no reverse forward,
+so a Debug run on one is wired to a LAN origin instead of localhost. Both codes
+fire BEFORE the build, because a refusal that costs a build is a bad refusal.
+
+STIM_NO_LAN_ADDRESS
+  This Mac reports no non-internal IPv4 interface, so there is no address to
+  give the phone: it is offline, or on nothing but utun/awdl/bridge. Join a
+  Wi-Fi or Ethernet network, or connect this Mac by cable, and run again.
+  Deliberately NOT "set metro.publicUrl": neither channel to a phone carries a
+  URL. The dev-client deep link composes http://<host>:<port> itself, and
+  ip.txt is read by RCTBundleURLProvider, which prefixes the scheme. A tunnel
+  cannot be expressed to a phone, so --device ignores metro.publicUrl,
+  metro.tunnel and metro.ngrokUrl and says so when one is set.
+
+STIM_LAN_METRO_UNREACHABLE
+  The chosen LAN origin did not answer as THIS workspace's Metro: no answer, a
+  5xx, or a dev server that is not this one -- the message says which.
+  \`stim start\` prints the port it reserved. On a Mac with several interfaces
+  the first en* is not necessarily the one the phone shares: set ios.lanHost to
+  the address it can reach (see \`guide settings\`).
+  What this gate CANNOT prove is that the phone can reach the origin: macOS
+  routes a host connection to its own address over loopback, so the gate passes
+  through a firewall that will block the phone. That evidence only ever arrives
+  from the phone's own bundle request, which is what \`launched\` reports.
 
 STIM_NO_DEVICE
   With \`--device\`, no physical device answered the selection: none connected,
@@ -835,12 +909,6 @@ STIM_BAD_ARG / STIM_NO_PROJECT
   no variant selected (the refusal names the debug variants).
   These errors are caught before the port is reserved and before anything is
   spawned, so nothing was started.
-  ONE EXCEPTION, and it is temporary: \`ios --device\` also refuses with this
-  code AFTER a successful build. It selects a phone and builds the iphoneos
-  slice for it, but installing onto hardware is not implemented yet, so the
-  run stops there and the message names the cache key the artifact was stored
-  under -- the build is kept and the next run reuses it. This exception goes
-  away when device install lands; see appandflow/stim#178.
 
 "@stim-cli/metro is not installed ... so bundler and client logs will not be
 captured"  (in metro.ndjson, bare RN)
@@ -1306,31 +1374,70 @@ THE OPTION SURFACE, IN FULL
   simulator slice on a phone or publish an iphoneos app under a key simulator
   builds resolve.
 
-  IT IS NOT FINISHED. Today it builds the \`iphoneos\` slice for the selected
-  phone -- \`-sdk iphoneos\`, the project's own signing settings, no signing
-  flags on the argv -- stores that artifact, and then REFUSES with
-  STIM_BAD_ARG, because installing and launching on hardware are not wired yet
-  (appandflow/stim#178). A release cache hit does not run the JS swap either:
-  the swap ends in a signature, and the device re-seal that would make it
-  installable is not wired in yet. Use \`--device\` to prove a project signs
-  for a device and to warm the device cache; use \`stim ios\` with no --device
-  for a run that ends with an app on screen.
+  THE BUILD is the \`iphoneos\` slice for the selected phone -- \`-sdk
+  iphoneos\`, the project's own signing settings, no signing flags on the argv.
+  It is installed with \`devicectl device install app\` and launched with
+  \`devicectl device process launch\`. Every device install is SIGNED, Debug
+  included, so the signing gate runs before it: the app's own
+  embedded.mobileprovision must be unexpired and must name this phone, and when
+  Stim modifies the bundle the identity that profile names must be in this
+  machine's keychain (see \`guide errors\`). A gate refusal on a CACHED app
+  falls back to a full build; on a freshly built one it exits on its own code,
+  because building again would produce the same app.
 
-  THE DEVICE LOG COLLECTOR IS BUILT BUT NOT YET STARTED, for the same reason:
-  on hardware the collector IS the launch. \`devicectl\` connects an app's
+  DEBUG REACHES METRO OVER THE LAN, because a phone shares no loopback with
+  the host and USB carries no reverse forward. Stim picks a non-internal IPv4
+  address (en0 first, RN's own order from react-native-xcode.sh), gates it as
+  this workspace's Metro, and then wires the app to it: an expo-dev-client app
+  through the deep link, passed to devicectl as \`--payload-url\`, and a bare
+  app by writing \`<addr>:<port>\` into the app bundle's ip.txt --
+  RCTBundleURLProvider's own mechanism, which honours a colon-bearing value
+  verbatim and never consults the compiled RCT_METRO_PORT. Stim never sets
+  that define: it would put the reserved port into a compiled input and fork
+  the device cache per workspace.
+  ip.txt is a sealed resource, so Stim writes it on a COPY of the artifact and
+  re-seals that copy with \`codesign\`. THE ORDER IS STORE, THEN COPY, THEN
+  MUTATE: the cache entry stays the pristine, shareable artifact, and the
+  per-run address lives only in the copy that is installed and then deleted.
+
+  A RELEASE device run builds fresh every time for now. A cached Release app
+  carries its BUILDER's JS, and the device JS swap (which has to re-seal what
+  it injects) lands with phase 6 of appandflow/stim#178, so the cache hit is
+  refused rather than installed with someone else's JavaScript.
+
+  THE DEVICE LOG COLLECTOR IS THE LAUNCH. \`devicectl\` connects an app's
   streams only when it is the process that starts the app, so the collector
-  runs \`devicectl device process launch --console\` itself rather than
-  attaching after the fact the way the simulator collector does. It is spawned
-  with the launch that #178 has still to wire. Once running it is the same
-  process as every other collector -- one per platform per workspace, titled
-  with its --root, killed and replaced on the next \`ios\` run whose pid still
-  proves it is this workspace's, and reaped by \`stop\`. Unplugging the phone
-  ends devicectl, which ends the collector: it removes its own registration
-  and exits, leaving nothing for \`gc\` to find, because a phone is never
-  recorded as a device. Whether it closes with collector_stopped or
+  runs \`devicectl device process launch --console --terminate-existing\`
+  itself rather than attaching after the fact the way the simulator collector
+  does. The run then reads the app's pid from the phone's own process list
+  (\`devicectl device info processes\`), because \`--console\` blocks until
+  the app exits and its \`--json-output\` is written only then. That device pid
+  is also what proves a RELEASE launch: a device pid means nothing to the host,
+  so nothing on the host is ever signalled with it. Otherwise the collector is
+  the same process as every other collector -- one per platform per workspace,
+  titled with its --root, killed and replaced on the next \`ios\` run whose pid
+  still proves it is this workspace's, and reaped by \`stop\`. One difference in
+  the ordering: a device run stops the PREVIOUS collector before it installs,
+  not while starting its own, because an upgrade install terminates the running
+  app -- which would end that collector's devicectl non-zero and record a
+  failure for a normal reinstall. Unplugging the phone ends devicectl, which
+  ends the collector: it removes its own registration and exits, leaving
+  nothing for \`gc\` to find, because a phone is never recorded as a device. Whether it closes with collector_stopped or
   collector_failed follows devicectl's exit code, which no one has watched a
   cable-pull produce yet. See \`guide logs\` for what the device stream can
   and cannot carry, and appandflow/stim#179.
+
+  THE APP RUNS FOR AS LONG AS THE COLLECTOR DOES. Because the collector is the
+  launch, the app is attached to it: \`stop\` (and any other end of that
+  collector -- a crash, the host sleeping, the cable coming out) closes the app
+  on the phone. It stays INSTALLED and Stim still records nothing about the
+  device; only the running process goes. See \`guide cleanup\`.
+
+  THERE IS NO INSTALL SKIP ON A PHONE. The simulator path skips the install
+  when the device already holds the same bundle byte for byte, which it proves
+  by hashing the installed container; there is no cheap equivalent through
+  devicectl, so a device run always installs. It is an upgrade install: the
+  app's data, and the Local Network permission the phone granted it, survive.
 
   A VARIANT WHOSE NAME ENDS IN "Release" IS A RELEASE BUILD (\`release\`,
   \`productionRelease\`), and that is the whole opt-in -- there is no second
@@ -1486,14 +1593,25 @@ WHAT ELSE STOP REAPS
   runs \`devicectl device process launch --console\` itself rather than
   attaching after the fact. It registers under the same \`ios\` key, carries
   the same --root in its title, is proven and replaced by the same pid rules,
-  and is reaped by the same \`stop\`. Unplugging the phone ends devicectl,
-  which ends the collector: it unregisters itself and exits either way, so
-  \`gc\` has nothing to find, because a phone is never recorded as a device.
+  and is reaped by the same \`stop\`.
+
+  THE APP'S LIFETIME IS BOUND TO THAT COLLECTOR, and this is the one place a
+  phone behaves worse than a simulator. \`devicectl device process launch
+  --console\` keeps the app attached to the launching process, so anything that
+  ends the collector ends the APP ON THE PHONE: \`stop\`, \`gc --delete\`,
+  \`worktree remove\`, a fresh \`ios --device\` run stopping its predecessor,
+  a crash, the host sleeping, or the cable coming out. Measured: SIGTERM to the
+  collector alone terminates the app. \`stop\` therefore leaves no RECORD of the
+  phone -- it never had one -- but it does close the app that was running on it.
+  Nothing is uninstalled, and the next \`ios --device\` starts it again.
+
+  Unplugging the phone ends devicectl, which ends the collector: it unregisters
+  itself and exits either way, so \`gc\` has nothing to find, because a phone is
+  never recorded as a device.
   WHICH record it writes on the way out depends on devicectl's exit code, and
   that code is unverified until someone pulls a cable: a zero exit is
   collector_stopped, a non-zero one is collector_failed, because on hardware
   a non-zero devicectl exit is the only evidence a launch or console failed.
-  It is not started yet -- the launch it would ride on is appandflow/stim#178.
   See \`guide logs\` for what it can and cannot carry.
 
   Before signalling a recorded collector pid, \`stop\`, \`gc --delete\`,
