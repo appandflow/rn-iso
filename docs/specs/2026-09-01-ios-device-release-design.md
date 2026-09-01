@@ -294,9 +294,17 @@ per-phone: `on-<serial>` is deliberately not used, because an
 devices those are is a property of the signature, and the gate below is where
 that gets checked.
 
+**No port segment, and that is a decision, not an omission.** The Metro port
+never enters a compiled input, because Stim declines to set `RCT_METRO_PORT`
+and puts the port in `ip.txt` instead — the reasoning is in "The port, which is
+the subtle part". Had it gone into the binary, the key would have had to carry
+it, which forks the device-Debug cache per workspace and kills the sharing that
+makes the slice worth caching at all. The port stays out of the build so that
+it can stay out of the key.
+
 **The device slice is not uploaded to a remote or provider cache in v1.**
 Every consumer on another machine would fail the signing gate — a Release
-entry at the swap, a Debug entry at the pre-install check — and fall back to a
+entry at the swap, a Debug entry at the `ip.txt` re-seal — and fall back to a
 full build, so the upload buys a download and a refusal. Local tiers only.
 
 ## The signing model
@@ -305,16 +313,32 @@ full build, so the upload buys a download and a refusal. Local tiers only.
 
 Nothing. The project's Xcode settings decide, per Rock.
 
-### Debug: the gate runs, the re-seal does not
+### Debug: the same gate, and a re-seal after all
 
-A Debug build embeds no JS, so a Debug cache hit installs the artifact
-untouched, its original signature intact, and there is nothing to re-sign.
-What still applies is the **first half** of the gate below — profile present,
-unexpired, and naming this UDID — run as a pre-install check rather than as a
-swap gate. It costs two `security` calls and it converts an opaque
-`devicectl install` rejection into `STIM_PROFILE_MISMATCH` with the phone and
-the profile named. The identity-in-keychain check is skipped, because nothing
-is being signed.
+An earlier draft said a Debug device install needs no re-signing, on the
+reasoning that a Debug build embeds no JS to swap. That was right about the JS
+and wrong about the bundle: Stim writes `ip.txt` into every bare Debug device
+install (see "Metro on a phone"), `ip.txt` is a sealed resource, so the
+signature has to be re-made.
+
+So the two configurations converge:
+
+|             | Debug                     | Release                         |
+| ----------- | ------------------------- | ------------------------------- |
+| fresh build | rewrite `ip.txt`, re-seal | nothing; `xcodebuild` signed it |
+| cache hit   | rewrite `ip.txt`, re-seal | JS swap, then re-seal           |
+
+The gate below therefore applies in full to both — including the
+identity-in-keychain check, since both end in a `codesign`. An expo-dev-client
+app is the one case that needs no rewrite, because its URL arrives in the deep
+link; it can skip straight to install, and the gate degrades to the
+profile-only pre-install check that turns an opaque `devicectl install`
+rejection into `STIM_PROFILE_MISMATCH` with the phone and the profile named.
+
+The cost is one `codesign` per Debug device install that the simulator path
+does not pay. It is seconds on a large app, against a build that is minutes,
+and it is unavoidable: there is no way to change a sealed resource and keep the
+seal.
 
 ### Re-signing after a JS swap — the crux, and release only
 
@@ -496,18 +520,184 @@ host substituted:
 
 1. Resolve the LAN origin `http://<addr>:<port>`.
 2. `gateMetroOrigin({origin, metroPort, platform: 'ios'})` — unchanged code.
-3. Launch with `devicectl device process launch --device <udid> …`, passing the
-   dev-client deep link built as `devClientUrl(scheme, port, <addr>)`.
-4. `verifyLaunch` as today.
+3. For a bare app, write `<addr>:<port>` into `ip.txt` inside the copy and
+   re-seal it (below). For an expo-dev-client app, nothing — the deep link
+   carries the URL.
+4. Launch with `devicectl device process launch --device <udid> …`, passing the
+   dev-client deep link built as `devClientUrl(scheme, port, <addr>)` when there
+   is one, and the bundle id otherwise.
+5. `verifyLaunch` as today.
 
-For a bare app the `RCT_jsLocation` equivalent is a problem: `jsLocationValue`
-(`app-install.ts:132`) hardcodes `localhost:<port>`, and it is written into the
-app's `NSUserDefaults` through `simctl spawn defaults write`, which does not
-exist for hardware. A bare Debug app on a phone therefore has no channel for
-the hint, and falls back to whatever its bundle URL default is. **v1 supports
-Debug on device for expo-dev-client apps, where the deep link carries the URL,
-and refuses for a bare app with a remedy naming the shake-menu "Configure
-Bundler" screen.** That is an honest limit, not a silent one.
+### How a bare app finds Metro: `ip.txt`, which RN already builds for this
+
+React Native has solved this for physical devices since long before Stim
+existed, and the first draft of this section missed it. Two files:
+
+**The producer.** `packages/react-native/scripts/react-native-xcode.sh:16-28`,
+the Xcode build phase every bare app runs:
+
+```bash
+# Enables iOS devices to get the IP address of the machine running Metro
+if [[ ! "$SKIP_BUNDLING_METRO_IP" && "$CONFIGURATION" = *Debug* && ! "$PLATFORM_NAME" == *simulator ]]; then
+  for num in 0 1 2 3 4 5 6 7 8; do
+    IP=$(ipconfig getifaddr en${num} || echo "")
+    if [ ! -z "$IP" ]; then break; fi
+  done
+  …
+  echo "$IP" > "$DEST/ip.txt"
+fi
+```
+
+Debug and not-simulator: exactly the slice this spec adds. It writes the host's
+LAN address into `ip.txt` in the app bundle.
+
+**The consumer.** `React/Base/RCTBundleURLProvider.mm:206 guessPackagerHost`
+reads that resource, falls back to `localhost`, and probes:
+
+```objc
+NSString *ipPath = [[NSBundle mainBundle] pathForResource:@"ip" ofType:@"txt"];
+ipGuess = [[NSString stringWithContentsOfFile:ipPath …] stringByTrimmingCharactersInSet:…];
+NSString *host = ipGuess ?: @"localhost";
+if ([RCTBundleURLProvider isPackagerRunning:host]) { return host; }
+return nil;
+```
+
+`packagerServerHostPort` (line 259) tries the `RCT_jsLocation` default first,
+then falls through to `guessPackagerHost` under `#if RCT_DEV`.
+
+So **bare Debug on a device is in for v1, through RN's own mechanism**, and no
+dev-client is required. The constraint it carries is the same one this section
+already had, because it is the same constraint by construction: the value baked
+in is a LAN address, so the phone and the Mac must share a network.
+
+`RCT_jsLocation` stays hardware-unreachable, exactly as the earlier draft had
+it — `jsLocationValue` (`app-install.ts:132`) is written through
+`simctl spawn defaults write`, which has no `devicectl` counterpart. It is
+simply no longer the only channel, so the refusal it implied is gone. The
+shake-menu "Configure Bundler" screen survives only as the remedy of last
+resort, for a phone Stim cannot reach at all.
+
+### The port, which is the subtle part
+
+`ip.txt` holds a host. The port comes from `kRCTBundleURLProviderDefaultPort`
+(`RCTBundleURLProvider.mm:20`), which is `RCT_METRO_PORT`, which is a
+**compile-time define**, defaulting to 8081 in `RCTDefines.h:111-121`. Stim
+reserves a port that is deliberately not 8081. That looks like a serious
+problem, and tracing where the define comes from makes it look worse before it
+gets better.
+
+`React-Core.podspec:61` sets
+
+```ruby
+"GCC_PREPROCESSOR_DEFINITIONS" => "RCT_METRO_PORT=${RCT_METRO_PORT}",
+```
+
+`${…}` is not Ruby interpolation — Ruby's is `#{…}` — so that is a literal
+string written into the pod's generated `.xcconfig`, where `${RCT_METRO_PORT}`
+is an **xcconfig build-setting reference resolved by Xcode at build time**, not
+by CocoaPods at install time. `RCTDefines.h:114-121` confirms it from the other
+end: the `RCT_METRO_PORT_DO_EXPAND(VAL) VAL##1` trick exists precisely to detect
+`RCT_METRO_PORT=` — the empty expansion you get when the build setting was
+never set — and fall back to 8081.
+
+Which means Stim _could_ pass `RCT_METRO_PORT=<port>` as a build setting on the
+`xcodebuild` argv, and `xcodebuildArgs` already appends a `buildSettings` array
+after `build` for exactly that kind of thing. **It should not, and the reason is
+the cache.**
+
+The define changes `RCTBundleURLProvider.o`, so it changes the binary, so a
+device-Debug `.app` built for port 8082 is not the same artifact as one built
+for 8083 — while the port appears in no fingerprinted input, so both would land
+on the same cache key. Making the key honest means adding a port segment, which
+**forks the device-Debug cache per workspace**: every worktree has a different
+reserved port by design, so no two would ever share an artifact, and the
+single-flight build and cross-workspace sharing that are the reason Stim is fast
+would be dead exactly on the slowest slice. This is invariant-10-shaped
+reasoning — a value that mutates a compiled input has to be in the key or out of
+the build — and here the answer is to keep it out of the build.
+
+**The way out is that `ip.txt` can carry the port too.**
+`serverRootWithHostPort` (`RCTBundleURLProvider.mm:70`) is the single funnel
+every packager URL goes through:
+
+```objc
+if ([hostPort rangeOfString:@":"].location != NSNotFound) {
+  return [NSURL URLWithString:[NSString stringWithFormat:@"%@://%@/", scheme, hostPort]];
+}
+return [NSURL URLWithString:[NSString stringWithFormat:@"%@://%@:%lu/", scheme, hostPort,
+                             (unsigned long)kRCTBundleURLProviderDefaultPort]];
+```
+
+A value containing a colon is used verbatim and
+`kRCTBundleURLProviderDefaultPort` is never consulted. `guessPackagerHost`
+returns the trimmed contents of `ip.txt` unaltered, and `isPackagerRunning:`
+funnels through the same helper — so `192.168.1.5:8085` in `ip.txt` is probed at
+`http://192.168.1.5:8085/status` and loaded from
+`http://192.168.1.5:8085/index.bundle?…`.
+
+**So: Stim never sets `RCT_METRO_PORT`, never passes a build setting, and writes
+`<addr>:<port>` into `ip.txt`.** The port stays out of every compiled input, the
+`xcodebuild` argv stays fixed as invariant 3 requires, and the device-Debug
+artifact is port-agnostic and shareable across workspaces like every other
+slice.
+
+### Stim owns `ip.txt`, on every device install
+
+RN bakes an address at build time. That value is wrong more often than it looks:
+
+- On a **cache hit** it is the _building_ machine's address at _build_ time.
+  Move to a different Wi-Fi, or take a colleague's artifact, and it names a host
+  that no longer exists.
+- On a **multi-NIC Mac** it is `ipconfig getifaddr en0`, or the first `en`
+  interface that answers — which on a machine with Ethernet, Wi-Fi and a
+  Thunderbolt bridge is a coin flip, and not necessarily the interface the phone
+  shares.
+- It never carries the port, per above.
+
+Stim knows the right answer: its LAN discovery picked an address and
+`gateMetroOrigin` proved Metro answers on it. So **Stim writes `ip.txt` itself
+on every bare Debug device install — cached or freshly built — and re-seals**,
+which makes whatever RN baked irrelevant and removes both hazards at once. No
+`SKIP_BUNDLING_METRO_IP`, no build-setting divergence; the build stays exactly
+what the project's own tooling produces, and the fix is applied to the artifact
+afterwards.
+
+`ip.txt` is a bundle resource, so it is covered by
+`_CodeSignature/CodeResources` and rewriting it invalidates the seal — which is
+the neat part: **it needs precisely the re-seal step the Release swap already
+needs.** Debug and Release device installs converge on one code path, and the
+signing gate applies in full to both.
+
+### The stale-fallback trap, and why `'unverified'` earns its keep
+
+One consequence has to be said out loud, because it is quiet and it is the
+opposite of what a simulator does. `react-native-xcode.sh` **does** bundle for a
+physical device in Debug — the script's own line is _"Bundling for physical
+device"_, and only the simulator branch skips it. So a device-Debug `.app`
+carries an embedded `main.jsbundle`, and `jsBundleURLForBundleRoot:` falls back
+to it whenever `packagerServerHostPort` comes back nil.
+
+An unreachable Metro therefore does not error. The app launches, looks fine, and
+runs **the JS that was baked when the artifact was built** — which on a cache hit
+is another workspace's JS. That is the exact scenario invariant 3's "must never
+install stale JS" exists to prevent, arriving through a door that rule was not
+written for.
+
+Stim's existing machinery already catches it: no bundle request reaches this
+workspace's Metro, so `verifyLaunch` returns `'unverified'`. What this design
+adds is that the `'unverified'` remedy for a bare device Debug run must **say
+what the app is probably doing** — running JS embedded at build time, not this
+workspace's — rather than only listing network causes. An `'unverified'` that
+reads as "we could not confirm" underplays "the screen you are looking at may be
+someone else's build".
+
+Two alternatives were considered and rejected. Passing `SKIP_BUNDLING=1` would
+leave no fallback, turning an unreachable Metro into a visible failure — but it
+diverges the build from what the project's own tooling produces, and makes the
+cached artifact useless without a network. Running the full JS swap on every
+Debug cache hit would make the fallback correct, but it pays a Metro bundle on
+every Debug run, which is most of what `--device` Debug is trying to avoid.
+Loud reporting is the cheaper honest answer.
 
 ### The gate proves less than it looks like it proves
 
@@ -557,11 +747,13 @@ several is a refusal listing the candidates.
 
 **Launch**, branching on the configuration exactly as the simulator path does:
 
-- _Debug:_ `xcrun devicectl device process launch --device <udid>
---terminate-existing --json-output <tmp> <devClientUrl(scheme, port, lanAddr)>`
-  — the deep link built with the LAN host, per the section above. No
+- _Debug, expo-dev-client:_ `xcrun devicectl device process launch --device
+<udid> --terminate-existing --json-output <tmp> <devClientUrl(scheme, port, lanAddr)>`
+  — the deep link built with the LAN host, per the section above.
+- _Debug, bare:_ the same launch with the bundle id. The URL travelled in
+  `ip.txt` instead, written and re-sealed before the install. No
   `RCT_jsLocation` write, because `simctl spawn defaults write` has no hardware
-  equivalent; expo-dev-client apps only, in v1.
+  equivalent — it is no longer needed.
 - _Release:_ the same launch with the bundle id and no URL. Metro is skipped
   entirely, `metroPort` is `null`, and none of the LAN machinery runs.
 
@@ -646,9 +838,12 @@ Exact sentences, in the manner of #141.
 > no iOS equivalent, because that needs code signing.~~
 >
 > `android --device [serial]` and `ios --device [udid]` select a connected
-> physical device. A physical device does not share the host's loopback and
-> has no reverse forward over USB, so a Debug run on one is wired to a gated
-> LAN origin rather than to `localhost`.
+> physical device. A physical device does not share the host's loopback and has
+> no reverse forward over USB, so a Debug run on one is wired to a gated LAN
+> origin rather than to `localhost`: through the dev-client deep link, or by
+> writing `<addr>:<port>` into the app bundle's `ip.txt` and re-sealing it.
+> Never by setting `RCT_METRO_PORT`, which would put the reserved port into a
+> compiled input and fork the cache per workspace.
 
 > Android swaps require an emitted-asset manifest match, then `zipalign`
 > before `apksigner`. **An iOS device build is always signed, Debug included,
@@ -725,9 +920,9 @@ Reused rather than invented:
 
 - **`STIM_NO_DEVICE`** for zero connected devices and for an ambiguous
   selection, matching `android --device` exactly.
-- **`STIM_BAD_ARG`** for `--device` with an empty UDID, for `--device` with
-  `--remote`, and for `--device` in Debug on a **bare** project, whose
-  `RCT_jsLocation` hint has no hardware channel.
+- **`STIM_BAD_ARG`** for `--device` with an empty UDID and for `--device` with
+  `--remote`. There is no bare-project refusal: RN's own `ip.txt` mechanism
+  covers bare Debug on hardware.
 - **`STIM_INSTALL_FAILED`** for every `devicectl install` failure, with a
   pure `iosInstallFailureKind(text)` classifier — in the shape of
   `installConflictKind` — supplying a distinct remedy per cause: device
@@ -738,10 +933,13 @@ Reused rather than invented:
 
 Not a code, but a changed message: **`launched: 'unverified'` on a Debug
 `--device` run gets a new remedy**, because the two causes the LAN gate cannot
-distinguish both land here. It names them: the phone is on a different network
+distinguish both land here. It names them — the phone is on a different network
 (check it is on the same SSID, not cellular, not a VPN), or macOS is blocking
 inbound connections (System Settings > Network > Firewall, or
-`/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate`).
+`/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate`) — and, on a
+bare project, it names the consequence: the app did not fall over, it fell back
+to the JS bundle embedded when the artifact was built, which on a cache hit is
+another workspace's. See "the stale-fallback trap".
 
 Gate refusals are **not** codes. The guide's existing section heading —
 _"FALLBACK NOTES THAT ARE NOT CODES (release cache hits)"_ — grows the iOS
@@ -808,8 +1006,6 @@ options bag. `commands/doctor.ts`'s "Checked: …" sentence gains a clause.
   `usbmuxd` forwards host-to-device only, so closing this means either a
   device-side listener Stim does not have or a `devicectl`-mediated tunnel
   whose availability is open question 2.
-- **Bare (non-expo-dev-client) Debug on a device**, which has no channel for
-  the `RCT_jsLocation` hint. Refused with a remedy, not silently broken.
 - **Wireless devices.** `devicectl` can reach a paired device over the
   network; v1 requires a cable for the install, because a flaky install over
   Wi-Fi is a confusing failure and the cable case has to work first. (The
@@ -822,7 +1018,7 @@ options bag. `commands/doctor.ts`'s "Checked: …" sentence gains a clause.
 
 ## Implementation plan
 
-Six phases. Each is independently reviewable, and the tree stays green
+Seven phases. Each is independently reviewable, and the tree stays green
 throughout.
 
 **1 — The device slice.** `sdk: 'iphoneos'` and `destination: id=<udid>`
@@ -842,58 +1038,80 @@ _Testable:_ entirely pure against recorded `devicectl` JSON and a synthetic
 `os.networkInterfaces()` object. _Invariant 9:_ one real
 `devicectl list devices`, **and** the `lsof -nP -iTCP:<port>` check against a
 live bare supervisor that settles whether Metro binds all interfaces. That
-check is cheap and it gates phase 3, so it happens here.
+check is cheap and it gates phase 5, so it happens here.
 
-**3 — Debug on the device.** `ensureLanReachable` reusing `gateMetroOrigin`;
-the launch wiring through `devClientUrl(scheme, port, lanAddr)`; the bare-project
-refusal; the two reachability codes; the rewritten `'unverified'` remedy.
-After this phase Debug works end to end. _Testable:_ the plan/selection logic
-is pure; `gateMetroOrigin` already has tests. _Invariant 9 requires a real
-iPhone from here on, and there is no way around it_ — an unlocked, trusted,
-Developer-Mode device on a cable, on the same Wi-Fi, loading a bundle.
+**3 — Install and launch.** The `devicectl` install / launch / uninstall calls,
+`iosInstallFailureKind`, the signer-conflict uninstall-and-retry, and the
+device-side process probe that replaces the host `process.kill` in
+`verifyReleaseLaunch`. After this phase **Release works end to end** with the
+cache-hit path disabled — a full build every run, which is correct if slow.
+_Testable:_ the classifiers and the process-list parser are pure; the calls go
+through the existing mock executor. _Invariant 9 requires a real iPhone from
+here on, and there is no way around it_ — an unlocked, trusted,
+Developer-Mode device on a cable.
 
-**4 — Install, launch, release proof.** The `devicectl` install/launch/uninstall
-calls, `iosInstallFailureKind`, the device-side process probe replacing the host
-`process.kill`. After this, release works with the cache-hit path disabled —
-a full build every run. _Testable:_ classifiers and the process-list parser are
-pure; calls go through the existing mock executor. _Invariant 9:_ a real
-release install and launch.
-
-**5 — The signing gate and the re-seal.** The `security cms -D` decode, the
-X509 CN extraction, the `find-identity` membership check, the
-`ProvisionedDevices` and expiry checks, the `--preserve-metadata` re-seal with
-its `--entitlements` fallback, `codesign --verify --strict`, the two settings,
-the four signing codes, `doctor`. This is where cache hits turn on.
+**4 — The re-seal primitive.** Deliberately ahead of the Release swap that used
+to own it, because Debug needs it too: the `security cms -D` decode, the X509
+CN extraction, the `find-identity` membership check, the `ProvisionedDevices`
+and expiry checks, `codesign --force --sign … --preserve-metadata=…` with its
+`--entitlements` fallback, `codesign --verify --strict`, the two settings, the
+four signing codes, `doctor`. Exposed as one function taking a bundle path and
+returning sealed-or-refused, with no opinion about why the bundle was modified.
 _Testable:_ the plist and certificate parsing are pure and get fixtures (a
 decoded profile plist and a self-signed cert, as Rock does in
 `sign/__tests__/__fixtures__/`). _Invariant 9:_ real `security cms -D`, real
-`security find-identity`, real `codesign` in both forms, then a real install of
-a swapped app on the phone — the moment the whole design is either true or not.
+`security find-identity`, real `codesign` in both forms — none of which needs a
+phone.
 
-**6 — Device runtime logs.** Deferred to its own issue by the 2026-09-01
-ruling. Until it lands, phases 1–5 ship with `logs` reporting the gap
+**5 — Debug on the device.** `ensureLanReachable` reusing `gateMetroOrigin`;
+`writeIpTxt(appCopy, addr, port)` plus the phase-4 re-seal on every bare Debug
+install, cached or fresh; the deep-link launch through
+`devClientUrl(scheme, port, lanAddr)` for dev-client apps; the two reachability
+codes; the `'unverified'` remedy naming the stale-fallback consequence. After
+this phase **Debug works end to end**, bare and dev-client. _Testable:_ the
+reach plan is pure, `gateMetroOrigin` already has tests, and `ip.txt` content is
+one pure function. _Invariant 9:_ the thing to prove is that the phone fetched
+from Metro rather than falling back to the embedded bundle — which is exactly
+what `verifyLaunch` reports, so the evidence is the run's own `ready: bundle
+loaded` line, as in #141's test plan.
+
+**6 — The Release swap.** `js-swap.ts` gains its device branch: the gate runs
+before the bundle work, the ad-hoc `--sign -` becomes the phase-4 re-seal, and
+release cache hits turn on. Small, because phase 4 built the hard part.
+_Invariant 9:_ a real install of a swapped app on the phone — the moment the
+whole design is either true or not.
+
+**7 — Device runtime logs.** Deferred to its own issue by the 2026-09-01
+ruling. Until it lands, phases 1–6 ship with `logs` reporting the gap
 explicitly.
 
-Phases 1–3 deliver Debug on a phone without any of the release machinery;
-phases 4–5 deliver release. Either half is useful without the other, which is
-the argument for this ordering over doing all the signing first.
+Seven rather than the first draft's five, because the re-seal moved forward and
+split from the swap that used to carry it. The ordering earns something: after
+phase 3 Release runs (uncached), and after phase 5 Debug runs — two useful
+halves that do not depend on each other, rather than one long march through the
+signing work before anything installs.
 
 ## Decisions
 
-Six questions went to the maintainer with the first draft. All six were
-answered on 2026-09-01 and the doc above reflects the rulings; they are
-recorded here rather than silently absorbed, because several of them close off
-alternatives a later reader would otherwise re-litigate.
+Six questions went to the maintainer with the first draft; all were answered on
+2026-09-01, and two further corrections came back the same day after those
+rulings were applied. They are recorded here rather than silently absorbed,
+because several close off alternatives a later reader would otherwise
+re-litigate — and because two of them are places this doc was simply wrong,
+where saying so is cheaper than leaving the reasoning that produced the error
+in circulation.
 
-| #   | Question                                                                         | Ruling (2026-09-01)                                                                                                                                                                                                                                                                                                                                           |
-| --- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Device runtime logs, given `simctl spawn` has no hardware equivalent             | **v1 ships without them.** Build errors only; the run and the guide topics state it plainly; a follow-up issue explores a `devicectl`-based collector.                                                                                                                                                                                                        |
-| 2   | Is `--device` the right surface, given it appeared to require `--configuration`? | **Moot, and the premise was wrong** — see 3. `--device` constrains nothing.                                                                                                                                                                                                                                                                                   |
-| 3   | Debug on a device: defer it?                                                     | **Overruled: v1 supports it.** "Why is device debug not possible? I've done it before" — and that is right; it is standard RN practice over the LAN. The draft's error was generalising a true narrow finding (no USB reverse forward, because `usbmuxd` is host-to-device) into a false broad one (no reachability at all). Rewritten as "Metro on a phone". |
-| 4   | `-allowProvisioningUpdates`                                                      | **Never.** A build must not mutate an Apple Developer account. `doctor` and the remedies name the one-time manual Xcode step instead.                                                                                                                                                                                                                         |
-| 5   | Enterprise / App Store profiles, which carry no `ProvisionedDevices`             | **The gate refuses them**, and the remedy names the profile type it found and why: development profiles are the local-dev case.                                                                                                                                                                                                                               |
-| 6   | Device slice shared across phones, or keyed per UDID?                            | **Shared** — `-device`, no per-UDID keys. The binary is identical; the profile is what constrains devices, and the gate re-checks the UDID on every hit.                                                                                                                                                                                                      |
-| 7   | `--preserve-metadata` vs. explicit `--entitlements`                              | **`--preserve-metadata` is the primary path**, explicit extraction is the fallback. One primary, not two equals.                                                                                                                                                                                                                                              |
+| #   | Question                                                                                               | Ruling (2026-09-01)                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| --- | ------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Device runtime logs, given `simctl spawn` has no hardware equivalent                                   | **v1 ships without them.** Build errors only; the run and the guide topics state it plainly; a follow-up issue explores a `devicectl`-based collector.                                                                                                                                                                                                                                                                                 |
+| 2   | Is `--device` the right surface, given it appeared to require `--configuration`?                       | **Moot, and the premise was wrong** — see 3. `--device` constrains nothing.                                                                                                                                                                                                                                                                                                                                                            |
+| 3   | Debug on a device: defer it?                                                                           | **Overruled: v1 supports it.** "Why is device debug not possible? I've done it before" — and that is right; it is standard RN practice over the LAN. The draft's error was generalising a true narrow finding (no USB reverse forward, because `usbmuxd` is host-to-device) into a false broad one (no reachability at all). Rewritten as "Metro on a phone".                                                                          |
+| 4   | `-allowProvisioningUpdates`                                                                            | **Never.** A build must not mutate an Apple Developer account. `doctor` and the remedies name the one-time manual Xcode step instead.                                                                                                                                                                                                                                                                                                  |
+| 5   | Enterprise / App Store profiles, which carry no `ProvisionedDevices`                                   | **The gate refuses them**, and the remedy names the profile type it found and why: development profiles are the local-dev case.                                                                                                                                                                                                                                                                                                        |
+| 6   | Device slice shared across phones, or keyed per UDID?                                                  | **Shared** — `-device`, no per-UDID keys. The binary is identical; the profile is what constrains devices, and the gate re-checks the UDID on every hit.                                                                                                                                                                                                                                                                               |
+| 7   | `--preserve-metadata` vs. explicit `--entitlements`                                                    | **`--preserve-metadata` is the primary path**, explicit extraction is the fallback. One primary, not two equals.                                                                                                                                                                                                                                                                                                                       |
+| 8   | Bare (non-dev-client) Debug on a device, which the draft refused                                       | **Corrected: it is in.** RN has shipped the mechanism for years — `react-native-xcode.sh:16-28` bakes the host's LAN address into `ip.txt` for exactly the Debug-and-not-simulator slice, and `RCTBundleURLProvider.mm:206` reads it back. The draft looked only at `RCT_jsLocation`, found it hardware-unreachable, and stopped. `RCT_jsLocation` really is unreachable; it was never the only channel.                               |
+| 9   | The port, once bare Debug is in: `RCT_METRO_PORT` is a compile-time define and Stim's port is not 8081 | **Do not set it.** `serverRootWithHostPort` (`RCTBundleURLProvider.mm:70`) uses a colon-bearing value verbatim and never consults the define, so `<addr>:<port>` in `ip.txt` carries both. Setting the define would put the port into a compiled input, which would force it into the cache key, which would fork the device-Debug cache per workspace. Stim writes `ip.txt` on every bare Debug device install instead, and re-seals. |
 
 ## Open questions
 
