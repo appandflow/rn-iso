@@ -27,6 +27,7 @@ import {
   entryDir,
   fingerprintDiffRecord,
   fingerprintDiffSuffix,
+  DEFAULT_FINGERPRINT_IGNORES,
   fingerprintProject,
   prepareProviderDownloadDir,
   providerDownloadPath,
@@ -299,6 +300,26 @@ test('fingerprintProject without a platform passes no platforms option', async (
   expect((await fingerprintProject(root, { createFingerprint }))?.hash).toBe('h');
   const seen = options as { platforms?: string[] } | undefined | 'unset';
   expect(typeof seen === 'object' ? seen?.platforms : undefined).toBe(undefined);
+});
+
+test('fingerprintProject ignores the paths a fresh checkout does not have', async () => {
+  let options: FingerprintOptions | undefined;
+  const createFingerprint = async (_dir: string, opts?: FingerprintOptions) => {
+    options = opts;
+    return { hash: 'h', sources: [] };
+  };
+  await fingerprintProject(root, { platform: 'ios', createFingerprint });
+  expect(options?.ignorePaths).toEqual(['**/android/local.properties', '**/android/.idea/**']);
+  expect(options?.platforms).toEqual(['ios']);
+});
+
+test('the ignore list holds only paths no native build reads', async () => {
+  // A path that any project could read belongs in that project's
+  // .fingerprintignore, not here: ignoring it machine-wide turns a slow build
+  // into a wrong one.
+  for (const risky of ['**/*.map', '**/node_modules/**/lib/**', '**/ios/**/Package.resolved']) {
+    expect(DEFAULT_FINGERPRINT_IGNORES).not.toContain(risky);
+  }
 });
 
 test('fingerprintProject ignores a platform it does not know', async () => {

@@ -30,6 +30,11 @@ config.cacheStores = sharedCacheStores('my-app');
 
 This package is a local Expo build-cache provider. It lets direct Expo builds
 share native artifacts with Stim.
+Stim and Expo CLI compute the fingerprint that keys this cache separately, and
+Stim ignores two machine-local Android paths (`android/local.properties`,
+`android/.idea`) that Expo CLI does not. On a machine where those exist, the
+two hashes differ and each side fills its own entry. List them in the project's
+`.fingerprintignore` to bring the hashes back together.
 
 ```bash
 npm install --save-dev @stim-cli/expo-build-cache

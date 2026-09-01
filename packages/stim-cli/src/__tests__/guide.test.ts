@@ -1,6 +1,7 @@
 import assert from 'node:assert';
 import { readdirSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'node:url';
+import { DEFAULT_FINGERPRINT_IGNORES } from '../build-cache.ts';
 import { topicNames, renderTopic, renderIndex } from '../commands/guide.ts';
 import { ANDROID_AVD_CONFIG_HELP } from '../settings.ts';
 import { CONSOLE_ENV, deviceConsoleArgs } from '../collector/ios-device.ts';
@@ -556,6 +557,15 @@ test('the skill still carries the rules an agent must not have to look up', () =
     'worktree remove',
   ]) {
     expect(skill.includes(must)).toBeTruthy();
+  }
+});
+
+test('the guide names every path Stim ignores by default', () => {
+  const lifecycle = renderTopic('lifecycle') ?? '';
+  for (const path of DEFAULT_FINGERPRINT_IGNORES) {
+    // The guide prints them without the glob, e.g. android/local.properties.
+    const bare = path.replace(/^\*\*\//, '').replace(/\/\*\*$/, '');
+    expect(lifecycle).toContain(bare);
   }
 });
 

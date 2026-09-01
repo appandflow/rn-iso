@@ -44,6 +44,23 @@ export type ProjectFingerprint = Fingerprint;
 
 const FINGERPRINT_PLATFORMS = new Set(['ios', 'android']);
 
+/**
+ * Paths that exist in a working checkout and not in a fresh one, which
+ * @expo/fingerprint does not ignore on its own. A fingerprint that counts them
+ * cannot match across checkouts, which is the parity failure `doctor` reports.
+ *
+ * The list stays narrow on purpose: a path belongs here only when no native
+ * build on any project can read it. Anything a single project can judge --
+ * a lockfile with machine paths, a generated report -- belongs in that
+ * project's `.fingerprintignore`, which still applies on top of this.
+ */
+export const DEFAULT_FINGERPRINT_IGNORES: string[] = [
+  // Generated, and carries this machine's absolute sdk.dir.
+  '**/android/local.properties',
+  // Appears the first time someone opens the project in Android Studio.
+  '**/android/.idea/**',
+];
+
 export async function fingerprintProject(
   projectRoot: string,
   {
@@ -51,10 +68,11 @@ export async function fingerprintProject(
     createFingerprint = expoFingerprint.createFingerprintAsync,
   }: { platform?: string; createFingerprint?: typeof expoFingerprint.createFingerprintAsync } = {},
 ): Promise<ProjectFingerprint | null> {
-  const options: FingerprintOptions | undefined =
+  const platforms =
     platform && FINGERPRINT_PLATFORMS.has(platform)
       ? { platforms: [platform] as FingerprintOptions['platforms'] }
       : undefined;
+  const options: FingerprintOptions = { ...platforms, ignorePaths: DEFAULT_FINGERPRINT_IGNORES };
   const result = await createFingerprint(projectRoot, options);
   const hash = result?.hash ?? null;
   if (!hash) return null;
