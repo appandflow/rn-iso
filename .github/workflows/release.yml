@@ -90,15 +90,37 @@ jobs:
               process.exit(bad === 0 ? 0 : 1);
             ' "$manifest" "$tag"
           done
+      - name: Compute publish dist-tag
+        # Dist-tag selection: see RELEASE.md section 1.
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          dist_tag=latest
+
+          if [[ "$tag_version" == *-* ]]; then
+            err_log="$(mktemp)"
+            if current=$(npm view @stim-cli/core version 2>"$err_log"); then
+              if [[ -n "$current" && "$current" != *-* ]]; then
+                dist_tag=next
+              fi
+            elif grep -q 'code E404' "$err_log"; then
+              :
+            else
+              echo "::error::npm view @stim-cli/core version failed and did not report E404; refusing to guess a dist-tag: $(cat "$err_log")"
+              rm -f "$err_log"
+              exit 1
+            fi
+            rm -f "$err_log"
+          fi
+
+          echo "tag_version=$tag_version dist_tag=$dist_tag"
+          echo "DIST_TAG=$dist_tag" >> "$GITHUB_ENV"
       - name: Publish @stim-cli/core
         run: |
           version=$(node -p "require('$RUNNER_TEMP/tarballs/core.package.json').version")
           if npm view "@stim-cli/core@$version" version >/dev/null 2>&1; then
             echo "@stim-cli/core@$version is already published"
           else
-            # latest-on-purpose while no stable exists (RELEASE.md section 1); issue #165
-            # gates the prerelease-aware selection required after 1.0.0 stable.
-            npm publish "$RUNNER_TEMP/tarballs/core.tgz" --provenance --access public --tag latest
+            npm publish "$RUNNER_TEMP/tarballs/core.tgz" --provenance --access public --tag "$DIST_TAG"
           fi
       - name: Publish @stim-cli/cache
         run: |
@@ -106,7 +128,7 @@ jobs:
           if npm view "@stim-cli/cache@$version" version >/dev/null 2>&1; then
             echo "@stim-cli/cache@$version is already published"
           else
-            npm publish "$RUNNER_TEMP/tarballs/cache.tgz" --provenance --access public --tag latest
+            npm publish "$RUNNER_TEMP/tarballs/cache.tgz" --provenance --access public --tag "$DIST_TAG"
           fi
       - name: Publish @stim-cli/metro
         run: |
@@ -114,7 +136,7 @@ jobs:
           if npm view "@stim-cli/metro@$version" version >/dev/null 2>&1; then
             echo "@stim-cli/metro@$version is already published"
           else
-            npm publish "$RUNNER_TEMP/tarballs/metro.tgz" --provenance --access public --tag latest
+            npm publish "$RUNNER_TEMP/tarballs/metro.tgz" --provenance --access public --tag "$DIST_TAG"
           fi
       - name: Publish @stim-cli/expo-build-cache
         run: |
@@ -122,7 +144,7 @@ jobs:
           if npm view "@stim-cli/expo-build-cache@$version" version >/dev/null 2>&1; then
             echo "@stim-cli/expo-build-cache@$version is already published"
           else
-            npm publish "$RUNNER_TEMP/tarballs/expo-build-cache.tgz" --provenance --access public --tag latest
+            npm publish "$RUNNER_TEMP/tarballs/expo-build-cache.tgz" --provenance --access public --tag "$DIST_TAG"
           fi
       - name: Publish stim-cli
         run: |
@@ -130,7 +152,7 @@ jobs:
           if npm view "stim-cli@$version" version >/dev/null 2>&1; then
             echo "stim-cli@$version is already published"
           else
-            npm publish "$RUNNER_TEMP/tarballs/stim-cli.tgz" --provenance --access public --tag latest
+            npm publish "$RUNNER_TEMP/tarballs/stim-cli.tgz" --provenance --access public --tag "$DIST_TAG"
           fi
       - name: Smoke-test the registry
         run: |
@@ -151,6 +173,21 @@ jobs:
               fi
 
               echo "$p@$version is not visible yet (attempt $attempt/$max_attempts); retrying in ${retry_delay}s"
+              sleep "$retry_delay"
+            done
+
+            for attempt in $(seq 1 "$max_attempts"); do
+              if tagged=$(npm view "$p" "dist-tags.$DIST_TAG" 2>/dev/null) && [ "$tagged" = "$version" ]; then
+                echo "$p dist-tag $DIST_TAG -> $tagged"
+                break
+              fi
+
+              if [ "$attempt" -eq "$max_attempts" ]; then
+                echo "$p dist-tag $DIST_TAG points at ${tagged:-<unset>}, expected $version"
+                exit 1
+              fi
+
+              echo "$p dist-tag $DIST_TAG is ${tagged:-<unset>}, not $version yet (attempt $attempt/$max_attempts); retrying in ${retry_delay}s"
               sleep "$retry_delay"
             done
           done
