@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, realpathSync } from 'fs';
 import { basename, dirname, resolve } from 'path';
 import chalk from 'chalk';
-import type { Command } from 'commander';
+import { type Command, InvalidArgumentError } from 'commander';
 import { resolveSettings, unknownSettingKeys } from '../settings.ts';
 import { getProject, isPathPrefix, loadConfig, removeProject, upsertProject } from '../config.ts';
 import { podInstallCommand } from '../engine/bundler.ts';
@@ -138,6 +138,10 @@ export function registerCreate(worktree: Command): void {
     .option(
       '--dir <path>',
       'directory to create the worktree under, resolved against the current directory; overrides the worktreeDir setting for this run',
+      (v: string) => {
+        if (!v.trim()) throw new InvalidArgumentError('must name a directory, e.g. --dir .worktrees');
+        return v;
+      },
     )
     .option('--label <label>', 'Stim shortcut for the worktree (defaults to the worktree name)')
     .option(

@@ -2,7 +2,7 @@ import { execSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, realpathSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { dirname, join } from 'path';
-import type { Command } from 'commander';
+import { Command } from 'commander';
 import {
   carriedChangesLine,
   carryConflictWarning,
@@ -300,6 +300,17 @@ test('create action: --dir places the worktree under that directory, resolved ag
   } finally {
     process.exitCode = 0;
     rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('create: rejects a blank --dir instead of falling through to the default directory', async () => {
+  for (const value of ['', '   ']) {
+    const program = new Command();
+    program.exitOverride();
+    registerCreate(program);
+    await expect(() => program.parseAsync(['node', 'stim', 'create', 'x', '--dir', value])).rejects.toThrow(
+      /must name a directory/,
+    );
   }
 });
 
