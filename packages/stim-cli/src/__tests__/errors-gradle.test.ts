@@ -298,3 +298,74 @@ describe('CMake FATAL_ERROR lines survive the What-went-wrong clip', () => {
     ]);
   });
 });
+
+describe('a packaging failure surfaces its cause however gradle interleaves its two streams', () => {
+  const nativeLib =
+    "java.io.IOException: Failed to copy full contents from '/w/android/app/build/intermediates/stripped_native_libs/debug/out/lib/arm64-v8a/libreactnative.so' to '/w/android/app/build/intermediates/apk/debug/packageDebug/lib/arm64-v8a/libreactnative.so'";
+  const deprecation =
+    "Deprecated Gradle features were used in this build, making it incompatible with Gradle 10. You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.";
+  const report = [
+    'FAILURE: Build failed with an exception.',
+    '* What went wrong:',
+    "Execution failed for task ':app:packageDebug'.",
+    '> A failure occurred while executing com.android.build.gradle.tasks.PackageAndroidArtifact$IncrementalSplitterRunnable',
+    `   > ${nativeLib}`,
+    '* Try:',
+    '> Run with --stacktrace option to get the stack trace.',
+    '* Get more help at https://help.gradle.org.',
+  ];
+  const tail = [deprecation, 'BUILD FAILED in 1m22s', '104 actionable tasks: 104 executed'];
+
+  test('the cause chain is reported when the report arrives whole', () => {
+    const diagnostics = extractGradleDiagnostics(
+      ['> Task :app:stripDebugDebugSymbols', '> Task :app:packageDebug FAILED', ...report, ...tail].join('\n'),
+    );
+    const messages = diagnostics.map((d) => d.message);
+    expect(messages[0]).toBe('Task :app:packageDebug FAILED');
+    expect(messages[1]).toMatch(/Execution failed for task ':app:packageDebug'\./);
+    expect(messages[1]).toMatch(/PackageAndroidArtifact/);
+    expect(messages).toContain(nativeLib);
+    expect(messages.some((m) => /Deprecated Gradle features/.test(m))).toBe(false);
+  });
+
+  test('the cause chain is reported when the stdout tail lands inside the stderr report', () => {
+    const diagnostics = extractGradleDiagnostics(
+      ['> Task :app:packageDebug FAILED', ...report.slice(0, 2), ...tail, ...report.slice(2)].join('\n'),
+    );
+    const messages = diagnostics.map((d) => d.message);
+    expect(messages[0]).toBe('Task :app:packageDebug FAILED');
+    expect(messages.some((m) => /Execution failed for task ':app:packageDebug'/.test(m))).toBe(true);
+    expect(messages).toContain(nativeLib);
+    expect(messages.some((m) => /Deprecated Gradle features/.test(m))).toBe(false);
+  });
+
+  test('a build result tail on its own is not a diagnostic', () => {
+    expect(extractGradleDiagnostics(tail.join('\n'))).toEqual([]);
+  });
+
+  test('the cause chain stops at the next task line rather than swallowing the build', () => {
+    const diagnostics = extractGradleDiagnostics(
+      [
+        "Execution failed for task ':app:packageDebug'.",
+        '> A failure occurred while executing PackageAndroidArtifact',
+        '> Task :app:packageRelease FAILED',
+        'e: file:///w/Main.kt:10:5 Unresolved reference: foo',
+      ].join('\n'),
+    );
+    expect(diagnostics.map((d) => d.message)).toEqual([
+      "Execution failed for task ':app:packageDebug'. A failure occurred while executing PackageAndroidArtifact",
+      'Task :app:packageRelease FAILED',
+      'Unresolved reference: foo',
+    ]);
+  });
+
+  test('a cause chain longer than the cap is cut, not printed whole', () => {
+    const deep = Array.from({ length: 12 }, (_, i) => `${' '.repeat(i)}> cause level ${i}`);
+    const diagnostics = extractGradleDiagnostics(
+      ["Execution failed for task ':app:packageDebug'.", ...deep, '* Try:'].join('\n'),
+    );
+    expect(diagnostics.length).toBe(1);
+    expect(diagnostics[0]?.message).toMatch(/cause level 4$/);
+    expect(diagnostics[0]?.message).not.toMatch(/cause level 5/);
+  });
+});

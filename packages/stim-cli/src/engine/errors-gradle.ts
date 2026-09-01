@@ -22,6 +22,14 @@ const FAILURE_HEADER = /^FAILURE:\s*Build (?:failed|completed with)/;
 const WHAT_WENT_WRONG = /^\*\s*What went wrong:/;
 const SECTION = /^\*\s*[A-Za-z]/;
 const COULD_NOT_RESOLVE = /^>?\s*(Could not (?:resolve|find|download|GET) .+)$/;
+const EXECUTION_FAILED = /^Execution failed for task\s+'(?::[^']+)'/;
+const CAUSE_LINE = /^>\s+\S/;
+const JAVA_EXCEPTION = /^(?:[a-z][A-Za-z0-9_]*\.){2,}[A-Za-z0-9_$]*(?:Exception|Error)\b/;
+const TASK_LINE = /^>\s*Task\s+:/;
+const BUILD_TAIL =
+  /^(?:BUILD (?:FAILED|SUCCESSFUL)\b|Deprecated Gradle features were used\b|You can use '--warning-mode|For more on this, please refer to\b|\d+ actionable task)/;
+
+const MAX_CAUSE_LINES = 6;
 
 const REMEDIES: Array<[RegExp, string]> = [
   [
@@ -62,6 +70,12 @@ export function remedyFor(message: string): string | null {
   return null;
 }
 
+interface CauseBlock {
+  message: string;
+  highlights: string[];
+  endIndex: number;
+}
+
 export function extractGradleDiagnostics(text: string): Diagnostic[] {
   if (typeof text !== 'string' || text.trim() === '') return [];
   const lines = text.split('\n');
@@ -92,7 +106,7 @@ export function extractGradleDiagnostics(text: string): Diagnostic[] {
       const block = readWhatWentWrong(lines, i);
       if (block) {
         add({ message: block.message });
-        for (const fatal of block.fatal) add({ message: fatal });
+        for (const highlight of block.highlights) add({ message: highlight });
         i = block.endIndex;
       }
       continue;
@@ -101,9 +115,17 @@ export function extractGradleDiagnostics(text: string): Diagnostic[] {
       const block = readWhatWentWrong(lines, i - 1);
       if (block) {
         add({ message: block.message });
-        for (const fatal of block.fatal) add({ message: fatal });
+        for (const highlight of block.highlights) add({ message: highlight });
         i = block.endIndex;
       }
+      continue;
+    }
+
+    if (EXECUTION_FAILED.test(line)) {
+      const chain = readCauseChain(lines, i);
+      add({ message: chain.message });
+      for (const highlight of chain.highlights) add({ message: highlight });
+      i = chain.endIndex;
       continue;
     }
 
@@ -215,10 +237,7 @@ export function formatDiagnostic(diag?: Diagnostic | null): string {
   return `${where}${diag.message}`;
 }
 
-function readWhatWentWrong(
-  lines: string[],
-  start: number,
-): { message: string; fatal: string[]; endIndex: number } | null {
+function readWhatWentWrong(lines: string[], start: number): CauseBlock | null {
   let i = start + 1;
   while (i < lines.length && !WHAT_WENT_WRONG.test(stripCarriage(lines[i]).trim())) {
     const probe = stripCarriage(lines[i]).trim();
@@ -232,6 +251,7 @@ function readWhatWentWrong(
   for (; j < lines.length; j++) {
     const line = stripCarriage(lines[j]).trim();
     if (SECTION.test(line)) break;
+    if (BUILD_TAIL.test(line) || TASK_LINE.test(line)) break;
     if (line === '') {
       if (parts.length) break;
       continue;
@@ -239,7 +259,23 @@ function readWhatWentWrong(
     parts.push(line.replace(/^>\s*/, ''));
   }
   if (parts.length === 0) return null;
-  return { message: parts.join(' '), fatal: parts.filter((part) => FATAL_ERROR.test(part)), endIndex: j - 1 };
+  return { message: parts.join(' '), highlights: highlightsOf(parts), endIndex: j - 1 };
+}
+
+function readCauseChain(lines: string[], start: number): CauseBlock {
+  const parts = [stripCarriage(lines[start]).trim()];
+  let end = start;
+  for (let j = start + 1; j < lines.length && parts.length < MAX_CAUSE_LINES; j++) {
+    const line = stripCarriage(lines[j]).trim();
+    if (!CAUSE_LINE.test(line) || TASK_LINE.test(line)) break;
+    parts.push(line.replace(/^>\s*/, ''));
+    end = j;
+  }
+  return { message: parts.join(' '), highlights: highlightsOf(parts), endIndex: end };
+}
+
+function highlightsOf(parts: string[]): string[] {
+  return parts.filter((part) => FATAL_ERROR.test(part) || JAVA_EXCEPTION.test(part));
 }
 
 function stripAaptPrefix(message: string): string {
