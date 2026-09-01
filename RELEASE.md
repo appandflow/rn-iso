@@ -80,20 +80,28 @@ preparation, `git status --short` may show only the draft
    same number, and `dist/cli.mjs` reads it from its own `package.json`:
 
    ```bash
-   pnpm -r --filter './packages/*' exec npm version X.Y.Z --no-git-tag-version
-   pnpm install --lockfile-only
+   pnpm run release:prep X.Y.Z
    ```
 
-   The filtered `exec` bumps all five; `--no-git-tag-version` leaves the
-   candidate uncommitted and untagged. The lockfile duplicates every
-   workspace's version and must move with the manifests.
+   The script refuses a malformed version, one that does not come after the
+   version the five packages already carry, and a tree whose versions already
+   disagree. It rewrites the five `version` fields together, refreshes the
+   lockfile, then re-reads the manifests to confirm all five landed on the new
+   version and that the lockfile still matches them, and leaves the candidate
+   uncommitted and untagged. If any of that fails it puts the five manifests
+   back at the version they had, so a failed run is never half-bumped.
 
-   Confirm all five moved, and that dependency ranges between the packages
-   still name versions that will exist when publishing finishes:
+   Nothing else moves. The packages depend on each other through pnpm's
+   `workspace:` protocol, so there is no dependency range to bump: pnpm
+   substitutes the real version when it packs (verified in step 3).
+   `pnpm run release:prep --check` audits that shape -- five versions in
+   lockstep, every internal range a bare `workspace:` range -- without changing
+   anything.
+
+   Confirm all five moved:
 
    ```bash
    grep -H '"version"' packages/*/package.json
-   grep -H '"@stim-cli/' packages/stim-cli/package.json packages/expo-build-cache/package.json packages/metro/package.json packages/cache/package.json
    ```
 
 2. **Install and run the full pre-flight against those exact files:**
@@ -112,22 +120,34 @@ preparation, `git status --short` may show only the draft
    test "$(node packages/stim-cli/dist/cli.mjs --version)" = "X.Y.Z"
    ```
 
-3. **Verify each npm tarball** ships only what should ship, and that each one
-   carries its own README:
+3. **Verify each npm tarball** ships only what should ship, that each one
+   carries its own README, and that every `@stim-cli/*` line names a real
+   version. Pack with `pnpm`, never `npm`: the release workflow publishes
+   pnpm-packed tarballs, and `npm pack` prints the unsubstituted `workspace:`
+   ranges rather than what actually publishes.
 
    ```bash
-   for p in core stim-cli expo-build-cache metro; do
-     echo "== $p"; (cd "packages/$p" && npm pack --dry-run 2>&1 | grep -E 'README|Tarball|total files')
+   out=$(mktemp -d)
+   for p in core cache metro expo-build-cache stim-cli; do
+     tgz=$(cd "packages/$p" && pnpm pack --pack-destination "$out" | tail -1)
+     echo "== $p ($(tar -tzf "$tgz" | wc -l | tr -d ' ') files)"
+     tar -tzf "$tgz" | grep -E 'README|LICENSE'
+     tar -xzOf "$tgz" package/package.json | grep -E '"version"|"@stim-cli/'
    done
+   rm -rf "$out"
    ```
 
    Keep the `files` whitelists tight (`dist`, `shim`, `skill`, `LICENSE`,
    `README.md` for the CLI; `dist`, `README.md`, `LICENSE` for the other
-   packages). Every published JavaScript entry lives under `dist/`.
+   packages). Every published JavaScript entry lives under `dist/`. A
+   `workspace:` range in that output means the tarball was not packed by pnpm;
+   stop and fix the packing before publishing.
 
 4. **Inspect the candidate diff.** `git status --short` should contain only the
-   five package manifests, `pnpm-lock.yaml`, and the draft
-   release notes. Resolve anything else before QA.
+   five package manifests and the draft release notes. `pnpm-lock.yaml` no
+   longer moves with a version bump -- it records the internal edges as
+   `workspace:` specifiers and `link:` targets, neither of which carries a
+   version. Resolve anything else before QA.
 
 ## 3. Pre-tag QA gate
 
@@ -236,8 +256,9 @@ Before continuing:
    ```
 
    Send the `url` (the run page has Review deployments -> `release` ->
-   Approve and deploy). The workflow skips an exact package version that
-   already exists, publishes to the `latest` dist-tag (section 1), then
+   Approve and deploy). The workflow packs the five tarballs with pnpm, checks
+   that no `workspace:` range survived the pack, skips an exact package version
+   that already exists, publishes to the `latest` dist-tag (section 1), then
    verifies all five registry versions. A NEW package, a failed publish, or
    a provenance rejection: see
    [docs/release-recovery.md](./docs/release-recovery.md).
@@ -264,6 +285,7 @@ Before continuing:
 ## Don't
 
 - Force-push tags. Cut a new version.
-- Skip the `npm pack --dry-run` step. Untracked files have shipped before.
+- Skip the tarball check in section 2, step 3. Untracked files have shipped
+  before, and it is the only place a `workspace:` range would be caught by hand.
 - Publish one package at a new version and leave the others behind. The shared
   version is the compatibility statement; a partial release makes it a lie.

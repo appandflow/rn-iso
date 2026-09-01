@@ -2,7 +2,9 @@ packages:
   - packages/*
   - website
 
-# Internal deps declared by semver resolve to the workspace copies.
+# Defence in depth: the packages declare each other with `workspace:` ranges,
+# which link regardless. This keeps a plain semver internal dep linking to the
+# workspace copy rather than silently resolving to a published version.
 linkWorkspacePackages: true
 
 # Security posture (pnpm 12 defaults + explicit choices):
