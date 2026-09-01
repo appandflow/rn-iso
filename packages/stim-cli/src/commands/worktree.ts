@@ -634,7 +634,7 @@ export function removalPath(target: string | undefined): string {
 // The registry keys a worktree by the path git reports, which is the real
 // path. Canonicalize from the deepest ancestor that exists so a symlinked or
 // not-yet-created directory yields the same key git will.
-export function canonicalExistingPath(target: string): string {
+function canonicalExistingPath(target: string): string {
   const resolved = resolve(target);
   let existing = resolved;
   const missing: string[] = [];
