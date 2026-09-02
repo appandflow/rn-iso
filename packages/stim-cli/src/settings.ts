@@ -56,6 +56,21 @@ const KNOWN_SETTINGS = new Set([
 
 const OPEN_SETTINGS_OBJECTS = new Set(['android.avdConfig', 'cache.options']);
 
+// Keys outside this set have no validator on every command that reads them,
+// so an object value keeps the unknown-key warning; see issue #210.
+const VALIDATED_SCALAR_SETTINGS = new Set([
+  'worktreeDir',
+  'ios.lanHost',
+  'ios.signingIdentity',
+  'ios.signingIdentitySha1',
+  'ios.remote',
+  'ios.simslimProfile',
+  'android.remote',
+  'android.dataPartitionSizeGb',
+  'android.avdConfigFile',
+  'cache.provider',
+]);
+
 export const MIN_ANDROID_DATA_PARTITION_SIZE_GB: number = 6;
 export const DEFAULT_ANDROID_DATA_PARTITION_SIZE_GB: number = 8;
 export const MAX_ANDROID_DATA_PARTITION_SIZE_GB: number = 16 * 1024;
@@ -404,6 +419,7 @@ export function unknownSettingKeys(settings: unknown, prefix = ''): string[] {
     const path = prefix ? `${prefix}.${key}` : key;
     if (isPlainObject(value)) {
       if (OPEN_SETTINGS_OBJECTS.has(path)) continue;
+      if (VALIDATED_SCALAR_SETTINGS.has(path)) continue;
       const hasKnownChildren = [...KNOWN_SETTINGS].some((k) => k.startsWith(`${path}.`));
       if (hasKnownChildren) unknown.push(...unknownSettingKeys(value, path));
       else unknown.push(path);
