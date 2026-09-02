@@ -943,8 +943,6 @@ interface ReportAndroidResultArgs {
   androidPackage: string;
   installSkipped: boolean;
   record: AndroidRecord;
-  storeHash: string;
-  storeKey: string;
   waitedForBuild: WaitedForBuild | null;
   remote: LoadProjectProviderResult | null;
   providerName: string | null;
@@ -967,8 +965,6 @@ function reportAndroidResult({
   androidPackage,
   installSkipped,
   record,
-  storeHash,
-  storeKey,
   waitedForBuild,
   remote,
   providerName,
@@ -985,8 +981,8 @@ function reportAndroidResult({
     debugHttpHost: launched.debugHttpHost ?? null,
     debugHttpHostNote: launched.debugHttpHostNote ?? null,
     devClientUrl: launched.devClientUrl ?? null,
-    fingerprint: storeHash,
-    cacheKey: storeKey,
+    fingerprint: record.fingerprint,
+    cacheKey: record.cacheKey,
     variant,
     metroPort,
     cacheHit: record.cacheHit,
@@ -1059,8 +1055,6 @@ interface FinishAndroidRunArgs {
   androidPackage: string | null;
   swapDir: string | null;
   record: AndroidRecord;
-  storeHash: string;
-  storeKey: string;
   waitedForBuild: WaitedForBuild | null;
   uploadPending: Promise<RemoteUploadLike> | null;
   providerUpload: Promise<ProviderCallResult<void>> | null;
@@ -1116,8 +1110,6 @@ async function finishAndroidRun({
   androidPackage: initialPackage,
   swapDir,
   record,
-  storeHash,
-  storeKey,
   waitedForBuild,
   uploadPending,
   providerUpload,
@@ -1361,8 +1353,6 @@ async function finishAndroidRun({
     androidPackage,
     installSkipped,
     record,
-    storeHash,
-    storeKey,
     waitedForBuild,
     remote,
     providerName,
@@ -2387,37 +2377,65 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
           phase('build', `${basename(apkPath!)} (${formatDuration(built.durationMs)})`);
           if (built.apkNote) phase('build', chalk.yellow(built.apkNote));
 
-          const assetManifest = release ? captureAssets(root, { variant }) : null;
-          try {
-            const stored = await storeTieredBuild({
-              local: filesystemBuildCapability({
-                resolve: resolveCached,
-                store: storeCached,
-                sources: storeSources,
-                assetManifest,
-              }),
-              loadProvider: loadTieredProvider,
-              target: { projectRoot: root, platform: PLATFORM, key: storeKey },
-              sourcePath: apkPath!,
-              overwrite: !useBuildCache || swapFellBack,
-              warn: cacheWarn,
-            });
-            providerUpload = stored.providerUpload;
-            providerName = stored.providerName ?? providerName;
-          } catch (err) {
-            phase('cache', chalk.yellow(`could not store the build: ${(err as Error)?.message || err}`));
-          }
+          const beforeBuildHash = storeHash;
+          const afterBuild = await refingerprintAfterMutation({
+            projectRoot: root,
+            platform: PLATFORM,
+            previousHash: beforeBuildHash,
+            fingerprint,
+          });
+          if (!afterBuild) {
+            record.fingerprint = null;
+            record.cacheKey = null;
+            phase('fingerprint', chalk.yellow('unavailable after Gradle; the build will be installed but not cached'));
+          } else {
+            if (afterBuild.moved) {
+              storeHash = afterBuild.hash;
+              storeSources = afterBuild.sources;
+              storeKey = buildCacheKey(PLATFORM, afterBuild.hash, variant ? { variant } : {});
+              record.fingerprint = storeHash;
+              record.cacheKey = storeKey;
+              phase(
+                'fingerprint',
+                chalk.dim(
+                  `${shortHash(beforeBuildHash)} -> ${shortHash(storeHash)} after Gradle; ` +
+                    'storing under the new key, which is the one the next run looks up',
+                ),
+              );
+            }
 
-          if (remote) {
-            uploadPending = uploadRemoteBuild({
-              logWriter: writer,
-              provider: remote.provider,
-              platform: PLATFORM,
-              projectRoot: root,
-              fingerprintHash: storeHash,
-              buildPath: apkPath!,
-              runOptions: variant ? { variant } : null,
-            });
+            const assetManifest = release ? captureAssets(root, { variant }) : null;
+            try {
+              const stored = await storeTieredBuild({
+                local: filesystemBuildCapability({
+                  resolve: resolveCached,
+                  store: storeCached,
+                  sources: storeSources,
+                  assetManifest,
+                }),
+                loadProvider: loadTieredProvider,
+                target: { projectRoot: root, platform: PLATFORM, key: storeKey },
+                sourcePath: apkPath!,
+                overwrite: !useBuildCache || swapFellBack,
+                warn: cacheWarn,
+              });
+              providerUpload = stored.providerUpload;
+              providerName = stored.providerName ?? providerName;
+            } catch (err) {
+              phase('cache', chalk.yellow(`could not store the build: ${(err as Error)?.message || err}`));
+            }
+
+            if (remote) {
+              uploadPending = uploadRemoteBuild({
+                logWriter: writer,
+                provider: remote.provider,
+                platform: PLATFORM,
+                projectRoot: root,
+                fingerprintHash: storeHash,
+                buildPath: apkPath!,
+                runOptions: variant ? { variant } : null,
+              });
+            }
           }
         }
       } finally {
@@ -2501,8 +2519,6 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       androidPackage,
       swapDir,
       record,
-      storeHash,
-      storeKey,
       waitedForBuild,
       uploadPending,
       providerUpload,

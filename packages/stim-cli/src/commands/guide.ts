@@ -45,12 +45,17 @@ line by design (see \`guide logs\`), not this single-payload contract.
                   computed AFTER those steps -- the one the next run in this
                   tree computes -- and this field reports that one. The shift
                   is printed on stderr as one dim line naming both short
-                  hashes; no shift, no line, and no second fingerprint.
-                  A shift is RE-LOOKED-UP before anything compiles (\`cache
+                  hashes. A prebuild shift is RE-LOOKED-UP before anything
+                  compiles (\`cache
                   hit under the post-prebuild key\`), so a cold tree -- a
                   fresh worktree or clone of a CNG app -- installs an entry
                   another workspace already built instead of compiling
-                  beside it
+                  beside it. Android also fingerprints after Gradle because
+                  Gradle plugins can rewrite native inputs while they build;
+                  its artifact is stored only under that post-build hash. A
+                  stable second fingerprint prints no shift line. If that
+                  fingerprint cannot be computed, the build is installed but
+                  not cached, and fingerprint and cacheKey are null
   configuration   the Xcode configuration that was built ("Release" from
                   --configuration or the ios.configuration setting); null for
                   the default Debug
