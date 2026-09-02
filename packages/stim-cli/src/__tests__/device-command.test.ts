@@ -277,6 +277,53 @@ describe('stim device lock', () => {
     expect(facts.deviceName).toBe('SM-G996W');
   });
 
+  test('with no id and two unhealthy cabled iOS phones, the refusal names each one own reason', async () => {
+    const SECOND = '00008120-000A11223C44201E';
+    const h = harness({
+      listIosDevices: () => [
+        {
+          udid: PHONE,
+          name: 'Old iPhone',
+          bootState: 'booted',
+          developerModeStatus: 'disabled',
+          pairingState: 'paired',
+          transportType: 'wired',
+        },
+        {
+          udid: SECOND,
+          name: 'Second',
+          bootState: 'booted',
+          developerModeStatus: 'enabled',
+          pairingState: 'unpaired',
+          transportType: 'wired',
+        },
+      ],
+    });
+    const failure = await runLock('ios', undefined, {}, h.deps);
+    assert('code' in failure);
+    expect(failure.code).toBe('STIM_NO_DEVICE');
+    expect(failure.message).toMatch(new RegExp(`${PHONE} \\(Old iPhone\\) has Developer Mode disabled`));
+    expect(failure.message).toMatch(new RegExp(`${SECOND} \\(Second\\) is connected but unpaired`));
+    expect(failure.message).not.toMatch(/Several devices are connected/);
+  });
+
+  test('with no id and two emulator-probed android serials, the refusal names each one own reason', async () => {
+    const h = harness({
+      listAdbDevices: () => ({
+        emulators: [],
+        physical: [{ serial: 'ZY224' }, { serial: 'RFCR7081Q9L' }],
+        unhealthy: [],
+      }),
+      probeEmulatorSerial: () => true,
+    });
+    const failure = await runLock('android', undefined, {}, h.deps);
+    assert('code' in failure);
+    expect(failure.code).toBe('STIM_NO_DEVICE');
+    expect(failure.message).toMatch(/ZY224 is an emulator, not a physical device/);
+    expect(failure.message).toMatch(/RFCR7081Q9L is an emulator, not a physical device/);
+    expect(failure.message).not.toMatch(/Several physical devices are connected/);
+  });
+
   test('a device this workspace leases but is not connected refuses, naming the way out', async () => {
     const h = harness();
     takeLease({ root, platform: 'ios', id: 'GONE-PHONE', kind: 'declared' }, h.io);
