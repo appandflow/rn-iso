@@ -160,8 +160,8 @@ ports, devices, supervisors, builds, logs, capacity, and free disk space.
 ## `worktree create`
 
 ```text
-stim worktree create <name> [--base <head|fresh|ref>] [--label <label>]
-                            [--carry-ignored]
+stim worktree create <name> [--base <head|fresh|ref>] [--dir <path>]
+                            [--label <label>] [--carry-ignored]
 ```
 
 Creates a git worktree and prints its absolute path.
@@ -169,6 +169,10 @@ Creates a git worktree and prints its absolute path.
 - `--base head` uses the current checkout's `HEAD`. This is the default.
 - `--base fresh` uses `origin/HEAD`.
 - `--base <ref>` accepts any branch, tag, or commit that git resolves.
+- `--dir <path>` creates the worktree under that directory instead of the
+  `worktreeDir` setting or the default `<repo>-worktrees/` sibling. A relative
+  path resolves against the current directory. The worktree lands at
+  `<dir>/<name>`.
 - `--label` sets the short Stim name used by the environment and device.
 - `--carry-ignored` copies safe ignored files and compatible uncommitted changes.
 

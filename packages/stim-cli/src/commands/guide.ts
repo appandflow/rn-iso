@@ -1325,7 +1325,7 @@ THE OPTION SURFACE, IN FULL
   stop            --json --force
   status          --json          (already machine-wide)
   gc              --delete --older-than <days> --cache <name|all>
-  worktree create <name> --carry-ignored --base <ref> --label <label>; remove [path] --force
+  worktree create <name> --carry-ignored --base <ref> --dir <path> --label <label>; remove [path] --force
 
   That is the whole surface today, and it is deliberately small. It can grow
   when a flag is genuinely the best answer -- but project-specific knowledge
@@ -1885,7 +1885,8 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         did not create it, so a Metro request through it is
                         still gated the same way a managed tunnel's is. Set it
                         before Expo start so the manifest advertises it.
-  worktreeDir           where worktrees are created
+  worktreeDir           where worktrees are created; worktree create --dir
+                        overrides it for one run
   worktree.baseRef      "head" (current HEAD) or "fresh" (origin/HEAD).
                         Unset means "head".
   worktree.include      carry-over patterns, same role as .worktreeinclude

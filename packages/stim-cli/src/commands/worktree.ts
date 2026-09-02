@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, realpathSync } from 'fs';
 import { basename, dirname, resolve } from 'path';
 import chalk from 'chalk';
-import type { Command } from 'commander';
+import { type Command, InvalidArgumentError } from 'commander';
 import { resolveSettings, unknownSettingKeys } from '../settings.ts';
 import { getProject, isPathPrefix, loadConfig, removeProject, upsertProject } from '../config.ts';
 import { podInstallCommand } from '../engine/bundler.ts';
@@ -135,6 +135,14 @@ export function registerCreate(worktree: Command): void {
       '--base <ref>',
       'base ref: "head" (current HEAD, default), "fresh" (origin/HEAD), or any ref this repo resolves (branch, tag, sha)',
     )
+    .option(
+      '--dir <path>',
+      'directory to create the worktree under, resolved against the current directory; overrides the worktreeDir setting for this run',
+      (v: string) => {
+        if (!v.trim()) throw new InvalidArgumentError('must name a directory, e.g. --dir .worktrees');
+        return v;
+      },
+    )
     .option('--label <label>', 'Stim shortcut for the worktree (defaults to the worktree name)')
     .option(
       '--carry-ignored',
@@ -163,7 +171,7 @@ export function registerCreate(worktree: Command): void {
 
       const base = opts.base || settings?.worktree?.baseRef || 'head';
 
-      const dir = settings.worktreeDir || defaultWorktreeDir(root);
+      const dir = canonicalExistingPath(opts.dir || settings.worktreeDir || defaultWorktreeDir(root));
       const target = worktreePath({ worktreeDir: dir, name });
 
       if (existsSync(target)) {
@@ -620,7 +628,14 @@ interface RemovalInspection {
 }
 
 export function removalPath(target: string | undefined): string {
-  const resolved = resolve(target ?? process.cwd());
+  return canonicalExistingPath(target ?? process.cwd());
+}
+
+// The registry keys a worktree by the path git reports, which is the real
+// path. Canonicalize from the deepest ancestor that exists so a symlinked or
+// not-yet-created directory yields the same key git will.
+function canonicalExistingPath(target: string): string {
+  const resolved = resolve(target);
   let existing = resolved;
   const missing: string[] = [];
   while (!existsSync(existing)) {

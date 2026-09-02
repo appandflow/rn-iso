@@ -1,8 +1,8 @@
 import { execSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, realpathSync, rmSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, realpathSync, rmSync, symlinkSync } from 'fs';
 import { tmpdir } from 'os';
 import { dirname, join } from 'path';
-import type { Command } from 'commander';
+import { Command } from 'commander';
 import {
   carriedChangesLine,
   carryConflictWarning,
@@ -280,6 +280,94 @@ test('create action: --base takes any ref this repo resolves, and branches from 
       expect(String(branchedFrom[0])).toMatch(new RegExp(`from ${ref.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')} \\(`));
       expect(String(branchedFrom[0])).toMatch(new RegExp(releaseSha.slice(0, 7)));
     }
+  } finally {
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('create action: --dir places the worktree under that directory, resolved against the cwd', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-dir-')));
+  const repo = join(base, 'repo');
+  try {
+    initScratchRepo(repo);
+    // Run from a subdirectory: a relative --dir must resolve against the cwd,
+    // not the repository root, or this lands at repo/.worktrees instead.
+    mkdirSync(join(repo, 'sub'));
+    const { logs } = await runCreateInRepo(join(repo, 'sub'), 'feat-x', { dir: '.worktrees', install: false });
+    const target = join(repo, 'sub', '.worktrees', 'feat-x');
+    expect(logs).toEqual([target]);
+    expect(existsSync(join(target, '.git'))).toBeTruthy();
+    expect(existsSync(join(repo, '.worktrees', 'feat-x'))).toBeFalsy();
+    expect(existsSync(join(defaultWorktreeDir(repo), 'feat-x'))).toBeFalsy();
+  } finally {
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('create: rejects a blank --dir instead of falling through to the default directory', async () => {
+  for (const value of ['', '   ']) {
+    const program = new Command();
+    program.exitOverride();
+    registerCreate(program);
+    await expect(() => program.parseAsync(['node', 'stim', 'create', 'x', '--dir', value])).rejects.toThrow(
+      /must name a directory/,
+    );
+  }
+});
+
+test('create action: --dir through a symlink yields the real path git will report', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-dir-link-')));
+  const repo = join(base, 'repo');
+  try {
+    initScratchRepo(repo);
+    mkdirSync(join(base, 'real'));
+    symlinkSync(join(base, 'real'), join(base, 'link'));
+    const { logs } = await runCreateInRepo(repo, 'feat-z', { dir: join(base, 'link', 'wts'), install: false });
+    const target = join(base, 'real', 'wts', 'feat-z');
+    expect(logs).toEqual([target]);
+    expect(realpathSync(target)).toBe(target);
+  } finally {
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('create action: --carry-ignored into a nested --dir does not copy the worktree into itself', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-dir-carry-')));
+  const repo = join(base, 'repo');
+  try {
+    initScratchRepo(repo);
+    writeFileSync(join(repo, '.gitignore'), '.worktrees/\n');
+    execSync('git add .gitignore && git commit -q -m ignore', { cwd: repo });
+    const { logs } = await runCreateInRepo(repo, 'feat-nest', {
+      dir: '.worktrees',
+      carryIgnored: true,
+      install: false,
+    });
+    const target = join(repo, '.worktrees', 'feat-nest');
+    expect(logs).toEqual([target]);
+    expect(existsSync(join(target, '.worktrees'))).toBeFalsy();
+  } finally {
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('create action: --dir takes precedence over the worktreeDir setting', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-dir-setting-')));
+  const repo = join(base, 'repo');
+  try {
+    initScratchRepo(repo);
+    writeFileSync(join(repo, '.stim.json'), JSON.stringify({ worktreeDir: join(base, 'from-setting') }));
+    const { logs } = await runCreateInRepo(repo, 'feat-y', { dir: join(base, 'from-flag'), install: false });
+    expect(logs).toEqual([join(base, 'from-flag', 'feat-y')]);
+    expect(existsSync(join(base, 'from-setting', 'feat-y'))).toBeFalsy();
   } finally {
     process.exitCode = 0;
     rmSync(base, { recursive: true, force: true });
