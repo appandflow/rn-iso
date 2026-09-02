@@ -1,9 +1,9 @@
-import { join } from 'path';
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { findProjectRoot } from '../project.ts';
 import { repoRoot } from '../worktree.ts';
 import {
+  allowanceSearchPaths,
   applyClaudeAllowance,
   claudeLocalSettingsPath,
   detectHarness,
@@ -19,11 +19,56 @@ interface DoctorOptions {
   fix?: boolean;
 }
 
+/**
+ * Status goes to stderr so `--json --fix` still prints one parseable payload
+ * on stdout, and the report that follows shows what the write left.
+ */
+export function applySandboxFix(root: string, env: NodeJS.ProcessEnv = process.env): void {
+  const harness = detectHarness(env);
+  if (harness === 'codex') {
+    console.error(chalk.yellow('Nothing to apply under Codex.'));
+    console.error(
+      chalk.dim(
+        'Its sandbox is one setting, `sandbox_mode`, with no per-path allowance: the only value that clears Stim is `danger-full-access`, which turns the sandbox off rather than allowing these three. Run Stim with the sandbox off instead, or set it yourself.',
+      ),
+    );
+    process.exitCode = 1;
+    return;
+  }
+  if (harness !== 'claude-code') {
+    console.error(chalk.dim('No sandboxing harness detected, so there is nothing to apply.'));
+    return;
+  }
+
+  const settingsRoot = repoRoot(root) ?? root;
+  const stimHome = env.STIM_HOME || '~/.stim';
+  const target = claudeLocalSettingsPath(settingsRoot);
+  const missing = missingAllowance(allowanceSearchPaths(settingsRoot), stimHome);
+  if (missing.length === 0) {
+    console.error(chalk.green('Stim is already allowed through this sandbox. Nothing to apply.'));
+    return;
+  }
+
+  const result = applyClaudeAllowance(target, sandboxAllowance(stimHome));
+  if (result.status === 'refused') {
+    console.error(chalk.red(result.reason));
+    console.error(chalk.dim(`Nothing was written. Add ${missing.join(', ')} by hand.`));
+    process.exitCode = 1;
+    return;
+  }
+  console.error(chalk.green(`${result.status === 'created' ? 'Wrote' : 'Updated'} ${target}`));
+  console.error(
+    chalk.dim(
+      "Added writes to Stim's state directory, the simulator XPC service, and local port binding. Claude Code reads project settings from the directory a session starts in, so this file only counts for sessions rooted there. Restart the session for it to take effect.",
+    ),
+  );
+}
+
 export default function doctorCommand(program: Command): void {
   program
     .command('doctor')
     .description(
-      'Inspect the main checkout and report project state that can make native worktrees slow or invalid. Read-only; changes nothing.',
+      'Inspect the main checkout and report project state that can make native worktrees slow or invalid. Read-only unless --fix is passed.',
     )
     .option('--json', 'print the findings as JSON')
     .option(
@@ -38,38 +83,7 @@ export default function doctorCommand(program: Command): void {
         return;
       }
 
-      if (opts.fix) {
-        const harness = detectHarness();
-        const settingsRoot = repoRoot(root) ?? root;
-        const home = process.env.STIM_HOME || '~/.stim';
-        if (harness === 'claude-code') {
-          const path = claudeLocalSettingsPath(settingsRoot);
-          if (missingAllowance([path, join(settingsRoot, '.claude', 'settings.json')], home).length === 0) {
-            console.log(chalk.green('Stim is already allowed through this sandbox. Nothing to apply.'));
-            return;
-          }
-          const { created } = applyClaudeAllowance(path, sandboxAllowance(home));
-          console.log(chalk.green(`${created ? 'Wrote' : 'Updated'} ${path}`));
-          console.log(
-            chalk.dim(
-              "Added writes to Stim's state directory, the simulator XPC service, and local port binding. Restart the session for it to take effect.",
-            ),
-          );
-          return;
-        }
-        if (harness === 'codex') {
-          console.error(chalk.yellow('Nothing to apply under Codex.'));
-          console.error(
-            chalk.dim(
-              'Its sandbox is one setting, `sandbox_mode`, with no per-path allowance: the only value that clears Stim is `danger-full-access`, which turns the sandbox off rather than allowing these three. Run Stim with the sandbox off instead, or set it yourself.',
-            ),
-          );
-          process.exitCode = 1;
-          return;
-        }
-        console.log(chalk.dim('No sandboxing harness detected, so there is nothing to apply.'));
-        return;
-      }
+      if (opts.fix) applySandboxFix(root);
 
       const findings: Finding[] = runDoctor(root, {
         xcodeMajor: detectXcodeMajor(),
@@ -78,8 +92,10 @@ export default function doctorCommand(program: Command): void {
       const parity = await detectFingerprintParity(root);
       if (parity) findings.push(parity);
 
-      const sandbox = sandboxFinding(repoRoot(root) ?? root);
-      if (sandbox) findings.push(sandbox);
+      if (detectHarness()) {
+        const sandbox = sandboxFinding(repoRoot(root) ?? root);
+        if (sandbox) findings.push(sandbox);
+      }
 
       if (opts.json) {
         console.log(JSON.stringify({ project: root, findings }, null, 2));
