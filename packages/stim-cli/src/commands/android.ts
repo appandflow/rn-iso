@@ -109,7 +109,14 @@ import {
   probeEmulatorSerial,
   resolvePhysicalDevice,
 } from '../sim/android.ts';
-import { checkDeviceCapacity, ensureBooted, ensureOwnedDevice } from '../engine/device.ts';
+import {
+  checkDeviceCapacity,
+  ensureBooted,
+  ensureOwnedDevice,
+  unknownAndroidSystemImageRefusal,
+  type OwnedDeviceRecord,
+  type UnknownDeviceNameRefusal,
+} from '../engine/device.ts';
 import {
   REMOTE_SESSION_ERROR,
   binOnPath,
@@ -133,7 +140,6 @@ import {
   type RunLease,
 } from '../engine/device-lease-run.ts';
 import { ownedSessionName } from '../engine/eas-simulator.ts';
-import type { OwnedDeviceRecord } from '../engine/device.ts';
 import { needsPrebuild, runPrebuild } from '../engine/prebuild.ts';
 import { buildAndroid, productFlavorRefusal, readProductFlavors } from '../engine/gradle.ts';
 import { resolveKeystore, swapApkBundle } from '../engine/apk-swap.ts';
@@ -171,6 +177,45 @@ export function resolveVariant(
 ): string | null {
   const fromFlag = typeof flag === 'string' && flag.trim() !== '' ? flag.trim() : null;
   return fromFlag || androidVariantSetting(settings);
+}
+
+export function androidSystemImageSetting(settings: SettingsObject | null | undefined): string | null {
+  const android = settings?.['android'];
+  if (!android || typeof android !== 'object' || Array.isArray(android)) return null;
+  const raw = (android as Record<string, unknown>)['systemImage'];
+  return typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : null;
+}
+
+export function resolveSystemImage(
+  flag: string | null | undefined,
+  settings: SettingsObject | null | undefined,
+): string | null {
+  const fromFlag = typeof flag === 'string' && flag.trim() !== '' ? flag.trim() : null;
+  return fromFlag || androidSystemImageSetting(settings);
+}
+
+function systemImageRefusal({
+  flag,
+  resolved,
+  physical,
+  remoteBackend,
+  unknown,
+}: {
+  flag: string | null | undefined;
+  resolved: string | null;
+  physical: boolean;
+  remoteBackend: string | null;
+  unknown: typeof unknownAndroidSystemImageRefusal;
+}): UnknownDeviceNameRefusal | null {
+  if (typeof flag === 'string' && flag.trim() === '') {
+    return {
+      message: '--system-image was given an empty id.',
+      remedy:
+        'Pass `--system-image <id>` with an sdkmanager package id, e.g. "system-images;android-36;google_apis;arm64-v8a".',
+    };
+  }
+  if (physical || remoteBackend) return null;
+  return unknown(resolved);
 }
 
 export function isReleaseVariant(variant: string | null | undefined): boolean {
@@ -247,6 +292,7 @@ interface AndroidCommandOptions {
   metroCheck?: boolean;
   buildCache?: boolean;
   variant?: string;
+  systemImage?: string;
   remote?: RemoteDeviceBackend;
   device?: string | boolean;
   wait?: string | boolean;
@@ -269,6 +315,7 @@ interface AndroidRecord {
   bundleId?: string | null;
   avdName?: string | null;
   deviceName?: string | null;
+  systemImage?: string | null;
 }
 
 export const NO_METRO = 'STIM_NO_METRO';
@@ -469,6 +516,7 @@ export function androidFacts({
   serial,
   avdName = null,
   deviceName = null,
+  systemImage = null,
   fingerprint,
   cacheKey = null,
   variant = null,
@@ -490,6 +538,7 @@ export function androidFacts({
   serial?: string | null;
   avdName?: string | null;
   deviceName?: string | null;
+  systemImage?: string | null;
   fingerprint?: string | null;
   cacheKey?: string | null;
   variant?: string | null;
@@ -513,6 +562,7 @@ export function androidFacts({
     serial: serial ?? null,
     avdName: avdName ?? null,
     deviceName: deviceName ?? avdName ?? null,
+    systemImage: systemImage ?? null,
     fingerprint: fingerprint ?? null,
     cacheKey: cacheKey ?? null,
     variant: variant ?? null,
@@ -645,6 +695,12 @@ export function registerAndroid(program: Command): void {
       'Gradle variant to assemble and install (e.g. productionDebug on a flavored project); overrides the android.variant setting. A variant ending in Release embeds the JS bundle and skips Metro entirely. Default: debug',
     )
     .option(
+      '--system-image <id>',
+      "Android system image to create this workspace's owned AVD from, as the sdkmanager package id " +
+        '(e.g. "system-images;android-36;google_apis;arm64-v8a"). Overrides the android.systemImage setting for this ' +
+        'invocation. An unknown id refuses with STIM_BAD_ARG and prints the installed images.',
+    )
+    .option(
       '--device [serial]',
       "Install and launch on a connected physical device instead of this workspace's owned emulator. " +
         'With no serial, the first connected device this workspace can lease is used. Stim never creates, boots, or deletes a physical device.',
@@ -678,6 +734,7 @@ export function registerAndroid(program: Command): void {
         metroCheck: opts.metroCheck !== false,
         useBuildCache: opts.buildCache !== false,
         variant: opts.variant ?? null,
+        systemImage: opts.systemImage ?? null,
         remoteDevice: opts.remote ?? null,
         device: opts.device ?? null,
         wait: opts.wait,
@@ -693,6 +750,8 @@ interface RunAndroidOptions {
   metroCheck?: boolean;
   useBuildCache?: boolean;
   variant?: string | null;
+  systemImage?: string | null;
+  unknownSystemImage?: typeof unknownAndroidSystemImageRefusal;
   device?: string | boolean | null;
   wait?: string | boolean;
   waitConflict?: boolean;
@@ -983,6 +1042,7 @@ function reportAndroidResult({
     serial,
     avdName: record.avdName,
     deviceName: record.deviceName,
+    systemImage: record.systemImage,
     debugHttpHost: launched.debugHttpHost ?? null,
     debugHttpHostNote: launched.debugHttpHostNote ?? null,
     devClientUrl: launched.devClientUrl ?? null,
@@ -1437,6 +1497,7 @@ function resolveRunAndroidOptions(
     metroCheck = true,
     useBuildCache = true,
     variant: variantFlag = null,
+    systemImage: systemImageFlag = null,
     device: deviceFlag = null,
     wait: waitFlag = undefined,
     waitConflict = false,
@@ -1453,6 +1514,7 @@ function resolveRunAndroidOptions(
     acquireSlot = acquireBuildSlot,
     releaseSlot = releaseBuildSlot,
     ensureDevice = ensureOwnedDevice,
+    unknownSystemImage = unknownAndroidSystemImageRefusal,
     ensureDeviceBooted = ensureBooted,
     resolveMetro = resolveProjectMetro,
     resolveMetroRetrying = resolveMetroWithRetry,
@@ -1508,6 +1570,7 @@ function resolveRunAndroidOptions(
     metroCheck,
     useBuildCache,
     variantFlag,
+    systemImageFlag,
     deviceFlag,
     waitFlag,
     waitConflict,
@@ -1524,6 +1587,7 @@ function resolveRunAndroidOptions(
     acquireSlot,
     releaseSlot,
     ensureDevice,
+    unknownSystemImage,
     ensureDeviceBooted,
     resolveMetro,
     resolveMetroRetrying,
@@ -1581,6 +1645,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     metroCheck,
     useBuildCache,
     variantFlag,
+    systemImageFlag,
     deviceFlag,
     waitFlag,
     waitConflict,
@@ -1597,6 +1662,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     acquireSlot,
     releaseSlot,
     ensureDevice,
+    unknownSystemImage,
     ensureDeviceBooted,
     resolveMetro,
     resolveMetroRetrying,
@@ -1767,6 +1833,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       `Set ios.remote and android.remote to one of: ${REMOTE_DEVICE_BACKENDS.join(', ')}.`,
     );
   }
+  const systemImage = resolveSystemImage(systemImageFlag, settings);
   const variant = resolveVariant(variantFlag, settings);
   const flavorRefusal = productFlavorRefusal({ flavors: readProductFlavors(root), variant });
   if (flavorRefusal) return fail(flavorRefusal.code, flavorRefusal.reason, flavorRefusal.remedy);
@@ -1815,6 +1882,14 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   const waitSeconds = waitParsed.seconds;
 
   const remoteBackend = physical ? null : (commandRemoteBackend ?? remoteAndroidSetting(settings));
+  const imageRefusal = systemImageRefusal({
+    flag: systemImageFlag,
+    resolved: systemImage,
+    physical,
+    remoteBackend,
+    unknown: unknownSystemImage,
+  });
+  if (imageRefusal) return fail('STIM_BAD_ARG', imageRefusal.message, imageRefusal.remedy);
   const requestedSerial = typeof deviceFlag === 'string' ? deviceFlag : null;
   let androidPackage = detectAndroidPackage(root);
   record.bundleId = androidPackage;
@@ -1957,7 +2032,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         settingsRoot,
         label,
         settings,
-        flags: {},
+        flags: { systemImage },
         note: out,
         out,
         logFile: emuLog,
@@ -2026,6 +2101,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   }
   record.avdName = device.avdName ?? null;
   record.deviceName = device.deviceName ?? device.avdName ?? null;
+  record.systemImage = device.systemImage;
 
   let hash = '';
   let providerUpload: Promise<ProviderCallResult<void>> | null = null;

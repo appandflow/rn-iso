@@ -163,7 +163,12 @@ Metro from the project's dependencies. Expo runs its fixed start command. iOS
 and Android use fixed `xcodebuild` and Gradle arguments.
 
 The supported build selectors are `ios --configuration <name>` and
-`android --variant <name>`. `android --device [serial]` and
+`android --variant <name>`. `ios --device-type <name>`, `ios --runtime
+<version>`, and `android --system-image <id>` select the model and version of
+the owned simulator or emulator for one invocation, overriding
+`ios.deviceType`, `ios.runtime`, and `android.systemImage`; a name that is not
+installed refuses with `STIM_BAD_ARG` and prints the installed names.
+`android --device [serial]` and
 `ios --device [udid]` select a connected physical device, and take
 `--wait <seconds>` or `--no-wait` for the lease on it. Non-Debug iOS
 configurations and Android variants ending in `Release` skip Metro. A release

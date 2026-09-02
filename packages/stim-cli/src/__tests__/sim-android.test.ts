@@ -33,6 +33,8 @@ import {
   pickDefaultSystemImage,
   hostSystemImageArch,
   ownedAvdDirectory,
+  ownedAvdSystemImage,
+  parseAvdSystemImage,
   deleteAvd,
   resolveOwnedAvdSerial,
   physicalDeviceModel,
@@ -919,4 +921,32 @@ test('memoizeEmulatorProbe probes a serial once and reuses the result across rep
   expect(probe('emulator-5554')).toBe(true);
   expect(probe('RFCR7081Q9L')).toBe(false);
   expect(calls).toEqual(['emulator-5554', 'RFCR7081Q9L']);
+});
+
+test('parseAvdSystemImage turns the config.ini image directory back into an sdkmanager package id', () => {
+  expect(
+    parseAvdSystemImage(
+      'avd.ini.encoding=UTF-8\nimage.sysdir.1=system-images/android-36/google_apis/arm64-v8a/\ntag.id=google_apis\n',
+    ),
+  ).toBe('system-images;android-36;google_apis;arm64-v8a');
+  expect(parseAvdSystemImage('image.sysdir.1 = system-images/android-35/default/x86_64')).toBe(
+    'system-images;android-35;default;x86_64',
+  );
+  expect(parseAvdSystemImage('image.sysdir.1=\n')).toBe(null);
+  expect(parseAvdSystemImage('hw.cpu.arch=arm64\n')).toBe(null);
+  expect(parseAvdSystemImage('')).toBe(null);
+});
+
+test('ownedAvdSystemImage reads the AVD Stim owns and stays null when it cannot', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'stim-avd-image-'));
+  try {
+    writeFileSync(join(dir, 'config.ini'), 'image.sysdir.1=system-images/android-36/google_apis/arm64-v8a/\n');
+    expect(ownedAvdSystemImage('stim-app', { avdDirectory: () => dir })).toBe(
+      'system-images;android-36;google_apis;arm64-v8a',
+    );
+    expect(ownedAvdSystemImage('stim-app', { avdDirectory: () => null })).toBe(null);
+    expect(ownedAvdSystemImage('stim-app', { avdDirectory: () => join(dir, 'gone') })).toBe(null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

@@ -23,6 +23,8 @@ import {
   isReleaseConfiguration,
   lastBuildRecord,
   resolveConfiguration,
+  resolveDeviceType,
+  resolveRuntime,
   phaseLine,
   podAction,
   ensureWorkspaceStorageSafely,
@@ -41,6 +43,7 @@ import { asProcessExit, makeChildProcess, makeError, makeExecutor, makeMetroReso
 import { RELEASE_VERIFY_WAIT_MS } from '../engine/app-install.ts';
 import { DEVICECTL_INSTALL_TIMEOUT_MS, LAUNCH_PROBE_TIMEOUT_MS } from '../engine/ios-device.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
+import { unknownIosDeviceTypeRefusal, unknownIosRuntimeRefusal } from '../engine/device.ts';
 import { DEBUG_VERIFY_STEP_MS, type RunLease } from '../engine/device-lease-run.ts';
 
 const UDID = 'BF2A1C3D-4E5F-6071-8293-A4B5C6D7E8F9';
@@ -169,6 +172,8 @@ function harness(overrides: LooseDeps = {}) {
       record('ensureOwnedDevice', args);
       return { deviceUdid: UDID, deviceName: 'stim-fixture', owned: true };
     },
+    unknownDeviceType: () => null,
+    unknownRuntime: () => null,
     ensureBooted: async (args) => {
       record('ensureBooted', args);
       return { ok: true, udid: UDID };
@@ -2095,6 +2100,8 @@ describe('iosFacts', () => {
       platform: 'ios',
       udid: UDID,
       deviceName: 'stim-x',
+      deviceType: null,
+      runtime: null,
       fingerprint: 'abc',
       configuration: null,
       cacheKey: 'abc-debug-sim',
@@ -4349,5 +4356,121 @@ describe('ios --device: the lease on the phone', () => {
     } finally {
       process.argv = argv;
     }
+  });
+});
+
+describe('the simulator model and runtime flags', () => {
+  test('resolveDeviceType and resolveRuntime put the flag over the setting', () => {
+    const settings = { ios: { deviceType: 'iPhone 17 Pro', runtime: '26.2' } };
+    expect(resolveDeviceType('iPad Pro 13-inch (M4)', settings)).toBe('iPad Pro 13-inch (M4)');
+    expect(resolveRuntime('18.5', settings)).toBe('18.5');
+    expect(resolveDeviceType(null, settings)).toBe('iPhone 17 Pro');
+    expect(resolveRuntime(null, settings)).toBe('26.2');
+    expect(resolveDeviceType('  ', settings)).toBe('iPhone 17 Pro');
+    expect(resolveRuntime('  ', settings)).toBe('26.2');
+    expect(resolveDeviceType(null, {})).toBe(null);
+    expect(resolveRuntime(null, null)).toBe(null);
+  });
+
+  test('the flags reach the engine and override the settings for that invocation', async () => {
+    reserve();
+    const settings = { ios: { deviceType: 'iPhone 17 Pro', runtime: '26.2' } };
+    const fromSetting = await run({}, { resolveSettings: () => settings });
+    expect(fromSetting.calls.args['ensureOwnedDevice']).toMatchObject({
+      flags: { deviceType: 'iPhone 17 Pro', runtime: '26.2' },
+    });
+    const fromFlag = await run(
+      { deviceType: 'iPad Pro 13-inch (M4)', runtime: '18.5' },
+      { resolveSettings: () => settings },
+    );
+    expect(fromFlag.calls.args['ensureOwnedDevice']).toMatchObject({
+      flags: { deviceType: 'iPad Pro 13-inch (M4)', runtime: '18.5' },
+    });
+    const neither = await run({});
+    expect(neither.calls.args['ensureOwnedDevice']).toMatchObject({ flags: { deviceType: null, runtime: null } });
+  });
+
+  test('an unknown device type refuses with STIM_BAD_ARG naming the installed models, before anything is created', async () => {
+    reserve();
+    const { exitCode, logs, errs, calls } = await run(
+      { deviceType: 'iPad Pro 99-inch', json: true },
+      {
+        unknownDeviceType: (requested: string | null | undefined) =>
+          unknownIosDeviceTypeRefusal(requested, [
+            { identifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-17', name: 'iPhone 17' },
+            { identifier: 'com.apple.CoreSimulator.SimDeviceType.iPad-Pro-13-M4', name: 'iPad Pro 13-inch (M4)' },
+          ]),
+      },
+    );
+    expect(exitCode).toBe(1);
+    const payload = parseFirst(logs);
+    expect(payload.code).toBe('STIM_BAD_ARG');
+    expect(payload.message).toMatch(/No installed simulator device type is named "iPad Pro 99-inch"/);
+    expect(payload.message).toMatch(/iPhone 17, iPad Pro 13-inch \(M4\)/);
+    expect(payload.remedy).toMatch(/--device-type/);
+    expect(calls.order.includes('ensureOwnedDevice')).toBeFalsy();
+    expect(calls.order.includes('buildIos')).toBeFalsy();
+    expect(errs.join('\n')).toMatch(/STIM_BAD_ARG/);
+  });
+
+  test('an unknown runtime refuses the same way, naming the installed versions', async () => {
+    reserve();
+    const { exitCode, logs, calls } = await run(
+      { runtime: '99.9', json: true },
+      {
+        unknownRuntime: (requested: string | null | undefined) =>
+          unknownIosRuntimeRefusal(requested, [
+            {
+              identifier: 'com.apple.CoreSimulator.SimRuntime.iOS-18-5',
+              name: 'iOS 18.5',
+              version: '18.5',
+              supportedDeviceTypes: [],
+            },
+          ]),
+      },
+    );
+    expect(exitCode).toBe(1);
+    const payload = parseFirst(logs);
+    expect(payload.code).toBe('STIM_BAD_ARG');
+    expect(payload.message).toMatch(/No installed simulator runtime matches "99\.9"\. Installed runtimes: 18\.5\./);
+    expect(calls.order.includes('ensureOwnedDevice')).toBeFalsy();
+  });
+
+  test('a blank value is STIM_BAD_ARG on its own', async () => {
+    reserve();
+    const blankType = await run({ deviceType: '   ', json: true });
+    expect(blankType.exitCode).toBe(1);
+    expect(parseFirst(blankType.logs).code).toBe('STIM_BAD_ARG');
+    expect(parseFirst(blankType.logs).message).toMatch(/--device-type was given an empty name/);
+    const blankRuntime = await run({ runtime: '', json: true });
+    expect(blankRuntime.exitCode).toBe(1);
+    expect(parseFirst(blankRuntime.logs).message).toMatch(/--runtime was given an empty version/);
+  });
+
+  test('the --json payload reports the model and runtime the owned simulator actually has', async () => {
+    reserve();
+    const { logs } = await run(
+      { json: true },
+      {
+        ensureOwnedDevice: async () => ({
+          deviceUdid: UDID,
+          deviceName: 'stim-fixture',
+          owned: true,
+          deviceType: 'iPad Pro 13-inch (M4)',
+          runtime: '18.5',
+        }),
+      },
+    );
+    const payload = parseFirst(logs);
+    expect(payload.deviceType).toBe('iPad Pro 13-inch (M4)');
+    expect(payload.runtime).toBe('18.5');
+  });
+
+  test('a device Stim does not own reports both as null', async () => {
+    reserve();
+    const { logs } = await run({ json: true });
+    const payload = parseFirst(logs);
+    expect(payload.deviceType).toBe(null);
+    expect(payload.runtime).toBe(null);
   });
 });

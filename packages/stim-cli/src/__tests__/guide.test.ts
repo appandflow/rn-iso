@@ -65,6 +65,8 @@ test('the facts topic documents the fields each --json payload actually carries'
       'installSkipped',
       'launched',
       'metroPort',
+      'deviceType',
+      'runtime',
     ],
     android: [
       'serial',
@@ -80,6 +82,7 @@ test('the facts topic documents the fields each --json payload actually carries'
       'installSkipped',
       'launched',
       'durationMs',
+      'systemImage',
     ],
   };
   for (const [command, names] of Object.entries(fields)) {
@@ -138,8 +141,25 @@ test('the flags the guide advertises are the flags the commands define', () => {
   assert(lifecycle);
   const advertised = {
     'start.ts': ['--json', '--wait', '--remote'],
-    'ios.ts': ['--json', '--no-metro-check', '--no-build-cache', '--configuration', '--device', '--remote'],
-    'android.ts': ['--json', '--no-metro-check', '--no-build-cache', '--variant', '--device', '--remote'],
+    'ios.ts': [
+      '--json',
+      '--no-metro-check',
+      '--no-build-cache',
+      '--configuration',
+      '--device-type',
+      '--runtime',
+      '--device',
+      '--remote',
+    ],
+    'android.ts': [
+      '--json',
+      '--no-metro-check',
+      '--no-build-cache',
+      '--variant',
+      '--system-image',
+      '--device',
+      '--remote',
+    ],
     'stop.ts': ['--json', '--force'],
     'logs.ts': ['--errors', '--follow', '--since', '--grep', '--tail'],
     'gc.ts': ['--delete', '--older-than', '--cache'],
@@ -1081,4 +1101,41 @@ test('the guide documents the pool an id-less --device picks from', () => {
   expect(lifecycle).not.toMatch(/refuses with the candidate\s+list/);
   expect(lifecycle).toMatch(/no serial it takes the first device it can lease/);
   expect(lifecycle).toMatch(/with no UDID it takes the\s+first device it can lease/);
+});
+
+test('the option surface lists the model and runtime flags on both platforms', () => {
+  const lifecycle = renderTopic('lifecycle');
+  assert(lifecycle);
+  expect(lifecycle).toMatch(/ios\s+--json[^\n]*--device-type <name> --runtime <version>/);
+  expect(lifecycle).toMatch(/android\s+--json[^\n]*--system-image <id>/);
+  expect(lifecycle).toMatch(/Each overrides its\s+setting \(ios\.deviceType, ios\.runtime, android\.systemImage\)/);
+  expect(lifecycle).toMatch(/exactly as `--configuration` overrides ios\.configuration/);
+  expect(lifecycle).toMatch(/reap the current\s+sim with `stim worktree remove` \(or `stim gc --delete`\)/);
+});
+
+test('the settings topic says the flag overrides each device-model key', () => {
+  const settings = renderTopic('settings');
+  assert(settings);
+  const flat = settings.replace(/\s+/g, ' ');
+  expect(flat).toMatch(/ios\.deviceType[^|]*The `--device-type` flag overrides this per invocation/);
+  expect(flat).toMatch(/ios\.runtime[^|]*The `--runtime` flag overrides this per invocation/);
+  expect(flat).toMatch(/android\.systemImage[^|]*The `--system-image` flag overrides this per invocation/);
+});
+
+test('the errors topic names an uninstalled device name as a STIM_BAD_ARG cause with the printed-names remedy', () => {
+  const errors = renderTopic('errors');
+  assert(errors);
+  const section = errors.slice(errors.indexOf('STIM_BAD_ARG')).replace(/\s+/g, ' ');
+  expect(section).toMatch(/`--device-type`, `--runtime` or `--system-image` name that is BLANK or is not installed/);
+  expect(section).toMatch(/the installed names are printed in the message/);
+});
+
+test('the facts topic documents the model, runtime and system image the run reports', () => {
+  const facts = renderTopic('facts');
+  assert(facts);
+  const flat = facts.replace(/\s+/g, ' ');
+  expect(flat).toMatch(/deviceType the owned simulator's MODEL/);
+  expect(flat).toMatch(/runtime that simulator's iOS runtime version/);
+  expect(flat).toMatch(/systemImage the sdkmanager package id the owned AVD was created from/);
+  expect(flat).toMatch(/a run driven by the ios\.deviceType setting reports it too/);
 });

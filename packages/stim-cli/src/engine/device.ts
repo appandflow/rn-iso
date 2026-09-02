@@ -16,7 +16,10 @@ import {
   IOS_BOOT_TIMEOUT_MS,
   listAllIosSims,
   listIosDeviceTypes,
+  listIosRuntimes,
+  parseRuntimeVersion,
   resolveOwnedIosSim,
+  type IosRuntime,
 } from '../sim/ios.ts';
 import {
   bootAndroidEmulator,
@@ -25,10 +28,13 @@ import {
   getAvdNameForSerial,
   listAdbDevices,
   listAvds,
+  listInstalledSystemImages,
   nextConsolePort,
   ownedAvdName,
+  ownedAvdSystemImage,
   resolveOwnedAvdSerial,
   waitForBoot,
+  type SystemImage,
 } from '../sim/android.ts';
 import { androidAvdConfigSetting, androidDataPartitionSizeGbSetting, iosSimSlimProfileSetting } from '../settings.ts';
 import { teardownOwnedAvd } from '../teardown.ts';
@@ -44,6 +50,9 @@ export interface OwnedDeviceRecord {
   serial?: string;
   setupIncomplete?: boolean;
   simslimManaged?: boolean;
+  deviceType?: string | null;
+  runtime?: string | null;
+  systemImage?: string | null;
 }
 
 interface DeviceSettings {
@@ -57,9 +66,9 @@ interface DeviceSettings {
 }
 
 interface DeviceFlags {
-  deviceType?: string;
-  runtime?: string;
-  systemImage?: string;
+  deviceType?: string | null;
+  runtime?: string | null;
+  systemImage?: string | null;
 }
 
 type Notify = (msg: string) => void;
@@ -176,7 +185,8 @@ async function ensureOwnedIosDevice({
       } else {
         const sim = resolved.sim as SimRecord;
         const wantedType = flags.deviceType || settings?.ios?.deviceType;
-        const mismatch = deviceTypeMismatch(sim.deviceTypeIdentifier, wantedType, listIosDeviceTypes());
+        const deviceTypes = listIosDeviceTypes();
+        const mismatch = deviceTypeMismatch(sim.deviceTypeIdentifier, wantedType, deviceTypes);
         if (mismatch) {
           throw new Error(
             `${mismatch}. Stim will not silently boot a different model. ` +
@@ -193,13 +203,17 @@ async function ensureOwnedIosDevice({
           deviceName: record.deviceName ?? sim.name,
           ...(record.simslimManaged ? { simslimManaged: true } : {}),
         };
-        return configureOwnedIosSim({
-          record: updated,
-          projectPath,
-          profile: simslimProfile,
-          out,
-          reconcileIosSimulator,
-        });
+        return {
+          ...(await configureOwnedIosSim({
+            record: updated,
+            projectPath,
+            profile: simslimProfile,
+            out,
+            reconcileIosSimulator,
+          })),
+          deviceType: deviceTypes.find((d) => d.identifier === sim.deviceTypeIdentifier)?.name ?? null,
+          runtime: parseRuntimeVersion(sim.runtime),
+        };
       }
     } else {
       const sim = listAllIosSims().find((s) => s.udid === record.deviceUdid);
@@ -236,7 +250,7 @@ async function ensureOwnedIosDevice({
     out,
     reconcileIosSimulator,
   });
-  return { ...configured, created: true };
+  return { ...configured, created: true, deviceType: created.deviceType, runtime: created.runtime };
 }
 
 async function configureOwnedIosSim({
@@ -337,21 +351,24 @@ async function ensureOwnedAndroidDevice({
           deviceName: record.deviceName ?? record.avdName,
         };
         setDevice(projectPath, 'android', updated);
-        return updated;
+        return { ...updated, systemImage: ownedAvdSystemImage(record.avdName) };
       } else if (!resolved.missing) {
         out(
           chalk.dim(
             `Recorded port for owned AVD ${record.avdName} is not currently ours; booting it on a freshly allocated port...`,
           ),
         );
-        return await bootOwnedAvdOnFreshPort({
-          avdName: record.avdName,
-          projectPath,
-          deviceName: record.deviceName,
-          out,
-          logFile,
-          alive,
-        });
+        return {
+          ...(await bootOwnedAvdOnFreshPort({
+            avdName: record.avdName,
+            projectPath,
+            deviceName: record.deviceName,
+            out,
+            logFile,
+            alive,
+          })),
+          systemImage: ownedAvdSystemImage(record.avdName),
+        };
       }
     } else {
       const avdExists = listAvds().includes(record.avdName);
@@ -382,7 +399,7 @@ async function ensureOwnedAndroidDevice({
     note(chalk.dim('Creating an owned emulator instead. Pass `--device` to build for a connected device.'));
   }
 
-  let created: { avdName: string };
+  let created: { avdName: string; systemImage: string | null };
   let fresh = false;
   try {
     created = createOwnedAvd(label, { systemImage: flags.systemImage || settings.android?.systemImage });
@@ -406,7 +423,7 @@ async function ensureOwnedAndroidDevice({
           { cause: e },
         );
       }
-      created = { avdName };
+      created = { avdName, systemImage: ownedAvdSystemImage(avdName) };
       out(chalk.dim(`Recovered existing owned AVD ${avdName} (unrecorded from a prior run)`));
     } else {
       throw e;
@@ -438,14 +455,17 @@ async function ensureOwnedAndroidDevice({
     }
   }
   out(chalk.dim(`Created owned AVD ${created.avdName}`));
-  return bootOwnedAvdOnFreshPort({
-    avdName: created.avdName,
-    projectPath,
-    deviceName: created.avdName,
-    out,
-    logFile,
-    alive,
-  });
+  return {
+    ...(await bootOwnedAvdOnFreshPort({
+      avdName: created.avdName,
+      projectPath,
+      deviceName: created.avdName,
+      out,
+      logFile,
+      alive,
+    })),
+    systemImage: created.systemImage,
+  };
 }
 
 export interface AndroidConsolePortClaim {
@@ -660,6 +680,55 @@ export function deviceTypeMismatch(
   if (wanted.identifier === recordedTypeId) return null;
   const recorded = (deviceTypes || []).find((d) => d.identifier === recordedTypeId);
   return `this project's sim is ${recorded ? recorded.name : recordedTypeId}, but --device-type asked for ${requestedName}`;
+}
+
+export interface UnknownDeviceNameRefusal {
+  message: string;
+  remedy: string;
+}
+
+function installedNames(names: Array<string | null | undefined>): string {
+  const unique = [...new Set(names.filter((n): n is string => typeof n === 'string' && n !== ''))];
+  return unique.length > 0 ? unique.join(', ') : 'none';
+}
+
+export function unknownIosDeviceTypeRefusal(
+  requested: string | null | undefined,
+  deviceTypes: DeviceTypeInfo[] = listIosDeviceTypes(),
+): UnknownDeviceNameRefusal | null {
+  if (!requested) return null;
+  if ((deviceTypes || []).some((d) => d.name === requested)) return null;
+  return {
+    message: `No installed simulator device type is named "${requested}". Installed device types: ${installedNames((deviceTypes || []).map((d) => d.name))}.`,
+    remedy:
+      'Pass `--device-type` (or set ios.deviceType) to one of the names printed above, exactly as `xcrun simctl list devicetypes` spells it. Install more models through Xcode.',
+  };
+}
+
+export function unknownIosRuntimeRefusal(
+  requested: string | null | undefined,
+  runtimes: IosRuntime[] = listIosRuntimes(),
+): UnknownDeviceNameRefusal | null {
+  if (!requested) return null;
+  if ((runtimes || []).some((r) => r.version === requested || r.name.endsWith(requested))) return null;
+  return {
+    message: `No installed simulator runtime matches "${requested}". Installed runtimes: ${installedNames((runtimes || []).map((r) => r.version))}.`,
+    remedy:
+      'Pass `--runtime` (or set ios.runtime) to one of the versions printed above, as `xcrun simctl list runtimes` reports them. Install more runtimes through Xcode.',
+  };
+}
+
+export function unknownAndroidSystemImageRefusal(
+  requested: string | null | undefined,
+  images: SystemImage[] = listInstalledSystemImages(),
+): UnknownDeviceNameRefusal | null {
+  if (!requested) return null;
+  if ((images || []).some((i) => i.pkg === requested)) return null;
+  return {
+    message: `No installed Android system image is named "${requested}". Installed system images: ${installedNames((images || []).map((i) => i.pkg))}.`,
+    remedy:
+      'Pass `--system-image` (or set android.systemImage) to one of the package ids printed above. Install more with `sdkmanager "system-images;android-36;google_apis;arm64-v8a"`.',
+  };
 }
 
 const BOOT_POLL_MS = 500;

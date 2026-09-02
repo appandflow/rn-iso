@@ -64,7 +64,8 @@ project is reused.
 ## `ios`
 
 ```text
-stim ios [--configuration <name>] [--device [udid]] [--remote <proxy|eas>]
+stim ios [--configuration <name>] [--device-type <name>] [--runtime <version>]
+         [--device [udid]] [--remote <proxy|eas>]
          [--no-metro-check] [--no-build-cache] [--json]
 ```
 
@@ -73,6 +74,11 @@ app, opens it, and checks launch logs. The build always runs on the local
 machine, including remote-device workflows.
 
 - `--configuration <name>` selects an Xcode configuration. The default is Debug.
+- `--device-type <name>` creates this workspace's owned simulator as that model,
+  overriding `ios.deviceType` for one invocation; an uninstalled name refuses
+  with `STIM_BAD_ARG` and prints the installed names.
+- `--runtime <version>` creates it on that iOS runtime, overriding `ios.runtime`
+  the same way.
 - `--device [udid]` builds, installs, and launches on a connected iPhone instead
   of the owned simulator. With no UDID it takes the first connected device it
   can lease. Stim never creates, boots, or deletes hardware.
@@ -121,7 +127,8 @@ a later phase of [#178](https://github.com/appandflow/stim/issues/178).
 ## `android`
 
 ```text
-stim android [--variant <name>] [--device [serial]] [--remote <proxy|eas>]
+stim android [--variant <name>] [--system-image <id>] [--device [serial]]
+             [--remote <proxy|eas>]
              [--no-metro-check] [--no-build-cache] [--json]
 ```
 
@@ -129,6 +136,10 @@ Builds or restores the Android app. Stim then boots an owned emulator, installs
 the app, opens it, and checks launch logs.
 
 - `--variant <name>` selects a Gradle variant. The default is `debug`.
+- `--system-image <id>` creates this workspace's owned AVD from that sdkmanager
+  package id, overriding `android.systemImage` for one invocation; an id this
+  SDK has not installed refuses with `STIM_BAD_ARG` and prints the installed
+  ids.
 - `--remote proxy` uses a configured Agent Device daemon.
 - `--remote eas` uses an EAS remote emulator.
 - `--no-metro-check` skips the Debug dev-server gate.
