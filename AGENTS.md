@@ -157,14 +157,17 @@ Metro from the project's dependencies. Expo runs its fixed start command. iOS
 and Android use fixed `xcodebuild` and Gradle arguments.
 
 The supported build selectors are `ios --configuration <name>` and
-`android --variant <name>`. `android --device [serial]` selects a connected
-physical device; there is no iOS equivalent, because that needs code signing.
-Do not add install flows. Non-Debug iOS configurations and Android variants
-ending in `Release` skip Metro. A release cache hit must inject the current JS
-into a copy of the artifact. A swap failure must run a full build; it must never
-install stale JS. Android swaps require an emitted-asset manifest match, then
-`zipalign` before `apksigner`. Store signing and distribution remain out of
-scope.
+`android --variant <name>`. `ios --device [udid]` and `android --device
+[serial]` select a connected physical device; the iOS path requires a
+development signing identity and a matching embedded provisioning profile,
+and the signing gate refuses an expired profile or one that does not name
+the target device — including an Enterprise or App Store profile, which
+carries no device list to check. Do not add install flows. Non-Debug iOS
+configurations and Android variants ending in `Release` skip Metro. A
+release cache hit must inject the current JS into a copy of the artifact. A
+swap failure must run a full build; it must never install stale JS. Android
+swaps require an emitted-asset manifest match, then `zipalign` before
+`apksigner`. Store signing and distribution remain out of scope.
 
 ### 4. Centralize device teardown
 
