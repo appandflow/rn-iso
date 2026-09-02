@@ -286,21 +286,27 @@ carry brings the signing settings, so B needs no Xcode run).
 lock ios --for 5m`; in B, `stim ios --device --wait 10`. B prints a waiting
    line naming A, the device, and A's expiry, then refuses `STIM_DEVICE_BUSY`
    with the same facts and the three remedies, and installs nothing.
-   **PASSED 2026-09-02** on an iPhone 12 Pro (iPhone13,3, cabled), 13.8 s
-   end to end; the busy `--json` carried the `lease` object.
+   **PASSED 2026-09-02** on an iPhone 12 Pro (iPhone13,3, cabled): the wait ran
+   10 s (the countdown went 4m56s to 4m46s between the waiting line and the
+   refusal); the busy `--json` carried the `lease` object.
 2. **`--no-wait` bypasses and says what it costs.** With A's lease still held,
-   B runs `stim ios --device --no-wait`. One warning names A and its expiry
-   and, when the app ids match, says the install terminates A's app; the run
-   installs, launches, reports `lease: null`, and A's lease file is untouched.
-   **PASSED 2026-09-02**: cache hit, `launched: true`, 8.4 s; A's file
-   remained; the same-app-id sentence printed because both workspaces build
-   `com.appandflow.trailhead`.
+   B runs `stim ios --device --no-wait`. A warning (two `lease` lines) names A
+   and its expiry and, when the app ids match, says the install terminates
+   A's app; the run installs, launches, reports `lease: null`, and A's lease
+   file is untouched.
+   **PASSED 2026-09-02**: cache hit, `launched: true`, 8.4 s; A still had a
+   lease to `unlock` afterwards; the same-app-id sentence printed because both
+   workspaces build `com.appandflow.trailhead`. Whether A's app closed on the
+   phone was not checked; A had no run of its own in flight.
 3. **A run leases for itself and lets go.** After `stim device unlock` in A,
-   B runs `stim ios --device`. During the install, `stim status` from A lists
-   a lease held by B with `mine: false`; after the run the file is gone and
-   the run's `--json` carries `lease: { kind: "run", expiresAt }`.
-   **PASSED 2026-09-02**: the mid-run poll showed B's lease; zero lease files
-   afterwards.
+   B runs `stim ios --device`. While the run holds the device (install through
+   verification), `stim status` from A lists a lease held by B with
+   `mine: false`; after the run the file is gone and the run's `--json`
+   carries `lease: { kind: "run", expiresAt }`.
+   **PASSED 2026-09-02**: `lease: { kind: "run", expiresAt:
+"2026-09-02T06:54:18.461Z" }`, 7.8 s; the mid-run status listing
+   (`mine: false`) and the empty lock directory afterwards were OBSERVED from
+   A and not saved.
 4. **Expiry frees the device.** In A, `stim device lock ios --for 10s`; in B,
    `stim ios --device --wait 30`. B waits out the eight or so seconds and
    proceeds. **PASSED 2026-09-02** (16 s total, `launched: true`).
@@ -310,13 +316,32 @@ lock ios --for 5m`; in B, `stim ios --device --wait 10`. B prints a waiting
    unlocks, the same command grants B the phone by pool selection, and B's
    id-less `stim ios --device` rides that declared lease: the run raises it
    per step and leaves it, so `status` still lists B's lease after the run and
-   the run's `--json` says `kind: "declared"`. **PASSED 2026-09-02.**
+   the run's `--json` says `kind: "declared"`. **PASSED 2026-09-02**: the
+   refusal read "Every connected device is leased by another workspace, and
+   this run waited 5s for one"; the id-less run then printed "declared lease
+   on 00008101-000A10913C89001E until 2026-09-02T07:01:24.449Z" (five minutes
+   from the install step, so the raise happened) and launched. The
+   `kind: "declared"` payload and the lingering status entry were read in the
+   session, not saved.
 6. **Two-device ordering.** NOT YET RUN ON HARDWARE: it needs two connected
-   phones. Expected: an id-less run takes the lower case-folded UDID, a
-   workspace holding a lease on the higher one lands there instead, and a
-   leased-but-unplugged held device refuses `STIM_NO_DEVICE` naming it. The
+   phones. Expected: an id-less run takes the lower case-folded UDID, and a
+   workspace holding a lease on the higher one lands there instead. The
    selection is unit-tested; only the real listing order is unproven.
-7. **A corrupt lease file on a real listing.** NOT YET RUN ON HARDWARE: write
+7. **A held phone, unplugged.** NOT YET RUN ON HARDWARE, and one phone is
+   enough: with B holding a lease, pull the cable, then B's id-less
+   `stim ios --device` must refuse `STIM_NO_DEVICE` naming the leased UDID
+   rather than the generic no-device message; `stim device unlock` in B clears
+   it.
+8. **A lease stolen mid-run.** NOT YET RUN ON HARDWARE: nothing takes a live
+   lease without deleting its file, so this is a deliberate provocation. From
+   A, wait for B's `lease   run lease on ...` line, then remove
+   `$STIM_HOME/device-locks/ios-<udid>.json` and run `stim device lock ios` at
+   once. If A lands before B's install raise, B refuses `STIM_DEVICE_LOST`
+   and installs nothing; if A lands during the install or launch, B prints one
+   `lease` warning that the app is already installed and continues, and its
+   `--json` says `lease: null`. The two-process protocol test covers both
+   paths; neither has been seen on a phone.
+9. **A corrupt lease file on a real listing.** NOT YET RUN ON HARDWARE: write
    garbage into the phone's lease file, then an id-less run must refuse
    `STIM_DEVICE_BUSY` naming the file rather than treat the phone as free, and
    `stim gc` must report the file without deleting it.
