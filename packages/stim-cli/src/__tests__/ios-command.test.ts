@@ -3328,14 +3328,24 @@ test('a local hit leaves no provider download directory behind', async () => {
 });
 
 describe('an app the simulator already holds', () => {
-  test('the skip is named on the install line and carried in the facts', async () => {
+  test('the install proof and dev-client preparation get separate phase lines', async () => {
     reserve();
     const { logs, stderr } = await run(
       { json: true },
-      { installIosApp: (args) => ({ ok: true, appPath: args.appPath, skipped: true }) },
+      {
+        devClientScheme: () => 'fixture',
+        installIosApp: (args) => ({
+          ok: true,
+          appPath: args.appPath,
+          skipped: true,
+          artifactDurationMs: 45_600,
+          devClientPreparationDurationMs: 1200,
+        }),
+      },
     );
 
-    expect(stderr).toMatch(/skipped; .*already holds this app/);
+    expect(stderr).toMatch(/install\s+unchanged; .*already holds this app; proof \(45\.6s\)/);
+    expect(stderr).toMatch(/dev client\s+prepared \(1\.2s\)/);
     expect(parseFirst(logs).installSkipped).toBe(true);
   });
 

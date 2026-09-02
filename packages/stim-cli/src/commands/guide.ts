@@ -1434,10 +1434,17 @@ AN ARTIFACT THE DEVICE ALREADY HOLDS IS NOT INSTALLED AGAIN
   Before installing, Stim hashes the artifact it is about to install and the
   one the device already has -- \`pm path\` then \`sha256sum\` on Android, the
   \`simctl get_app_container\` bundle on iOS. Byte-identical means the install
-  is skipped and the run goes straight to launch, which is under a second
-  instead of the ~43s a 400MB APK costs over USB.
+  is skipped. The phase still reports the cost of proving that identity, but
+  avoids the ~43s a 400MB APK can cost to copy and install over USB.
 
     install     skipped; emulator-5584 already holds this APK (0.4s)
+
+  On iOS the install line names the identity proof separately from the Expo
+  dev-client preference writes, so a slow simulator command is never charged
+  to an install that did not run:
+
+    install     unchanged; stim-app (BF2A..) already holds this app; proof (0.4s)
+    dev client  prepared (0.9s)
 
   The skip needs PROOF. A package that is not installed, a split install, an
   image without \`sha256sum\`, and any adb or simctl failure all read as

@@ -22,6 +22,14 @@ test('the facts topic pins how an owned emulator gets its console port', () => {
   expect(body).toMatch(/A boot that fails releases the port again and\s+keeps the AVD recorded for `gc`/);
 });
 
+test('the lifecycle topic separates an iOS install proof from dev-client preparation', () => {
+  const body = renderTopic('lifecycle');
+  assert(body);
+  expect(body).toMatch(/install\s+unchanged; .*already holds this app; proof/);
+  expect(body).toMatch(/dev client\s+prepared/);
+  expect(body).toMatch(/slow simulator command is never charged\s+to an install that did not run/);
+});
+
 test('an unknown topic renders nothing rather than throwing', () => {
   expect(renderTopic('nope')).toBe(null);
 });

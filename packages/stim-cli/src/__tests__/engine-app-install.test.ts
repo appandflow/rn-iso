@@ -226,6 +226,34 @@ describe('ios', () => {
     ]);
   });
 
+  test('installIosApp times the artifact step separately from dev-client preparation', () => {
+    const exec = recordingExec();
+    const times = [0, 500, 1300];
+    const appPath = '/tmp/My App.app';
+    const result = installIosApp(
+      {
+        udid: 'U1',
+        appPath,
+        bundleId: 'com.example.app',
+        devClientScheme: 'myapp',
+      },
+      {
+        exec,
+        now: () => {
+          const time = times.shift();
+          assert(time !== undefined);
+          return time;
+        },
+      },
+    );
+    expect(result).toEqual({
+      ok: true,
+      appPath,
+      artifactDurationMs: 500,
+      devClientPreparationDurationMs: 800,
+    });
+  });
+
   test('a failed dev-client preference write reports a failed install result', () => {
     const exec = recordingExec({ fail: 'EXDevMenuShowsAtLaunch' });
     const result = installIosApp(

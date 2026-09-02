@@ -18,12 +18,15 @@ const ANDROID_DISABLE_AUTO_LAUNCH_EXTRA = 'EXDevMenuDisableAutoLaunch';
 
 interface ExecOpt {
   exec?: Executor | null;
+  now?: (() => number) | null;
 }
 
 export type IosInstallResult = {
   ok?: boolean;
   appPath?: string;
   skipped?: boolean;
+  artifactDurationMs?: number;
+  devClientPreparationDurationMs?: number;
   failed?: boolean;
   code?: string;
   reason?: string;
@@ -72,9 +75,10 @@ export function installIosApp(
     bundleId = null,
     devClientScheme = null,
   }: { udid: string; appPath: string; bundleId?: string | null; devClientScheme?: string | null },
-  { exec = null }: ExecOpt = {},
+  { exec = null, now = null }: ExecOpt = {},
 ): IosInstallResult {
   const e = exec || getExecutor();
+  const artifactStartedAt = now?.();
   const skipped = bundleId ? deviceHoldsBundle({ udid, bundleId, appPath }, { exec: e }) : false;
   if (!skipped) {
     try {
@@ -83,6 +87,12 @@ export function installIosApp(
       return { failed: true, code: INSTALL_ERROR, reason: `simctl install failed for ${appPath}: ${describe(err)}` };
     }
   }
+  const artifactFinishedAt = now?.();
+  const artifactDurationMs =
+    artifactStartedAt !== undefined && artifactFinishedAt !== undefined
+      ? artifactFinishedAt - artifactStartedAt
+      : undefined;
+  const preparationStartedAt = bundleId && devClientScheme ? artifactFinishedAt : undefined;
   if (bundleId && devClientScheme) {
     try {
       for (const key of IOS_DEV_MENU_OFF_KEYS) {
@@ -109,7 +119,13 @@ export function installIosApp(
       };
     }
   }
-  return skipped ? { ok: true, appPath, skipped: true } : { ok: true, appPath };
+  const devClientPreparationDurationMs =
+    now && preparationStartedAt !== undefined ? now() - preparationStartedAt : undefined;
+  const timing = {
+    ...(artifactDurationMs === undefined ? {} : { artifactDurationMs }),
+    ...(devClientPreparationDurationMs === undefined ? {} : { devClientPreparationDurationMs }),
+  };
+  return skipped ? { ok: true, appPath, skipped: true, ...timing } : { ok: true, appPath, ...timing };
 }
 
 export function jsLocationValue(metroPort: number | string): string {
