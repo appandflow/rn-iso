@@ -28,7 +28,8 @@ The key is the app's path in the repository's main working tree:
 is a `.git` directory, otherwise the canonical project root (invariant 6).
 All worktrees of one repository share a bucket, because the normal flow is a
 fresh worktree hitting the cache another checkout filled; two apps in one
-monorepo do not share one. The key is the path `stats` prints.
+monorepo do not share one. The key is passed through `realpath` before use and is the path `stats`
+prints.
 
 ## The record
 
@@ -42,7 +43,8 @@ One file, `$STIM_HOME/stats.json`, version 1:
       }
     }
 
-A bucket, created on its first run so `firstRunAt` is never a placeholder:
+A bucket's fields (a bucket is created on its first run, so `firstRunAt`
+is never a placeholder):
 
     {
       "runs": 0,
@@ -70,10 +72,11 @@ The run's `durationMs` is the number `ios --json`, `android --json`, and
 compared run to run, so install, launch, and verification time sits on both
 sides and cancels in the mean; no second definition of duration exists.
 
-1. A run is an invocation that computed a cache key. An invocation refused
-   before that point (outside a project, an unpreparable workspace, a bad
-   flag, no Metro, no device, at capacity, a busy lease) is not recorded. An
-   invocation ended by a signal is not recorded.
+1. A run is an invocation that computed a cache key. An invocation refused before that point (outside a project, an
+   unpreparable workspace, a bad flag, no Metro, no device to prepare, at
+   capacity) is not recorded; `fail()` records only when a cache key exists.
+   A busy lease or a boot that fails after the build is a run that ends
+   through `fail()`. An invocation ended by a signal is not recorded.
 2. Every run increments `runs` and sets `lastRunAt`; the first sets
    `firstRunAt`.
 3. A run that ends through `fail()` or an uncaught exception increments
@@ -114,10 +117,9 @@ exits before workspace storage exists are not runs (rule 1). The write runs
 under the global config lock: read, apply the rule, write with a temp file
 and rename. Reads (`stats`) take no lock, because writes are atomic.
 
-A statistics failure never changes the run's outcome or exit status. A file
-whose `version` is greater than 1 is left untouched and the run records
-nothing. A file that does not parse, or parses to something other than an
-object, is renamed aside under the same lock to `stats.json.corrupt-<unix ms>`
+A statistics failure never changes the run's outcome or exit status. A file whose integer `version` is greater than 1 is left untouched and
+the run records nothing. A file that does not parse, parses to something
+other than an object, or has no integer `version`, is renamed aside under the same lock to `stats.json.corrupt-<unix ms>`
 and a fresh one started. In every such case, and when the lock or the write
 fails, the run prints one dim line to stderr, the way a failed `lastBuild`
 write does, and continues.
@@ -129,7 +131,7 @@ write does, and continues.
 Prints, for this project when run inside one and for the machine:
 
     project /path/to/app
-      ios      42 runs   36 hits (86%)   cold run 4m12s avg   hit run 31s avg   saved ~2h13m (estimated)   since 2026-09-01
+      ios      42 runs (3 failed)   36 hits (92%)   cold run 4m12s avg   hit run 31s avg   saved ~2h13m (estimated)   since 2026-09-01
       android  10 runs    7 hits (70%)   cold run 6m40s avg   hit run 48s avg   saved ~41m (estimated)     since 2026-09-01
     machine
       ios     118 runs   97 hits (82%)   ...
