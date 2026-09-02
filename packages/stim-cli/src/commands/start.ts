@@ -317,7 +317,8 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
         return fail({
           code: (error as Error & { code?: string })?.code || 'STIM_WORKSPACE_STATE',
           message: `Could not prepare this workspace's Stim state: ${(error as Error)?.message || error}`,
-          remedy: 'Check that STIM_HOME is writable and has free space.',
+          remedy:
+            'Check that STIM_HOME is writable and has free space. An EPERM on a directory you can write is a sandbox: allow writes to STIM_HOME, or run Stim with the sandbox disabled (`stim guide errors`).',
         });
       }
 
