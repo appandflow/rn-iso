@@ -388,6 +388,15 @@ export function iosLanHostSettingError(settings: unknown): string | null {
   return null;
 }
 
+export function worktreeDirSettingError(settings: unknown): string | null {
+  if (!isPlainObject(settings) || !('worktreeDir' in settings)) return null;
+  const raw = settings.worktreeDir;
+  if (typeof raw !== 'string') {
+    return `Invalid worktreeDir setting ${JSON.stringify(raw)}. Expected a string path.`;
+  }
+  return null;
+}
+
 export function unknownSettingKeys(settings: unknown, prefix = ''): string[] {
   if (!isPlainObject(settings)) return [];
   const unknown: string[] = [];
