@@ -16,6 +16,7 @@ import { findProjectRoot } from '../project.ts';
 import {
   androidPoolCandidates,
   listAdbDevices,
+  memoizeEmulatorProbe,
   physicalDeviceModel,
   probeEmulatorSerial,
   resolvePhysicalDevice,
@@ -144,6 +145,7 @@ async function poolDevice(
   root: string,
   d: DeviceDeps,
 ): Promise<ResolvedDevice | DeviceFailure> {
+  const isEmulator = memoizeEmulatorProbe(d.probeEmulatorSerial);
   const pooled = await d.selectFromPool({
     root,
     platform,
@@ -151,12 +153,12 @@ async function poolDevice(
     list: () =>
       platform === 'ios'
         ? iosPoolCandidates(d.listIosDevices()).map((entry) => ({ id: entry.udid, name: entry.name }))
-        : androidPoolCandidates(d.listAdbDevices(), d.probeEmulatorSerial).map((entry) => ({ id: entry.serial })),
+        : androidPoolCandidates(d.listAdbDevices(), isEmulator).map((entry) => ({ id: entry.serial })),
     noCandidates: () => {
       const resolved =
         platform === 'ios'
           ? resolveIosPhysicalDevice(null, d.listIosDevices())
-          : resolvePhysicalDevice(null, d.listAdbDevices(), d.probeEmulatorSerial);
+          : resolvePhysicalDevice(null, d.listAdbDevices(), isEmulator);
       return { message: resolved.error as string, remedy: resolved.remedy as string };
     },
     waitSeconds,

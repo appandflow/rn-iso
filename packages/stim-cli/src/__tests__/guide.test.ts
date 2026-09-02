@@ -987,4 +987,9 @@ test('the guide documents the pool an id-less --device picks from', () => {
   expect(lifecycle).toMatch(/No candidate at all is the existing STIM_NO_DEVICE/);
   expect(lifecycle).toMatch(/`--no-wait` takes the first candidate\s+anyway/);
   expect(lifecycle).toMatch(/in `--json` \(`udid` or\s+`serial`, plus `deviceName`\)/);
+
+  expect(lifecycle).not.toMatch(/one connected device/);
+  expect(lifecycle).not.toMatch(/refuses with the candidate\s+list/);
+  expect(lifecycle).toMatch(/no serial it takes the first device it can lease/);
+  expect(lifecycle).toMatch(/with no UDID it takes the\s+first device it can lease/);
 });

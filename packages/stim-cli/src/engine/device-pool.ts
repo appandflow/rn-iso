@@ -40,13 +40,26 @@ export function heldPoolId(
   return record.id;
 }
 
-function candidateLeases(platform: LeasePlatform, candidates: readonly PoolCandidate[], io: LeaseIo): DeviceLease[] {
-  const leases: DeviceLease[] = [];
+interface PoolReading {
+  usable: PoolCandidate[];
+  leases: DeviceLease[];
+  unreadable: string[];
+}
+
+function readPool(platform: LeasePlatform, candidates: readonly PoolCandidate[], io: LeaseIo): PoolReading {
+  const reading: PoolReading = { usable: [], leases: [], unreadable: [] };
   for (const candidate of candidates) {
-    const lease = parseLease(io.readLease(deviceLeasePath(platform, candidate.id)));
-    if (lease) leases.push(lease);
+    const path = deviceLeasePath(platform, candidate.id);
+    const raw = io.readLease(path);
+    const lease = parseLease(raw);
+    if (raw !== null && !lease) {
+      reading.unreadable.push(path);
+      continue;
+    }
+    reading.usable.push(candidate);
+    if (lease) reading.leases.push(lease);
   }
-  return leases;
+  return reading;
 }
 
 function disconnectedHeldRefusal(id: string, idLabel: string): RunLeaseRefusal {
@@ -60,9 +73,18 @@ function disconnectedHeldRefusal(id: string, idLabel: string): RunLeaseRefusal {
   };
 }
 
+const NO_LEASE_FACTS = { platform: null, id: null, deviceName: null, holder: null, expiresAt: null };
+
+function unreadableSentence(unreadable: readonly string[]): string {
+  return unreadable.length
+    ? ` Unreadable lease file, so no run may take that device around it: ${unreadable.join('; ')}.`
+    : '';
+}
+
 function poolBusyRefusal(
   holders: readonly PoolHolder[],
   leases: readonly DeviceLease[],
+  unreadable: readonly string[],
   now: number,
   waitSeconds: number,
 ): RunLeaseRefusal {
@@ -71,23 +93,29 @@ function poolBusyRefusal(
   );
   const first = holders[0];
   const lease = first ? leases.find((entry) => entry.id === first.id) : undefined;
+  if (!first) {
+    return {
+      code: DEVICE_BUSY,
+      message: `Every connected device has an unreadable lease file, so Stim cannot tell who holds them: ${unreadable.join('; ')}.`,
+      remedy: 'Read each file and, once you know no run depends on it, delete it. `stim gc` reports them on every run.',
+      lease: NO_LEASE_FACTS,
+    };
+  }
   return {
     code: DEVICE_BUSY,
     message:
       `Every connected device is leased by another workspace${waitSeconds > 0 ? `, and this run waited ${waitSeconds}s for one` : ''}: ` +
-      `${named.join('; ')}.`,
+      `${named.join('; ')}.${unreadableSentence(unreadable)}`,
     remedy:
       'Wait longer with `--wait <seconds>`, connect another device, or pass `--no-wait` to install anyway -- ' +
       "which takes no lease and, when both workspaces build the same app id, terminates the holder's running app.",
-    lease: first
-      ? {
-          platform: lease?.platform ?? null,
-          id: first.id,
-          deviceName: lease?.deviceName ?? null,
-          holder: first.holder,
-          expiresAt: first.expiresAt,
-        }
-      : null,
+    lease: {
+      platform: lease?.platform ?? null,
+      id: first.id,
+      deviceName: lease?.deviceName ?? null,
+      holder: first.holder,
+      expiresAt: first.expiresAt,
+    },
   };
 }
 
@@ -124,25 +152,31 @@ export async function selectFromPool({
 
   for (;;) {
     const candidates = list();
-    const leases = candidateLeases(platform, candidates, io);
-    const selection = selectPoolDevice({ candidates, leases, held, now: now() });
+    const { usable, leases, unreadable } = readPool(platform, candidates, io);
+    const selection = selectPoolDevice({ candidates: usable, leases, held, now: now() });
 
     if (selection.status === 'selected') return selection;
     if (selection.status === 'held-disconnected') {
       return { status: 'refused', refusal: disconnectedHeldRefusal(selection.id, idLabel) };
     }
     if (selection.status === 'none') {
+      if (unreadable.length) {
+        return { status: 'refused', refusal: poolBusyRefusal([], leases, unreadable, now(), waitSeconds) };
+      }
       const { message, remedy } = noCandidates();
       return { status: 'refused', refusal: { code: 'STIM_NO_DEVICE', message, remedy, lease: null } };
     }
 
     const first = selection.holders[0];
     if (noWait && first) {
-      const candidate = candidates.find((entry) => entry.id === first.id);
+      const candidate = usable.find((entry) => entry.id === first.id);
       if (candidate) return { status: 'selected', candidate };
     }
     if (now() >= until) {
-      return { status: 'refused', refusal: poolBusyRefusal(selection.holders, leases, now(), waitSeconds) };
+      return {
+        status: 'refused',
+        refusal: poolBusyRefusal(selection.holders, leases, unreadable, now(), waitSeconds),
+      };
     }
     if (lastLine === null || now() - lastLine >= DEVICE_WAIT_LINE_MS) {
       lastLine = now();

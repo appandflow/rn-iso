@@ -74,8 +74,8 @@ machine, including remote-device workflows.
 
 - `--configuration <name>` selects an Xcode configuration. The default is Debug.
 - `--device [udid]` builds, installs, and launches on a connected iPhone instead
-  of the owned simulator. With no UDID the one connected device is used. Stim
-  never creates, boots, or deletes hardware.
+  of the owned simulator. With no UDID it takes the first connected device it
+  can lease. Stim never creates, boots, or deletes hardware.
 - `--remote proxy` uses a configured Agent Device daemon.
 - `--remote eas` uses an EAS remote simulator.
 - `--no-metro-check` skips the Debug dev-server gate.

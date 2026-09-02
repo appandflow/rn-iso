@@ -98,6 +98,7 @@ import {
 import {
   androidHome,
   androidPoolCandidates,
+  memoizeEmulatorProbe,
   emulatorDiskSpaceRemedy,
   emulatorFailureRemedy,
   extractEmulatorFailure,
@@ -1395,13 +1396,14 @@ async function pooledAndroidDevice({
   now: () => number;
   warn: (line: string) => void;
 }): Promise<{ device: OwnedDeviceRecord } | { code: string; message: string; remedy: string; extra: FailExtra }> {
+  const isEmulator = memoizeEmulatorProbe(isEmulatorDevice);
   const pooled = await selectPool({
     root,
     platform: PLATFORM,
     idLabel: 'serial',
-    list: () => androidPoolCandidates(listDevices(), isEmulatorDevice).map((entry) => ({ id: entry.serial })),
+    list: () => androidPoolCandidates(listDevices(), isEmulator).map((entry) => ({ id: entry.serial })),
     noCandidates: () => {
-      const resolved = resolvePhysicalDevice(null, listDevices(), isEmulatorDevice);
+      const resolved = resolvePhysicalDevice(null, listDevices(), isEmulator);
       return { message: resolved.error as string, remedy: resolved.remedy as string };
     },
     waitSeconds,
@@ -1777,7 +1779,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     return fail(
       'STIM_BAD_ARG',
       '--device was given an empty serial.',
-      'Pass `--device` on its own to use the one connected device, or `--device <serial>` to name one.',
+      'Pass `--device` on its own to take the first connected device this workspace can lease, or ' +
+        '`--device <serial>` to name one.',
     );
   }
   if (physical && commandRemoteBackend) {

@@ -1591,8 +1591,8 @@ THE OPTION SURFACE, IN FULL
 
   \`android --device [serial]\` installs and launches on a physical device
   connected to this machine instead of this workspace's owned emulator. With
-  no serial it uses the one connected device, and refuses with the candidate
-  list when adb reports several. It cannot be combined with --remote.
+  no serial it takes the first device it can lease (THE POOL, below). It
+  cannot be combined with --remote.
 
   A \`--device\` run LEASES the device from just after the build until it
   exits, so a second workspace cannot install over it mid-run (see THE DEVICE
@@ -1606,8 +1606,8 @@ THE OPTION SURFACE, IN FULL
   10.0.2.2. Stim never creates, boots, shuts down, or deletes hardware.
 
   \`ios --device [udid]\` selects a connected iPhone, the same way
-  \`android --device\` selects a connected phone: with no UDID the one
-  connected device is used, several is a refusal listing them, and an iPhone
+  \`android --device\` selects a connected phone: with no UDID it takes the
+  first device it can lease (THE POOL, below), and an iPhone
   that is unpaired or has Developer Mode off is refused with the fix. It
   cannot be combined with --remote, and it never creates, boots, or deletes
   hardware -- there is no capacity check, no simulator creation, no boot wait,

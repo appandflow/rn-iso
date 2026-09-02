@@ -1766,7 +1766,9 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     return fail({
       code: 'STIM_BAD_ARG',
       message: '--device was given an empty UDID.',
-      remedy: 'Pass `--device` on its own to use the one connected device, or `--device <udid>` to name one.',
+      remedy:
+        'Pass `--device` on its own to take the first connected device this workspace can lease, or ' +
+        '`--device <udid>` to name one.',
     });
   }
   if (physical && opts.remote) {

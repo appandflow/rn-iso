@@ -2,7 +2,7 @@ import assert from 'node:assert';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { takeLease, type LeaseIo, type WorkspaceLeases } from '../engine/device-lease.ts';
+import { deviceLeasePath, takeLease, type LeaseIo, type WorkspaceLeases } from '../engine/device-lease.ts';
 import { DEVICE_WAIT_POLL_MS } from '../engine/device-lease-run.ts';
 import { heldPoolId, selectFromPool } from '../engine/device-pool.ts';
 import { iosPoolCandidates } from '../engine/ios-device.ts';
@@ -128,9 +128,9 @@ describe('which connected devices are candidates', () => {
 describe('choosing from the pool', () => {
   test('the first free candidate in case-folded id order wins', async () => {
     const h = harness();
-    const result = await pool(h, ['zzz', 'AAA', 'mmm']);
+    const result = await pool(h, ['Zzz', 'aaa']);
     assert(result.status === 'selected');
-    expect(result.candidate.id).toBe('AAA');
+    expect(result.candidate.id).toBe('aaa');
     expect(h.slept).toEqual([]);
   });
 
@@ -167,6 +167,44 @@ describe('choosing from the pool', () => {
     const result = await pool(h, [FIRST, SECOND]);
     assert(result.status === 'selected');
     expect(result.candidate.id).toBe(FIRST);
+  });
+
+  test('a candidate whose lease file does not parse is never treated as free', async () => {
+    const h = harness();
+    h.files.set(deviceLeasePath('ios', 'A-CORRUPT'), '{ not a lease');
+    const result = await pool(h, ['A-CORRUPT', 'B-FREE']);
+    assert(result.status === 'selected');
+    expect(result.candidate.id).toBe('B-FREE');
+  });
+
+  test('every candidate unreadable refuses, naming the files rather than the phones', async () => {
+    const h = harness();
+    h.files.set(deviceLeasePath('ios', 'A-CORRUPT'), '{ not a lease');
+    const result = await pool(h, ['A-CORRUPT']);
+    assert(result.status === 'refused');
+    expect(result.refusal.code).toBe('STIM_DEVICE_BUSY');
+    expect(result.refusal.message).toMatch(/Every connected device has an unreadable lease file/);
+    expect(result.refusal.message).toContain(deviceLeasePath('ios', 'A-CORRUPT'));
+    expect(result.refusal.remedy).toMatch(/`stim gc` reports them on every run/);
+    expect(result.refusal.lease).toEqual({
+      platform: null,
+      id: null,
+      deviceName: null,
+      holder: null,
+      expiresAt: null,
+    });
+    expect(h.slept).toEqual([]);
+  });
+
+  test('an unreadable file is named beside the holders when the rest are leased', async () => {
+    const h = harness();
+    leasedBy(h, OTHER, FIRST);
+    h.files.set(deviceLeasePath('ios', 'A-CORRUPT'), '{ not a lease');
+    const result = await pool(h, ['A-CORRUPT', FIRST], { waitSeconds: 0 });
+    assert(result.status === 'refused');
+    expect(result.refusal.message).toMatch(/Every connected device is leased by another workspace/);
+    expect(result.refusal.message).toMatch(/Unreadable lease file/);
+    expect(result.refusal.message).toContain(deviceLeasePath('ios', 'A-CORRUPT'));
   });
 
   test('a leased device that is not connected refuses rather than picking another', async () => {

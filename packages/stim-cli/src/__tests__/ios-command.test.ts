@@ -3461,6 +3461,23 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     expect(parseFirst(logs).lease).toMatchObject({ platform: 'ios', id: PHONE, holder: '/worktree/one' });
   });
 
+  test('--no-wait with every connected phone leased installs on the first, without a lease', async () => {
+    reserve();
+    takeLease({ root: '/worktree/one', platform: 'ios', id: PHONE, deviceName: 'Test Phone', kind: 'declared' });
+    takeLease({ root: '/worktree/two', platform: 'ios', id: '00008120-000A11223C44201E', kind: 'declared' });
+    const { errs, exitCode, logs, calls } = await run(
+      { device: true, json: true, wait: false },
+      connected([{ udid: PHONE }, { udid: '00008120-000A11223C44201E', name: 'Second' }]),
+    );
+
+    expect(exitCode).toBe(null);
+    expect(calls.order.includes('installIosDeviceApp')).toBe(true);
+    expect(parseFirst(logs).udid).toBe(PHONE);
+    expect(parseFirst(logs).lease).toBe(null);
+    expect(errs.join('\n')).toMatch(/--no-wait: \/worktree\/one holds Test Phone/);
+    expect(listLeaseFiles()).toHaveLength(2);
+  });
+
   test('no connected phone at all still refuses with the resolver own message', async () => {
     reserve();
     const { errs, exitCode } = await run({ device: true }, { listIosDevices: () => [] });
