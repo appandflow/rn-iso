@@ -73,6 +73,7 @@ import {
   installIosDeviceApp,
   iosDeviceProcess,
   iosPoolCandidates,
+  iosPoolNoCandidatesRefusal,
   listIosDevices,
   localNetworkPending,
   resolveIosPhysicalDevice,
@@ -1844,7 +1845,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
       idLabel: 'udid',
       list: () => iosPoolCandidates(d.listIosDevices()).map((entry) => ({ id: entry.udid, name: entry.name })),
       noCandidates: () => {
-        const resolved = resolveIosPhysicalDevice(null, d.listIosDevices());
+        const resolved = iosPoolNoCandidatesRefusal(d.listIosDevices());
         return { message: resolved.error as string, remedy: resolved.remedy as string };
       },
       waitSeconds,

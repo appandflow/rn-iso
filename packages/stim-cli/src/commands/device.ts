@@ -11,10 +11,16 @@ import {
 } from '../engine/device-lease.ts';
 import { parseDeviceWait, waitForDevice } from '../engine/device-lease-run.ts';
 import { selectFromPool } from '../engine/device-pool.ts';
-import { iosPoolCandidates, listIosDevices, resolveIosPhysicalDevice } from '../engine/ios-device.ts';
+import {
+  iosPoolCandidates,
+  iosPoolNoCandidatesRefusal,
+  listIosDevices,
+  resolveIosPhysicalDevice,
+} from '../engine/ios-device.ts';
 import { findProjectRoot } from '../project.ts';
 import {
   androidPoolCandidates,
+  androidPoolNoCandidatesRefusal,
   listAdbDevices,
   memoizeEmulatorProbe,
   physicalDeviceModel,
@@ -157,8 +163,8 @@ async function poolDevice(
     noCandidates: () => {
       const resolved =
         platform === 'ios'
-          ? resolveIosPhysicalDevice(null, d.listIosDevices())
-          : resolvePhysicalDevice(null, d.listAdbDevices(), isEmulator);
+          ? iosPoolNoCandidatesRefusal(d.listIosDevices())
+          : androidPoolNoCandidatesRefusal(d.listAdbDevices(), isEmulator);
       return { message: resolved.error as string, remedy: resolved.remedy as string };
     },
     waitSeconds,

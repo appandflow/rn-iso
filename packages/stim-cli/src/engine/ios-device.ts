@@ -121,6 +121,20 @@ export function iosPoolCandidates(devices: readonly IosDeviceEntry[]): IosDevice
   return (Array.isArray(devices) ? devices : []).filter((device) => isWired(device) && unhealthy(device) === null);
 }
 
+export function iosPoolNoCandidatesRefusal(devices: readonly IosDeviceEntry[]): ResolvedIosDevice {
+  const listed = Array.isArray(devices) ? devices : [];
+  const cabled = listed.filter(isWired);
+  const problems = cabled.map((device) => unhealthy(device));
+  if (cabled.length > 0 && problems.every((problem) => problem !== null)) {
+    const reasons = problems as ResolvedIosDevice[];
+    return {
+      error: reasons.map((reason) => reason.error!).join(' '),
+      remedy: [...new Set(reasons.map((reason) => reason.remedy!))].join(' '),
+    };
+  }
+  return resolveIosPhysicalDevice(null, listed);
+}
+
 export function resolveIosPhysicalDevice(requested: string | null, devices: IosDeviceEntry[]): ResolvedIosDevice {
   const listed = Array.isArray(devices) ? devices : [];
   const cabled = listed.filter(isWired);

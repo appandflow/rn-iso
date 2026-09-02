@@ -17,6 +17,7 @@ import {
   localNetworkPending,
   parseDevicectlDevices,
   parseDeviceProcesses,
+  iosPoolNoCandidatesRefusal,
   resolveIosPhysicalDevice,
   verifyIosDeviceReleaseLaunch,
   type IosDeviceEntry,
@@ -133,6 +134,27 @@ test('resolveIosPhysicalDevice does not invent a health problem from absent fiel
     udid: PHONE,
     name: 'Test Phone',
   });
+});
+
+test('iosPoolNoCandidatesRefusal names each unhealthy cabled device with its own reason, not the count message', () => {
+  const refusal = iosPoolNoCandidatesRefusal([
+    entry({ developerModeStatus: 'disabled' }),
+    entry({ udid: OTHER, name: 'Second', pairingState: 'unpaired' }),
+  ]);
+  expect(refusal.udid).toBeUndefined();
+  expect(refusal.error).toContain(resolveIosPhysicalDevice(null, [entry({ developerModeStatus: 'disabled' })]).error);
+  expect(refusal.error).toContain(
+    resolveIosPhysicalDevice(null, [entry({ udid: OTHER, name: 'Second', pairingState: 'unpaired' })]).error,
+  );
+  expect(refusal.error).not.toMatch(/Several devices are connected/);
+  expect(refusal.remedy).toMatch(/Developer Mode/);
+  expect(refusal.remedy).toMatch(/Trust/);
+});
+
+test('iosPoolNoCandidatesRefusal falls back to the resolver when nothing is cabled', () => {
+  expect(iosPoolNoCandidatesRefusal([])).toEqual(resolveIosPhysicalDevice(null, []));
+  const wireless = entry({ transportType: 'localNetwork' });
+  expect(iosPoolNoCandidatesRefusal([wireless])).toEqual(resolveIosPhysicalDevice(null, [wireless]));
 });
 
 test('lanCandidates orders en0 first and the remaining en* by index', () => {

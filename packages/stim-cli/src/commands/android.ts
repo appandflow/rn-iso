@@ -98,6 +98,7 @@ import {
 import {
   androidHome,
   androidPoolCandidates,
+  androidPoolNoCandidatesRefusal,
   memoizeEmulatorProbe,
   emulatorDiskSpaceRemedy,
   emulatorFailureRemedy,
@@ -1403,7 +1404,7 @@ async function pooledAndroidDevice({
     idLabel: 'serial',
     list: () => androidPoolCandidates(listDevices(), isEmulator).map((entry) => ({ id: entry.serial })),
     noCandidates: () => {
-      const resolved = resolvePhysicalDevice(null, listDevices(), isEmulator);
+      const resolved = androidPoolNoCandidatesRefusal(listDevices(), isEmulator);
       return { message: resolved.error as string, remedy: resolved.remedy as string };
     },
     waitSeconds,

@@ -4101,6 +4101,17 @@ describe('--device with no serial: the pool', () => {
     expect(result.error?.code).toBe(NO_DEVICE);
   });
 
+  test('two emulator-only serials refuse with each one own reason, not the count message', async () => {
+    const h = pool([FIRST, SECOND], { isEmulatorDevice: () => true });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe(NO_DEVICE);
+    expect(result.error?.message).toMatch(new RegExp(`${FIRST} is an emulator, not a physical device`));
+    expect(result.error?.message).toMatch(new RegExp(`${SECOND} is an emulator, not a physical device`));
+    expect(result.error?.message).not.toMatch(/Several physical devices are connected/);
+    expect(result.error?.remedy).toMatch(/without --device/);
+  });
+
   test('a leased device that is not connected refuses, naming it and the way out', async () => {
     takeLease({ root, platform: 'android', id: 'GONE-SERIAL', kind: 'declared' });
     const h = pool([FIRST]);

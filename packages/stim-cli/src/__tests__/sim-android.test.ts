@@ -16,6 +16,7 @@ import { setExecutor, resetExecutor } from '../exec.ts';
 import {
   MAX_EMULATOR_FAILURE_LINES,
   androidToolPath,
+  androidPoolNoCandidatesRefusal,
   buildToolsMajor,
   emulatorFailureRemedy,
   extractEmulatorFailure,
@@ -24,6 +25,7 @@ import {
   bootAndroidEmulator,
   configureNewOwnedAvd,
   listAvds,
+  memoizeEmulatorProbe,
   parseAvdList,
   parseAdbDevices,
   nextConsolePort,
@@ -887,4 +889,34 @@ test('resolvePhysicalDevice reports the whole adb status, not its first word', (
   const result = resolvePhysicalDevice(null, adb);
   expect(result.error).toMatch(/no permissions/);
   expect(result.error).not.toMatch(/but no,/);
+});
+
+test('androidPoolNoCandidatesRefusal names each emulator-only physical serial with its own reason, not the count message', () => {
+  const adb = parseAdbDevices(`List of devices attached\nRFCR7081Q9L\tdevice\n0123456789ABCDEF\tdevice\n`);
+  const result = androidPoolNoCandidatesRefusal(adb, () => true);
+  expect(result.serial).toBeUndefined();
+  expect(result.error).toContain(resolvePhysicalDevice('RFCR7081Q9L', adb, () => true).error);
+  expect(result.error).toContain(resolvePhysicalDevice('0123456789ABCDEF', adb, () => true).error);
+  expect(result.error).not.toMatch(/Several physical devices are connected/);
+  expect(result.remedy).toMatch(/without --device/);
+});
+
+test('androidPoolNoCandidatesRefusal falls back to the resolver when a physical device is genuine', () => {
+  const adb = parseAdbDevices(`List of devices attached\nRFCR7081Q9L\tdevice\n`);
+  expect(androidPoolNoCandidatesRefusal(adb, () => false)).toEqual(resolvePhysicalDevice(null, adb, () => false));
+  const none = parseAdbDevices(`List of devices attached\n`);
+  expect(androidPoolNoCandidatesRefusal(none)).toEqual(resolvePhysicalDevice(null, none));
+});
+
+test('memoizeEmulatorProbe probes a serial once and reuses the result across repeated calls', () => {
+  const calls: string[] = [];
+  const probe = memoizeEmulatorProbe((serial) => {
+    calls.push(serial);
+    return serial === 'emulator-5554';
+  });
+  expect(probe('emulator-5554')).toBe(true);
+  expect(probe('RFCR7081Q9L')).toBe(false);
+  expect(probe('emulator-5554')).toBe(true);
+  expect(probe('RFCR7081Q9L')).toBe(false);
+  expect(calls).toEqual(['emulator-5554', 'RFCR7081Q9L']);
 });

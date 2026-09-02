@@ -350,6 +350,21 @@ export function androidPoolCandidates(
   return (adb?.physical ?? []).filter((entry) => !isEmulator(entry.serial));
 }
 
+export function androidPoolNoCandidatesRefusal(
+  adb: AdbDevices,
+  isEmulator: (serial: string) => boolean = probeEmulatorSerial,
+): ResolvedPhysicalDevice {
+  const physical = adb?.physical ?? [];
+  if (physical.length > 0 && physical.every((entry) => isEmulator(entry.serial))) {
+    const reasons = physical.map((entry) => emulatorRefusal(entry.serial));
+    return {
+      error: reasons.map((reason) => reason.error!).join(' '),
+      remedy: [...new Set(reasons.map((reason) => reason.remedy!))].join(' '),
+    };
+  }
+  return resolvePhysicalDevice(null, adb, isEmulator);
+}
+
 export function resolvePhysicalDevice(
   requested: string | null,
   adb: AdbDevices,
