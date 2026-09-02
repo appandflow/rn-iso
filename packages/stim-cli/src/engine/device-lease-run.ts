@@ -88,17 +88,26 @@ function waitingLine(lease: DeviceLease, now: number): string {
   );
 }
 
-function bypassLines(lease: DeviceLease, now: number, sameApp: boolean): string[] {
-  const lines = [
+export type AppIdMatch = 'same' | 'different' | 'unknown';
+
+export function appIdMatch(ours: string | null, theirs: string | null): AppIdMatch {
+  if (!ours || !theirs) return 'unknown';
+  return ours === theirs ? 'same' : 'different';
+}
+
+function bypassLines(lease: DeviceLease, now: number, match: AppIdMatch): string[] {
+  const consequence = {
+    same: 'Both workspaces build the same app id, so this install terminates the app that workspace is running.',
+    different: "The other workspace's app id differs, so the launch below backgrounds it rather than ending it.",
+    unknown:
+      'Stim cannot tell whether the two workspaces build the same app id; if they do, this install terminates ' +
+      "the holder's running app.",
+  }[match];
+  return [
     `--no-wait: ${lease.holder} holds ${describeDevice(lease)} until ${leaseExpiryText(lease.expiresAt, now)}, ` +
       'and this run is proceeding without a lease.',
+    consequence,
   ];
-  lines.push(
-    sameApp
-      ? 'Both workspaces build the same app id, so this install terminates the app that workspace is running.'
-      : "The other workspace's app keeps its data, but the launch below backgrounds it.",
-  );
-  return lines;
 }
 
 function busyRefusal({
@@ -232,6 +241,39 @@ export function runLease({
   return handle;
 }
 
+const SIGNAL_EXIT_CODES: Record<string, number> = { SIGINT: 130, SIGTERM: 143 };
+
+export function releaseLeaseOnSignal(
+  release: () => void,
+  {
+    on = (signal, handler) => {
+      process.once(signal as NodeJS.Signals, handler);
+    },
+    off = (signal, handler) => {
+      process.off(signal as NodeJS.Signals, handler);
+    },
+    exit = (code) => process.exit(code),
+  }: {
+    on?: (signal: string, handler: () => void) => void;
+    off?: (signal: string, handler: () => void) => void;
+    exit?: (code: number) => void;
+  } = {},
+): () => void {
+  const installed: Array<[string, () => void]> = [];
+  for (const signal of Object.keys(SIGNAL_EXIT_CODES)) {
+    const handler = () => {
+      release();
+      exit(SIGNAL_EXIT_CODES[signal] as number);
+    };
+    installed.push([signal, handler]);
+    on(signal, handler);
+  }
+  return () => {
+    for (const [signal, handler] of installed) off(signal, handler);
+    installed.length = 0;
+  };
+}
+
 export type AcquireRunLeaseResult =
   | { status: 'leased'; kind: LeaseKind; expiresAt: string }
   | { status: 'unleased' }
@@ -268,24 +310,30 @@ export async function acquireRunLease({
   warn?: (line: string) => void;
   io?: LeaseIo;
 }): Promise<AcquireRunLeaseResult> {
-  const held = io.readHolder(root)[platform];
-  if (held && held.id !== id) {
-    return { status: 'refused', refusal: otherDeviceRefusal(held.id, id) };
+  const recorded = io.readHolder(root)[platform];
+  let held = recorded;
+  if (recorded && recorded.id !== id) {
+    const other = parseLease(io.readLease(deviceLeasePath(platform, recorded.id)));
+    if (other && other.token === recorded.token && !leaseIsExpired(other, now())) {
+      return { status: 'refused', refusal: otherDeviceRefusal(recorded.id, id) };
+    }
+    held = undefined;
   }
 
   const path = deviceLeasePath(platform, id);
   const deadline = now() + waitSeconds * 1000;
-  let lastLine = now();
+  let lastLine: number | null = null;
 
   for (;;) {
     const raw = io.readLease(path);
     const current = parseLease(raw);
     if (raw !== null && !current) return { status: 'refused', refusal: unreadableRefusal(path) };
 
-    if (current && held && current.token === held.token) {
+    const mine = current && held && current.token === held.token ? { lease: current, record: held } : null;
+    if (mine && (mine.record.kind === 'run' || !leaseIsExpired(mine.lease, now()))) {
       const raised = raiseLease({ root, platform, minMs: leaseStepMs(installBoundMs) }, io);
       if (raised.status === 'raised') {
-        return { status: 'leased', kind: held.kind, expiresAt: raised.lease.expiresAt };
+        return { status: 'leased', kind: mine.record.kind, expiresAt: raised.lease.expiresAt };
       }
     }
 
@@ -297,15 +345,13 @@ export async function acquireRunLease({
         return { status: 'refused', refusal: untokenedRefusal(current, now()) };
       }
       if (noWait) {
-        for (const line of bypassLines(current, now(), Boolean(appId) && holderAppId(current.holder) === appId)) {
-          warn(line);
-        }
+        for (const line of bypassLines(current, now(), appIdMatch(appId, holderAppId(current.holder)))) warn(line);
         return { status: 'unleased' };
       }
       if (now() >= deadline) {
         return { status: 'refused', refusal: busyRefusal({ lease: current, now: now(), idLabel, waitSeconds }) };
       }
-      if (now() - lastLine >= DEVICE_WAIT_LINE_MS) {
+      if (lastLine === null || now() - lastLine >= DEVICE_WAIT_LINE_MS) {
         lastLine = now();
         warn(waitingLine(current, now()));
       }

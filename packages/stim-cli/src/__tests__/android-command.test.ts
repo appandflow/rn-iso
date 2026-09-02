@@ -3933,10 +3933,10 @@ describe('--device: the lease on the device', () => {
     expect(JSON.parse(emulator.stdout[0] as string)).not.toHaveProperty('lease');
   });
 
-  test('every device step raises the lease: the install timeout, the launch floor, the bundle deadline', async () => {
+  test('every device step raises the lease: install, launch, the collector, the bundle deadline', async () => {
     const { lease, raises } = fakeLease();
     await leased(lease).run();
-    expect(raises).toEqual([ADB_INSTALL_TIMEOUT_MS, 0, DEBUG_VERIFY_STEP_MS]);
+    expect(raises).toEqual([ADB_INSTALL_TIMEOUT_MS, 0, 0, DEBUG_VERIFY_STEP_MS]);
   });
 
   test('the lease is released on success and on failure', async () => {

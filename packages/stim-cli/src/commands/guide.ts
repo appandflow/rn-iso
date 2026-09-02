@@ -1616,8 +1616,11 @@ THE OPTION SURFACE, IN FULL
 THE DEVICE LEASE ON A \`--device\` RUN
   A physical device is shared, so a \`--device\` run takes a lease on it. The
   lease step sits AFTER the build (a build touches no device) and before the
-  install, and the run releases what it took when the command exits, however it
-  exits. Before each device step -- install, launch, verification -- the run
+  install, and the run releases what it took when the command exits: on success,
+  on a failure, on an exception, and on a Ctrl-C or a SIGTERM, which it catches
+  to give the device back before exiting 130/143. Only SIGKILL escapes that, and
+  then the lease expires on its own.
+  Before each device step -- install, launch, the log collector, verification -- the run
   raises the expiry to now plus the larger of 60 seconds and that step's own
   upper bound, because a child process is synchronous and no timer can tick
   during an install. A run killed with SIGKILL therefore leaves the device
@@ -1626,12 +1629,16 @@ THE DEVICE LEASE ON A \`--device\` RUN
   If nobody holds the device, the run takes a lease of its own and gives it
   back at exit. If another workspace holds it, the run WAITS: \`--wait
   <seconds>\` (default 60) polls every 2 seconds, prints a waiting line to
-  stderr every 30 with the holder, the device and the holder's expiry, and
-  refuses with STIM_DEVICE_BUSY when it runs out. \`--wait 0\` refuses at
+  stderr at once and then every 30 seconds with the holder, the device and the
+  holder's expiry, and refuses with STIM_DEVICE_BUSY when it runs out. It keeps
+  waiting past the holder's own expiry, because the holder can release early.
+  \`--wait 0\` refuses at
   once. \`--no-wait\` changes only that case: the run proceeds with NO lease
-  and prints one warning naming the holder and its expiry -- and when both
-  workspaces build the same app id, that the install terminates the holder's
-  running app. A free device is leased as usual under \`--no-wait\`. The two
+  and prints one warning naming the holder and its expiry, plus what the install
+  costs: the same app id means it TERMINATES the holder's running app, a
+  different one means the launch only backgrounds it, and when Stim cannot read
+  the holder's app id it says so rather than guessing. A free device is leased
+  as usual under \`--no-wait\`. The two
   flags together are STIM_BAD_ARG, and so is either one without \`--device\`,
   because an owned simulator or emulator has no contention.
 

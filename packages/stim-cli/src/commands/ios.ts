@@ -83,6 +83,7 @@ import {
   lostLine,
   lostRefusal,
   parseDeviceWait,
+  releaseLeaseOnSignal,
   runLease,
   waitFlagConflict,
   type LeaseFacts,
@@ -790,6 +791,7 @@ interface IosDeps {
   awaitIosDeviceLaunch: typeof awaitIosDeviceLaunch;
   acquireRunLease: typeof acquireRunLease;
   runLease: typeof runLease;
+  releaseLeaseOnSignal: typeof releaseLeaseOnSignal;
   iosDeviceProcess: typeof iosDeviceProcess;
   verifyIosDeviceReleaseLaunch: typeof verifyIosDeviceReleaseLaunch;
   readBundleId: typeof readBundleId;
@@ -861,6 +863,7 @@ const DEFAULT_DEPS: IosDeps = {
   awaitIosDeviceLaunch,
   acquireRunLease,
   runLease,
+  releaseLeaseOnSignal,
   iosDeviceProcess,
   verifyIosDeviceReleaseLaunch,
   readBundleId,
@@ -1649,9 +1652,13 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   };
 
   let leaseHandle: RunLease | null = null;
+  let stopLeaseSignals: (() => void) | null = null;
   const releaseLease = () => {
     const held = leaseHandle;
+    const stopSignals = stopLeaseSignals;
     leaseHandle = null;
+    stopLeaseSignals = null;
+    stopSignals?.();
     try {
       held?.release();
     } catch (e) {
@@ -2569,6 +2576,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
       expiresAt: acquired.status === 'leased' ? acquired.expiresAt : null,
     });
     if (acquired.status === 'leased') {
+      stopLeaseSignals = d.releaseLeaseOnSignal(releaseLease);
       phase('lease', `${acquired.kind} lease on ${physicalDevice.udid} until ${acquired.expiresAt}`);
     }
   }

@@ -122,6 +122,7 @@ import {
   lostLine,
   lostRefusal,
   parseDeviceWait,
+  releaseLeaseOnSignal,
   runLease,
   waitFlagConflict,
   type LeaseFacts,
@@ -690,6 +691,7 @@ interface RunAndroidOptions {
   waitConflict?: boolean;
   acquireLease?: typeof acquireRunLease;
   makeRunLease?: typeof runLease;
+  onLeaseSignal?: typeof releaseLeaseOnSignal;
   listDevices?: typeof listAdbDevices;
   deviceModel?: typeof physicalDeviceModel;
   isEmulatorDevice?: typeof probeEmulatorSerial;
@@ -1294,6 +1296,7 @@ async function finishAndroidRun({
 
   const remoteRelease = Boolean(remoteDevice && release);
   if (!remoteRelease) {
+    if (physical) raiseLeaseFor(0, false);
     const collectorPid = await startCollector({
       root,
       serial,
@@ -1388,6 +1391,7 @@ function resolveRunAndroidOptions(
     waitConflict = false,
     acquireLease = acquireRunLease,
     makeRunLease = runLease,
+    onLeaseSignal = releaseLeaseOnSignal,
     listDevices = listAdbDevices,
     deviceModel = physicalDeviceModel,
     isEmulatorDevice = probeEmulatorSerial,
@@ -1457,6 +1461,7 @@ function resolveRunAndroidOptions(
     waitConflict,
     acquireLease,
     makeRunLease,
+    onLeaseSignal,
     listDevices,
     deviceModel,
     isEmulatorDevice,
@@ -1528,6 +1533,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     waitConflict,
     acquireLease,
     makeRunLease,
+    onLeaseSignal,
     listDevices,
     deviceModel,
     isEmulatorDevice,
@@ -2354,9 +2360,13 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   record.appPath = apkPath;
 
   let leaseHandle: RunLease | null = null;
+  let stopLeaseSignals: (() => void) | null = null;
   const releaseLease = () => {
     const held = leaseHandle;
+    const stopSignals = stopLeaseSignals;
     leaseHandle = null;
+    stopLeaseSignals = null;
+    stopSignals?.();
     try {
       held?.release();
     } catch (err) {
@@ -2390,6 +2400,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       expiresAt: acquired.status === 'leased' ? acquired.expiresAt : null,
     });
     if (acquired.status === 'leased') {
+      stopLeaseSignals = onLeaseSignal(releaseLease);
       phase('lease', `${acquired.kind} lease on ${device.serial} until ${acquired.expiresAt}`);
     }
   }

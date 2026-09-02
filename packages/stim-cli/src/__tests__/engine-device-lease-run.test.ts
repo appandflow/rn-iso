@@ -10,8 +10,10 @@ import {
   DEVICE_WAIT_POLL_MS,
   LEASE_STEP_FLOOR_MS,
   acquireRunLease,
+  appIdMatch,
   leaseStepMs,
   parseDeviceWait,
+  releaseLeaseOnSignal,
   runLease,
   waitFlagConflict,
 } from '../engine/device-lease-run.ts';
@@ -153,6 +155,51 @@ describe('taking the lease a run needs', () => {
     expect(result.refusal.remedy).toMatch(/--device ANOTHER-PHONE/);
   });
 
+  test('a stale record for another device is dropped, not turned into a refusal', async () => {
+    const h = harness();
+    const dead = takeLease({ root: ROOT, platform: 'ios', id: 'ANOTHER-PHONE', kind: 'run', durationMs: 60_000 }, h.io);
+    assert(dead.status === 'taken');
+    h.advance(61_000);
+
+    const result = await acquire(h);
+    assert(result.status === 'leased');
+    expect(h.read()?.holder).toBe(ROOT);
+    expect(h.holders.get(ROOT)?.ios?.id).toBe(UDID);
+  });
+
+  test('a live lease on another device still refuses, so one run cannot hold two', async () => {
+    const h = harness();
+    takeLease({ root: ROOT, platform: 'ios', id: 'ANOTHER-PHONE', kind: 'run', durationMs: 600_000 }, h.io);
+    const result = await acquire(h);
+    assert(result.status === 'refused');
+    expect(result.refusal.code).toBe('STIM_NO_DEVICE');
+  });
+
+  test('an expired run lease of this run own token is revived rather than retaken', async () => {
+    const h = harness();
+    const first = await acquire(h);
+    assert(first.status === 'leased');
+    const token = h.read()?.token;
+    h.advance(INSTALL_MS + 1);
+
+    const again = await acquire(h);
+    assert(again.status === 'leased');
+    expect(h.read()?.token).toBe(token);
+  });
+
+  test('an expired declared lease is free: the run takes a run-scoped one it will release', async () => {
+    const h = harness();
+    const declared = takeLease({ root: ROOT, platform: 'ios', id: UDID, kind: 'declared', durationMs: 60_000 }, h.io);
+    assert(declared.status === 'taken');
+    h.advance(61_000);
+
+    const result = await acquire(h);
+    assert(result.status === 'leased');
+    expect(result.kind).toBe('run');
+    expect(h.read()?.token).not.toBe(declared.lease.token);
+    expect(h.holders.get(ROOT)?.ios?.kind).toBe('run');
+  });
+
   test("this root's own lease with no token left refuses at once, naming what to do", async () => {
     const h = harness();
     takeLease({ root: ROOT, platform: 'ios', id: UDID, kind: 'declared' }, h.io);
@@ -208,14 +255,17 @@ describe('waiting for a device another workspace holds', () => {
     expect(h.read()?.holder).toBe(ROOT);
   });
 
-  test('the waiting line is printed every 30 seconds, not on every poll', async () => {
+  test('the waiting line is printed at once and then every 30 seconds, not on every poll', async () => {
     const h = harness();
+    const started = h.now();
     held(h, 10 * 60_000);
     const result = await acquire(h, { waitSeconds: 61 });
     assert(result.status === 'refused');
-    expect(h.warnings).toHaveLength(2);
+    expect(h.warnings).toHaveLength(3);
     expect(h.warnings[0]).toMatch(new RegExp(`waiting for ${OTHER} to release Test Phone \\(${UDID}\\)`));
     expect(h.warnings[0]).toMatch(/its lease runs until \d\d:\d\d:\d\d \(\d+m\d\ds from now\)/);
+    expect(h.slept.slice(0, 1)).toEqual([DEVICE_WAIT_POLL_MS]);
+    expect(started).toBe(h.now() - 62_000);
   });
 
   test('the wait running out refuses with the holder, the expiry and the three remedies', async () => {
@@ -260,11 +310,49 @@ describe('waiting for a device another workspace holds', () => {
     expect(h.slept).toEqual([]);
   });
 
-  test('--no-wait on a different app id says what actually happens instead', async () => {
+  test('--no-wait on a different app id says the launch only backgrounds it', async () => {
     const h = harness();
     held(h, 10 * 60_000);
     await acquire(h, { noWait: true, appId: 'com.example.app', holderAppId: () => 'com.other.app' });
-    expect(h.warnings[1]).toMatch(/backgrounds it/);
+    expect(h.warnings[1]).toMatch(/app id differs, so the launch below backgrounds it/);
+  });
+
+  test('--no-wait says so when the app ids cannot be compared, instead of guessing', async () => {
+    const h = harness();
+    held(h, 10 * 60_000);
+    await acquire(h, { noWait: true, appId: 'com.example.app', holderAppId: () => null });
+    expect(h.warnings[1]).toMatch(/cannot tell whether the two workspaces build the same app id/);
+    expect(h.warnings[1]).toMatch(/if they do, this install terminates the holder's running app/);
+
+    const unknownOurs = harness();
+    held(unknownOurs, 10 * 60_000);
+    await acquire(unknownOurs, { noWait: true, appId: null, holderAppId: () => 'com.example.app' });
+    expect(unknownOurs.warnings[1]).toMatch(/cannot tell whether/);
+  });
+
+  test('appIdMatch is three states, never a guess', () => {
+    expect(appIdMatch('a', 'a')).toBe('same');
+    expect(appIdMatch('a', 'b')).toBe('different');
+    expect(appIdMatch(null, 'b')).toBe('unknown');
+    expect(appIdMatch('a', null)).toBe('unknown');
+  });
+
+  test('a wait outlasts the holder expiry, because the holder can unlock early', async () => {
+    const h = harness();
+    held(h, 10 * 60_000);
+    const io = h.io;
+    let polls = 0;
+    const result = await acquire(h, {
+      waitSeconds: 10,
+      sleep: async (ms: number) => {
+        polls += 1;
+        h.advance(ms);
+        if (polls === 2) io.removeLease(deviceLeasePath('ios', UDID));
+      },
+    });
+    assert(result.status === 'leased');
+    expect(polls).toBe(2);
+    expect(h.read()?.holder).toBe(ROOT);
   });
 
   test('--no-wait still leases a free device', async () => {
@@ -273,6 +361,40 @@ describe('waiting for a device another workspace holds', () => {
     assert(result.status === 'leased');
     expect(h.read()?.holder).toBe(ROOT);
     expect(h.warnings).toEqual([]);
+  });
+});
+
+describe('a run cut short by a signal', () => {
+  test('SIGINT and SIGTERM release the lease and exit 130 and 143', () => {
+    const handlers = new Map<string, () => void>();
+    const released: number[] = [];
+    const exits: number[] = [];
+    const stop = releaseLeaseOnSignal(() => released.push(1), {
+      on: (signal, handler) => handlers.set(signal, handler),
+      off: (signal) => handlers.delete(signal),
+      exit: (code) => exits.push(code),
+    });
+
+    expect([...handlers.keys()].toSorted()).toEqual(['SIGINT', 'SIGTERM']);
+    handlers.get('SIGINT')?.();
+    handlers.get('SIGTERM')?.();
+    expect(released).toHaveLength(2);
+    expect(exits).toEqual([130, 143]);
+
+    stop();
+    expect(handlers.size).toBe(0);
+  });
+
+  test('the normal release takes the handlers back off', () => {
+    const handlers = new Map<string, () => void>();
+    const stop = releaseLeaseOnSignal(() => {}, {
+      on: (signal, handler) => handlers.set(signal, handler),
+      off: (signal) => handlers.delete(signal),
+      exit: () => {},
+    });
+    stop();
+    stop();
+    expect(handlers.size).toBe(0);
   });
 });
 
