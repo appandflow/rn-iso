@@ -317,6 +317,30 @@ test('unknownSettingKeys still reports an object value for a known scalar with n
   expect(unknownSettingKeys({ ios: { configuration: {} } })).toEqual(['ios.configuration']);
 });
 
+test('every validated scalar key is a known setting, as a string and as an object', () => {
+  const validated = [
+    'worktreeDir',
+    'ios.lanHost',
+    'ios.signingIdentity',
+    'ios.signingIdentitySha1',
+    'ios.remote',
+    'ios.simslimProfile',
+    'android.remote',
+    'android.dataPartitionSizeGb',
+    'android.avdConfigFile',
+    'cache.provider',
+  ];
+  const nested = (path: string, value: unknown): Record<string, unknown> =>
+    path
+      .split('.')
+      .reverse()
+      .reduce<Record<string, unknown>>((inner, key) => ({ [key]: inner }), value as Record<string, unknown>);
+  for (const path of validated) {
+    expect(unknownSettingKeys(nested(path, 'x'))).toEqual([]);
+    expect(unknownSettingKeys(nested(path, {}))).toEqual([]);
+  }
+});
+
 test('unknownSettingKeys tolerates empty and malformed input', () => {
   expect(unknownSettingKeys({})).toEqual([]);
   expect(unknownSettingKeys(null)).toEqual([]);

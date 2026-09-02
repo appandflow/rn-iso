@@ -56,8 +56,8 @@ const KNOWN_SETTINGS = new Set([
 
 const OPEN_SETTINGS_OBJECTS = new Set(['android.avdConfig', 'cache.options']);
 
-// Transitional: every other known scalar setting accepts an object value
-// silently instead of being refused; see the follow-up in issue #210.
+// Keys outside this set have no validator on every command that reads them,
+// so an object value keeps the unknown-key warning; see issue #210.
 const VALIDATED_SCALAR_SETTINGS = new Set([
   'worktreeDir',
   'ios.lanHost',
