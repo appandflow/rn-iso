@@ -75,10 +75,11 @@ machine, including remote-device workflows.
 
 - `--configuration <name>` selects an Xcode configuration. The default is Debug.
 - `--device-type <name>` creates this workspace's owned simulator as that model,
-  overriding `ios.deviceType` for one invocation; an uninstalled name refuses
-  with `STIM_BAD_ARG` and prints the installed names.
+  overriding `ios.deviceType` for one invocation. A model no installed runtime
+  can create refuses with `STIM_BAD_ARG` and prints the ones they do offer.
 - `--runtime <version>` creates it on that iOS runtime, overriding `ios.runtime`
-  the same way.
+  the same way. It takes a version (`26.5`) or a runtime's full name
+  (`iOS 26.5`), exactly.
 - `--device [udid]` builds, installs, and launches on a connected iPhone instead
   of the owned simulator. With no UDID it takes the first connected device it
   can lease. Stim never creates, boots, or deletes hardware.

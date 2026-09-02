@@ -1148,13 +1148,19 @@ STIM_BAD_ARG / STIM_NO_PROJECT
   no variant selected (the refusal names the debug variants), or a
   \`--device-type\`, \`--runtime\` or \`--system-image\` name that is BLANK or
   is not installed on this machine. For the unknown-name case the installed
-  names are printed in the message -- the models \`xcrun simctl list
-  devicetypes\` reports, the versions \`xcrun simctl list runtimes\` reports,
-  or the system images the SDK has -- so the remedy is to re-run with one of
-  them (an ios.deviceType, ios.runtime or android.systemImage setting is
-  checked the same way).
-  These errors are caught before the port is reserved and before anything is
-  spawned, so nothing was started.
+  names are printed in the message -- the versions \`xcrun simctl list
+  runtimes\` reports, the models those runtimes can actually CREATE (not the
+  whole \`simctl list devicetypes\` table, which also names watchOS, tvOS and
+  visionOS models no iOS runtime offers), or the system images the SDK has --
+  so the remedy is to re-run with one of them. An ios.deviceType, ios.runtime
+  or android.systemImage setting is checked the same way, and the check applies
+  even when this workspace ALREADY owns a device, so a name that could never
+  create anything is caught rather than left to a later run.
+  These errors are caught before the port is reserved and before any build or
+  device work, so nothing was started. The one listing they need
+  (\`simctl list runtimes\`, the SDK's system-images directory) runs only when
+  a name was actually given, and a listing that fails is reported as
+  STIM_NO_DEVICE naming the tool, never as a crash.
 
 "@stim-cli/metro is not installed ... so bundler and client logs will not be
 captured"  (in metro.ndjson, bare RN)
@@ -1701,10 +1707,19 @@ THE OPTION SURFACE, IN FULL
   invocation, exactly as \`--configuration\` overrides ios.configuration.
 
   A name that is not INSTALLED on this machine refuses with STIM_BAD_ARG
-  before anything is created, and the message lists the installed names --
-  \`xcrun simctl list devicetypes\` and \`runtimes\` on iOS, the SDK's own
-  system-images on Android -- so a wrong guess is one command, not a created
-  simulator. A blank value is the same refusal.
+  before anything is created, and the message lists the installed names, so a
+  wrong guess is one command, not a created simulator. A blank value is the
+  same refusal.
+
+  What counts as installed for \`--device-type\` is what an installed RUNTIME
+  can create, not what \`xcrun simctl list devicetypes\` prints: that table
+  also names watchOS, tvOS and visionOS models, and older iPhones no current
+  runtime supports, none of which \`simctl create\` would accept. So the
+  refusal lists the models the installed runtimes offer -- narrowed to the one
+  runtime when \`--runtime\` also resolved, which is what catches a pair like
+  \`--device-type "iPhone 8" --runtime 26.5\` that each half would pass alone.
+  \`--runtime\` takes a version (\`26.5\`) or a runtime's full name
+  (\`iOS 26.5\`), exactly; no prefix or suffix matches.
 
   These flags describe a device that does not exist yet. When this workspace
   ALREADY owns a simulator and \`--device-type\` names a different model,
@@ -2242,13 +2257,16 @@ belongs there:
 KEYS STIM READS
   ios.deviceType        e.g. "iPhone 17 Pro" -- the simulator model this
                         workspace's owned sim is created as, spelled exactly as
-                        \`xcrun simctl list devicetypes\` names it. The
-                        \`--device-type\` flag overrides this per invocation.
-                        An uninstalled name is STIM_BAD_ARG and the installed
-                        names are printed
-  ios.runtime           e.g. "26.2" -- the iOS runtime that sim is created on.
-                        The \`--runtime\` flag overrides this per invocation,
-                        and an uninstalled version refuses the same way
+                        \`xcrun simctl list devicetypes\` names it, and one an
+                        installed runtime can create. The \`--device-type\`
+                        flag overrides this per invocation. A name no installed
+                        runtime offers is STIM_BAD_ARG and the creatable names
+                        are printed
+  ios.runtime           e.g. "26.2" -- the iOS runtime that sim is created on,
+                        as a version ("26.2") or a runtime's full name
+                        ("iOS 26.2"); nothing else matches. The \`--runtime\`
+                        flag overrides this per invocation, and an uninstalled
+                        version refuses the same way
   ios.configuration     e.g. "Release" -- the Xcode configuration to build
                         (simulator only). Committing
                         { "ios": { "configuration": "Release" } } makes every

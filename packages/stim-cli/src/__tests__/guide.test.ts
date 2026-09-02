@@ -1128,6 +1128,22 @@ test('the errors topic names an uninstalled device name as a STIM_BAD_ARG cause 
   const section = errors.slice(errors.indexOf('STIM_BAD_ARG')).replace(/\s+/g, ' ');
   expect(section).toMatch(/`--device-type`, `--runtime` or `--system-image` name that is BLANK or is not installed/);
   expect(section).toMatch(/the installed names are printed in the message/);
+  expect(section).toMatch(/the check applies even when this workspace ALREADY owns a device/);
+  expect(section).toMatch(/runs only when a name was actually given/);
+  expect(section).toMatch(/a listing that fails is reported as STIM_NO_DEVICE naming the tool, never as a crash/);
+  expect(section).not.toMatch(/before anything is spawned/);
+});
+
+test('the guide says what counts as an installed model, and the two runtime forms', () => {
+  const lifecycle = renderTopic('lifecycle');
+  assert(lifecycle);
+  const flat = lifecycle.replace(/\s+/g, ' ');
+  expect(flat).toMatch(/what an installed RUNTIME can create, not what `xcrun simctl list devicetypes` prints/);
+  expect(flat).toMatch(/narrowed to the one runtime when `--runtime` also resolved/);
+  expect(flat).toMatch(/`--runtime` takes a version \(`26\.5`\) or a runtime's full name \(`iOS 26\.5`\), exactly/);
+  const settings = renderTopic('settings');
+  assert(settings);
+  expect(settings.replace(/\s+/g, ' ')).toMatch(/as a version \("26\.2"\) or a runtime's full name \("iOS 26\.2"\)/);
 });
 
 test('the facts topic documents the model, runtime and system image the run reports', () => {

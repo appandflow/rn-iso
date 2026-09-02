@@ -45,7 +45,11 @@ import type { AssetManifest } from '../engine/asset-manifest.ts';
 import { PREBUILD_ERROR } from '../engine/prebuild.ts';
 import { asProcessExit, makeChildProcess, makeError, makeExecutor } from './_factories.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
-import { unknownAndroidSystemImageRefusal } from '../engine/device.ts';
+
+const IMAGES = [
+  { api: 36, tag: 'google_apis', arch: 'arm64-v8a', pkg: 'system-images;android-36;google_apis;arm64-v8a' },
+  { api: 35, tag: 'google_apis', arch: 'arm64-v8a', pkg: 'system-images;android-35;google_apis;arm64-v8a' },
+];
 import { DEBUG_VERIFY_STEP_MS, type RunLease } from '../engine/device-lease-run.ts';
 
 const FINGERPRINT = 'a3f9b1c2d3e4f5a6b7c8d9e0f1a2b3c4';
@@ -247,7 +251,7 @@ function harness(overrides = {}) {
       calls.ensureDevice.push(args);
       return { avdName: 'stim-app-412', consolePort: 5584, owned: true };
     },
-    unknownSystemImage: () => null,
+    listSystemImages: () => IMAGES,
     ensureDeviceBooted: async (args: unknown = {}) => {
       calls.booted.push(args);
       return { ok: true, serial: 'emulator-5584' };
@@ -4292,15 +4296,7 @@ describe('the emulator system-image flag', () => {
   });
 
   test('an unknown system image refuses with STIM_BAD_ARG naming the installed ids, before anything is created', async () => {
-    const h = harness({
-      json: true,
-      systemImage: 'system-images;android-99;google_apis;arm64-v8a',
-      unknownSystemImage: (requested: string | null | undefined) =>
-        unknownAndroidSystemImageRefusal(requested, [
-          { api: 36, tag: 'google_apis', arch: 'arm64-v8a', pkg: 'system-images;android-36;google_apis;arm64-v8a' },
-          { api: 35, tag: 'google_apis', arch: 'arm64-v8a', pkg: 'system-images;android-35;google_apis;arm64-v8a' },
-        ]),
-    });
+    const h = harness({ json: true, systemImage: 'system-images;android-99;google_apis;arm64-v8a' });
     const result = await h.run();
     expect(result.ok).toBe(false);
     const stdout0 = h.stdout[0];
@@ -4312,6 +4308,37 @@ describe('the emulator system-image flag', () => {
       /system-images;android-36;google_apis;arm64-v8a, system-images;android-35;google_apis;arm64-v8a/,
     );
     expect(payload.remedy).toMatch(/--system-image/);
+    expect(h.calls.ensureDevice.length).toBe(0);
+  });
+
+  test('a plain run with neither flag nor setting never reads the system-image listing', async () => {
+    let listed = 0;
+    const h = harness({
+      listSystemImages: () => {
+        listed += 1;
+        return IMAGES;
+      },
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(listed).toBe(0);
+  });
+
+  test('an unreadable SDK is a structured refusal, not a stack trace', async () => {
+    const h = harness({
+      json: true,
+      systemImage: 'system-images;android-36;google_apis;arm64-v8a',
+      listSystemImages: () => {
+        throw new Error('EACCES: permission denied');
+      },
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    const stdout0 = h.stdout[0];
+    assert(stdout0);
+    const payload = JSON.parse(stdout0);
+    expect(payload.code).toBe(NO_DEVICE);
+    expect(payload.message).toMatch(/Could not read the installed Android system images: EACCES/);
     expect(h.calls.ensureDevice.length).toBe(0);
   });
 

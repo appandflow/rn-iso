@@ -15,8 +15,8 @@ import {
   createOwnedIosSim,
   IOS_BOOT_TIMEOUT_MS,
   listAllIosSims,
+  iosRuntimeMatches,
   listIosDeviceTypes,
-  listIosRuntimes,
   parseRuntimeVersion,
   resolveOwnedIosSim,
   type IosRuntime,
@@ -28,7 +28,6 @@ import {
   getAvdNameForSerial,
   listAdbDevices,
   listAvds,
-  listInstalledSystemImages,
   nextConsolePort,
   ownedAvdName,
   ownedAvdSystemImage,
@@ -692,35 +691,44 @@ function installedNames(names: Array<string | null | undefined>): string {
   return unique.length > 0 ? unique.join(', ') : 'none';
 }
 
-export function unknownIosDeviceTypeRefusal(
-  requested: string | null | undefined,
-  deviceTypes: DeviceTypeInfo[] = listIosDeviceTypes(),
-): UnknownDeviceNameRefusal | null {
-  if (!requested) return null;
-  if ((deviceTypes || []).some((d) => d.name === requested)) return null;
-  return {
-    message: `No installed simulator device type is named "${requested}". Installed device types: ${installedNames((deviceTypes || []).map((d) => d.name))}.`,
-    remedy:
-      'Pass `--device-type` (or set ios.deviceType) to one of the names printed above, exactly as `xcrun simctl list devicetypes` spells it. Install more models through Xcode.',
-  };
-}
-
 export function unknownIosRuntimeRefusal(
   requested: string | null | undefined,
-  runtimes: IosRuntime[] = listIosRuntimes(),
+  runtimes: IosRuntime[],
 ): UnknownDeviceNameRefusal | null {
   if (!requested) return null;
-  if ((runtimes || []).some((r) => r.version === requested || r.name.endsWith(requested))) return null;
+  if ((runtimes || []).some((r) => iosRuntimeMatches(r, requested))) return null;
   return {
     message: `No installed simulator runtime matches "${requested}". Installed runtimes: ${installedNames((runtimes || []).map((r) => r.version))}.`,
     remedy:
-      'Pass `--runtime` (or set ios.runtime) to one of the versions printed above, as `xcrun simctl list runtimes` reports them. Install more runtimes through Xcode.',
+      'Pass `--runtime` (or set ios.runtime) a version printed above ("26.5") or a runtime\'s full name ("iOS 26.5"); nothing else matches. Install more runtimes through Xcode.',
+  };
+}
+
+function creatableIosDeviceTypeNames(runtimes: IosRuntime[], runtime?: string | null): string[] {
+  const scoped = runtime ? (runtimes || []).filter((r) => iosRuntimeMatches(r, runtime)) : runtimes || [];
+  return scoped.flatMap((r) => (r.supportedDeviceTypes || []).map((d) => d.name));
+}
+
+export function unknownIosDeviceTypeRefusal(
+  requested: string | null | undefined,
+  runtimes: IosRuntime[],
+  runtime?: string | null,
+): UnknownDeviceNameRefusal | null {
+  if (!requested) return null;
+  const creatable = creatableIosDeviceTypeNames(runtimes, runtime);
+  if (creatable.includes(requested)) return null;
+  const scope = runtime ? `runtime ${runtime}` : 'any installed simulator runtime';
+  const offered = runtime ? `Device types runtime ${runtime} supports` : 'Device types the installed runtimes support';
+  return {
+    message: `No device type named "${requested}" can be created on ${scope}. ${offered}: ${installedNames(creatable)}.`,
+    remedy:
+      'Pass `--device-type` (or set ios.deviceType) one of the names printed above, exactly as `xcrun simctl list devicetypes` spells it. `xcrun simctl list devicetypes` also lists watchOS, tvOS and visionOS models, which no iOS runtime can create. Install more models through Xcode.',
   };
 }
 
 export function unknownAndroidSystemImageRefusal(
   requested: string | null | undefined,
-  images: SystemImage[] = listInstalledSystemImages(),
+  images: SystemImage[],
 ): UnknownDeviceNameRefusal | null {
   if (!requested) return null;
   if ((images || []).some((i) => i.pkg === requested)) return null;

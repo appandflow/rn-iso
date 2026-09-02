@@ -143,7 +143,7 @@ export function listInstalledSystemImages(): SystemImage[] {
   const root = join(androidHome(), 'system-images');
   const images: SystemImage[] = [];
   if (!existsSync(root)) return images;
-  for (const apiDir of readdirSync(root)) {
+  for (const apiDir of safeList(root)) {
     const m = apiDir.match(/^android-(\d+)$/);
     if (!m) continue;
     const apiPath = join(root, apiDir);

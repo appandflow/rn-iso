@@ -105,6 +105,7 @@ import {
   extractEmulatorFailure,
   findBuildTool,
   listAdbDevices,
+  listInstalledSystemImages,
   physicalDeviceModel,
   probeEmulatorSerial,
   resolvePhysicalDevice,
@@ -115,7 +116,6 @@ import {
   ensureOwnedDevice,
   unknownAndroidSystemImageRefusal,
   type OwnedDeviceRecord,
-  type UnknownDeviceNameRefusal,
 } from '../engine/device.ts';
 import {
   REMOTE_SESSION_ERROR,
@@ -199,23 +199,36 @@ function systemImageRefusal({
   resolved,
   physical,
   remoteBackend,
-  unknown,
+  listImages,
 }: {
   flag: string | null | undefined;
   resolved: string | null;
   physical: boolean;
   remoteBackend: string | null;
-  unknown: typeof unknownAndroidSystemImageRefusal;
-}): UnknownDeviceNameRefusal | null {
+  listImages: typeof listInstalledSystemImages;
+}): { code: string; message: string; remedy: string } | null {
   if (typeof flag === 'string' && flag.trim() === '') {
     return {
+      code: 'STIM_BAD_ARG',
       message: '--system-image was given an empty id.',
       remedy:
         'Pass `--system-image <id>` with an sdkmanager package id, e.g. "system-images;android-36;google_apis;arm64-v8a".',
     };
   }
   if (physical || remoteBackend) return null;
-  return unknown(resolved);
+  if (!resolved) return null;
+  let images;
+  try {
+    images = listImages();
+  } catch (error) {
+    return {
+      code: NO_DEVICE,
+      message: `Could not read the installed Android system images: ${(error as Error)?.message || error}`,
+      remedy: 'Check that ANDROID_HOME points at a readable SDK, then try again.',
+    };
+  }
+  const refusal = unknownAndroidSystemImageRefusal(resolved, images);
+  return refusal ? { code: 'STIM_BAD_ARG', message: refusal.message, remedy: refusal.remedy } : null;
 }
 
 export function isReleaseVariant(variant: string | null | undefined): boolean {
@@ -751,7 +764,7 @@ interface RunAndroidOptions {
   useBuildCache?: boolean;
   variant?: string | null;
   systemImage?: string | null;
-  unknownSystemImage?: typeof unknownAndroidSystemImageRefusal;
+  listSystemImages?: typeof listInstalledSystemImages;
   device?: string | boolean | null;
   wait?: string | boolean;
   waitConflict?: boolean;
@@ -1514,7 +1527,7 @@ function resolveRunAndroidOptions(
     acquireSlot = acquireBuildSlot,
     releaseSlot = releaseBuildSlot,
     ensureDevice = ensureOwnedDevice,
-    unknownSystemImage = unknownAndroidSystemImageRefusal,
+    listSystemImages = listInstalledSystemImages,
     ensureDeviceBooted = ensureBooted,
     resolveMetro = resolveProjectMetro,
     resolveMetroRetrying = resolveMetroWithRetry,
@@ -1587,7 +1600,7 @@ function resolveRunAndroidOptions(
     acquireSlot,
     releaseSlot,
     ensureDevice,
-    unknownSystemImage,
+    listSystemImages,
     ensureDeviceBooted,
     resolveMetro,
     resolveMetroRetrying,
@@ -1662,7 +1675,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     acquireSlot,
     releaseSlot,
     ensureDevice,
-    unknownSystemImage,
+    listSystemImages,
     ensureDeviceBooted,
     resolveMetro,
     resolveMetroRetrying,
@@ -1887,9 +1900,9 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     resolved: systemImage,
     physical,
     remoteBackend,
-    unknown: unknownSystemImage,
+    listImages: listSystemImages,
   });
-  if (imageRefusal) return fail('STIM_BAD_ARG', imageRefusal.message, imageRefusal.remedy);
+  if (imageRefusal) return fail(imageRefusal.code, imageRefusal.message, imageRefusal.remedy);
   const requestedSerial = typeof deviceFlag === 'string' ? deviceFlag : null;
   let androidPackage = detectAndroidPackage(root);
   record.bundleId = androidPackage;

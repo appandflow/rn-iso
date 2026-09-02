@@ -63,8 +63,8 @@ import {
   ensureOwnedDevice,
   unknownIosDeviceTypeRefusal,
   unknownIosRuntimeRefusal,
-  type UnknownDeviceNameRefusal,
 } from '../engine/device.ts';
+import { listIosRuntimes } from '../sim/ios.ts';
 import {
   REMOTE_SESSION_ERROR,
   binOnPath,
@@ -373,20 +373,21 @@ function deviceModelRefusal({
   runtimeFlag,
   deviceType,
   runtime,
-  skipUnknown,
-  unknownDeviceType,
-  unknownRuntime,
+  physical,
+  remoteBackend,
+  listRuntimes,
 }: {
   deviceTypeFlag: string | undefined;
   runtimeFlag: string | undefined;
   deviceType: string | null;
   runtime: string | null;
-  skipUnknown: boolean;
-  unknownDeviceType: typeof unknownIosDeviceTypeRefusal;
-  unknownRuntime: typeof unknownIosRuntimeRefusal;
-}): UnknownDeviceNameRefusal | null {
+  physical: boolean;
+  remoteBackend: RemoteDeviceBackend | null;
+  listRuntimes: typeof listIosRuntimes;
+}): { code: string; message: string; remedy: string } | null {
   if (typeof deviceTypeFlag === 'string' && deviceTypeFlag.trim() === '') {
     return {
+      code: 'STIM_BAD_ARG',
       message: '--device-type was given an empty name.',
       remedy:
         'Pass `--device-type <name>` with a model `xcrun simctl list devicetypes` names, e.g. "iPad Pro 13-inch (M4)".',
@@ -394,12 +395,26 @@ function deviceModelRefusal({
   }
   if (typeof runtimeFlag === 'string' && runtimeFlag.trim() === '') {
     return {
+      code: 'STIM_BAD_ARG',
       message: '--runtime was given an empty version.',
       remedy: 'Pass `--runtime <version>` with a runtime `xcrun simctl list runtimes` reports, e.g. "18.5".',
     };
   }
-  if (skipUnknown) return null;
-  return unknownDeviceType(deviceType) ?? unknownRuntime(runtime);
+  if (physical || remoteBackend) return null;
+  if (!deviceType && !runtime) return null;
+  let runtimes;
+  try {
+    runtimes = listRuntimes();
+  } catch (error) {
+    return {
+      code: 'STIM_NO_DEVICE',
+      message: `Could not read the installed simulator runtimes: ${(error as Error)?.message || error}`,
+      remedy: 'Run `stim doctor` to check the simulator toolchain, then try again.',
+    };
+  }
+  const refusal =
+    unknownIosRuntimeRefusal(runtime, runtimes) ?? unknownIosDeviceTypeRefusal(deviceType, runtimes, runtime);
+  return refusal ? { code: 'STIM_BAD_ARG', message: refusal.message, remedy: refusal.remedy } : null;
 }
 
 export function isReleaseConfiguration(configuration: string | null | undefined): boolean {
@@ -832,8 +847,7 @@ interface IosDeps {
   projectShortcut: typeof projectShortcut;
   checkDeviceCapacity: typeof checkDeviceCapacity;
   ensureOwnedDevice: typeof ensureOwnedDevice;
-  unknownDeviceType: typeof unknownIosDeviceTypeRefusal;
-  unknownRuntime: typeof unknownIosRuntimeRefusal;
+  listIosRuntimes: typeof listIosRuntimes;
   ensureBooted: typeof ensureBooted;
   resolveProjectMetro: typeof resolveProjectMetro;
   resolveMetroWithRetry: typeof resolveMetroWithRetry;
@@ -901,8 +915,7 @@ const DEFAULT_DEPS: IosDeps = {
   projectShortcut,
   checkDeviceCapacity,
   ensureOwnedDevice,
-  unknownDeviceType: unknownIosDeviceTypeRefusal,
-  unknownRuntime: unknownIosRuntimeRefusal,
+  listIosRuntimes,
   ensureBooted,
   resolveRemoteContext,
   remoteIosDeps,
@@ -987,13 +1000,14 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     .option(
       '--device-type <name>',
       "Simulator model to create this workspace's owned sim as, exactly as `xcrun simctl list devicetypes` names it " +
-        '(e.g. "iPad Pro 13-inch (M4)"). Overrides the ios.deviceType setting for this invocation. An unknown name refuses ' +
-        'with STIM_BAD_ARG and prints the installed names.',
+        '(e.g. "iPad Pro 13-inch (M4)"). Overrides the ios.deviceType setting for this invocation. A model no installed ' +
+        'runtime can create refuses with STIM_BAD_ARG and prints the models they do offer.',
     )
     .option(
       '--runtime <version>',
-      'Simulator runtime to create this workspace\'s owned sim on (e.g. "18.5"). Overrides the ios.runtime setting for ' +
-        'this invocation. An unknown version refuses with STIM_BAD_ARG and prints the installed runtimes.',
+      'Simulator runtime to create this workspace\'s owned sim on, as a version ("18.5") or a runtime\'s full name ' +
+        '("iOS 18.5"); nothing else matches. Overrides the ios.runtime setting for this invocation. An unknown version ' +
+        'refuses with STIM_BAD_ARG and prints the installed runtimes.',
     )
     .option(
       '--device [udid]',
@@ -1914,13 +1928,11 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     runtimeFlag: opts.runtime,
     deviceType,
     runtime,
-    skipUnknown: Boolean(physical || remoteBackend),
-    unknownDeviceType: d.unknownDeviceType,
-    unknownRuntime: d.unknownRuntime,
+    physical,
+    remoteBackend,
+    listRuntimes: d.listIosRuntimes,
   });
-  if (modelRefusal) {
-    return fail({ code: 'STIM_BAD_ARG', message: modelRefusal.message, remedy: modelRefusal.remedy });
-  }
+  if (modelRefusal) return fail(modelRefusal);
   const registerProject = () => d.upsertProject(root, { bundleId: d.detectBundleId(root) ?? undefined, isExpo });
   if (remoteBackend !== 'eas') registerProject();
   const proj = d.getProject(root);

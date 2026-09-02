@@ -1246,39 +1246,66 @@ const RUNTIMES = [
   },
 ];
 
+const VISION_PRO = { identifier: 'com.apple.CoreSimulator.SimDeviceType.Apple-Vision-Pro', name: 'Apple Vision Pro' };
+const SIMCTL_DEVICE_TYPES = [...TYPES, VISION_PRO];
+
 const IMAGES = [
   { api: 36, tag: 'google_apis', arch: 'arm64-v8a', pkg: 'system-images;android-36;google_apis;arm64-v8a' },
 ];
 
 describe('the unknown-name refusals', () => {
-  test('an installed device type passes and nothing is refused when none was asked for', () => {
-    expect(unknownIosDeviceTypeRefusal('iPhone 17 Pro', TYPES)).toBe(null);
-    expect(unknownIosDeviceTypeRefusal(null, TYPES)).toBe(null);
+  test('a device type an installed runtime supports passes, and nothing is refused when none was asked for', () => {
+    expect(unknownIosDeviceTypeRefusal('iPhone 17 Pro', RUNTIMES)).toBe(null);
+    expect(unknownIosDeviceTypeRefusal(null, RUNTIMES)).toBe(null);
     expect(unknownIosDeviceTypeRefusal(undefined, [])).toBe(null);
   });
 
-  test('an uninstalled device type is refused and every installed name is printed', () => {
-    const refusal = unknownIosDeviceTypeRefusal('iPad Pro 99-inch', TYPES);
+  test('a device type simctl lists but no iOS runtime can create is refused, not left to fail at creation', () => {
+    expect(SIMCTL_DEVICE_TYPES.some((d) => d.name === VISION_PRO.name)).toBe(true);
+    const refusal = unknownIosDeviceTypeRefusal(VISION_PRO.name, RUNTIMES);
     assert(refusal);
-    expect(refusal.message).toMatch(/No installed simulator device type is named "iPad Pro 99-inch"/);
-    expect(refusal.message).toMatch(/Installed device types: iPhone 17 Pro, iPhone 16\./);
+    expect(refusal.message).toMatch(
+      /No device type named "Apple Vision Pro" can be created on any installed simulator runtime/,
+    );
+    expect(refusal.message).toMatch(/Device types the installed runtimes support: iPhone 17 Pro, iPhone 16\./);
+    expect(refusal.message).not.toMatch(/Apple Vision Pro\./);
     expect(refusal.remedy).toMatch(/--device-type/);
-    expect(refusal.remedy).toMatch(/ios\.deviceType/);
+    expect(refusal.remedy).toMatch(/watchOS, tvOS and visionOS/);
+  });
+
+  test('the printed set narrows to the requested runtime, and a pair no runtime offers is refused', () => {
+    const runtimes = [
+      ...RUNTIMES,
+      {
+        identifier: 'com.apple.CoreSimulator.SimRuntime.iOS-18-5',
+        name: 'iOS 18.5',
+        version: '18.5',
+        supportedDeviceTypes: [TYPE_16],
+      },
+    ];
+    expect(unknownIosDeviceTypeRefusal('iPhone 17 Pro', runtimes, '26.2')).toBe(null);
+    const refusal = unknownIosDeviceTypeRefusal('iPhone 17 Pro', runtimes, '18.5');
+    assert(refusal);
+    expect(refusal.message).toMatch(/No device type named "iPhone 17 Pro" can be created on runtime 18\.5/);
+    expect(refusal.message).toMatch(/Device types runtime 18\.5 supports: iPhone 16\./);
   });
 
   test('a machine with nothing installed says so rather than printing an empty list', () => {
     const refusal = unknownIosDeviceTypeRefusal('iPhone 17 Pro', []);
     assert(refusal);
-    expect(refusal.message).toMatch(/Installed device types: none\./);
+    expect(refusal.message).toMatch(/Device types the installed runtimes support: none\./);
   });
 
-  test('a runtime matches by version or by name suffix, the way creation matches it', () => {
+  test('a runtime matches by exact version or exact name, never by suffix', () => {
     expect(unknownIosRuntimeRefusal('26.2', RUNTIMES)).toBe(null);
     expect(unknownIosRuntimeRefusal('iOS 26.2', RUNTIMES)).toBe(null);
+    expect(unknownIosRuntimeRefusal('6.2', RUNTIMES)).not.toBe(null);
+    expect(unknownIosRuntimeRefusal('2', RUNTIMES)).not.toBe(null);
     const refusal = unknownIosRuntimeRefusal('18.5', RUNTIMES);
     assert(refusal);
     expect(refusal.message).toMatch(/No installed simulator runtime matches "18\.5"\. Installed runtimes: 26\.2\./);
     expect(refusal.remedy).toMatch(/ios\.runtime/);
+    expect(refusal.remedy).toMatch(/"iOS 26\.5"/);
   });
 
   test('an Android system image is matched on the exact sdkmanager package id', () => {

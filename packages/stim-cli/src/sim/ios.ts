@@ -169,6 +169,10 @@ function rankIphone(name: string): { gen: number; variant: number } {
   };
 }
 
+export function iosRuntimeMatches(runtime: IosRuntime, requested: string): boolean {
+  return runtime.version === requested || runtime.name === requested;
+}
+
 export function pickDefaultIosCreation(
   _deviceTypes: IosDeviceType[],
   runtimes: IosRuntime[],
@@ -177,7 +181,7 @@ export function pickDefaultIosCreation(
   const rts = runtimes.toSorted((a, b) =>
     String(b.version).localeCompare(String(a.version), undefined, { numeric: true }),
   );
-  const wantedRts = runtime ? rts.filter((r) => r.version === runtime || r.name.endsWith(runtime)) : rts;
+  const wantedRts = runtime ? rts.filter((r) => iosRuntimeMatches(r, runtime)) : rts;
   for (const rt of wantedRts) {
     const supported = (rt.supportedDeviceTypes || []).filter((d) =>
       deviceType ? d.name === deviceType : /^iPhone/i.test(d.name),
