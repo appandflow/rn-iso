@@ -103,14 +103,14 @@ describe('the two pure port-wiring shapes', () => {
 
   test('devClientUrl matches the shape expo-dev-launcher asserts on', () => {
     expect(devClientUrl('myapp', 8082)).toBe(
-      'myapp://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8082%2F%3FdisableOnboarding%3D1',
+      'myapp://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8082%2F%3FdisableOnboarding%3D1&disableFab=1',
     );
     expect(devClientUrl('scheme', 8081)).toBe(
-      'scheme://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8081%2F%3FdisableOnboarding%3D1',
+      'scheme://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8081%2F%3FdisableOnboarding%3D1&disableFab=1',
     );
   });
 
-  test('disableOnboarding=1 sits INSIDE the project url, never on the deep link', () => {
+  test('onboarding stays inside the project url and the session-only FAB flag stays outside', () => {
     const urls = [
       devClientUrl('myapp', 8082),
       devClientUrl('myapp', 8082, '10.0.0.188'),
@@ -121,14 +121,15 @@ describe('the two pure port-wiring shapes', () => {
     for (const url of urls) {
       const link = new URL(url);
       expect(link.searchParams.get('disableOnboarding')).toBe(null);
+      expect(link.searchParams.get('disableFab')).toBe('1');
       const projectUrl = new URL(link.searchParams.get('url') as string);
       expect(projectUrl.searchParams.get('disableOnboarding')).toBe('1');
     }
     expect(devClientUrl('myapp', 8082, '10.0.0.188')).toBe(
-      'myapp://expo-development-client/?url=http%3A%2F%2F10.0.0.188%3A8082%2F%3FdisableOnboarding%3D1',
+      'myapp://expo-development-client/?url=http%3A%2F%2F10.0.0.188%3A8082%2F%3FdisableOnboarding%3D1&disableFab=1',
     );
     expect(devClientDeepLink('myapp', 'https://abc.trycloudflare.com')).toBe(
-      'myapp://expo-development-client/?url=https%3A%2F%2Fabc.trycloudflare.com%2F%3FdisableOnboarding%3D1',
+      'myapp://expo-development-client/?url=https%3A%2F%2Fabc.trycloudflare.com%2F%3FdisableOnboarding%3D1&disableFab=1',
     );
   });
 
@@ -281,7 +282,7 @@ describe('ios', () => {
         'simctl',
         'openurl',
         'U1',
-        'myapp://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8082%2F%3FdisableOnboarding%3D1',
+        'myapp://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8082%2F%3FdisableOnboarding%3D1&disableFab=1',
       ],
     ]);
   });
@@ -752,7 +753,7 @@ describe('unverifiedLaunchLines', () => {
     }).join('\n');
     expect(simulator).toContain(
       "xcrun simctl openurl BF2A1C3D 'io.tlon.groups://expo-development-client/" +
-        "?url=http%3A%2F%2Flocalhost%3A8082%2F%3FdisableOnboarding%3D1'",
+        "?url=http%3A%2F%2Flocalhost%3A8082%2F%3FdisableOnboarding%3D1&disableFab=1'",
     );
 
     const phone = unverifiedLaunchLines({
@@ -767,7 +768,7 @@ describe('unverifiedLaunchLines', () => {
     }).join('\n');
     expect(phone).toContain(
       "--payload-url 'io.tlon.groups://expo-development-client/" +
-        "?url=http%3A%2F%2F10.0.0.132%3A8082%2F%3FdisableOnboarding%3D1' io.tlon.groups" +
+        "?url=http%3A%2F%2F10.0.0.132%3A8082%2F%3FdisableOnboarding%3D1&disableFab=1' io.tlon.groups" +
         ' -- -EXDevMenuShowsAtLaunch 0 -EXDevMenuShowFloatingActionButton 0',
     );
 
@@ -779,7 +780,7 @@ describe('unverifiedLaunchLines', () => {
       devClientUrl: androidDevClientUrl('exp+app', 8082),
     }).join('\n');
     expect(android).toContain(
-      "-d 'exp+app://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8082%2F%3FdisableOnboarding%3D1'" +
+      "-d 'exp+app://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8082%2F%3FdisableOnboarding%3D1&disableFab=1'" +
         ' --ez EXDevMenuDisableAutoLaunch true',
     );
   });
@@ -917,7 +918,7 @@ describe('unverifiedLaunchLines: the routed Local Network remedy', () => {
     expect(text).toContain(`agent-device press 'label="Close"'`);
     expect(text).toContain(
       `--payload-url 'io.tlon.groups://expo-development-client/` +
-        `?url=http%3A%2F%2F10.0.0.132%3A8082%2F%3FdisableOnboarding%3D1' io.tlon.groups` +
+        `?url=http%3A%2F%2F10.0.0.132%3A8082%2F%3FdisableOnboarding%3D1&disableFab=1' io.tlon.groups` +
         ' -- -EXDevMenuShowsAtLaunch 0 -EXDevMenuShowFloatingActionButton 0',
     );
   });
@@ -1058,10 +1059,10 @@ describe('the debug_http_host script, run for real under sh', () => {
 describe('the Android dev-client deep link', () => {
   test('the url is the iOS shape pointed at the emulator loopback', () => {
     expect(androidDevClientUrl('exp+app', 8085)).toBe(
-      'exp+app://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8085%2F%3FdisableOnboarding%3D1',
+      'exp+app://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8085%2F%3FdisableOnboarding%3D1&disableFab=1',
     );
     expect(devClientUrl('exp+app', 8085)).toBe(
-      'exp+app://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8085%2F%3FdisableOnboarding%3D1',
+      'exp+app://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8085%2F%3FdisableOnboarding%3D1&disableFab=1',
     );
   });
 
@@ -1073,7 +1074,7 @@ describe('the Android dev-client deep link', () => {
     );
     expect(result.mode).toBe('deep-link');
     expect(result.devClientUrl).toBe(
-      'exp+app://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8082%2F%3FdisableOnboarding%3D1',
+      'exp+app://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8082%2F%3FdisableOnboarding%3D1&disableFab=1',
     );
     expect(exec.calls.at(-1)).toEqual([
       'adb',
@@ -1085,7 +1086,7 @@ describe('the Android dev-client deep link', () => {
       '-a',
       'android.intent.action.VIEW',
       '-d',
-      `'exp+app://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8082%2F%3FdisableOnboarding%3D1'`,
+      `'exp+app://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8082%2F%3FdisableOnboarding%3D1&disableFab=1'`,
       '--ez',
       'EXDevMenuDisableAutoLaunch',
       'true',
@@ -1894,10 +1895,10 @@ describe('the Metro host for a physical device', () => {
 
   test('the dev-client url targets localhost on a physical device', () => {
     expect(androidDevClientUrl('exp+app', 8085, true)).toBe(
-      'exp+app://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8085%2F%3FdisableOnboarding%3D1',
+      'exp+app://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8085%2F%3FdisableOnboarding%3D1&disableFab=1',
     );
     expect(androidDevClientUrl('exp+app', 8085, false)).toBe(
-      'exp+app://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8085%2F%3FdisableOnboarding%3D1',
+      'exp+app://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8085%2F%3FdisableOnboarding%3D1&disableFab=1',
     );
   });
 
@@ -1915,7 +1916,7 @@ describe('the Metro host for a physical device', () => {
     );
     expect(result.ok).toBe(true);
     expect(result.devClientUrl).toBe(
-      'exp+app://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8082%2F%3FdisableOnboarding%3D1',
+      'exp+app://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8082%2F%3FdisableOnboarding%3D1&disableFab=1',
     );
   });
 });

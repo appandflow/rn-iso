@@ -502,23 +502,24 @@ test('the guide gives the Local Network recovery commands and the taps that have
   expect(facts).toMatch(/developer trust, has no API at all and is always the user's/);
 });
 
-// The preapproval is `simctl spawn defaults write`, which has no devicectl
-// equivalent, and the copied-plist route loses its keys to cfprefsd. On a phone
-// the launch arguments take its place: devicectl passes everything after `--`
-// to the app and NSUserDefaults reads the argument domain first, so nothing is
-// written to the device. Android's intent extra sets both preferences.
-test('the guide scopes the dev-menu preapproval to a simulator and names what covers a phone', () => {
+test('the guide scopes each platform dev-menu suppression mechanism accurately', () => {
   const facts = renderTopic('facts');
   assert(facts);
 
   expect(facts).toMatch(/EVERY DEV-CLIENT DEEP LINK CARRIES disableOnboarding=1\s+INSIDE ITS PROJECT URL/);
-  expect(facts).toContain('?url=http%3A%2F%2Fhost%3Aport%2F%3FdisableOnboarding%3D1');
+  expect(facts).toContain('?url=http%3A%2F%2Fhost%3Aport%2F%3FdisableOnboarding%3D1&disableFab=1');
   expect(facts).toMatch(/ON iOS it has to sit on the\s+PROJECT url/);
   expect(facts).toMatch(/on the\s+outer deep link it does nothing there\. Android reads it on\s+either/);
   expect(facts).toMatch(
-    /ON ANDROID the same deep link also carries the\s+`EXDevMenuDisableAutoLaunch` boolean intent extra/,
+    /ON LOCAL ANDROID the same deep link also carries the\s+`EXDevMenuDisableAutoLaunch` boolean intent extra/,
   );
   expect(facts).toContain("-d '<devClientUrl>'\n                  --ez EXDevMenuDisableAutoLaunch true");
+  expect(facts).toMatch(/set EXDevMenuShowsAtLaunch=false and\s+EXDevMenuIsOnboardingFinished=true/);
+  expect(facts).toMatch(/does NOT set expo-dev-menu's\s+showFab preference/);
+  expect(facts).toMatch(/Remote Android opens only the URL, so that intent-extra\s+suppression does not apply there/);
+  expect(facts).toMatch(/outer `disableFab=1`\s+query parameter/);
+  expect(facts).toContain('expo/expo#49651');
+  expect(facts).toMatch(/Stim does\s+not rewrite expo-dev-menu's private SharedPreferences XML/);
   expect(facts).toMatch(/ON A SIMULATOR, before a local dev-client openurl, Stim\s+preapproves/);
   expect(facts).toMatch(/those together are what keep the menu and its\s+button off a simulator entirely/);
   expect(facts).toContain('EXDevMenuShowFloatingActionButton=false');

@@ -3596,7 +3596,7 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     );
     const collector = calls.args.replaceCollector as Record<string, unknown>;
     expect(collector.payloadUrl).toBe(
-      `com.example.app://expo-development-client/?url=${encodeURIComponent('http://192.168.1.5:8082/?disableOnboarding=1')}`,
+      `com.example.app://expo-development-client/?url=${encodeURIComponent('http://192.168.1.5:8082/?disableOnboarding=1')}&disableFab=1`,
     );
     expect(calls.order.includes('sealAppForDevice')).toBe(false);
     expect(calls.order.includes('gateProfileForDevice')).toBe(true);
