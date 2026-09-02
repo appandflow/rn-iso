@@ -28,13 +28,39 @@ builds embed the JavaScript bundle and skip that requirement.
 ## `doctor`
 
 ```text
-stim doctor [--json]
+stim doctor [--fix] [--json]
 ```
 
 Inspects the main checkout. It reports missing or stale dependencies, CocoaPods
 state, cache conflicts, device capacity, and remote session problems. On a
 checkout without installed dependencies, it also reports fingerprint
-differences against a fresh worktree. The check is read-only.
+differences against a fresh worktree. The report is read-only.
+
+`doctor` also detects an agent harness that sandboxes shell commands (Claude
+Code through `CLAUDECODE` and `CLAUDE_CODE_ENTRYPOINT`, Codex through `CODEX_*`
+and `~/.codex/config.toml`). When one is present and the allowance Stim needs is
+missing, it reports the patch verbatim:
+
+```text
+sandbox.filesystem.allowWrite     ["~/.stim"]
+sandbox.network.allowMachLookup   ["com.apple.coresimulator.*"]
+sandbox.network.allowLocalBinding true
+```
+
+- `--fix` merges exactly those three keys into `.claude/settings.local.json`,
+  the personal file Git ignores. It creates the file when absent, keeps every
+  other key, appends to the arrays without duplicating, writes atomically, and
+  prints what it wrote to stderr. It never writes the committed
+  `.claude/settings.json`, and it refuses a `settings.local.json` that does not
+  parse rather than overwriting it. This is the only thing any Stim command
+  writes into a project.
+- `--fix` refuses under Codex and says why: `sandbox_mode` is a single enum with
+  no per-path allowance, `workspace-write` still refuses `STIM_HOME`, and only
+  `danger-full-access` clears it. Turning a sandbox off wholesale is the user's
+  decision. With no harness detected, `--fix` reports that there is nothing to
+  apply.
+- `--json` prints one payload on stdout, and carries a `fix` object when `--fix`
+  ran.
 
 ## `start`
 

@@ -1226,14 +1226,37 @@ RUNNING UNDER A SANDBOX
 
   Two ways out, and choosing at the start of a session beats discovering it
   three failures in. Either run Stim with the harness's sandbox disabled, or
-  allow the three. In Claude Code that is settings.json:
+  allow the three. In Claude Code that is a settings file:
 
     sandbox.filesystem.allowWrite     ["~/.stim"]
     sandbox.network.allowMachLookup   ["com.apple.coresimulator.*"]
     sandbox.network.allowLocalBinding true
 
-  In Codex the sandbox is one flag, \`codex -s\`, with no per-path allowance:
-  workspace-write still refuses STIM_HOME.
+  \`stim doctor\` does not wait for you to remember this. It reads CLAUDECODE /
+  CLAUDE_CODE_ENTRYPOINT and the CODEX_* variables plus ~/.codex/config.toml,
+  and when a sandboxing harness is present it reports a finding carrying those
+  three lines verbatim. Under Claude Code the finding is suppressed once the
+  three keys are satisfied in .claude/settings.local.json, .claude/settings.json
+  or ~/.claude/settings.json -- satisfied, not merely present: an allowWrite
+  array without "~/.stim" is still a missing allowance. The finding always
+  runs and needs no flag.
+
+  \`stim doctor --fix\` applies it, and it is the ONE thing any Stim command
+  writes into a project. It merges exactly those three keys into
+  .claude/settings.local.json -- the personal, gitignored file, created when
+  absent -- appending to the arrays without duplicating, keeping every other
+  key, and writing atomically. It never touches the committed
+  .claude/settings.json, it changes nothing else in the repo, and a
+  settings.local.json that does not parse is refused rather than overwritten.
+  It prints what it wrote to stderr. Restart the harness session afterwards.
+
+  In Codex the sandbox is one enum, \`sandbox_mode\` (read-only,
+  workspace-write, danger-full-access) or \`codex -s\`, with no per-path
+  allowance: workspace-write still refuses STIM_HOME and danger-full-access is
+  the only value that clears it. Switching a sandbox off wholesale is the
+  user's call, so \`--fix\` refuses under Codex and explains why, and doctor's
+  Codex finding recommends nothing automatic. With no harness detected,
+  \`--fix\` reports that there is nothing to apply.
 
   A git credential helper is often blocked too. It prints \`failed to store\`
   on a fetch that otherwise succeeded, and is safe to ignore.
@@ -1367,6 +1390,14 @@ provider on a key this SDK ignores) plus the project-side settings that matter
 solely for builds you make OUTSIDE Stim. A clean doctor means there is
 nothing Stim needs from this repo.
 
+  The one exception to read-only is \`stim doctor --fix\`, which exists for a
+  file Stim does not own: under Claude Code it merges the three sandbox
+  allowance keys into .claude/settings.local.json, the personal gitignored
+  harness file, and writes nothing else anywhere. It refuses under Codex,
+  which has no per-path allowance, and reports nothing to apply when no
+  harness is detected. The finding it applies always prints without the flag;
+  see \`guide errors\` for both.
+
 THE BUILD CACHE HAS THREE LEVELS
   1. Stim's own, on this machine: a directory under ~/.stim shared by
      every worktree, keyed on the @expo/fingerprint hash of the native inputs.
@@ -1486,6 +1517,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   the two env vars (see \`guide settings\`).
 
 THE OPTION SURFACE, IN FULL
+  doctor          --json --fix
   start           --json --wait <seconds> --remote
   ios             --json --no-metro-check --no-build-cache --configuration <name> --device [udid] --remote <proxy|eas>
   android         --json --no-metro-check --no-build-cache --variant <name> --device [serial] --remote <proxy|eas>

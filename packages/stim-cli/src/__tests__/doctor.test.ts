@@ -19,9 +19,11 @@ import {
   detectXcodeMajor,
   parseXcodeMajor,
   checkConcurrency,
+  checkSandboxAllowance,
 } from '../doctor.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import type { EasAuthResult } from '../engine/remote-cache.ts';
+import { sandboxAllowanceLines } from '../sandbox.ts';
 import assert from 'node:assert';
 
 test('checkMainCheckout reports missing dependencies, Pods, and native output', () => {
@@ -916,6 +918,67 @@ test.each([
 
     expect(findings.some((finding) => finding.title === 'The remote proxy credentials are missing')).toBe(true);
     expect(findings.some((finding) => finding.title === 'This project uses a remote proxy')).toBe(false);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
+test('checkSandboxAllowance stays silent with no harness and with the allowance in place', () => {
+  expect(checkSandboxAllowance({ harness: null })).toBe(null);
+  expect(checkSandboxAllowance({ harness: 'claude', satisfied: true })).toBe(null);
+});
+
+test('the Claude Code finding carries the patch verbatim and points at --fix', () => {
+  const found = checkSandboxAllowance({ harness: 'claude', satisfied: false });
+  assert(found);
+  expect(found.level).toBe('cost');
+  for (const line of sandboxAllowanceLines()) expect(found.detail).toContain(line);
+  expect(found.detail).toContain('.claude/settings.local.json');
+  expect(found.fix).toMatch(/doctor --fix/);
+});
+
+test('the Codex finding explains the single enum and recommends nothing automatic', () => {
+  const found = checkSandboxAllowance({ harness: 'codex' });
+  assert(found);
+  expect(found.level).toBe('note');
+  expect(found.detail).toMatch(/sandbox_mode/);
+  expect(found.detail).toMatch(/danger-full-access is the only value/);
+  expect(found.detail).not.toContain('sandbox.filesystem.allowWrite');
+  expect(found.fix).toMatch(/refuses/);
+});
+
+test('runDoctor reports the sandbox allowance from the project settings files', () => {
+  const project = mkdtempSync(join(tmpdir(), 'stim-doc-sandbox-'));
+  try {
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
+    const missing = runDoctor(project, {
+      concurrency: () => ({ maxBuilds: 0, maxDevices: 0 }),
+      harness: () => 'claude',
+      claudeSettings: [],
+    });
+    expect(missing.some((f) => /sandbox allowance/i.test(f.title))).toBe(true);
+
+    mkdirSync(join(project, '.claude'), { recursive: true });
+    writeFileSync(
+      join(project, '.claude', 'settings.local.json'),
+      JSON.stringify({
+        sandbox: {
+          filesystem: { allowWrite: ['~/.stim'] },
+          network: { allowMachLookup: ['com.apple.coresimulator.*'], allowLocalBinding: true },
+        },
+      }),
+    );
+    const handled = runDoctor(project, {
+      concurrency: () => ({ maxBuilds: 0, maxDevices: 0 }),
+      harness: () => 'claude',
+    });
+    expect(handled.some((f) => /sandbox/i.test(f.title))).toBe(false);
+
+    const none = runDoctor(project, {
+      concurrency: () => ({ maxBuilds: 0, maxDevices: 0 }),
+      harness: () => null,
+    });
+    expect(none.some((f) => /sandbox/i.test(f.title))).toBe(false);
   } finally {
     rmSync(project, { recursive: true, force: true });
   }

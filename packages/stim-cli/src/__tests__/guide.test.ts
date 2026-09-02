@@ -5,6 +5,8 @@ import { DEFAULT_FINGERPRINT_IGNORES } from '../build-cache.ts';
 import { topicNames, renderTopic, renderIndex } from '../commands/guide.ts';
 import { ANDROID_AVD_CONFIG_HELP } from '../settings.ts';
 import { CONSOLE_ENV, deviceConsoleArgs } from '../collector/ios-device.ts';
+import { checkSandboxAllowance } from '../doctor.ts';
+import { sandboxAllowanceLines } from '../sandbox.ts';
 
 test('every advertised topic renders non-empty content', () => {
   for (const name of topicNames()) {
@@ -76,6 +78,7 @@ test('the flags the guide advertises are the flags the commands define', () => {
   const lifecycle = renderTopic('lifecycle');
   assert(lifecycle);
   const advertised = {
+    'doctor.ts': ['--json', '--fix'],
     'start.ts': ['--json', '--wait', '--remote'],
     'ios.ts': ['--json', '--no-metro-check', '--no-build-cache', '--configuration', '--device', '--remote'],
     'android.ts': ['--json', '--no-metro-check', '--no-build-cache', '--variant', '--device', '--remote'],
@@ -746,6 +749,39 @@ test('the sandbox failures are named in the guide, and the skill points at them'
   // The skill says a sandbox exists and sends the reader to the topic.
   expect(skill).toMatch(/sandbox/i);
   expect(skill).toContain('stim guide errors');
+});
+
+test('the guide documents the doctor finding and --fix with the patch doctor reports', () => {
+  const errors = renderTopic('errors') ?? '';
+  const lifecycle = renderTopic('lifecycle') ?? '';
+  const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
+
+  // One source for the patch: the finding and the topic print the same lines.
+  const claude = checkSandboxAllowance({ harness: 'claude', satisfied: false });
+  assert(claude);
+  for (const line of sandboxAllowanceLines()) {
+    expect(claude.detail).toContain(line);
+    expect(errors).toContain(line);
+  }
+
+  // The finding always runs, and the topic names what doctor reads to detect it.
+  for (const detail of ['CLAUDECODE', 'CODEX_', '~/.codex/config.toml', '.claude/settings.local.json']) {
+    expect(errors).toContain(detail);
+  }
+  expect(errors).toContain('stim doctor --fix');
+  expect(lifecycle).toContain('stim doctor --fix');
+  expect(errors).toMatch(/never touches the committed/i);
+
+  // Codex gets the explanation and no write.
+  const codex = checkSandboxAllowance({ harness: 'codex' });
+  assert(codex);
+  for (const topic of [errors, codex.detail]) {
+    expect(topic).toMatch(/sandbox_mode/);
+    expect(topic).toMatch(/danger-full-access/);
+  }
+
+  // The flag is advanced detail: the guide carries it, the skill does not.
+  expect(skill).not.toContain('--fix');
 });
 
 test('advanced contracts stay in guide topics instead of the skill', () => {

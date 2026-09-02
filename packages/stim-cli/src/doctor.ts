@@ -23,6 +23,16 @@ import {
   resolveEasCliBin,
 } from './engine/remote-cache.ts';
 import { iosSimSlimProfileSetting, remoteAndroidSetting, remoteIosSetting, resolveSettings } from './settings.ts';
+import {
+  type Harness,
+  CLAUDE_LOCAL_SETTINGS,
+  CODEX_REFUSAL,
+  claudeSettingsPaths,
+  detectHarness,
+  readClaudeSettings,
+  sandboxAllowanceLines,
+  sandboxAllowanceSatisfied,
+} from './sandbox.ts';
 import type { RemoteDeviceBackend } from './types.ts';
 
 type AnyJson = Record<string, unknown>;
@@ -537,6 +547,37 @@ export function checkSimSlim({
   );
 }
 
+export function checkSandboxAllowance({
+  harness,
+  satisfied = false,
+}: {
+  harness: Harness | null;
+  satisfied?: boolean;
+}): Finding | null {
+  if (harness === null) return null;
+
+  if (harness === 'codex') {
+    return finding(
+      'note',
+      'This is a Codex session, whose sandbox has no per-path allowance',
+      `A sandboxed shell blocks three things Stim needs, and none of the failures names the sandbox: writes to STIM_HOME (~/.stim unless set), the CoreSimulator service simctl reaches over XPC, and the adb server socket on tcp:5037. ${CODEX_REFUSAL}`,
+      'Decide before the session starts whether this one runs Stim, and if it does, run Codex with danger-full-access. `stim doctor --fix` refuses here.',
+    );
+  }
+
+  if (satisfied) return null;
+
+  const patch = sandboxAllowanceLines()
+    .map((line) => `    ${line}`)
+    .join('\n');
+  return finding(
+    'cost',
+    'This Claude Code session has no sandbox allowance for Stim',
+    `A sandboxed shell blocks three things Stim needs, and none of the failures names the sandbox: writes to STIM_HOME (~/.stim unless set), the CoreSimulator service simctl reaches over XPC, and the adb server socket on tcp:5037. None of ${CLAUDE_LOCAL_SETTINGS}, .claude/settings.json, or ~/.claude/settings.json carries all three keys:\n\n${patch}\n\n  The allowance changes nothing when the sandbox is off, so applying it costs nothing and saves three failures that read as a broken machine.`,
+    `\`stim doctor --fix\` merges exactly those keys into ${CLAUDE_LOCAL_SETTINGS}, the personal gitignored file, leaving every other key alone. See \`stim guide errors\`.`,
+  );
+}
+
 export function runDoctor(
   projectRoot: string,
   {
@@ -550,6 +591,8 @@ export function runDoctor(
     lookupAgentDevice = null,
     lookupEasCli = null,
     lookupSimSlim = null,
+    harness = null,
+    claudeSettings = null,
   }: {
     readFile?: typeof readFileSync;
     xcodeMajor?: number | null;
@@ -561,6 +604,8 @@ export function runDoctor(
     lookupAgentDevice?: (() => boolean) | null;
     lookupEasCli?: (() => boolean) | null;
     lookupSimSlim?: (() => boolean) | null;
+    harness?: Harness | null | (() => Harness | null);
+    claudeSettings?: readonly unknown[] | null;
   } = {},
 ): Finding[] {
   const read = (rel: string): string | null => {
@@ -653,6 +698,15 @@ export function runDoctor(
     )
     .filter((remoteFinding): remoteFinding is Finding => remoteFinding !== null);
 
+  const activeHarness = typeof harness === 'function' ? harness() : (harness ?? detectHarness());
+  const sandboxFinding = checkSandboxAllowance({
+    harness: activeHarness,
+    satisfied:
+      activeHarness === 'claude'
+        ? sandboxAllowanceSatisfied(claudeSettings ?? readClaudeSettings(claudeSettingsPaths(projectRoot)))
+        : false,
+  });
+
   return [
     ...checkMainCheckout(projectRoot),
     checkDevClient(pkg, isExpo),
@@ -663,6 +717,7 @@ export function runDoctor(
     easFinding,
     concurrencyFinding,
     simslimFinding,
+    sandboxFinding,
     ...remoteFindings,
   ].filter((f): f is Finding => Boolean(f));
 }

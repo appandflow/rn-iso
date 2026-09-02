@@ -23,7 +23,10 @@ need custom behavior.
 
 Runtime state belongs under `$STIM_HOME/workspaces/`, not in the project
 tree. Stim has no init step and never mutates project setup; do not add
-either. `doctor` reports setup that requires project judgment.
+either. `doctor` reports setup that requires project judgment. The single
+exception is `doctor --fix`, which writes the sandbox allowance into the
+personal, gitignored harness settings file (`.claude/settings.local.json`) and
+nothing else; it never writes a committed file.
 
 ## Development
 
