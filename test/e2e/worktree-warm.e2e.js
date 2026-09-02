@@ -1,7 +1,7 @@
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -56,6 +56,40 @@ test('cold and warm worktree creation report different guidance', () => {
   assert.ok(existsSync(join(carriedPath, 'node_modules', 'pkg', 'index.js')));
   assert.ok(existsSync(join(carriedPath, 'ios', 'Pods', 'Manifest.lock')));
   assert.ok(existsSync(join(carriedPath, 'ios', 'build', 'generated.cpp')));
+});
+
+test('carried pods are judged against the Podfile.lock the new worktree ends up with', () => {
+  const repo = join(ctx.tmp, 'pods-app');
+  const branchLock = 'PODS:\n  - fmt (11.0.2)\n';
+  const workingLock = 'PODS:\n  - fmt (11.0.2)\n  - RNScreens (4.0.0)\n';
+  mkdirSync(join(repo, 'ios'), { recursive: true });
+  writeFileSync(join(repo, '.gitignore'), 'ios/Pods/\n');
+  writeFileSync(join(repo, 'ios', 'Podfile'), "platform :ios, '15.1'\n");
+  writeFileSync(join(repo, 'ios', 'Podfile.lock'), branchLock);
+  for (const args of [
+    ['init', '-b', 'main'],
+    ['config', 'user.email', 'e2e@example.com'],
+    ['config', 'user.name', 'stim-cli e2e'],
+    ['config', 'commit.gpgsign', 'false'],
+    ['add', '-A'],
+    ['commit', '-m', 'pods fixture'],
+  ]) {
+    execFileSync('git', ['-C', repo, ...args], { encoding: 'utf-8' });
+  }
+  writeFileSync(join(repo, 'ios', 'Podfile.lock'), workingLock);
+  mkdirSync(join(repo, 'ios', 'Pods'), { recursive: true });
+  writeFileSync(join(repo, 'ios', 'Pods', 'Manifest.lock'), workingLock);
+
+  const carried = spawnSync(
+    process.execPath,
+    [CLI, 'worktree', 'create', 'pods-carried', '--base', 'head', '--carry-ignored'],
+    { cwd: repo, env: { ...process.env, STIM_HOME: ctx.home }, encoding: 'utf-8' },
+  );
+  assert.equal(carried.status, 0, carried.stderr);
+  const created = carried.stdout.trim();
+  assert.equal(readFileSync(join(created, 'ios', 'Podfile.lock'), 'utf-8'), workingLock);
+  assert.equal(readFileSync(join(created, 'ios', 'Pods', 'Manifest.lock'), 'utf-8'), workingLock);
+  assert.doesNotMatch(carried.stderr, /Carried ios\/Pods does not match/);
 });
 
 function create(name, extra = []) {

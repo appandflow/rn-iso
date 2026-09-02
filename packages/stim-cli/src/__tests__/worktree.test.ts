@@ -695,6 +695,19 @@ test('a Pods directory with no Manifest.lock is not reported', () => {
   rmSync(root, { recursive: true, force: true });
 });
 
+test('the Podfile.lock on disk decides, so a carried lockfile change clears the mismatch', () => {
+  const branchLock = 'PODS:\n  - fmt (11.0.2)\n';
+  const workingLock = 'PODS:\n  - fmt (11.0.2)\n  - RNScreens (4.0.0)\n';
+  const root = podsFixture({ manifest: workingLock, podfileLock: branchLock });
+  try {
+    expect(podsOutOfSync(root, ['ios/Pods'])).toEqual([{ dir: 'ios', reason: 'mismatch' }]);
+    writeFileSync(join(root, 'ios', 'Podfile.lock'), workingLock);
+    expect(podsOutOfSync(root, ['ios/Pods'])).toEqual([]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('pod-install churn is recognised so the restore advice only fires when it works', () => {
   expect(isPodInstallChurn([' M ios/Podfile.lock', ' M ios/PatientApp.xcodeproj/project.pbxproj'])).toBe(true);
   expect(isPodInstallChurn([' M ios/Podfile.lock', ' M config.json'])).toBe(false);
