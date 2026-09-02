@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { formatElapsed } from '../command-output.ts';
 import { getConfigDir } from '../config.ts';
 import { resolveBuild } from '../build-cache.ts';
 import { isPidAlive } from '../metro.ts';
@@ -249,16 +250,10 @@ export function listBuildLocks({ isAlive = isPidAlive }: ListBuildLocksOptions =
   return locks;
 }
 
-export function formatWaited(ms: number): string {
-  const total = Math.max(0, Math.round(Number(ms) || 0) / 1000);
-  if (total < 60) return `${Math.round(total)}s`;
-  return `${Math.floor(total / 60)}m`;
-}
-
 export function waitingLine({ projectRoot, pid, elapsedMs, logFile }: WaitingLineArgs): string {
   const where = projectRoot || 'another workspace';
   const tail = logFile ? ` -- tail ${logFile}` : '';
-  return `${'build'.padEnd(11)} waiting on ${where} (pid ${pid ?? '?'}, ${formatWaited(elapsedMs)} elapsed)${tail}`;
+  return `${'build'.padEnd(11)} waiting on ${where} (pid ${pid ?? '?'}, ${formatElapsed(elapsedMs)} elapsed)${tail}`;
 }
 
 export function takeoverLine({
@@ -276,7 +271,7 @@ export function takeoverLine({
 }): string {
   const where = projectRoot || 'another workspace';
   const started = startedAt ? Date.parse(startedAt) : Number.NaN;
-  const ago = Number.isFinite(started) ? ` (it started ${formatWaited(now() - started)} ago)` : '';
+  const ago = Number.isFinite(started) ? ` (it started ${formatElapsed(now() - started)} ago)` : '';
   const tail = logFile ? ` -- read ${logFile} before this one finishes` : '';
   return (
     `RETRY: ${where}'s build of this fingerprint (pid ${pid ?? '?'}) FAILED without an artifact${ago}, ` +
@@ -326,7 +321,7 @@ export async function waitForBuild({
     const elapsed = now() - started;
     if (elapsed >= ceilingMs) {
       const err = new Error(
-        `Waited ${formatWaited(elapsed)} for ${info.projectRoot || 'another workspace'}'s ${platform} build of ${key} ` +
+        `Waited ${formatElapsed(elapsed)} for ${info.projectRoot || 'another workspace'}'s ${platform} build of ${key} ` +
           `without an artifact, and pid ${info.pid} is still alive. The lock is ${path}; ` +
           'remove that directory if that process is not really building.',
       ) as Error & { code?: string; lockPath?: string; holder?: BuildLockRecord };

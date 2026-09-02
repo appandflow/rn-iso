@@ -270,9 +270,16 @@ const COLLECTOR_POLL_MS = 25;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-export function stepTimer(now: () => number = Date.now): () => string {
+export const SLOW_STEP_MS = 2000;
+
+export function stepClock(now: () => number = Date.now): () => number {
   const t0 = now();
-  return () => `(${formatDuration(now() - t0)})`;
+  return () => now() - t0;
+}
+
+export function stepTimer(now: () => number = Date.now): () => string {
+  const elapsed = stepClock(now);
+  return () => `(${formatDuration(elapsed())})`;
 }
 
 export function shortUdid(udid: unknown): string {
@@ -997,8 +1004,9 @@ async function verifyIosRun({
   if (verification?.verified) {
     phase(
       'verify',
-      `ready: bundle loaded, stable for 3s` +
+      `bundle loaded` +
         (verification.processAlive === true ? ', process alive' : '') +
+        `, stable for 3s -- the first screen may still be rendering` +
         ` (${formatDuration(verification.waitedMs ?? 0)} total)`,
     );
     for (const record of verification.errors ?? []) {
@@ -1734,6 +1742,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
       ReturnType<typeof ensureOwnedDevice>
     >;
   } else {
+    const prepare = stepClock(d.now);
     try {
       device = await d.ensureOwnedDevice({
         platform: PLATFORM,
@@ -1752,6 +1761,13 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
         message: `Could not ensure an owned iOS simulator: ${(e as Error)?.message || e}`,
         remedy: 'Run `stim doctor` to check the simulator toolchain, then try again.',
       });
+    }
+    const prepareMs = prepare();
+    if (device.created || prepareMs >= SLOW_STEP_MS) {
+      phase(
+        'device',
+        `${deviceLabel(device, device.deviceUdid)} ${device.created ? 'created' : 'prepared'} (${formatDuration(prepareMs)})`,
+      );
     }
   }
 

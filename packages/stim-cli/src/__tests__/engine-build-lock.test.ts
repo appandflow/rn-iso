@@ -374,12 +374,18 @@ describe('waitingLine', () => {
       logFile: '/w/app-412/.stim/logs/build-ios.ndjson',
     });
     expect(line).toBe(
-      'build       waiting on /w/app-412 (pid 41233, 8m elapsed) -- tail /w/app-412/.stim/logs/build-ios.ndjson',
+      'build       waiting on /w/app-412 (pid 41233, 8m00s elapsed) -- tail /w/app-412/.stim/logs/build-ios.ndjson',
     );
   });
 
   test('reads in seconds before the first minute is up', () => {
     expect(waitingLine({ projectRoot: '/w', pid: 1, elapsedMs: 30000, logFile: '/l' })).toMatch(/30s elapsed/);
+  });
+
+  test('keeps seconds past the first minute, so two lines 30s apart never read the same', () => {
+    const args = { projectRoot: '/w', pid: 1, logFile: null };
+    expect(waitingLine({ ...args, elapsedMs: 60_000 })).toMatch(/1m00s elapsed/);
+    expect(waitingLine({ ...args, elapsedMs: 90_000 })).toMatch(/1m30s elapsed/);
   });
 
   test('says so when the holder recorded no log file', () => {
@@ -547,7 +553,7 @@ describe('takeoverLine', () => {
       now: () => 1_000_000 + 120_000,
     });
     expect(line).toMatch(/RETRY: \/w\/other's build of this fingerprint \(pid 4242\) FAILED without an artifact/);
-    expect(line).toMatch(/it started 2m ago/);
+    expect(line).toMatch(/it started 2m00s ago/);
     expect(line).toMatch(/SAME inputs/);
     expect(line).toMatch(/read \/w\/other\/\.stim\/logs\/build-android\.ndjson/);
   });

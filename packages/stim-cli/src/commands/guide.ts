@@ -93,7 +93,15 @@ other line goes to stderr, so it is always safe to pipe.
                                  The command checks process liveness when the
                                  platform exposes it. Errors from that window
                                  are printed even when the app stays alive; the
-                                 agent decides whether a nonfatal error matters
+                                 agent decides whether a nonfatal error matters.
+                                 IT IS NOT A PAINTED SCREEN. Stim observes the
+                                 bundle and the process, never a frame, and a
+                                 cold app can keep rendering for a minute or
+                                 more after this, which is why the stderr line
+                                 reads \`bundle loaded, process alive, stable
+                                 for 3s -- the first screen may still be
+                                 rendering\`. Poll the UI before you trust a
+                                 screenshot
                     "bundling"   the request DID arrive and Metro was still
                                  building when the bundle timeout closed.
                                  The wiring is proven; the JS has simply not
@@ -453,7 +461,15 @@ WHAT WRITES WHAT
                        -- and, on iOS, where every Apple framework running in
                        the app's process also logs. The proven noise sources
                        are recorded at info rather than error; the rest is why
-                       --errors leaves this source out unless asked.
+                       --errors leaves this source out unless asked. A VERIFIED
+                       LAUNCH also drops one iOS device record from the RUN
+                       SUMMARY: the connection refusal \`TCP Conn ... Failed :
+                       error 0:61 [61]\` (61 is ECONNREFUSED). The app got its
+                       bundle over this workspace's Metro and outlived the
+                       stability window, so it recovered. A refusal before the
+                       launch verifies still prints, and the record stays an
+                       error in device.ndjson either way; read it with
+                       \`logs --errors --source device\`.
 
   ON A PHYSICAL IPHONE THE SAME FILE CARRIES LESS, and the difference is not
   cosmetic. \`simctl spawn\` is simulator-only and there is no devicectl
@@ -1312,6 +1328,25 @@ and produces an app that cannot load a bundle.
 
 Repeat step 3 whenever a NATIVE input changes. A JS-only edit needs nothing --
 that is what Fast Refresh over the running dev server is for.
+
+PROGRESS ON A LONG RUN
+  The whole summary is stderr; stdout carries only the \`--json\` payload. A
+  step that costs real time is named and timed, including the step that
+  creates or reconciles the owned device before anything is fingerprinted:
+
+    device      stim-app-412 (BF2A..) created (2m14s)
+
+  A step that is still running heartbeats every 30 seconds, on the 30-second
+  grid, so the values read 30s, 1m00s, 1m30s and never repeat:
+
+    build       still running (1m30s): > Task :app:compileDebugKotlin
+    build       waiting on /w/app-411 (pid 41233, 1m30s elapsed)
+
+  A GAP BETWEEN HEARTBEATS IS NOT A HANG. Stim runs device tools
+  synchronously, so a long \`simctl\`, \`adb\` or copy call holds the timer
+  until it returns; the next heartbeat then lands on the grid, which is why an
+  elapsed value can jump. Read the phase lines, not the wall clock, before
+  killing a run.
 
 AN ARTIFACT THE DEVICE ALREADY HOLDS IS NOT INSTALLED AGAIN
   Both platforms store the artifact verbatim, so its hash is its identity.

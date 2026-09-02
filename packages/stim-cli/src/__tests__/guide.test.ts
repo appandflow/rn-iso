@@ -5,6 +5,7 @@ import { DEFAULT_FINGERPRINT_IGNORES } from '../build-cache.ts';
 import { topicNames, renderTopic, renderIndex } from '../commands/guide.ts';
 import { ANDROID_AVD_CONFIG_HELP } from '../settings.ts';
 import { CONSOLE_ENV, deviceConsoleArgs } from '../collector/ios-device.ts';
+import { HEARTBEAT_INTERVAL_MS } from '../engine/xcode.ts';
 
 test('every advertised topic renders non-empty content', () => {
   for (const name of topicNames()) {
@@ -129,6 +130,44 @@ test('the guide documents the identical-artifact skip and its fail-closed rule',
   expect(lifecycle).toMatch(/cannot determine[^.]*installs exactly as it always did/i);
   expect(lifecycle).toMatch(/release[\s\S]*COPY of the artifact[\s\S]*always installed/i);
   expect(lifecycle).toMatch(/installSkipped/);
+});
+
+test('the guide says what a verified launch does not prove, in the words the commands print', () => {
+  const facts = renderTopic('facts');
+  assert(facts);
+  expect(facts).toMatch(/IT IS NOT A PAINTED SCREEN/);
+  expect(facts).toMatch(/first screen may still be\s+rendering/);
+  expect(facts).toMatch(/Poll the UI before you trust a\s+screenshot/);
+  for (const command of ['ios', 'android']) {
+    const src = readFileSync(new URL(`../commands/${command}.ts`, import.meta.url), 'utf-8');
+    expect(src.includes('the first screen may still be rendering')).toBeTruthy();
+    expect(src.includes('ready: bundle loaded')).toBeFalsy();
+  }
+});
+
+test('the guide documents the one launch error a verified run drops', () => {
+  const logs = renderTopic('logs');
+  assert(logs);
+  expect(logs).toMatch(/TCP Conn \.\.\. Failed :\s+error 0:61 \[61\]/);
+  expect(logs).toMatch(/ECONNREFUSED/);
+  expect(logs).toMatch(/A refusal before the\s+launch verifies still prints/);
+  const src = readFileSync(new URL('../engine/app-install.ts', import.meta.url), 'utf-8');
+  expect(src.includes('error 0:61')).toBeTruthy();
+});
+
+test('the guide documents the progress cadence the heartbeat actually uses', () => {
+  const lifecycle = renderTopic('lifecycle');
+  assert(lifecycle);
+  expect(HEARTBEAT_INTERVAL_MS).toBe(30_000);
+  expect(lifecycle).toMatch(/PROGRESS ON A LONG RUN/);
+  expect(lifecycle).toMatch(/every 30 seconds, on the 30-second\s+grid/);
+  expect(lifecycle).toMatch(/still running \(1m30s\)/);
+  expect(lifecycle).toMatch(/GAP BETWEEN HEARTBEATS IS NOT A HANG/);
+  expect(lifecycle).toMatch(/device\s+stim-app-412 \(BF2A\.\.\) created \(2m14s\)/);
+  for (const command of ['ios', 'android']) {
+    const src = readFileSync(new URL(`../commands/${command}.ts`, import.meta.url), 'utf-8');
+    expect(src.includes('SLOW_STEP_MS')).toBeTruthy();
+  }
 });
 
 test('the guide documents scoped iOS dev-client preapproval', () => {

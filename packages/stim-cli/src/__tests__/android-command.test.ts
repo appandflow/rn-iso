@@ -2404,6 +2404,27 @@ describe('the pure parts', () => {
   });
 });
 
+describe('the device preparation step', () => {
+  test('a slow preparation gets its own timed line, so the elapsed total is accounted for', async () => {
+    let clock = 1_000_000;
+    const h = harness({
+      now: () => clock,
+      ensureDevice: async () => {
+        clock += 130_000;
+        return { avdName: 'stim-app-412', consolePort: 5584, owned: true };
+      },
+    });
+    await h.run();
+    expect(h.stderr.some((l) => /device\s+stim-app-412 prepared \(2m10s\)/.test(l))).toBeTruthy();
+  });
+
+  test('a preparation that costs nothing prints nothing of its own', async () => {
+    const h = harness();
+    await h.run();
+    expect(h.stderr.some((l) => /prepared \(/.test(l))).toBeFalsy();
+  });
+});
+
 describe('launch verification', () => {
   test("a verified launch reports launched: true and polls this workspace's timeline", async () => {
     const h = harness();
@@ -2413,7 +2434,9 @@ describe('launch verification', () => {
     expect(h.calls.verify[0]?.logsDir).toBe(workspaceLogsDir(root));
     expect(Number.isFinite(h.calls.verify[0]?.since)).toBeTruthy();
     expect(h.calls.verify[0]?.platform).toBe('android');
-    expect(h.stderr.some((l) => /verify.*bundle loaded, stable for 3s/.test(l))).toBeTruthy();
+    expect(
+      h.stderr.some((l) => /verify.*bundle loaded, stable for 3s -- the first screen may still be rendering/.test(l)),
+    ).toBeTruthy();
   });
 
   test('the picker: no bundle request makes it launched: "unverified", still exit ok', async () => {

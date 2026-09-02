@@ -1548,7 +1548,7 @@ describe('verifyLaunch: still bundling', () => {
     expect(result.errors?.[0]?.msg).toBe('console.error during launch');
   });
 
-  test('a healthy iOS launch omits the transient TCP refusal but keeps application errors', async () => {
+  test('a healthy iOS launch omits the connection refusal but keeps application errors', async () => {
     const clock = fakeClock();
     const since = clock.at();
     const refusal = {
@@ -1585,8 +1585,8 @@ describe('verifyLaunch: still bundling', () => {
     expect(refusal.level).toBe('error');
   });
 
-  test.each([true, false, null])(
-    'the TCP refusal stays an error without a later pointer recovery when process health is %s',
+  test.each([true, null])(
+    'a verified launch omits the refusal with no matching pointer recovery when process health is %s',
     async (alive) => {
       const clock = fakeClock();
       const since = clock.at();
@@ -1605,12 +1605,13 @@ describe('verifyLaunch: still bundling', () => {
         readDeviceRecords: () => [refusal],
         processAlive: () => alive,
       });
+      expect(result.verified).toBe(true);
       expect(result.processAlive).toBe(alive);
-      expect(result.errors).toEqual([refusal]);
+      expect(result.errors).toEqual([]);
     },
   );
 
-  test('the TCP refusal stays an error when only an earlier or different pointer succeeds', async () => {
+  test('the refusal still prints when the process died instead of verifying', async () => {
     const clock = fakeClock();
     const since = clock.at();
     const refusal = {
@@ -1625,14 +1626,40 @@ describe('verifyLaunch: still bundling', () => {
       now: clock.now,
       sleep: clock.sleep,
       readRecords: () => [{ ts: since + 10, event: 'bundle_build_done', platform: 'ios' }],
-      readDeviceRecords: () => [
-        { ts: since + 15, src: 'device', level: 'info', msg: 'TCP Conn 0x11e8cb020 complete. fd: 24, err: 0' },
-        refusal,
-        { ts: since + 25, src: 'device', level: 'info', msg: 'TCP Conn 0x11e8cb160 complete. fd: 25, err: 0' },
-      ],
+      readDeviceRecords: () => [refusal],
+      processAlive: () => false,
+    });
+    expect(result).toMatchObject({ verified: false, fatal: true });
+    expect(result.errors).toEqual([refusal]);
+  });
+
+  test('a refusal-shaped message from another source or platform stays an error', async () => {
+    const clock = fakeClock();
+    const since = clock.at();
+    const clientRefusal = {
+      ts: since + 20,
+      src: 'client',
+      level: 'error',
+      msg: 'TCP Conn 0x11e8cb020 Failed : error 0:61 [61]',
+    };
+    const otherError = {
+      ts: since + 21,
+      src: 'device',
+      level: 'error',
+      msg: 'TCP Conn 0x11e8cb020 Failed : error 0:60 [60]',
+    };
+    const result = await verifyLaunch({
+      since,
+      platform: 'ios',
+      now: clock.now,
+      sleep: clock.sleep,
+      readRecords: () => [{ ts: since + 10, event: 'bundle_build_done', platform: 'ios' }],
+      readDeviceRecords: () => [otherError],
+      readClientRecords: () => [clientRefusal],
       processAlive: () => true,
     });
-    expect(result.errors).toEqual([refusal]);
+    expect(result.verified).toBe(true);
+    expect(result.errors).toEqual([otherError, clientRefusal]);
   });
 
   test('errors before bundle completion are outside the stability window', async () => {
