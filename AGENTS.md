@@ -53,6 +53,15 @@ confirm that an existing issue still applies to current
 `origin/main`; close stale issues with the fixing commit and verification
 evidence instead of creating duplicate work.
 
+Claim an issue before you implement it. Every agent works as the same GitHub
+user, so assignees mean nothing; the claim is a comment plus a branch. Before
+starting, check the issue for an open pull request or a `Claimed: <branch>`
+comment newer than one day (by its `createdAt`) with no later `Released:`
+comment and that branch on `origin`. When either is present the issue is taken;
+pick another. To claim, comment `Claimed: <branch>`, then push the branch to
+`origin` before implementing anything. The open pull request replaces the
+claim. If you stop without one, comment `Released:` and delete the branch.
+
 Implement each valid issue in its own git worktree and branch created from the
 refreshed `origin/main`. Independent issues may run in parallel worktrees. Keep
 the branch limited to that issue, run the required checks, and open a pull
