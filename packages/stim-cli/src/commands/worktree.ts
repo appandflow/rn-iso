@@ -127,6 +127,54 @@ function dependencyInstallCommands(target: string): string[] {
   return [...dirs].map((dir) => dependencyInstallCommand(target, dir));
 }
 
+const BRANCH_EXISTS_CODE = 'STIM_WORKTREE_BRANCH_EXISTS';
+
+const GIT_BRANCH_ALREADY_EXISTS = /a branch named .* already exists/i;
+
+function gitFailureText(error: unknown): string {
+  return `${(error as Error)?.message || String(error)}\n${String((error as { stderr?: unknown })?.stderr ?? '')}`;
+}
+
+function rollBackCreatedBranch({
+  root,
+  branch,
+  baseRef,
+  baseSha,
+  error,
+}: {
+  root: string;
+  branch: string;
+  baseRef: string;
+  baseSha: string | null;
+  error: unknown;
+}): void {
+  const keep = (reason: string) => {
+    console.error(chalk.yellow(`Kept the branch ${branch}: ${reason}`));
+    console.error(chalk.dim(`  Delete it before retrying: git -C ${root} branch -D -- ${branch}`));
+  };
+  if (GIT_BRANCH_ALREADY_EXISTS.test(gitFailureText(error))) {
+    keep('git refused to create it because it already existed, so this create did not make it');
+    return;
+  }
+  const stranded = resolveFullRef(root, `refs/heads/${branch}`);
+  if (!stranded) return;
+  if (!baseSha || stranded !== baseSha) {
+    keep(`it points at ${stranded}, not at the ${baseRef} this create asked for, so Stim cannot prove it made it`);
+    return;
+  }
+  const checkedOutAt = listWorktrees(root).find((candidate) => candidate.branch === branch)?.path;
+  if (checkedOutAt) {
+    keep(`it is checked out at ${checkedOutAt}`);
+    return;
+  }
+  try {
+    deleteBranch(root, branch, stranded);
+    console.error(chalk.dim(`Deleted ${branch}, which git created before the failure, so a retry starts clean.`));
+  } catch (deleteError) {
+    keep(String((deleteError as Error)?.message || deleteError));
+  }
+}
+
 export function registerCreate(worktree: Command): void {
   worktree
     .command('create <name>')
@@ -203,17 +251,23 @@ export function registerCreate(worktree: Command): void {
 
       const branch = `worktree-${name}`;
       const reusedBranch = branchExists(root, branch);
-      const branchSha = reusedBranch ? resolveRef(root, branch) : null;
+      const branchSha = reusedBranch ? resolveRef(root, `refs/heads/${branch}`) : null;
 
-      if (opts.base && reusedBranch && branchSha !== baseSha) {
+      if (opts.base && reusedBranch) {
+        const diverged = branchSha !== baseSha;
         console.error(
           chalk.red(
-            `Refusing to create ${name}: the branch ${branch} already exists at ${branchSha || 'an unresolvable commit'}, but --base ${base} resolves to ${baseSha}.`,
+            `${BRANCH_EXISTS_CODE}: Refusing to create ${name}: the branch ${branch} already exists at ${branchSha || 'an unresolvable commit'}, ` +
+              (diverged
+                ? `but --base ${base} resolves to ${baseSha}.`
+                : `which is where --base ${base} resolves right now.`),
           ),
         );
         console.error(
           chalk.dim(
-            '  `git worktree add` attaches to an existing branch and ignores the base, so this worktree would NOT be based on what you asked for.',
+            diverged
+              ? '  `git worktree add` attaches to an existing branch and ignores the base, so this worktree would NOT be based on what you asked for.'
+              : '  `git worktree add` attaches to an existing branch and ignores the base, so the two agreeing here is a coincidence, not the guarantee --base exists to give.',
           ),
         );
         console.error(chalk.dim('  Either create it under a different name:'));
@@ -228,10 +282,13 @@ export function registerCreate(worktree: Command): void {
         return;
       }
 
+      const createBranch = !reusedBranch;
+      const baseFullSha = createBranch ? resolveFullRef(root, baseRef) : null;
       try {
-        addWorktree({ path: target, branch, baseRef, cwd: root });
+        addWorktree({ path: target, branch, baseRef, createBranch });
       } catch (e) {
         console.error(String((e as Error)?.message || e));
+        if (createBranch) rollBackCreatedBranch({ root, branch, baseRef, baseSha: baseFullSha, error: e });
         process.exitCode = 1;
         return;
       }
@@ -239,7 +296,7 @@ export function registerCreate(worktree: Command): void {
       console.error(
         chalk.dim(
           reusedBranch
-            ? `Attached to the existing branch ${branch}${branchSha ? ` (${branchSha})` : ''}; --base does not apply.`
+            ? `Attached to the existing branch ${branch}${branchSha ? ` (${branchSha})` : ''}; its tip is the base, and ${baseRef} was not applied.`
             : `Branched ${branch} from ${baseRef} (${baseSha}).`,
         ),
       );

@@ -16,6 +16,19 @@ cd ../<repo>-worktrees/feature-x
 The default base is the current checkout's `HEAD`. Use `--base fresh` for
 `origin/HEAD`, or pass any branch, tag, or commit that git resolves.
 
+`git worktree add` attaches to a branch named `worktree-<name>` when one
+already exists, and ignores the base. So `--base` with an existing branch is
+refused as `STIM_WORKTREE_BRANCH_EXISTS`, even when that branch currently sits
+on the requested base: the agreement is luck, not the guarantee the flag is
+for. Pick another name, or delete the branch and retry. Without `--base`,
+attaching is still the behaviour, and the create says which branch it attached
+to.
+
+When `git worktree add` fails after git has created the branch, Stim deletes
+that branch, so a retry branches from the base instead of attaching to a
+leftover. It rolls back only a branch this create made, judged by whether the
+run passed `-b` rather than by re-reading the refs afterwards.
+
 ## Carry a warm working state
 
 ```bash
