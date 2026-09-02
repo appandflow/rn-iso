@@ -140,9 +140,7 @@ and the conflict is visible before anything runs.
 
 Decide at the start of a session, not after the third failure: either run Stim
 with the harness's sandbox disabled, or ask the user to allow those three.
-`stim guide errors` lists what to allow. The same boundary catches other
-commands: a git credential helper prints `failed to store` on a fetch that
-worked.
+`stim guide errors` lists what to allow.
 
 ## Load advanced guidance only when needed
 
@@ -168,6 +166,7 @@ Run the guide before tasks involving any of these:
 - custom Metro processes or public tunnels;
 - cache bypasses, cache misses, or concurrent builds;
 - machine capacity limits;
+- cache hit rates or the time the cache saved, which `stim stats` reports;
 - worktree carry-over warnings;
 - fingerprint exclusions;
 - `gc`, `--force`, cleanup failures, or unfamiliar cleanup states and error

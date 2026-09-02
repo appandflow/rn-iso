@@ -1,6 +1,6 @@
 import assert from 'node:assert';
 import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
@@ -43,6 +43,7 @@ import { BUILD_ERROR } from '../engine/gradle.ts';
 import { ADB_INSTALL_TIMEOUT_MS, LAUNCH_UNVERIFIED } from '../engine/app-install.ts';
 import type { AssetManifest } from '../engine/asset-manifest.ts';
 import { PREBUILD_ERROR } from '../engine/prebuild.ts';
+import type { RecordStatsResult, StatsRun } from '../engine/stats.ts';
 import { asProcessExit, makeChildProcess, makeError, makeExecutor } from './_factories.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
 
@@ -4367,5 +4368,122 @@ describe('the emulator system-image flag', () => {
     const stdout0 = h.stdout[0];
     assert(stdout0);
     expect(JSON.parse(stdout0).systemImage).toBe('system-images;android-36;google_apis;arm64-v8a');
+  });
+});
+
+describe('run statistics', () => {
+  function recorder(result: RecordStatsResult = { recorded: true, note: null }) {
+    const runs: Array<{ run: StatsRun; now: number }> = [];
+    const recordStats = (statsRun: StatsRun, now: number) => {
+      runs.push({ run: statsRun, now });
+      return result;
+    };
+    return { runs, recordStats };
+  }
+
+  test('a successful run is recorded once, with its cache result and duration', async () => {
+    const { runs, recordStats } = recorder();
+    let clock = 1_700_000_000_000;
+    const h = harness({ recordStats, now: () => (clock += 1000) });
+
+    expect((await h.run()).ok).toBe(true);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.run).toEqual({
+      platform: 'android',
+      projectKey: realpathSync(root),
+      failed: false,
+      cacheHit: false,
+      waitedForBuild: false,
+      durationMs: expect.any(Number),
+    });
+    expect((runs[0]?.run.durationMs as number) > 0).toBe(true);
+    expect(runs[0]?.now).toBe(clock);
+  });
+
+  test('a cache hit is recorded as a hit', async () => {
+    const { runs, recordStats } = recorder();
+    const h = harness({ recordStats, resolveCached: () => fakeApk(), build: never('the build') });
+
+    expect((await h.run()).ok).toBe(true);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.run.cacheHit).toBe('local');
+  });
+
+  test('a run that ends through fail() is recorded once as failed', async () => {
+    const { runs, recordStats } = recorder();
+    const h = harness({
+      recordStats,
+      build: async () => ({ failed: true, code: BUILD_ERROR, reason: 'Gradle failed.', durationMs: 1, lastLines: [] }),
+    });
+
+    expect((await h.run()).ok).toBe(false);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.run.failed).toBe(true);
+  });
+
+  test('a refusal before a cache key exists is not a run', async () => {
+    const { runs, recordStats } = recorder();
+    const h = harness({ recordStats, fingerprint: async () => ({ hash: null, sources: [] }) });
+
+    expect((await h.run()).ok).toBe(false);
+    expect(runs).toEqual([]);
+  });
+
+  test('an uncaught exception after the cache key is recorded as failed, once', async () => {
+    const { runs, recordStats } = recorder();
+    const h = harness({
+      recordStats,
+      build: async () => {
+        throw new Error('gradle exploded');
+      },
+    });
+
+    await expect(h.run()).rejects.toThrow(/gradle exploded/);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.run.failed).toBe(true);
+  });
+
+  test('a recorder that throws leaves the result alone and says so once', async () => {
+    const throwing = () => {
+      throw new Error('stats disk is full');
+    };
+    const ok = harness({ recordStats: throwing });
+    expect((await ok.run()).ok).toBe(true);
+    expect(ok.stderr.join('\n')).toMatch(/Run statistics could not be recorded: stats disk is full/);
+
+    const failed = harness({
+      recordStats: throwing,
+      build: async () => ({ failed: true, code: BUILD_ERROR, reason: 'Gradle failed.', durationMs: 1, lastLines: [] }),
+    });
+    expect((await failed.run()).ok).toBe(false);
+  });
+
+  test('a note from the recorder is printed as one dim line', async () => {
+    const { recordStats } = recorder({ recorded: false, note: 'stats.json is from a newer Stim' });
+    const h = harness({ recordStats });
+
+    expect((await h.run()).ok).toBe(true);
+    expect(h.stderr.join('\n')).toContain('stats.json is from a newer Stim');
+  });
+
+  test('a throw after the success reporter recorded does not add a second, failed run', async () => {
+    const { runs, recordStats } = recorder();
+    const h = harness({
+      recordStats,
+      createWriter: (file: string) => ({
+        file,
+        write: () => true,
+        close: () => {
+          throw new Error('the build log vanished');
+        },
+        written: 0,
+        dropped: 0,
+        lastError: null,
+      }),
+    });
+
+    await expect(h.run()).rejects.toThrow(/the build log vanished/);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.run.failed).toBe(false);
   });
 });

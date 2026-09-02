@@ -214,6 +214,36 @@ stim status [--json]
 Shows every Stim environment on the machine. The output includes worktrees,
 ports, devices, supervisors, builds, logs, capacity, and free disk space.
 
+## `stats`
+
+```text
+stim stats [--json]
+```
+
+Shows how many `ios` and `android` runs this project and this machine have
+recorded, how many hit the build cache, the mean cold run and hit run, and an
+estimate of the time the cache saved. Only aggregates are kept, in
+`$STIM_HOME/stats.json`; nothing per run is stored, and every worktree of a
+repository counts into the same project bucket. Outside a project only the
+machine section prints. There is no reset flag: delete that file to start over.
+
+`--json` prints one line:
+
+```json
+{
+  "version": 1,
+  "project": { "key": "/path/to/app", "ios": {}, "android": null },
+  "machine": { "ios": {}, "android": null }
+}
+```
+
+`project` is `null` outside a project, and a platform with no run yet is
+`null`. A bucket carries `runs`, `failed`, `hits`, `misses`, `coldRuns`,
+`coldRunMs`, `hitRuns`, `hitRunMs`, `timeSavedMs`, `firstRunAt` and
+`lastRunAt`. The saved figure is an estimate: each cache hit is credited this
+project's mean cold run at that moment, minus its own duration, floored at
+zero.
+
 ## `worktree create`
 
 ```text

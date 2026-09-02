@@ -14,6 +14,18 @@ export function formatDuration(ms: unknown): string {
   return `${seconds}s`;
 }
 
+export function formatLongDuration(ms: unknown): string {
+  const value = Number(ms);
+  if (!Number.isFinite(value) || value < 0) return 'unknown';
+  const totalSeconds = Math.round(value / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds - hours * 3600) / 60);
+  const seconds = totalSeconds - hours * 3600 - minutes * 60;
+  if (hours > 0) return minutes > 0 ? `${hours}h${String(minutes).padStart(2, '0')}m` : `${hours}h`;
+  if (minutes > 0) return seconds > 0 ? `${minutes}m${String(seconds).padStart(2, '0')}s` : `${minutes}m`;
+  return `${seconds}s`;
+}
+
 export function formatElapsed(ms: unknown): string {
   const totalSeconds = Math.max(0, Math.round((Number(ms) || 0) / 1000));
   const minutes = Math.floor(totalSeconds / 60);

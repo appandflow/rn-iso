@@ -120,6 +120,7 @@ import {
   uploadRemote,
   type LoadProjectProviderResult,
 } from '../engine/remote-cache.ts';
+import { createRunRecorder, recordRunStats, statsProjectKey, type RunRecorder } from '../engine/stats.ts';
 import { swapJsBundle } from '../engine/js-swap.ts';
 import {
   buildIos,
@@ -899,6 +900,7 @@ interface IosDeps {
   stopPreviousCollector: typeof stopPreviousCollector;
   writeWorkspaceState: typeof writeWorkspaceState;
   createWriter: typeof createNdjsonWriter;
+  recordStats: typeof recordRunStats;
   now: () => number;
 }
 
@@ -973,6 +975,7 @@ const DEFAULT_DEPS: IosDeps = {
   stopPreviousCollector,
   writeWorkspaceState,
   createWriter: createNdjsonWriter,
+  recordStats: recordRunStats,
   now: () => Date.now(),
 };
 
@@ -1259,6 +1262,7 @@ interface ReportIosResultArgs {
   closeWriter: () => void;
   webPreviewUrl: string | null;
   lease?: { kind: string; expiresAt: string } | null;
+  recordRun: RunRecorder['record'];
 }
 
 function reportIosResult({
@@ -1289,8 +1293,10 @@ function reportIosResult({
   closeWriter,
   webPreviewUrl,
   lease,
+  recordRun,
 }: ReportIosResultArgs): IosFacts {
   const durationMs = elapsed();
+  recordRun({ failed: false, cacheHit, waited: waitedForBuild, durationMs });
   writeLastBuild(
     root,
     lastBuildRecord({
@@ -1411,6 +1417,7 @@ interface FinishIosRunArgs {
   closeWriter: () => void;
   lease: RunLease | null;
   releaseLease: () => void;
+  recordRun: ReportIosResultArgs['recordRun'];
 }
 
 async function finishIosRun({
@@ -1456,6 +1463,7 @@ async function finishIosRun({
   closeWriter,
   lease,
   releaseLease,
+  recordRun,
 }: FinishIosRunArgs): Promise<IosFacts | null> {
   let bundleId = initialBundleId;
   let leaseWarned = false;
@@ -1708,6 +1716,7 @@ async function finishIosRun({
     closeWriter,
     webPreviewUrl: remoteDevice?.webPreviewUrl() ?? null,
     lease: physical ? leaseFacts : undefined,
+    recordRun,
   });
   if (remoteWasAbandoned || uploadWasAbandoned) exitAfterFlush(0);
   return facts;
@@ -1795,6 +1804,14 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     }
   };
 
+  const stats = createRunRecorder({
+    platform: PLATFORM,
+    write: (statsRun, at) => d.recordStats(statsRun, at),
+    now: () => d.now(),
+    note: (line) => note(chalk.dim(line)),
+  });
+  const recordRun = stats.record;
+
   const fail = ({ code, message, remedy = null, lines = [], logPath = null, build = null, lease }: FailArgs): null => {
     releaseLock();
     releaseSlot();
@@ -1810,6 +1827,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
         { write: d.writeWorkspaceState },
       );
     note(chalk.red(phaseLine('failed', code)));
+    recordRun({ failed: true, durationMs: elapsed() });
     if (json) {
       console.log(
         JSON.stringify({
@@ -1831,6 +1849,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     gitCommonDir: d.gitCommonDir(root),
     repoRoot: settingsRepoRoot,
   };
+  stats.setProject(statsProjectKey({ root, commonDir: settingsContext.gitCommonDir, repoRoot: settingsRepoRoot }));
   const settings = d.resolveSettings(settingsContext);
   const [shapeError, ...moreShapeErrors] = settingShapeErrors(settings);
   if (shapeError) {
@@ -2241,6 +2260,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
       ...(configuration ? { configuration } : {}),
       isSimulator: !physical,
     });
+    stats.setCacheKey(cacheKey);
     storeHash = fingerprint;
     storeKey = cacheKey;
     storeSources = fingerprintSources;
@@ -2697,94 +2717,100 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     return true;
   }
 
-  if (!(await resolveInitialFingerprint())) return null;
-  await resolveRemoteArtifact();
-  if (!(await waitForSharedBuild())) return null;
-  await prepareCachedArtifact();
-  if (!(await buildArtifact())) return null;
-
-  if (physicalDevice) {
-    const acquired = await d.acquireRunLease({
-      root,
-      platform: PLATFORM,
-      id: physicalDevice.udid,
-      deviceName: physicalDevice.name,
-      idLabel: 'udid',
-      waitSeconds,
-      noWait,
-      installBoundMs: DEVICECTL_INSTALL_TIMEOUT_MS,
-      appId: bundleId ?? proj?.bundleId ?? null,
-      holderAppId: (holder: string) => d.getProject(holder)?.bundleId ?? null,
-      now: d.now,
-      warn: (line: string) => note(chalk.yellow(phaseLine('lease', line))),
-    });
-    if (acquired.status === 'refused') {
-      return fail({
-        code: acquired.refusal.code,
-        message: acquired.refusal.message,
-        remedy: acquired.refusal.remedy,
-        lease: acquired.refusal.lease,
-      });
-    }
-    leaseHandle = d.runLease({
-      root,
-      platform: PLATFORM,
-      kind: acquired.status === 'leased' ? acquired.kind : null,
-      expiresAt: acquired.status === 'leased' ? acquired.expiresAt : null,
-    });
-    if (acquired.status === 'leased') {
-      stopLeaseSignals = d.releaseLeaseOnSignal(releaseLease);
-      phase('lease', `${acquired.kind} lease on ${physicalDevice.udid} until ${acquired.expiresAt}`);
-    }
-  }
-
   try {
-    return await finishIosRun({
-      d,
-      root,
-      json,
-      release,
-      configuration,
-      isExpo,
-      metroCheck,
-      metroPort,
-      logsDir,
-      logFile,
-      device,
-      udid,
-      physical,
-      lanAddress,
-      lanOriginUrl,
-      remoteDevice,
-      bootPromise,
-      bootDuration: () => bootDuration,
-      appPath,
-      bundleId,
-      swapDir,
-      buildFailure,
-      fail,
-      phase,
-      note,
-      logWriter,
-      uploadPending,
-      providerUpload,
-      providerName,
-      remote,
-      abandonedRemote,
-      elapsed,
-      startedAt,
-      storeHash,
-      storeKey,
-      cacheHit,
-      compilationCache,
-      useBuildCache,
-      waitedForBuild,
-      closeWriter: () => writer?.close?.(),
-      lease: leaseHandle,
-      releaseLease,
-    });
-  } finally {
-    releaseLease();
+    if (!(await resolveInitialFingerprint())) return null;
+    await resolveRemoteArtifact();
+    if (!(await waitForSharedBuild())) return null;
+    await prepareCachedArtifact();
+    if (!(await buildArtifact())) return null;
+
+    if (physicalDevice) {
+      const acquired = await d.acquireRunLease({
+        root,
+        platform: PLATFORM,
+        id: physicalDevice.udid,
+        deviceName: physicalDevice.name,
+        idLabel: 'udid',
+        waitSeconds,
+        noWait,
+        installBoundMs: DEVICECTL_INSTALL_TIMEOUT_MS,
+        appId: bundleId ?? proj?.bundleId ?? null,
+        holderAppId: (holder: string) => d.getProject(holder)?.bundleId ?? null,
+        now: d.now,
+        warn: (line: string) => note(chalk.yellow(phaseLine('lease', line))),
+      });
+      if (acquired.status === 'refused') {
+        return fail({
+          code: acquired.refusal.code,
+          message: acquired.refusal.message,
+          remedy: acquired.refusal.remedy,
+          lease: acquired.refusal.lease,
+        });
+      }
+      leaseHandle = d.runLease({
+        root,
+        platform: PLATFORM,
+        kind: acquired.status === 'leased' ? acquired.kind : null,
+        expiresAt: acquired.status === 'leased' ? acquired.expiresAt : null,
+      });
+      if (acquired.status === 'leased') {
+        stopLeaseSignals = d.releaseLeaseOnSignal(releaseLease);
+        phase('lease', `${acquired.kind} lease on ${physicalDevice.udid} until ${acquired.expiresAt}`);
+      }
+    }
+
+    try {
+      return await finishIosRun({
+        d,
+        root,
+        json,
+        release,
+        configuration,
+        isExpo,
+        metroCheck,
+        metroPort,
+        logsDir,
+        logFile,
+        device,
+        udid,
+        physical,
+        lanAddress,
+        lanOriginUrl,
+        remoteDevice,
+        bootPromise,
+        bootDuration: () => bootDuration,
+        appPath,
+        bundleId,
+        swapDir,
+        buildFailure,
+        fail,
+        phase,
+        note,
+        logWriter,
+        uploadPending,
+        providerUpload,
+        providerName,
+        remote,
+        abandonedRemote,
+        elapsed,
+        startedAt,
+        storeHash,
+        storeKey,
+        cacheHit,
+        compilationCache,
+        useBuildCache,
+        waitedForBuild,
+        closeWriter: () => writer?.close?.(),
+        lease: leaseHandle,
+        releaseLease,
+        recordRun,
+      });
+    } finally {
+      releaseLease();
+    }
+  } catch (error) {
+    recordRun({ failed: true, durationMs: elapsed() });
+    throw error;
   }
 }
 

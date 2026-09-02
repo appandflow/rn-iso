@@ -114,13 +114,14 @@ test('the facts topic says Android artifacts use the post-Gradle fingerprint', (
 test('the one-line JSON sentence names every command whose --json payload is a single line', () => {
   const body = renderTopic('facts');
   assert(body);
-  const singleLineJsonCommands = ['start', 'ios', 'android', 'stop', 'status', 'doctor'];
+  const singleLineJsonCommands = ['start', 'ios', 'android', 'stop', 'status', 'stats', 'doctor'];
   const files: Record<string, string> = {
     start: 'start.ts',
     ios: 'ios.ts',
     android: 'android.ts',
     stop: 'stop.ts',
     status: 'status.ts',
+    stats: 'stats.ts',
     doctor: 'doctor.ts',
     device: 'device.ts',
   };
@@ -958,6 +959,7 @@ test('the binary command surface remains intentional', () => {
     'ios',
     'logs',
     'start',
+    'stats',
     'status',
     'stop',
     'worktree',
@@ -1154,4 +1156,61 @@ test('the facts topic documents the model, runtime and system image the run repo
   expect(flat).toMatch(/runtime that simulator's iOS runtime version/);
   expect(flat).toMatch(/systemImage the sdkmanager package id the owned AVD was created from/);
   expect(flat).toMatch(/a run driven by the ios\.deviceType setting reports it too/);
+});
+
+test('the guide states the rule that turns runs into the numbers `stats` prints', () => {
+  const facts = renderTopic('facts');
+  assert(facts);
+
+  expect(facts).toMatch(/HOW A RUN IS COUNTED/);
+  expect(facts).toMatch(/got as far as computing a\s+cache key is one run/i);
+  expect(facts).toMatch(/app's path IN THE MAIN WORKING TREE/);
+  expect(facts).toMatch(/worktree of a repository pools into one bucket/i);
+  expect(facts).toMatch(/ends through an error or an uncaught exception counts\s+only as `failed`/i);
+  expect(facts).toMatch(/"local" or "remote"\s+is a HIT, false is a MISS/);
+  expect(facts).toMatch(/mean cold run BEFORE it, minus its own duration, floored at zero/i);
+  expect(facts).toMatch(/WAITED for another workspace's build[\s\S]*credited nothing/i);
+  expect(facts).toMatch(/no cold run recorded for this project and platform/i);
+  expect(facts).toMatch(/ESTIMATE/);
+  expect(facts).toMatch(/stim stats --json/);
+  expect(facts).toMatch(/timeSavedMs/);
+});
+
+test('the guide routes the two report questions to the two commands', () => {
+  const lifecycle = renderTopic('lifecycle');
+  const cleanup = renderTopic('cleanup');
+  assert(lifecycle);
+  assert(cleanup);
+
+  expect(lifecycle).toMatch(/"What is running" is `stim status`/);
+  expect(lifecycle).toMatch(/"How much the\s+cache saved" is `stim stats`/);
+  expect(lifecycle).toMatch(/stats\s+--json/);
+  expect(lifecycle).toMatch(/\$STIM_HOME\/stats\.json/);
+  expect(cleanup).toMatch(/gc` never reports or trims the run\s+counters/i);
+  expect(cleanup).toMatch(/no reset flag[\s\S]*Delete that one file/i);
+  expect(cleanup).toMatch(/cannot read[\s\S]*one dim line on stderr/i);
+  expect(cleanup).toMatch(/stats\.json\.corrupt-<unix ms>/);
+});
+
+test('the skill routes cache-saving questions to `stim stats` without teaching the payload', () => {
+  const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
+
+  expect(skill).toMatch(/`stim stats` reports/);
+  expect(skill).not.toContain('timeSavedMs');
+  expect(skill).not.toContain('stats.json');
+});
+
+test('the website documents the stats command and its JSON shape', () => {
+  const website = readFileSync(new URL('../../../../website/docs/commands.md', import.meta.url), 'utf-8');
+
+  expect(website).toContain('## `stats`');
+  expect(website).toContain('stim stats [--json]');
+  expect(website).toMatch(/"project": \{ "key"/);
+  expect(website).toMatch(/no reset flag/i);
+});
+
+test('the repository guide names stats in the command surface', () => {
+  const agents = readFileSync(new URL('../../../../AGENTS.md', import.meta.url), 'utf-8');
+
+  expect(agents).toMatch(/The command surface is[\s\S]*`status`, `stats`, `gc`/);
 });

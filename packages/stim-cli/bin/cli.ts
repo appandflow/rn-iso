@@ -10,6 +10,7 @@ import androidCommand from '../src/commands/android.ts';
 import deviceCommand from '../src/commands/device.ts';
 import logsCommand from '../src/commands/logs.ts';
 import statusCommand from '../src/commands/status.ts';
+import statsCommand from '../src/commands/stats.ts';
 import gcCommand from '../src/commands/gc.ts';
 import guideCommand from '../src/commands/guide.ts';
 
@@ -27,6 +28,7 @@ androidCommand(program);
 deviceCommand(program);
 logsCommand(program);
 statusCommand(program);
+statsCommand(program);
 gcCommand(program);
 guideCommand(program, pkg.version);
 
