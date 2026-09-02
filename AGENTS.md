@@ -157,14 +157,27 @@ Metro from the project's dependencies. Expo runs its fixed start command. iOS
 and Android use fixed `xcodebuild` and Gradle arguments.
 
 The supported build selectors are `ios --configuration <name>` and
-`android --variant <name>`. `android --device [serial]` selects a connected
-physical device; there is no iOS equivalent, because that needs code signing.
-Do not add install flows. Non-Debug iOS configurations and Android variants
-ending in `Release` skip Metro. A release cache hit must inject the current JS
-into a copy of the artifact. A swap failure must run a full build; it must never
-install stale JS. Android swaps require an emitted-asset manifest match, then
-`zipalign` before `apksigner`. Store signing and distribution remain out of
-scope.
+`android --variant <name>`. `android --device [serial]` and
+`ios --device [udid]` select a connected physical device. Non-Debug iOS
+configurations and Android variants ending in `Release` skip Metro. A release
+cache hit must inject the current JS into a copy of the artifact. A swap
+failure must run a full build; it must never install stale JS. Android swaps
+require an emitted-asset manifest match, then `zipalign` before `apksigner`.
+
+An iOS device build is always signed, Debug included. Before Stim installs or
+re-seals a device app, the signing gate reads the bundle's own
+`embedded.mobileprovision` and refuses one that is missing, expired, carries
+no `ProvisionedDevices` list (App Store and enterprise profiles), or does not
+name the target UDID. Stim re-signs only copies it makes, with an identity
+present in the keychain: the one the profile's certificate names, or the one
+`ios.signingIdentity` pins. It never passes signing flags to `xcodebuild`, in
+particular never `-allowProvisioningUpdates`, because a build must not mutate
+an Apple Developer account. Stim installs only onto a device it drives in this
+run: an owned simulator or emulator, a physical device named by `--device`, or
+the remote device `--remote` targets. Do not add distribution flows: no store
+upload, no TestFlight, no over-the-air install page, no reconstruction of the
+project's own delivery pipeline. Archives, `.ipa` export, store signing, and
+distribution remain out of scope.
 
 ### 4. Centralize device teardown
 
