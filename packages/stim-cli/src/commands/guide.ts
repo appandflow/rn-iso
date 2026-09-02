@@ -1224,6 +1224,17 @@ RUNNING UNDER A SANDBOX
   so this is the shape of the problem, not one harness's quirk. Codex also
   blocks network egress by default, which breaks a cache lookup and a fetch.
 
+  \`stim doctor\` names this when a write to STIM_HOME actually fails, not
+  merely when a harness that can sandbox is present, and
+  \`stim doctor --fix\` writes the three keys into .claude/settings.local.json,
+  the per-user file, merging with what is there. It refuses under Codex, which
+  has no per-path allowance to add, and refuses any settings file it cannot
+  parse rather than replace it: comments make one unparseable here even though
+  Claude Code accepts them. Claude Code reads project settings from the
+  directory a session starts in, so in a monorepo the file has to sit at that
+  root to count, and a file written inside a worktree goes when the worktree
+  does.
+
   Two ways out, and choosing at the start of a session beats discovering it
   three failures in. Either run Stim with the harness's sandbox disabled, or
   allow the three. In Claude Code that is settings.json:
@@ -1360,7 +1371,7 @@ lines Stim composes rather than on files the project owns:
            config also gets the \`cache.provider\` tier behind that store.
 
 Each says so in one dim line. There is nothing to install, wire or commit, and
-no setup skill to run. \`stim doctor\` is the read-only second opinion when
+no setup skill to run. \`stim doctor\` is the second opinion when
 something IS blocked or slow: it reports only what Stim cannot handle itself
 (a missing dev client, ccache, a fingerprint no fresh worktree reproduces, a
 provider on a key this SDK ignores) plus the project-side settings that matter
@@ -1492,6 +1503,7 @@ THE OPTION SURFACE, IN FULL
   logs            --source --level --since --grep --tail --follow --errors --json
   stop            --json --force
   status          --json          (already machine-wide)
+  doctor          --json --fix    (--fix applies the findings Stim can repair)
   gc              --delete --older-than <days> --cache <name|all>
   worktree create <name> --carry-ignored --base <ref> --dir <path> --label <label>; remove [path] --force
 
