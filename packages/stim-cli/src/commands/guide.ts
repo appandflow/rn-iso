@@ -1372,7 +1372,7 @@ THE OPTION SURFACE, IN FULL
   logs            --source --level --since --grep --tail --follow --errors --json
   stop            --json --force
   status          --json          (already machine-wide)
-  doctor          --json --fix    (--fix writes only the sandbox allowance)
+  doctor          --json --fix    (--fix applies the findings Stim can repair)
   gc              --delete --older-than <days> --cache <name|all>
   worktree create <name> --carry-ignored --base <ref> --dir <path> --label <label>; remove [path] --force
 

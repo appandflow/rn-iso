@@ -73,7 +73,7 @@ export default function doctorCommand(program: Command): void {
     .option('--json', 'print the findings as JSON')
     .option(
       '--fix',
-      "allow Stim through this session's sandbox by writing the three keys into .claude/settings.local.json, the per-user file. Applies nothing else, and refuses where the harness has no per-path allowance.",
+      'apply the findings Stim can repair itself and report the rest, which stay read-only. Every repair writes a per-user file, never a committed one, and refuses a file it cannot read back rather than replace it. Today one finding qualifies: the sandbox allowance.',
     )
     .action(async (opts: DoctorOptions) => {
       const root = findProjectRoot(process.cwd());
