@@ -333,7 +333,7 @@ test('every validated scalar key is a known setting, as a string and as an objec
   const nested = (path: string, value: unknown): Record<string, unknown> =>
     path
       .split('.')
-      .reverse()
+      .toReversed()
       .reduce<Record<string, unknown>>((inner, key) => ({ [key]: inner }), value as Record<string, unknown>);
   for (const path of validated) {
     expect(unknownSettingKeys(nested(path, 'x'))).toEqual([]);
