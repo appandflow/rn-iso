@@ -531,7 +531,7 @@ async function bootOwnedAvdOnFreshPort({
     }
     return { ...claim, serial };
   } catch (error) {
-    releaseAndroidConsolePort(projectPath);
+    releaseAndroidConsolePort(projectPath, claim.consolePort);
     throw error;
   }
 }

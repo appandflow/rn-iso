@@ -13,6 +13,7 @@ import {
   upsertProject,
   removeProject,
   setDevice,
+  releaseAndroidConsolePort,
   clearDevice,
   allMetroPorts,
   allConsolePortsAndSerials,
@@ -241,6 +242,23 @@ test('allConsolePortsAndSerials collects physical serials (no avdName)', () => {
   setDevice(a, 'android', { serial: 'R5CR70XXXXX' });
   const result = allConsolePortsAndSerials();
   expect(result.androidPhysicalSerials).toEqual(['R5CR70XXXXX']);
+});
+
+test('releaseAndroidConsolePort frees the claimed port and keeps the AVD recorded for gc', () => {
+  const a = liveProjectDir('a');
+  upsertProject(a, { bundleId: 'com.a', androidPackage: 'com.a', isExpo: false });
+  setDevice(a, 'android', { avdName: 'stim-a', consolePort: 5554, owned: true, deviceName: 'stim-a' });
+  expect(releaseAndroidConsolePort(a, 5554)).toBe(true);
+  expect(getProject(a)?.platforms?.android).toEqual({ avdName: 'stim-a', owned: true, deviceName: 'stim-a' });
+  expect(allConsolePortsAndSerials().androidConsolePorts).toEqual([]);
+});
+
+test('releaseAndroidConsolePort leaves a port the record no longer holds', () => {
+  const a = liveProjectDir('a');
+  upsertProject(a, { bundleId: 'com.a', androidPackage: 'com.a', isExpo: false });
+  setDevice(a, 'android', { avdName: 'stim-a', consolePort: 5556, owned: true });
+  expect(releaseAndroidConsolePort(a, 5554)).toBe(false);
+  expect(getProject(a)?.platforms?.android?.consolePort).toBe(5556);
 });
 
 test('removeProject deletes entry', () => {
