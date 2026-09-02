@@ -301,6 +301,18 @@ test('unknownSettingKeys reports a nested unknown without flagging its parent', 
   expect(unknownSettingKeys({ ios: { deviceType: 'x', bogus: 1 } })).toEqual(['ios.bogus']);
 });
 
+test('unknownSettingKeys treats a known scalar key with an object value as known, leaving refusal to its validator', () => {
+  expect(unknownSettingKeys({ worktreeDir: {} })).toEqual([]);
+  expect(worktreeDirSettingError({ worktreeDir: {} })).toMatch(/Invalid worktreeDir setting/);
+
+  expect(unknownSettingKeys({ ios: { lanHost: {} } })).toEqual([]);
+  expect(iosLanHostSettingError({ ios: { lanHost: {} } })).toMatch(/Invalid ios\.lanHost setting/);
+});
+
+test('unknownSettingKeys still reports a genuinely unknown nested key under ios', () => {
+  expect(unknownSettingKeys({ ios: { bogus: {} } })).toEqual(['ios.bogus']);
+});
+
 test('unknownSettingKeys tolerates empty and malformed input', () => {
   expect(unknownSettingKeys({})).toEqual([]);
   expect(unknownSettingKeys(null)).toEqual([]);

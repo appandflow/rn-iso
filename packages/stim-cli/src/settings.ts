@@ -404,6 +404,7 @@ export function unknownSettingKeys(settings: unknown, prefix = ''): string[] {
     const path = prefix ? `${prefix}.${key}` : key;
     if (isPlainObject(value)) {
       if (OPEN_SETTINGS_OBJECTS.has(path)) continue;
+      if (KNOWN_SETTINGS.has(path)) continue;
       const hasKnownChildren = [...KNOWN_SETTINGS].some((k) => k.startsWith(`${path}.`));
       if (hasKnownChildren) unknown.push(...unknownSettingKeys(value, path));
       else unknown.push(path);
