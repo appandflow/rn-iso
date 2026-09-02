@@ -987,7 +987,13 @@ describe('a cache hit', () => {
   });
 
   test('--json puts the facts on stdout and nothing else', async () => {
-    const h = harness({ json: true, resolveCached: () => '/cache/app-debug.apk', build: never('the build') });
+    const timestamps = [1000, 1050, 1200, 1600];
+    const h = harness({
+      json: true,
+      resolveCached: () => '/cache/app-debug.apk',
+      build: never('the build'),
+      now: () => timestamps.shift() ?? 1600,
+    });
     const result = await h.run();
     expect(h.stdout.length).toBe(1);
     const stdout0 = h.stdout[0];
@@ -1012,6 +1018,7 @@ describe('a cache hit', () => {
       debugHttpHostNote: null,
       devClientUrl: null,
       logs: workspaceLogsDir(root),
+      durationMs: 600,
     });
     assert(result.facts);
     expect(JSON.parse(stdout0)).toEqual(result.facts);
@@ -2301,6 +2308,7 @@ describe('the pure parts', () => {
       debugHttpHostNote: null,
       devClientUrl: null,
       logs: null,
+      durationMs: null,
     });
     expect(androidFacts({ variant: 'productionDebug' }).variant).toBe('productionDebug');
     expect(androidFacts({ cacheKey: `${FINGERPRINT}-productionrelease-sim` }).cacheKey).toBe(
@@ -2311,6 +2319,7 @@ describe('the pure parts', () => {
       deviceName: androidFacts({ avdName: 'stim-app-412' }).deviceName,
     }).toEqual({ avdName: 'stim-app-412', deviceName: 'stim-app-412' });
     expect(androidFacts({ cacheHit: 'remote' }).cacheHit).toBe('remote');
+    expect(androidFacts({ durationMs: 123 }).durationMs).toBe(123);
     expect(androidFacts({ cacheHit: true }).cacheHit).toBe(false);
     expect(androidFacts({ cacheHit: 'local', waitedForBuild: { pid: 41233, ms: 761000 } }).waitedForBuild).toEqual({
       pid: 41233,

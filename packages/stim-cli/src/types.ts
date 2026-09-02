@@ -148,6 +148,7 @@ export interface AndroidFacts {
   debugHttpHostNote: string | null;
   devClientUrl: string | null;
   logs: string | null;
+  durationMs: number | null;
   lease?: RunLeaseFacts | null;
 }
 

@@ -71,6 +71,7 @@ test('the facts topic documents the fields each --json payload actually carries'
       'bundleId',
       'installSkipped',
       'launched',
+      'durationMs',
     ],
   };
   for (const [command, names] of Object.entries(fields)) {
@@ -79,6 +80,16 @@ test('the facts topic documents the fields each --json payload actually carries'
       expect(sources[command as keyof typeof sources].includes(f)).toBeTruthy();
     }
   }
+});
+
+test('the facts topic documents durationMs for both run commands', () => {
+  const body = renderTopic('facts');
+  assert(body);
+  const ios = body.slice(body.indexOf('stim ios --json'), body.indexOf('stim android --json'));
+  const android = body.slice(body.indexOf('stim android --json'), body.indexOf('ON FAILURE'));
+
+  expect(ios).toMatch(/durationMs\s+wall time for the whole run/);
+  expect(android).toMatch(/durationMs\s+wall time for the whole run/);
 });
 
 test('the facts topic says Android artifacts use the post-Gradle fingerprint', () => {

@@ -271,6 +271,7 @@ line by design (see \`guide logs\`), not this single-payload contract.
                   a plain launcher start. This is the command that puts the
                   app back on THIS workspace's bundle
   logs            the workspace log directory
+  durationMs      wall time for the whole run
 
 ON FAILURE
   \`start\`, \`ios\` and \`android\` all print the error contract instead,
