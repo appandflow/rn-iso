@@ -391,6 +391,22 @@ test('the errors topic documents every code the build commands and the iOS signi
   }
 });
 
+test('the errors topic documents every code worktree create can emit, and the rules behind it', () => {
+  const body = renderTopic('errors');
+  assert(body);
+  const src = readFileSync(new URL('../commands/worktree.ts', import.meta.url), 'utf-8');
+  const codes = new Set([...src.matchAll(/STIM_[A-Z_]+/g)].map((m) => m[0]));
+  expect(codes.has('STIM_WORKTREE_BRANCH_EXISTS')).toBeTruthy();
+  for (const code of codes) expect(body.includes(code)).toBeTruthy();
+
+  const section = body.slice(body.indexOf('STIM_WORKTREE_BRANCH_EXISTS')).replace(/\s+/g, ' ');
+  expect(section).toMatch(/refuses whenever it is passed and the branch already exists/i);
+  expect(section).toMatch(/INCLUDING the case where the branch happens to sit on the requested base/i);
+  expect(section).toMatch(/Stim deletes the branch it just made/i);
+  expect(section).toMatch(/only a branch that create made/i);
+  expect(src).not.toMatch(/--base does not apply/);
+});
+
 test('the errors topic documents every code the engine can emit under a command', () => {
   const body = renderTopic('errors');
   assert(body);

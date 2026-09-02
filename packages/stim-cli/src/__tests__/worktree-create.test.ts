@@ -1,5 +1,15 @@
 import { execSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, realpathSync, rmSync, symlinkSync } from 'fs';
+import {
+  chmodSync,
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  existsSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+} from 'fs';
 import { tmpdir } from 'os';
 import { dirname, join } from 'path';
 import { Command } from 'commander';
@@ -505,7 +515,7 @@ test('create action: refuses when a leftover branch would void an explicit --bas
   }
 });
 
-test('create action: a leftover branch already AT the base is attached to, not refused', async () => {
+test('create action: a leftover branch already AT the base is refused too, since --base would guarantee nothing', async () => {
   resetExecutor();
   const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-samesha-')));
   const repo = join(base, 'repo');
@@ -516,9 +526,14 @@ test('create action: a leftover branch already AT the base is attached to, not r
 
     const { logs, errs } = await runCreateInRepo(repo, 'feat-same', { base: headSha });
 
-    expect(logs).toEqual([join(defaultWorktreeDir(repo), 'feat-same')]);
-    expect(process.exitCode).not.toBe(1);
-    expect(errs.some((e) => /Attached to the existing branch worktree-feat-same/.test(String(e)))).toBeTruthy();
+    expect(logs).toEqual([]);
+    expect(process.exitCode).toBe(1);
+    expect(existsSync(join(defaultWorktreeDir(repo), 'feat-same'))).toBe(false);
+    const text = errs.join('\n');
+    expect(text).toContain('STIM_WORKTREE_BRANCH_EXISTS');
+    expect(text).toMatch(/coincidence, not the guarantee/);
+    expect(text).toMatch(/branch -D worktree-feat-same/);
+    expect(text).not.toMatch(/Attached to the existing branch/);
   } finally {
     process.exitCode = 0;
     rmSync(base, { recursive: true, force: true });
@@ -542,6 +557,55 @@ test('create action: with no --base a leftover branch is still attached to', asy
     expect(process.exitCode).not.toBe(1);
   } finally {
     process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('create action: a failed git worktree add rolls back the branch it just created', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-rollback-')));
+  const repo = join(base, 'repo');
+  const unwritable = join(base, 'unwritable');
+  try {
+    const git = initScratchRepo(repo);
+    mkdirSync(unwritable);
+    writeFileSync(join(repo, '.stim.json'), JSON.stringify({ worktreeDir: unwritable }));
+    chmodSync(unwritable, 0o500);
+
+    const { logs, errs } = await runCreateInRepo(repo, 'feat-roll', { install: false });
+
+    expect(logs).toEqual([]);
+    expect(process.exitCode).toBe(1);
+    expect(git('git branch --list worktree-feat-roll').trim()).toBe('');
+    expect(errs.join('\n')).toMatch(/Deleted worktree-feat-roll/);
+  } finally {
+    process.exitCode = 0;
+    chmodSync(unwritable, 0o700);
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('create action: a failed git worktree add keeps a branch it did not create', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-rollback-keep-')));
+  const repo = join(base, 'repo');
+  const unwritable = join(base, 'unwritable');
+  try {
+    const git = initScratchRepo(repo);
+    git('git branch worktree-feat-keep');
+    mkdirSync(unwritable);
+    writeFileSync(join(repo, '.stim.json'), JSON.stringify({ worktreeDir: unwritable }));
+    chmodSync(unwritable, 0o500);
+
+    const { logs, errs } = await runCreateInRepo(repo, 'feat-keep', { install: false });
+
+    expect(logs).toEqual([]);
+    expect(process.exitCode).toBe(1);
+    expect(git('git branch --list worktree-feat-keep')).toMatch(/worktree-feat-keep/);
+    expect(errs.join('\n')).not.toMatch(/Deleted worktree-feat-keep/);
+  } finally {
+    process.exitCode = 0;
+    chmodSync(unwritable, 0o700);
     rmSync(base, { recursive: true, force: true });
   }
 });

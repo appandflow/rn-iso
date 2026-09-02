@@ -988,13 +988,25 @@ not on any remote"  (worktree remove)
   Runtime state is outside the project tree, so Stim's own files never cause
   Other dirty paths still refuse as described above.
 
-"Refusing to create <name>: the branch worktree-<name> already exists at <sha>,
-but --base <ref> resolves to <sha>"  (worktree create)
+STIM_WORKTREE_BRANCH_EXISTS  (worktree create)
+  "Refusing to create <name>: the branch worktree-<name> already exists at
+  <sha>, but --base <ref> resolves to <sha>" -- or, when the two agree,
+  "which is where --base <ref> resolves right now".
   \`git worktree add\` attaches to an existing branch and ignores the base, so
-  the worktree would not be based on what you asked for. Stim keeps branches
-  it did not create and branches with unique commits. Either pick another
-  name, or \`git branch -D worktree-<name>\` and retry. Without --base,
-  attaching is still the behaviour: nothing was promised about the tip.
+  the worktree would not be based on what you asked for. --base IS THE
+  REFUSAL'S TRIGGER: it is a correctness flag, so Stim refuses whenever it is
+  passed and the branch already exists, INCLUDING the case where the branch
+  happens to sit on the requested base -- that agreement is luck, not the
+  guarantee asked for. Stim keeps branches it did not create and branches with
+  unique commits. Either pick another name, or \`git branch -D
+  worktree-<name>\` and retry. Without --base, attaching is still the
+  behaviour: nothing was promised about the tip.
+  A leftover branch is no longer the usual cause. When \`git worktree add -b\`
+  fails AFTER git created the branch (a locked .git/config, a read-only
+  parent), Stim deletes the branch it just made, so the retry branches from
+  --base instead of attaching. It rolls back only a branch that create made:
+  one that already existed, moved off the base, or is checked out somewhere is
+  KEPT, and the note names \`git branch -D\` for it.
 
 "failed to scan dependencies for source ..." on pods you did not touch  (ios)
   The compilation cache holds a damaged object. Xcode reports it per source
