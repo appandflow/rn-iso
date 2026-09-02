@@ -28,13 +28,24 @@ builds embed the JavaScript bundle and skip that requirement.
 ## `doctor`
 
 ```text
-stim doctor [--json]
+stim doctor [--json] [--fix]
 ```
 
 Inspects the main checkout. It reports missing or stale dependencies, CocoaPods
 state, cache conflicts, device capacity, and remote session problems. On a
 checkout without installed dependencies, it also reports fingerprint
-differences against a fresh worktree. The check is read-only.
+differences against a fresh worktree. The check is read-only unless `--fix` is
+passed.
+
+`doctor` also flags when an agent harness sandboxes shell commands and Stim is
+not allowed through it, which shows up as unrelated-looking failures against
+the simulator service, the adb server, and Stim's own state directory.
+`--fix` writes the missing allowance into `.claude/settings.local.json` at the
+repository root, the per-user file, merging it with whatever is already there
+and touching nothing else. It refuses to change anything under Codex, whose
+sandbox has no per-path allowance to add, and it does nothing when no
+sandboxing harness is present. See `stim guide errors` for the failure
+signatures and the manual settings.
 
 ## `start`
 
