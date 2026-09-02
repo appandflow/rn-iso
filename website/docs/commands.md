@@ -98,8 +98,9 @@ Device Management, and allowing the Local Network prompt the first time the app
 looks for Metro. Neither can be pre-granted from this Mac. The trust tap has no
 API at all and is always the user's; the Local Network prompt can be accepted by
 a device tool once it is showing, and Stim's `unverified` remedy prints those
-commands when this launch's device log carries the signature of a pending
-prompt. Until it is granted, `launched` comes back `unverified`. Run
+commands when this launch's device log carries iOS's path reason for an
+ungranted app. A prior Don't Allow logs the same reason, and the remedy covers
+that too. Until it is granted, `launched` comes back `unverified`. Run
 `stim guide errors` for the signature and the full recovery.
 
 A `--device` run in a Release configuration builds fresh every time: a cached

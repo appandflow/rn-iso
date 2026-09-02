@@ -587,19 +587,19 @@ describe('localNetworkPending', () => {
     expect(localNetworkPending(pending, { since: 1000, pid: APP_PID, lanOrigin: LAN_ORIGIN })).toBe(true);
   });
 
-  test('each carrying line in that capture matches on its own', () => {
-    const carriers = pending.filter((record) =>
-      /failed to connect 1:50|encountered error\(1:50\)|error code: -1009 \[1:50\]|Local network prohibited/.test(
-        record.msg,
-      ),
-    );
+  test('only the NWPath reason carries the match, and it survives the pid filter', () => {
+    const carriers = pending.filter((record) => record.msg.includes('Local network prohibited'));
     expect(carriers.length).toBeGreaterThan(0);
     for (const record of carriers) {
+      expect(record.proc).toBe(`Trailhead(${APP_PID})`);
       expect(localNetworkPending([record], { since: 0, pid: APP_PID, lanOrigin: LAN_ORIGIN })).toBe(true);
+    }
+    for (const record of pending.filter((r) => !r.msg.includes('Local network prohibited'))) {
+      expect(localNetworkPending([record], { since: 0, pid: APP_PID, lanOrigin: LAN_ORIGIN })).toBe(false);
     }
   });
 
-  test('a refused connection, a satisfied path, and unrelated nw_ noise are not it', () => {
+  test('a refused connection, unrelated nw_ noise, and the sibling NWPath reasons are not it', () => {
     const negatives = deviceRecords(fixtureLines('local-network-negatives.txt'));
     expect(localNetworkPending(negatives, { since: 0, pid: APP_PID, lanOrigin: LAN_ORIGIN })).toBe(false);
     for (const record of negatives) {
@@ -607,16 +607,17 @@ describe('localNetworkPending', () => {
     }
   });
 
-  // The last negative IS the signature; only the origin it names disqualifies
-  // it, so pointing the workspace at that origin has to flip the verdict.
-  test("the same -1009 matches when the origin it names is this workspace's", () => {
-    const negatives = deviceRecords(fixtureLines('local-network-negatives.txt'));
-    const foreign = negatives[negatives.length - 1]!;
-    expect(foreign.msg).toContain('Local network prohibited');
-    expect(localNetworkPending([foreign], { since: 0, pid: APP_PID, lanOrigin: LAN_ORIGIN })).toBe(false);
-    expect(localNetworkPending([foreign], { since: 0, pid: APP_PID, lanOrigin: 'http://192.168.4.21:8081' })).toBe(
-      true,
-    );
+  test('the two errno-50 reasons that are NOT the permission are in that fixture', () => {
+    const negatives = fixtureLines('local-network-negatives.txt');
+    for (const reason of ['unsatisfied (No network route)', 'unsatisfied (Denied over cellular interface)']) {
+      const line = negatives.find((candidate) => candidate.includes(reason));
+      expect(line).toBeTruthy();
+      expect(line).toContain('_kCFStreamErrorCodeKey=50');
+      expect(line).toContain('Code=-1009');
+      expect(localNetworkPending(deviceRecords([line!]), { since: 0, pid: APP_PID, lanOrigin: LAN_ORIGIN })).toBe(
+        false,
+      );
+    }
   });
 
   test('records from before this launch and from another process do not count', () => {
@@ -646,8 +647,6 @@ describe('localNetworkPending', () => {
     expect(localNetworkPending(pending, { since: 0, pid: APP_PID, lanOrigin: null })).toBe(false);
   });
 
-  // Design rule: severity is never guessed for a phone's records. Routing the
-  // remedy must not promote one, or `logs --errors` would grow a device source.
   test('the capture stays info, so nothing new reaches `logs --errors`', () => {
     for (const line of fixtureLines('local-network-pending.txt')) {
       expect(deviceConsoleLevel(line)).toBe('info');

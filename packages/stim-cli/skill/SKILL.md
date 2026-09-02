@@ -28,19 +28,18 @@ E404 in a repo with a private registry, use:
 npx --registry=https://registry.npmjs.org stim-cli <command>
 ```
 
-Prefer plain output for agent workflows. It streams each phase and ends with the
+Prefer plain output for agent workflows: it streams each phase and ends with the
 full device ID, app ID, Metro state, cache result, and log path. Use `--json`
 only when a script must parse a stable payload.
 
 ## Normal workflow
 
 Work in the current checkout by default. When the agent creates an app worktree
-for isolation or parallel work, carry its installed dependencies and native
-outputs.
+for isolation or parallel work, carry its dependencies and native outputs.
 
 Before a native worktree task, run `stim doctor`. Doctor checks the main
 checkout even when it runs from a linked worktree. Fix its main-checkout
-dependency and CocoaPods findings.
+dependency and CocoaPods findings. Inspect any locally known upstream gap.
 
 ```bash
 stim doctor
@@ -72,7 +71,7 @@ stim worktree remove
 
 Follow these rules during the loop:
 
-- Run `start` before a debug `ios` or `android` build. If the build returns
+- Run `start` before a debug `ios` or `android` build. If it returns
   `STIM_NO_METRO`, run `stim start` and retry.
 - Run `ios` or `android` again after a native input changes. A JavaScript-only
   change does not need one.
@@ -82,11 +81,11 @@ Follow these rules during the loop:
   separate device tool is required. Trust the exact device, app, Metro, and
   launch facts in Stim's final summary. Use the full reported device ID. Never
   assume that a simulator named `booted` belongs to this workspace.
-- An `OK` summary with no launch qualifier proves the launch. When the summary
-  says `bundle requested, still building`, Metro has not completed the bundle;
-  wait and query the logs. For `launch UNVERIFIED`, follow the printed remedy
-  before you claim success. JSON reports these states as `true`, `"bundling"`,
-  and `"unverified"` in `launched`.
+- An `OK` summary with no launch qualifier proves the launch. `bundle requested,
+still building` means Metro has not finished the bundle; wait and query the
+  logs. For `launch UNVERIFIED`, follow the printed remedy before you claim
+  success. JSON reports these as `true`, `"bundling"`, and `"unverified"` in
+  `launched`.
 - Exit code 0 from `logs --errors` is the pass condition. Human output can show
   `No matching log records` on stderr. JSON mode prints zero bytes when no
   records match. Do not read the NDJSON files directly.
@@ -144,8 +143,8 @@ worked.
 ## Load advanced guidance only when needed
 
 The installed CLI is the source of truth for flags, payloads, settings, error
-codes, remote devices, release builds, caches, and cleanup. Read the relevant
-topic before an advanced operation:
+codes, remote devices, release builds, caches, and cleanup. Read the topic
+before an advanced operation:
 
 ```bash
 stim guide             # list topics
@@ -158,7 +157,7 @@ stim guide cleanup     # destructive behavior and disk cleanup
 stim guide settings    # configuration files and supported keys
 ```
 
-Run the guide before tasks that involve any of these cases:
+Run the guide before tasks involving any of these:
 
 - release configurations or Android variants;
 - remote proxy or EAS devices;
@@ -173,5 +172,5 @@ Run the guide before tasks that involve any of these cases:
 Ordinary `stim stop` and an authorized clean `stim worktree remove` do not need
 the cleanup guide.
 
-If this skill and `stim guide` disagree, follow the guide. The guide comes
-from the binary that is running.
+If this skill and `stim guide` disagree, follow the guide: it comes from the
+binary that is running.

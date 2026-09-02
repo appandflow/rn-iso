@@ -760,11 +760,14 @@ describe('unverifiedLaunchLines: the routed Local Network remedy', () => {
   test('the evidence leads, then the commands in the order they have to run', () => {
     const lines = devClientLines();
     expect(lines[1]).toMatch(/THE PHONE'S LOCAL NETWORK PERMISSION IS NOT GRANTED/);
+    expect(lines[1]).toContain('unsatisfied (Local network prohibited)');
+    expect(lines[1]).toMatch(/unanswered OR was answered Don't Allow earlier/);
     expect(lines[1]).toMatch(/http:\/\/10\.0\.0\.132:8082/);
     const at = (pattern: RegExp) => lines.findIndex((line) => pattern.test(line));
     const order = [
       at(/agent-device alert get/),
       at(/agent-device alert accept/),
+      at(/If the FIRST `alert get` already finds no alert/),
       at(/agent-device snapshot -i/),
       at(/xcrun devicectl device process launch/),
       at(/By hand/),
@@ -772,6 +775,17 @@ describe('unverifiedLaunchLines: the routed Local Network remedy', () => {
     expect(order.every((i) => i >= 0)).toBe(true);
     expect(order).toEqual([...order].toSorted((a, b) => a - b));
     expect(at(/agent-device press 'label="Reload"'/)).toBe(at(/agent-device snapshot -i/));
+    expect(at(/agent-device press 'label="Close"'/)).toBe(at(/agent-device snapshot -i/));
+  });
+
+  // A Don't Allow persists across upgrade installs and logs the same reason,
+  // so the remedy has to hand back a path that does not depend on the alert.
+  test('the denied case has its own step, and it is the Settings switch', () => {
+    const denied = devClientLines().find((line) => /If the FIRST `alert get` already finds no alert/.test(line));
+    expect(denied).toMatch(/denied on an earlier run/);
+    expect(denied).toMatch(/persists across upgrade installs/);
+    expect(denied).toMatch(/Settings > Privacy & Security > Local Network/);
+    expect(denied).toMatch(/no API for that switch/);
   });
 
   test('it replaces the network list rather than adding to it', () => {
@@ -787,6 +801,7 @@ describe('unverifiedLaunchLines: the routed Local Network remedy', () => {
     const text = unverifiedLaunchLines({ ...base, devClient: false }).join('\n');
     expect(text).toMatch(/agent-device alert accept/);
     expect(text).toMatch(/Could not connect to development server/);
+    expect(text).toMatch(/NOT VERIFIED ON HARDWARE/);
     expect(text).toMatch(/re-reads ip\.txt/);
     expect(text).toMatch(
       /xcrun devicectl device process launch --device BF2A1C3D --terminate-existing io\.tlon\.groups/,

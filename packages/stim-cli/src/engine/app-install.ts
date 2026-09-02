@@ -976,10 +976,11 @@ export function unverifiedLaunchLines({
   const push = (text: string) => lines.push(`  ${++step}. ${text}`);
   lines.push(
     localNetwork
-      ? `THE PHONE'S LOCAL NETWORK PERMISSION IS NOT GRANTED: every LAN connection this launch made failed with stream ` +
-          `error 50 (ENETDOWN) as NSURLErrorDomain -1009, which is what iOS returns for the whole time the ` +
-          `"would like to find and connect to devices on your local network" prompt is unanswered. Nothing the app ` +
-          `sends reaches ${lanOrigin || origin} until it is accepted. Do this, in order:`
+      ? `THE PHONE'S LOCAL NETWORK PERMISSION IS NOT GRANTED: the LAN connections this launch made failed with ` +
+          `NSURLErrorDomain -1009 and the path reason "unsatisfied (Local network prohibited)", which is what iOS ` +
+          'returns while the "would like to find and connect to devices on your local network" prompt is unanswered ' +
+          `OR was answered Don't Allow earlier -- the log reads the same either way. Nothing the app sends reaches ` +
+          `${lanOrigin || origin} until it is granted. Do this, in order:`
       : 'The app is launched; what is unproven is that it is talking to THIS dev server. Do this, in order:',
   );
   if (remote) {
@@ -1006,11 +1007,17 @@ export function unverifiedLaunchLines({
       push(
         `Tap Allow: agent-device alert accept --platform ios --udid ${udid}. A second \`alert get\` then finds none.`,
       );
+      push(
+        'If the FIRST `alert get` already finds no alert, this permission was denied on an earlier run -- a ' +
+          "Don't Allow persists across upgrade installs. Turn the app on by hand under Settings > Privacy & " +
+          'Security > Local Network; there is no API for that switch.',
+      );
       if (devClient) {
         push(
           'The app does NOT retry after the grant -- it stays on "Failed to load app ... The Internet connection ' +
             `appears to be offline." with a Reload button. Press it: agent-device snapshot -i --platform ios --udid ${udid}, ` +
-            `then agent-device press 'label="Reload"' --platform ios --udid ${udid}.`,
+            `then agent-device press 'label="Reload"' --platform ios --udid ${udid}. On a fresh install the Expo dev ` +
+            `menu is over the app first; agent-device press 'label="Close"' --platform ios --udid ${udid} dismisses it.`,
         );
         push(
           `Without agent-device, relaunching also recovers: ${relaunch}. It costs the device log -- it replaces the ` +
@@ -1020,9 +1027,10 @@ export function unverifiedLaunchLines({
         push('By hand: tap Allow on the phone, then tap Reload on the app.');
       } else {
         push(
-          'The app does NOT retry after the grant -- a bare app shows React Native\'s RedBox, "Could not connect to ' +
-            'development server". Press the RedBox\'s Reload button, found with agent-device snapshot -i --platform ' +
-            `ios --udid ${udid}.`,
+          'The app does NOT retry after the grant. A bare app is expected to show React Native\'s "Could not connect ' +
+            'to development server" RedBox -- NOT VERIFIED ON HARDWARE, so read the screen rather than trusting that: ' +
+            `agent-device snapshot -i --platform ios --udid ${udid}, then press its Reload button by the ref or label ` +
+            'that snapshot reports.',
         );
         push(
           `Cleanest for a bare app: relaunch, which re-reads ip.txt: ${relaunch}. It costs the device log -- it ` +

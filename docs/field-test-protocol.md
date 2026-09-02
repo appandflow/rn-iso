@@ -253,10 +253,13 @@ phone has to settle, and what is already settled:
    while the prompt was up, and the device log carried the signature for the
    whole time: at 23:12:53, `Connection 1: failed to connect 1:50`,
    `error code: -1009 [1:50]`, and `Code=-1009 ... _kCFStreamErrorCodeKey=50`
-   with `_NSURLErrorNWPathKey=unsatisfied (Local network prohibited)`. Sixteen
-   lines of it are the classifier's fixture. Recovery, in order:
-   `agent-device alert get` read `Allow "Trailhead" to find devices on local
-networks?` before any `open`; `alert accept` returned `accepted` and a second
+   with `_NSURLErrorNWPathKey=unsatisfied (Local network prohibited)`. Only that
+   last path reason is matched: the errno-50 lines are generic and Wi-Fi being
+   off produces them with `unsatisfied (No network route)`. Sixteen lines of the
+   capture are the classifier's fixture. Recovery, in order:
+   `agent-device alert get` read
+   `Allow "Trailhead" to find devices on local networks?` before any `open`;
+   `alert accept` returned `accepted` and a second
    `alert get` found none; no bundle request followed within 20 s, because the
    dev client stayed on its error screen; `snapshot -i` showed
    `[button] "Reload"` and `agent-device press 'label="Reload"'` produced Metro
@@ -265,7 +268,9 @@ networks?` before any `open`; `alert accept` returned `accepted` and a second
    cost of the collector's process. `agent-device metro reload` does not: it
    needs `--metro-host`/`--metro-port` on a phone and still does nothing to an
    app that never connected. NOT YET RUN ON HARDWARE: the same detection and
-   recovery on a BARE app, which needs a provisioned bare project.
+   recovery on a BARE app, which needs a provisioned bare project, and the
+   DENIED case -- a prior Don't Allow logs the identical path reason, so the
+   remedy covers it, but nobody has provoked it on hardware.
 
 ## Launch-status contract
 

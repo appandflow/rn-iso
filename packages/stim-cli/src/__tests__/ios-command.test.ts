@@ -3872,7 +3872,10 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     );
     const out = errs.join('\n');
     expect(out).toMatch(/THE PHONE'S LOCAL NETWORK PERMISSION IS NOT GRANTED/);
-    expect(out).toMatch(/stream error 50 \(ENETDOWN\)/);
+    expect(out).toContain('unsatisfied (Local network prohibited)');
+    expect(out).toMatch(/unanswered OR was answered Don't Allow earlier/);
+    expect(out).toMatch(/If the FIRST `alert get` already finds no alert/);
+    expect(out).toContain(`agent-device press 'label="Close"' --platform ios --udid ${PHONE}`);
     expect(out).toContain(`agent-device alert get --platform ios --udid ${PHONE}`);
     expect(out).toContain(`agent-device alert accept --platform ios --udid ${PHONE}`);
     expect(out).toContain(`agent-device snapshot -i --platform ios --udid ${PHONE}`);
@@ -3900,6 +3903,7 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     expect(out).toMatch(/THE PHONE'S LOCAL NETWORK PERMISSION IS NOT GRANTED/);
     expect(out).toContain(`agent-device alert accept --platform ios --udid ${PHONE}`);
     expect(out).toMatch(/Could not connect to development server/);
+    expect(out).toMatch(/NOT VERIFIED ON HARDWARE/);
     expect(out).toMatch(/re-reads ip\.txt/);
     expect(out).not.toMatch(/--payload-url/);
     expect(out).not.toMatch(/label="Reload"/);

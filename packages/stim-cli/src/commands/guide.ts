@@ -104,28 +104,42 @@ other line goes to stderr, so it is always safe to pipe.
                                  finishing
                     "unverified" nothing was observed at all: usually a
                                  dev-client server picker awaiting a tap
-                  ON A PHONE the unverified remedy is ROUTED, not a fixed list.
-                  When this launch's device records carry the Local Network
-                  ENETDOWN signature against this workspace's LAN origin, the
-                  remedy leads with that evidence and with
-                  \`agent-device alert get\`, \`alert accept\`, then
+                  ON A SIMULATOR, before a local dev-client openurl, Stim
+                  preapproves CoreSimulatorBridge for exactly the installed
+                  bundle id and discovered scheme on its owned simulator. That
+                  suppresses iOS's first-launch confirmation;
+                  unrelated schemes remain unapproved. It also finishes Expo
+                  dev-menu onboarding and disables the menu's automatic launch,
+                  so device automation opens on the app. The unverified warning
+                  therefore leads with the picker, then prints the openurl
+                  retry. On ANDROID the list leads with the dev-client deep
+                  link (\`am start -a android.intent.action.VIEW -d
+                  '<devClientUrl>'\`), which is the whole answer when the app
+                  has a scheme.
+                  ON A PHONE NONE OF THAT PREAPPROVAL APPLIES. Both writes go
+                  through \`simctl spawn defaults write\`, and devicectl has
+                  no defaults command; the one file route,
+                  \`devicectl device copy to --domain-type appDataContainer\`
+                  onto Library/Preferences/<bundleId>.plist with the app
+                  terminated, copies successfully and then loses the seeded
+                  keys, because cfprefsd serves its cached domain and rewrites
+                  the file. So the Expo dev menu opens over the app ONCE PER
+                  FRESH INSTALL (it shows the runtime version, Close, Reload,
+                  Go home). \`agent-device press 'label="Close"'\` dismisses
+                  it -- or \`snapshot -i\` and the ref. Both that onboarding
+                  flag and the Local Network grant survive an UPGRADE install,
+                  so it is not a per-run cost, and Stim does not write to the
+                  phone to avoid it.
+                  The phone's unverified remedy is also ROUTED, not a fixed
+                  list. When this launch's device records carry the Local
+                  Network path reason, the remedy leads with that evidence and
+                  with \`agent-device alert get\`, \`alert accept\`, then
                   \`snapshot -i\` and \`press 'label="Reload"'\` -- the grant
                   alone does not reload the dev client. Otherwise the network
                   list stays. Routing changes no record's level, so nothing new
                   reaches \`logs --errors\`. The OTHER first-launch tap,
                   developer trust, has no API at all and is always the user's.
                   \`guide errors\` has the signature and the full commands.
-                  Before a local dev-client openurl, Stim preapproves
-                  CoreSimulatorBridge for exactly the installed bundle id and
-                  discovered scheme on its owned simulator. That suppresses
-                  iOS's first-launch confirmation; unrelated schemes remain
-                  unapproved. It also finishes Expo dev-menu onboarding and
-                  disables the menu's automatic launch, so device automation
-                  opens on the app. The unverified warning therefore leads
-                  with the picker, then prints the openurl retry. On ANDROID the list
-                  leads with the dev-client deep link (\`am start -a
-                  android.intent.action.VIEW -d '<devClientUrl>'\`), which is
-                  the whole answer when the app has a scheme.
   metroPort       the port the app was wired to; NULL on a non-Debug
                   configuration, whose JS is embedded and which is launched
                   with no dev server at all. There, \`launched\` is verified
@@ -767,17 +781,36 @@ STIM_LAN_METRO_UNREACHABLE
   through a firewall that will block the phone. That evidence only ever arrives
   from the phone's own bundle request, which is what \`launched\` reports.
 
-LAUNCH UNVERIFIED WITH THE LOCAL NETWORK PROMPT UP (not a code -- a routed remedy)
-  iOS answers every LAN connection with ENETDOWN -- POSIX error 50, surfaced by
-  CFNetwork as NSURLErrorDomain -1009 "The Internet connection appears to be
-  offline." with _kCFStreamErrorCodeKey=50 and _NSURLErrorNWPathKey=unsatisfied
-  (Local network prohibited) -- for the whole time the "would like to find and
-  connect to devices on your local network" prompt is unanswered. That
-  signature is read out of THIS launch's device records (since the launch, and
-  the app's pid when it is known) and matched against THIS workspace's LAN
-  origin; a -1009 naming another origin is not it. Matching only picks the
-  remedy: no record's level changes, so the device source stays out of
-  \`logs --errors\` (\`guide logs\`: severity is never guessed on a phone).
+LAUNCH UNVERIFIED, LOCAL NETWORK NOT GRANTED (not a code -- a routed remedy)
+  An app that has not been granted Local Network reaches nothing on the LAN,
+  and CFNetwork reports each attempt as NSURLErrorDomain -1009 "The Internet
+  connection appears to be offline." with the path reason
+
+    _NSURLErrorNWPathKey=unsatisfied (Local network prohibited)
+
+  THAT REASON IS THE WHOLE MATCH. The rest of the block -- POSIX error 50
+  (ENETDOWN), \`failed to connect 1:50\`, \`error code: -1009 [1:50]\` -- is
+  generic and says nothing about the permission: Wi-Fi turned off gives the
+  identical errno with the reason \`unsatisfied (No network route)\`, and a
+  cellular-only route gives \`unsatisfied (Denied over cellular interface)\`.
+  Matching those would print this remedy at a phone that simply is not on the
+  network, and would drop the same-SSID check that is the actual fix, so they
+  are not matched.
+  THE PROMPT AND A PRIOR DENIAL READ THE SAME. iOS emits this reason while the
+  prompt is unanswered and after a Don't Allow, which persists across upgrade
+  installs. The remedy covers both: if the first \`alert get\` finds no alert,
+  it was denied earlier and the only fix is the switch under Settings > Privacy
+  & Security > Local Network, which has no API.
+  The reason is read out of THIS launch's device records -- since the launch,
+  and from the app's pid when it is known. It is NOT origin-scoped: the record
+  that carries the reason carries no URL (the failing URL lands in a
+  continuation line with no process prefix, which the pid filter drops), so
+  scoping to this workspace's Metro origin would never fire. That is sound
+  anyway, because the permission gates every LAN connection the app makes, so
+  even a third-party SDK's prohibited connection proves the app cannot reach
+  this workspace's Metro either. Matching only picks the remedy: no record's
+  level changes, so the device source stays out of \`logs --errors\`
+  (\`guide logs\`: severity is never guessed on a phone).
   When it matches, \`launched: "unverified"\` leads with that evidence and with
   the recovery, in this order:
 
@@ -791,17 +824,20 @@ LAUNCH UNVERIFIED WITH THE LOCAL NETWORK PROMPT UP (not a code -- a routed remed
   retry, and stays on "Failed to load app ... The Internet connection appears
   to be offline." with a Reload button, which is why the last two lines are
   there. The text form of the press target is \`label="Reload"\` (or
-  \`text="Reload"\`); a bare \`press "Reload"\` is rejected.
+  \`text="Reload"\`); a bare \`press "Reload"\` is rejected. On a FRESH install
+  the Expo dev menu is over the app first and \`snapshot -i\` shows it instead:
+  \`agent-device press 'label="Close"'\` dismisses it, then press Reload. Stim
+  cannot pre-dismiss it on a phone -- see \`guide facts\`, under \`launched\`.
 
   A BARE APP (no expo-dev-client) gets the same first two commands and a
   different third. The prompt fires the same way, because it is fired by any
-  LAN connection to the Metro host, and the log signature is CFNetwork's either
-  way -- the classifier keys on the LAN origin alone and knows nothing about
-  dev clients. What differs is the screen: a bare app shows React Native's
-  RedBox, "Could not connect to development server". Press its Reload button,
-  found with \`agent-device snapshot -i\`; the button's exact accessibility
-  label has not been read off hardware, so \`snapshot -i\` is how you get the
-  target rather than a literal to copy.
+  LAN connection to the Metro host, and the path reason is CFNetwork's either
+  way -- the classifier reads that reason alone and knows nothing about dev
+  clients. What differs is the screen: a bare app is expected to show React
+  Native's RedBox, "Could not connect to development server". Read the screen
+  with \`agent-device snapshot -i\` and press Reload by the ref or label it
+  reports; neither that text nor the button's accessibility label has been read
+  off hardware.
 
   \`agent-device metro reload\` does NOT recover either screen. It only reaches
   an app already connected to Metro's websocket, and an app stopped by this
