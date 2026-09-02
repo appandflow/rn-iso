@@ -171,7 +171,9 @@ export function registerCreate(worktree: Command): void {
 
       const base = opts.base || settings?.worktree?.baseRef || 'head';
 
-      const dir = canonicalExistingPath(opts.dir || settings.worktreeDir || defaultWorktreeDir(root));
+      const dir = canonicalExistingPath(
+        opts.dir || (settings.worktreeDir ? resolve(root, settings.worktreeDir) : defaultWorktreeDir(root)),
+      );
       const target = worktreePath({ worktreeDir: dir, name });
 
       if (existsSync(target)) {
