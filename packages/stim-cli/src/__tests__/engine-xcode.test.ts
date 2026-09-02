@@ -28,8 +28,8 @@ import {
   pickXcodeProject,
   productsDir,
   readBundleId,
-  formatHeartbeatElapsed,
   heartbeatLine,
+  startBuildHeartbeat,
   resolveScheme,
   tailLines,
   xcodebuildArgs,
@@ -628,13 +628,6 @@ describe('reading the bundle id', () => {
 });
 
 describe('the heartbeat line', () => {
-  test('formats elapsed time the way the completion line does', () => {
-    expect(formatHeartbeatElapsed(0)).toBe('0s');
-    expect(formatHeartbeatElapsed(42_000)).toBe('42s');
-    expect(formatHeartbeatElapsed(319_000)).toBe('5m19s');
-    expect(formatHeartbeatElapsed(605_000)).toBe('10m05s');
-  });
-
   test('carries the activity hint, truncated to one readable line', () => {
     expect(heartbeatLine(30_000, 'CompileC App.o')).toBe('build       still running (30s): CompileC App.o');
     const long = 'x'.repeat(200);
@@ -645,6 +638,107 @@ describe('the heartbeat line', () => {
 
   test('omits the hint before the child has printed anything', () => {
     expect(heartbeatLine(30_000, '')).toBe('build       still running (30s)');
+  });
+});
+
+describe('the heartbeat cadence', () => {
+  function fakeScheduler() {
+    let clock = 0;
+    let pending: { at: number; run: () => void } | null = null;
+    const fire = () => {
+      const due = pending;
+      pending = null;
+      due?.run();
+    };
+    return {
+      now: () => clock,
+      schedule: (run: () => void, delayMs: number) => {
+        pending = { at: clock + delayMs, run };
+        return () => {
+          pending = null;
+        };
+      },
+      advance(ms: number) {
+        clock += ms;
+        let due = pending;
+        while (due && due.at <= clock) {
+          pending = null;
+          due.run();
+          due = pending;
+        }
+      },
+      jump(ms: number) {
+        clock += ms;
+      },
+      fire,
+      idle: () => pending === null,
+    };
+  }
+
+  function heartbeat(scheduler: ReturnType<typeof fakeScheduler>, beats: string[], intervalMs = 30_000) {
+    return startBuildHeartbeat({
+      intervalMs,
+      elapsed: scheduler.now,
+      lastLine: () => '',
+      emit: (line) => beats.push(line),
+      schedule: scheduler.schedule,
+    });
+  }
+
+  test('lands on the interval grid, so no elapsed value is ever printed twice', () => {
+    const scheduler = fakeScheduler();
+    const beats: string[] = [];
+    const stop = heartbeat(scheduler, beats);
+    scheduler.advance(30_000);
+    scheduler.advance(30_000);
+    scheduler.advance(30_000);
+    stop();
+    expect(beats).toEqual([
+      'build       still running (30s)',
+      'build       still running (1m00s)',
+      'build       still running (1m30s)',
+    ]);
+    expect(scheduler.idle()).toBe(true);
+  });
+
+  test('a stalled loop reports the elapsed it woke up to, then resumes on the grid', () => {
+    const scheduler = fakeScheduler();
+    const beats: string[] = [];
+    const stop = heartbeat(scheduler, beats);
+    scheduler.advance(30_000);
+    scheduler.advance(300_000);
+    scheduler.advance(30_000);
+    scheduler.advance(30_000);
+    stop();
+    expect(beats).toEqual([
+      'build       still running (30s)',
+      'build       still running (5m30s)',
+      'build       still running (6m00s)',
+      'build       still running (6m30s)',
+    ]);
+  });
+
+  test('a timer that fires a millisecond early does not repeat the beat it just printed', () => {
+    const scheduler = fakeScheduler();
+    const beats: string[] = [];
+    const stop = heartbeat(scheduler, beats);
+    scheduler.advance(30_000);
+    scheduler.jump(29_999);
+    scheduler.fire();
+    expect(beats).toEqual(['build       still running (30s)']);
+    scheduler.advance(1);
+    stop();
+    expect(beats).toEqual(['build       still running (30s)', 'build       still running (1m00s)']);
+  });
+
+  test('a non-positive interval schedules nothing at all', () => {
+    const scheduler = fakeScheduler();
+    const beats: string[] = [];
+    const stop = heartbeat(scheduler, beats, 0);
+    scheduler.advance(120_000);
+    stop();
+    expect(beats).toEqual([]);
+    expect(scheduler.idle()).toBe(true);
   });
 });
 

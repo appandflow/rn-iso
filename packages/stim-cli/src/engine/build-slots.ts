@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, wri
 import { join } from 'node:path';
 import { getConfigDir } from '../config.ts';
 import { isPidAlive } from '../metro.ts';
-import { formatWaited } from './build-lock.ts';
+import { formatElapsed } from '../command-output.ts';
 
 const SLOT_FILE_NAME = 'slot.json';
 const SLOT_PREFIX = 'slot-';
@@ -149,7 +149,7 @@ export function tryAcquireBuildSlot({
 }
 
 export function slotWaitingLine({ max, elapsedMs }: { max: number; elapsedMs: number }): string {
-  return `${'build'.padEnd(11)} waiting for a build slot (all ${max} in use, ${formatWaited(elapsedMs)} elapsed)`;
+  return `${'build'.padEnd(11)} waiting for a build slot (all ${max} in use, ${formatElapsed(elapsedMs)} elapsed)`;
 }
 
 export async function acquireBuildSlot({
@@ -174,7 +174,7 @@ export async function acquireBuildSlot({
     const elapsed = now() - started;
     if (elapsed >= ceilingMs) {
       const err = new Error(
-        `Waited ${formatWaited(elapsed)} for one of ${max} build slots, and every slot is held by a ` +
+        `Waited ${formatElapsed(elapsed)} for one of ${max} build slots, and every slot is held by a ` +
           'process that is still alive. Slots live under ' +
           buildSlotsDir() +
           '; ' +

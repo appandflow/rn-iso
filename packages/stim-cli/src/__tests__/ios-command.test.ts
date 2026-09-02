@@ -519,16 +519,67 @@ describe('the Metro gate retries an indexing Metro', () => {
   });
 });
 
+describe('the device preparation step', () => {
+  test('a slow preparation gets its own timed line, so the elapsed total is accounted for', async () => {
+    reserve();
+    let clock = 1_000_000;
+    const { errs } = await run(
+      {},
+      {
+        now: () => clock,
+        ensureOwnedDevice: async () => {
+          clock += 130_000;
+          return { deviceUdid: UDID, deviceName: 'stim-fixture', owned: true };
+        },
+      },
+    );
+    expect(errs.join('\n')).toMatch(/device\s+stim-fixture \(BF2A\.\.\) prepared \(2m10s\)/);
+  });
+
+  test('a created simulator is named however fast it was', async () => {
+    reserve();
+    const { errs } = await run(
+      {},
+      {
+        ensureOwnedDevice: async () => ({
+          deviceUdid: UDID,
+          deviceName: 'stim-fixture',
+          owned: true,
+          created: true,
+        }),
+      },
+    );
+    expect(errs.join('\n')).toMatch(/device\s+stim-fixture \(BF2A\.\.\) created \(/);
+  });
+
+  test('a preparation that costs nothing prints nothing of its own', async () => {
+    reserve();
+    const { errs } = await run();
+    expect(errs.join('\n')).not.toMatch(/prepared \(/);
+  });
+});
+
 describe('launch verification', () => {
   test('a verified launch reports launched: true and says what it saw', async () => {
     reserve();
     const { logs, errs, exitCode, calls } = await run({ json: true });
     expect(exitCode).toBe(null);
     expect(parseFirst(logs).launched).toBe(true);
-    expect(errs.join('\n')).toMatch(/verify.*bundle loaded, stable for 3s/);
+    expect(errs.join('\n')).toMatch(/verify.*bundle loaded, stable for 3s -- the first screen may still be rendering/);
     expect(calls.args.verifyLaunch.logsDir).toBe(workspaceLogsDir(root));
     expect(Number.isFinite(calls.args.verifyLaunch.since)).toBeTruthy();
     expect(calls.args.verifyLaunch.platform).toBe('ios');
+  });
+
+  test('the ready line claims only what was proven, and says a paint is not part of it', async () => {
+    reserve();
+    const { errs } = await run(
+      {},
+      { verifyLaunch: async () => ({ verified: true, processAlive: true, waitedMs: 11_100 }) },
+    );
+    expect(errs.join('\n')).toMatch(
+      /verify\s+bundle loaded, process alive, stable for 3s -- the first screen may still be rendering \(11\.1s total\)/,
+    );
   });
 
   test('the picker: an unverified launch is launched: "unverified", exit 0, and a loud warning', async () => {

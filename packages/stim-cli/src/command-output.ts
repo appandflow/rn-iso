@@ -14,6 +14,13 @@ export function formatDuration(ms: unknown): string {
   return `${seconds}s`;
 }
 
+export function formatElapsed(ms: unknown): string {
+  const totalSeconds = Math.max(0, Math.round((Number(ms) || 0) / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes > 0 ? `${minutes}m${String(seconds).padStart(2, '0')}s` : `${seconds}s`;
+}
+
 export function phaseLine(label: unknown, text: string): string {
   return `  ${String(label).padEnd(LABEL_WIDTH)} ${text}`;
 }

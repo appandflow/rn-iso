@@ -6,6 +6,7 @@ import { register } from '../cache-manifest.ts';
 import { getExecutor, type Executor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { sharedCompilationCache, workspaceDerivedData } from '../paths.ts';
+import { formatElapsed } from '../command-output.ts';
 import { createLineReader } from '../process-output.ts';
 import { capDiagnostics, describeDiagnostic, type Diagnostic, extractXcodeDiagnostics } from './errors-xcode.ts';
 import { cleanLine } from '../supervisor/server-expo.ts';
@@ -371,19 +372,20 @@ export const HEARTBEAT_INTERVAL_MS = 30_000;
 
 const HEARTBEAT_HINT_LENGTH = 80;
 
-export function formatHeartbeatElapsed(ms: number): string {
-  const totalSeconds = Math.max(0, Math.round(ms / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return minutes > 0 ? `${minutes}m${String(seconds).padStart(2, '0')}s` : `${seconds}s`;
-}
-
 export function heartbeatLine(elapsedMs: number, lastLine: string, label = 'build'): string {
   const hint =
     lastLine.length > HEARTBEAT_HINT_LENGTH ? `${lastLine.slice(0, HEARTBEAT_HINT_LENGTH - 3)}...` : lastLine;
   const activity = hint.trim() === '' ? '' : `: ${hint}`;
-  return `${label.padEnd(11)} still running (${formatHeartbeatElapsed(elapsedMs)})${activity}`;
+  return `${label.padEnd(11)} still running (${formatElapsed(elapsedMs)})${activity}`;
 }
+
+export type HeartbeatSchedule = (run: () => void, delayMs: number) => () => void;
+
+const defaultSchedule: HeartbeatSchedule = (run, delayMs) => {
+  const timer = setTimeout(run, delayMs);
+  timer.unref?.();
+  return () => clearTimeout(timer);
+};
 
 export function startBuildHeartbeat({
   intervalMs,
@@ -391,17 +393,33 @@ export function startBuildHeartbeat({
   lastLine,
   emit,
   label = 'build',
+  schedule = defaultSchedule,
 }: {
   intervalMs: number;
   elapsed: () => number;
   lastLine: () => string;
   emit: (line: string) => void;
   label?: string;
+  schedule?: HeartbeatSchedule;
 }): () => void {
   if (!(intervalMs > 0)) return () => {};
-  const timer = setInterval(() => emit(heartbeatLine(elapsed(), lastLine(), label)), intervalMs);
-  timer.unref?.();
-  return () => clearInterval(timer);
+  let stopped = false;
+  let lastBeat = 0;
+  function tick() {
+    if (stopped) return;
+    const ms = elapsed();
+    const beat = Math.floor(ms / intervalMs) * intervalMs;
+    if (beat > lastBeat) {
+      lastBeat = beat;
+      emit(heartbeatLine(beat, lastLine(), label));
+    }
+    cancel = schedule(tick, intervalMs - (ms % intervalMs));
+  }
+  let cancel = schedule(tick, intervalMs);
+  return () => {
+    stopped = true;
+    cancel();
+  };
 }
 
 function failedResult({

@@ -56,6 +56,8 @@ import {
   noMetroRemedy,
   pickDevClientScheme,
   resolveMetroWithRetry,
+  SLOW_STEP_MS,
+  stepClock,
   stepTimer,
 } from './ios.ts';
 import {
@@ -822,8 +824,9 @@ async function verifyAndroidRun({
   if (verification?.verified) {
     phase(
       'verify',
-      `ready: bundle loaded, stable for 3s` +
+      `bundle loaded` +
         (verification.processAlive === true ? ', process alive' : '') +
+        `, stable for 3s -- the first screen may still be rendering` +
         ` (${formatDuration(verification.waitedMs ?? 0)} total)`,
     );
     for (const record of verification.errors ?? []) {
@@ -1768,6 +1771,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     });
     if (capacity) return fail(capacity.code, capacity.message, capacity.remedy);
 
+    const prepare = stepClock(now);
     try {
       device = await ensureDevice({
         platform: PLATFORM,
@@ -1792,6 +1796,10 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         lines: diag.lines,
         logPath: diag.logPath ? displayPath(root, diag.logPath) : null,
       });
+    }
+    const prepareMs = prepare();
+    if (prepareMs >= SLOW_STEP_MS) {
+      phase('device', `${device.avdName || device.deviceName || label} prepared (${formatDuration(prepareMs)})`);
     }
 
     const bootTimer = stepTimer(now);
