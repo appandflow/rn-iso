@@ -210,7 +210,12 @@ other line goes to stderr, so it is always safe to pipe.
   avdName         the AVD's NAME (stim-<label>). The serial is a slot --
                   emulator-5554 is whatever booted into that console port
                   first -- so this is what addresses the emulator in
-                  \`emulator -avd\`, avdmanager, or a device tool
+                  \`emulator -avd\`, avdmanager, or a device tool. The console
+                  port is CHOSEN AND RECORDED under the global config lock
+                  BEFORE the emulator starts, then passed to it as \`-port\`,
+                  so two workspaces booting at the same moment cannot land on
+                  one serial. A boot that fails releases the port again and
+                  keeps the AVD recorded for \`gc\`
   deviceName      the same name, matching the iOS payload's field
   fingerprint / cacheKey / cacheHit / cacheSkipped / waitedForBuild /
   appPath / installSkipped / launched

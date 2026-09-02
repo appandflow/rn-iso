@@ -143,6 +143,17 @@ export function setDevice(projectPath: string, platform: string, deviceFields: D
   });
 }
 
+export function releaseAndroidConsolePort(projectPath: string, consolePort: number): boolean {
+  return withConfigLock(() => {
+    const cfg = loadConfig();
+    const android = cfg?.projects?.[projectPath]?.platforms?.android;
+    if (!cfg || !android || android.consolePort !== consolePort) return false;
+    delete android.consolePort;
+    saveConfig(cfg);
+    return true;
+  });
+}
+
 export function clearDevice(projectPath: string, platform: string): void {
   withConfigLock(() => {
     const cfg = loadConfig();

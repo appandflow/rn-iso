@@ -2,8 +2,15 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert';
-import { deviceCapacityRefusal, deviceTypeMismatch, ensureBooted, ensureOwnedDevice } from '../engine/device.ts';
-import { getProject, setDevice, upsertProject } from '../config.ts';
+import {
+  claimAndroidConsolePort,
+  deviceCapacityRefusal,
+  deviceTypeMismatch,
+  ensureBooted,
+  ensureOwnedDevice,
+} from '../engine/device.ts';
+import { allConsolePortsAndSerials, getProject, setDevice, upsertProject } from '../config.ts';
+import type { DeviceRecord } from '../types.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { makeAdbDevices, makeConfig, makeIosSim } from './_factories.ts';
 
@@ -706,11 +713,17 @@ describe('ensureOwnedDevice: android', () => {
     createAvdError = null,
     writeAvdFiles = true,
     beforeCreateAvdError = () => {},
+    bootCompletes = true,
+    runningAvdName = '',
+    onSpawn = () => {},
   }: {
     avds?: string[];
     createAvdError?: string | null;
     writeAvdFiles?: boolean;
     beforeCreateAvdError?: () => void;
+    bootCompletes?: boolean;
+    runningAvdName?: string;
+    onSpawn?: () => void;
   } = {}) {
     const run: string[] = [];
     const spawn: { cmd: string; args: readonly string[]; opts?: object }[] = [];
@@ -740,8 +753,8 @@ describe('ensureOwnedDevice: android', () => {
           }
           if (/delete avd/.test(cmd)) return '';
           if (cmd === 'adb devices') return 'List of devices attached\n';
-          if (/emu avd name/.test(cmd)) return '';
-          if (/getprop sys\.boot_completed/.test(cmd)) return '1';
+          if (/emu avd name/.test(cmd)) return runningAvdName;
+          if (/getprop sys\.boot_completed/.test(cmd)) return bootCompletes ? '1' : '';
           if (/getprop /.test(cmd)) return '';
           throw new Error(`unexpected run: ${cmd}`);
         },
@@ -756,6 +769,7 @@ describe('ensureOwnedDevice: android', () => {
           return '';
         },
         spawn(cmd: string, args: readonly string[], opts?: object) {
+          onSpawn();
           spawn.push({ cmd, args, opts });
           return { pid: 9999, unref() {} };
         },
@@ -1009,6 +1023,128 @@ describe('ensureOwnedDevice: android', () => {
       rmSync(other, { recursive: true, force: true });
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  test('the console port is recorded before the emulator process is spawned', async () => {
+    const root = projectDir();
+    try {
+      let recordedAtSpawn: DeviceRecord | undefined;
+      const { spawn, exec } = androidExecutor({
+        onSpawn: () => {
+          recordedAtSpawn = getProject(root)?.platforms?.android;
+        },
+      });
+      setExecutor(exec);
+      const result = await ensureOwnedDevice({
+        platform: 'android',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: {},
+      });
+      expect(result.consolePort).toBe(5554);
+      expect(recordedAtSpawn).toMatchObject({ avdName: 'stim-app', consolePort: 5554, owned: true });
+      expect(spawn[0]?.args).toContain('5554');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a failed boot releases the port claim and keeps the owned AVD recorded for gc', async () => {
+    const root = projectDir();
+    try {
+      const { exec } = androidExecutor({ bootCompletes: false });
+      setExecutor(exec);
+      await expect(
+        ensureOwnedDevice({
+          platform: 'android',
+          project: getProject(root),
+          projectPath: root,
+          label: 'app',
+          settings: {},
+          alive: () => false,
+        }),
+      ).rejects.toThrow(/exited before the device finished booting/);
+      const record = getProject(root)?.platforms?.android;
+      expect(record).toMatchObject({ avdName: 'stim-app', owned: true });
+      expect(record?.consolePort).toBeUndefined();
+      expect(allConsolePortsAndSerials().androidConsolePorts).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('an emulator that booted another AVD on the claimed serial is refused and the claim released', async () => {
+    const root = projectDir();
+    try {
+      const { exec } = androidExecutor({ runningAvdName: 'Pixel_7_API_35\nOK' });
+      setExecutor(exec);
+      await expect(
+        ensureOwnedDevice({
+          platform: 'android',
+          project: getProject(root),
+          projectPath: root,
+          label: 'app',
+          settings: {},
+        }),
+      ).rejects.toThrow(/emulator-5554 is running AVD Pixel_7_API_35, not this workspace's owned AVD stim-app/);
+      expect(getProject(root)?.platforms?.android?.consolePort).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('claimAndroidConsolePort', () => {
+  function fakeRegistry() {
+    const ports = new Map<string, number>();
+    let depth = 0;
+    const seenDepths: number[] = [];
+    return {
+      ports,
+      seenDepths,
+      lock: <T>(fn: () => T): T => {
+        expect(depth).toBe(0);
+        depth += 1;
+        try {
+          return fn();
+        } finally {
+          depth -= 1;
+        }
+      },
+      recordedPorts: () => {
+        seenDepths.push(depth);
+        return [...ports.values()];
+      },
+      record: (projectPath: string, _platform: string, fields: DeviceRecord) => {
+        seenDepths.push(depth);
+        ports.set(projectPath, fields.consolePort as number);
+      },
+    };
+  }
+
+  test('two workspaces claiming at once take distinct ports because the read and the record share one lock', () => {
+    const registry = fakeRegistry();
+    const deps = { lock: registry.lock, recordedPorts: registry.recordedPorts, record: registry.record };
+    const first = claimAndroidConsolePort({ projectPath: '/w/a', avdName: 'stim-a' }, deps);
+    const second = claimAndroidConsolePort({ projectPath: '/w/b', avdName: 'stim-b' }, deps);
+    expect(first.consolePort).toBe(5554);
+    expect(second.consolePort).toBe(5556);
+    expect([...registry.ports]).toEqual([
+      ['/w/a', 5554],
+      ['/w/b', 5556],
+    ]);
+    expect(registry.seenDepths).toEqual([1, 1, 1, 1]);
+  });
+
+  test('live emulator ports outside the registry are claimed too', () => {
+    const registry = fakeRegistry();
+    const claim = claimAndroidConsolePort(
+      { projectPath: '/w/a', avdName: 'stim-a', deviceName: 'stim-a', livePorts: [5554, 5556] },
+      { lock: registry.lock, recordedPorts: registry.recordedPorts, record: registry.record },
+    );
+    expect(claim.consolePort).toBe(5558);
+    expect(registry.ports.get('/w/a')).toBe(5558);
   });
 });
 
