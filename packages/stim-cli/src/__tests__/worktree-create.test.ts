@@ -358,6 +358,24 @@ test('create action: --carry-ignored into a nested --dir does not copy the workt
   }
 });
 
+test('create action: a non-string worktreeDir setting refuses cleanly instead of throwing', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-dir-invalid-')));
+  const repo = join(base, 'repo');
+  try {
+    initScratchRepo(repo);
+    writeFileSync(join(repo, '.stim.json'), JSON.stringify({ worktreeDir: 5 }));
+
+    const { logs, errs } = await runCreateInRepo(repo, 'feat-invalid', { install: false });
+
+    expect(logs).toEqual([]);
+    expect(errs.some((e) => /Invalid worktreeDir setting/.test(e))).toBeTruthy();
+  } finally {
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test('create action: --dir takes precedence over the worktreeDir setting', async () => {
   resetExecutor();
   const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-dir-setting-')));

@@ -29,6 +29,7 @@ import {
   resolveSettings,
   tunnelModeSetting,
   unknownSettingKeys,
+  worktreeDirSettingError,
 } from '../settings.ts';
 import { setProjectSetting, setRepoSetting, upsertProject } from '../config.ts';
 
@@ -545,6 +546,11 @@ test('ios.lanHost takes a bare address and refuses everything that would break s
   ]) {
     expect(iosLanHostSettingError({ ios: { lanHost: bad } })).toMatch(/Invalid ios\.lanHost/);
   }
+});
+
+test('worktreeDir refuses a non-string value and accepts a valid path', () => {
+  expect(worktreeDirSettingError({ worktreeDir: 5 })).toMatch(/Invalid worktreeDir setting/);
+  expect(worktreeDirSettingError({ worktreeDir: '.stim-worktrees' })).toBe(null);
 });
 
 test('the three iOS device settings are known keys', () => {
