@@ -1479,7 +1479,7 @@ async function finishIosRun({
     );
   } else {
     const installTimer = stepTimer(d.now);
-    const installed = d.installIosApp({ udid, appPath: appPath!, bundleId, devClientScheme: scheme });
+    const installed = d.installIosApp({ udid, appPath: appPath!, bundleId, devClientScheme: scheme }, { now: d.now });
     if (installed?.failed) {
       return fail({
         code: installed.code || 'STIM_INSTALL_FAILED',
@@ -1489,12 +1489,19 @@ async function finishIosRun({
       });
     }
     installSkipped = Boolean(installed?.skipped);
+    const artifactDuration =
+      installed?.artifactDurationMs === undefined
+        ? installTimer()
+        : `(${formatDuration(installed.artifactDurationMs)})`;
     phase(
       'install',
       installSkipped
-        ? `skipped; ${deviceLabel(device, udid)} already holds this app ${installTimer()}`
-        : `-> ${deviceLabel(device, udid)} ${installTimer()}`,
+        ? `unchanged; ${deviceLabel(device, udid)} already holds this app; proof ${artifactDuration}`
+        : `-> ${deviceLabel(device, udid)} ${artifactDuration}`,
     );
+    if (!remoteDevice && installed?.devClientPreparationDurationMs !== undefined) {
+      phase('dev client', `prepared (${formatDuration(installed.devClientPreparationDurationMs)})`);
+    }
 
     dropSwapDir();
 
