@@ -22,8 +22,8 @@ flags without an explicit product decision. Projects can wrap Stim when they
 need custom behavior.
 
 Runtime state belongs under `$STIM_HOME/workspaces/`, not in the project
-tree. Stim has no init step and never mutates project setup; do not add
-either. `doctor` reports setup that requires project judgment.
+tree. Stim has no init step; do not add one. `doctor` reports setup that
+requires project judgment.
 
 ## Development
 
