@@ -1093,6 +1093,11 @@ RUNNING UNDER A SANDBOX
   so this is the shape of the problem, not one harness's quirk. Codex also
   blocks network egress by default, which breaks a cache lookup and a fetch.
 
+  \`stim doctor\` names this when it sees a sandboxing harness, and
+  \`stim doctor --fix\` writes the three keys into .claude/settings.local.json,
+  the per-user file, merging with what is there. It refuses under Codex, which
+  has no per-path allowance to add.
+
   Two ways out, and choosing at the start of a session beats discovering it
   three failures in. Either run Stim with the harness's sandbox disabled, or
   allow the three. In Claude Code that is settings.json:
@@ -1361,6 +1366,7 @@ THE OPTION SURFACE, IN FULL
   logs            --source --level --since --grep --tail --follow --errors --json
   stop            --json --force
   status          --json          (already machine-wide)
+  doctor          --json --fix    (--fix writes only the sandbox allowance)
   gc              --delete --older-than <days> --cache <name|all>
   worktree create <name> --carry-ignored --base <ref> --dir <path> --label <label>; remove [path] --force
 

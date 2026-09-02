@@ -84,6 +84,12 @@ test('the flags the guide advertises are the flags the commands define', () => {
     'gc.ts': ['--delete', '--older-than', '--cache'],
     'worktree.ts': ['--carry-ignored', '--base', '--dir', '--label', '--force'],
   };
+  const doctorFlags: Record<string, string[]> = { 'doctor.ts': ['--json', '--fix'] };
+  for (const [file, flags] of Object.entries(doctorFlags)) {
+    const src = readFileSync(new URL(`../commands/${file}`, import.meta.url), 'utf-8');
+    for (const flag of flags) expect(src.includes(flag)).toBeTruthy();
+  }
+
   const retired: Record<string, string[]> = { 'gc.ts': ['--all'] };
   for (const [file, flags] of Object.entries(retired)) {
     const src = readFileSync(new URL(`../commands/${file}`, import.meta.url), 'utf-8');
