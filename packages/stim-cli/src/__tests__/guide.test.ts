@@ -891,3 +891,18 @@ test('the guide documents the flavor refusal that lands before the build', () =>
   expect(errors).toMatch(/STIM_BAD_ARG[\s\S]*declares product flavors with\s+no variant selected/);
   expect(errors).toMatch(/caught before\s+the build instead \(STIM_BAD_ARG\)/);
 });
+
+test('the cleanup guide documents what gc does with device lease files', () => {
+  const cleanup = renderTopic('cleanup');
+  assert(cleanup);
+  expect(cleanup).toMatch(/DEVICE LEASES/);
+  expect(cleanup).toMatch(/~\/\.stim\/device-locks/);
+  expect(cleanup).toMatch(/`gc` reports[\s\S]*expiry has\s+passed/);
+  expect(cleanup).toMatch(/`gc --delete` removes those\s+files/);
+  expect(cleanup).toMatch(/under its own lock/);
+  expect(cleanup).toMatch(/reported and KEPT[\s\S]*does\s+not parse/);
+  expect(cleanup).toMatch(/unexpired lease\s+whose holder directory is gone/);
+  expect(cleanup).toMatch(/`stim status` lists every lease file/);
+  expect(cleanup).toMatch(/`stop` and\s+`worktree remove` release the leases/);
+  expect(cleanup).toMatch(/never remove another workspace's/);
+});

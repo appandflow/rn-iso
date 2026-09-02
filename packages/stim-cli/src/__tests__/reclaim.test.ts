@@ -7,6 +7,7 @@ import { upsertProject, setDevice, getProject } from '../config.ts';
 import { describeDereferenced, reclaimProject } from '../reclaim.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { ensureWorkspaceStorage, workspaceStateFile } from '../paths.ts';
+import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
 
 let tmpHome: string;
 
@@ -720,4 +721,41 @@ describe('the unverified-collector start-time split (mocked verify and start tim
     expect(r.skippedDevices).toEqual([]);
     rmSync(root, { recursive: true, force: true });
   }, 20_000);
+});
+
+test('reclaimProject releases the leases the workspace holds', async () => {
+  setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
+  const root = mkdtempSync(join(tmpdir(), 'stim-ws-'));
+  try {
+    ensureWorkspaceStorage(root);
+    const taken = takeLease({ root, platform: 'ios', id: 'UDID-1', deviceName: 'Old iPhone', kind: 'declared' });
+    expect(taken.status).toBe('taken');
+    const other = takeLease({ root: '/w/other', platform: 'android', id: 'R5CT', kind: 'run' });
+    expect(other.status).toBe('taken');
+
+    const result = await reclaimProject(root, { deleteOwnedDevices: false });
+
+    expect(result.releasedLeases).toEqual([
+      { platform: 'ios', id: 'UDID-1', deviceName: 'Old iPhone', expiresAt: expect.any(String) },
+    ]);
+    expect(listLeaseFiles().map((entry) => entry.id)).toEqual(['R5CT']);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('reclaimProject releases a lease whose token the recreated workspace lost', async () => {
+  setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
+  const root = mkdtempSync(join(tmpdir(), 'stim-ws-'));
+  try {
+    takeLease({ root, platform: 'ios', id: 'UDID-1', kind: 'declared' });
+    rmSync(workspaceStateFile(root), { force: true });
+
+    const result = await reclaimProject(root, { deleteOwnedDevices: false });
+
+    expect(result.releasedLeases.map((lease) => lease.id)).toEqual(['UDID-1']);
+    expect(listLeaseFiles()).toEqual([]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

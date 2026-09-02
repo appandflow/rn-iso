@@ -7,6 +7,7 @@ import { clearDevice, getConfigDir, loadConfig } from '../config.ts';
 import { directorySize, formatBytes, isOnMountedVolume, listMountedVolumes, volumeRootFor } from '../fs-util.ts';
 import { listBuildLocks, readBuildLock } from '../engine/build-lock.ts';
 import { listBuildSlots, readBuildSlot } from '../engine/build-slots.ts';
+import { leaseIsExpired, listLeaseFiles, removeExpiredLease, type LeaseFileEntry } from '../engine/device-lease.ts';
 import {
   findOrphanedOwnedSessions,
   getSessionArgs,
@@ -82,6 +83,17 @@ interface EasSessionSweep {
   deletionSafe: boolean;
 }
 
+interface KeptLeaseFile {
+  name: string;
+  path: string;
+  reason: string;
+}
+
+interface DeviceLeaseGarbage {
+  expired: LeaseFileEntry[];
+  kept: KeptLeaseFile[];
+}
+
 interface GcReport {
   skipped: GcSkip[];
   deadProjects: string[];
@@ -90,6 +102,7 @@ interface GcReport {
   staleDeviceRecords: StaleDeviceRecord[];
   buildLocks: { stale: BuildLockInfo[]; live: BuildLockInfo[] };
   buildSlots: { stale: BuildSlotInfo[]; live: BuildSlotInfo[] };
+  deviceLeases: DeviceLeaseGarbage;
   deviceSweepNotices: string[];
   easSessionSweep: EasSessionSweep;
   caches: GcCache[];
@@ -611,6 +624,7 @@ export function formatGcReport({
   staleDeviceRecords = [],
   buildLocks = { stale: [], live: [] },
   buildSlots = { stale: [], live: [] },
+  deviceLeases = { expired: [], kept: [] },
   deviceSweepNotices = [],
   easSessionSweep = { projectScope: null, orphaned: [], notices: [], deletionSafe: true },
   caches = [],
@@ -621,6 +635,7 @@ export function formatGcReport({
   const staleLocks = buildLocks?.stale ?? [];
   const liveLocks = buildLocks?.live ?? [];
   const staleSlots = buildSlots?.stale ?? [];
+  const expiredLeases = deviceLeases?.expired ?? [];
 
   if (cacheScope) {
     lines.push(`Cache scope: "${cacheScope}". Devices, project entries and locks were not inspected.`);
@@ -631,6 +646,7 @@ export function formatGcReport({
     staleDeviceRecords.length === 0 &&
     staleLocks.length === 0 &&
     staleSlots.length === 0 &&
+    expiredLeases.length === 0 &&
     easSessionSweep.orphaned.length === 0
   ) {
     const reasons = [];
@@ -711,6 +727,8 @@ export function formatGcReport({
     }
   }
 
+  lines.push(...leaseGarbageLines(deviceLeases));
+
   if (deviceSweepNotices.length) {
     lines.push(`Device sweep notices (${deviceSweepNotices.length}):`);
     for (const notice of deviceSweepNotices) lines.push(`  ${notice}`);
@@ -745,6 +763,26 @@ export function formatGcReport({
     }
   }
 
+  return lines;
+}
+
+function leaseGarbageLines({ expired, kept }: DeviceLeaseGarbage): string[] {
+  const lines: string[] = [];
+  if (expired.length) {
+    lines.push(`Expired device leases (${expired.length}) - the device is already free:`);
+    for (const entry of expired) {
+      const name = entry.lease?.deviceName ? ` (${entry.lease.deviceName})` : '';
+      lines.push(`  ${entry.platform} ${entry.id ?? entry.name}${name}`);
+      lines.push(
+        `              held by ${entry.lease?.holder ?? 'an unrecorded workspace'} until ${entry.lease?.expiresAt}`,
+      );
+    }
+    lines.push('              --delete removes the FILE only; an expired lease already holds nothing.');
+  }
+  if (kept.length) {
+    lines.push(`Device lease files kept (${kept.length}) - reported, never deleted:`);
+    for (const entry of kept) lines.push(`  ${entry.name}: ${entry.reason}`);
+  }
   return lines;
 }
 
@@ -886,6 +924,34 @@ function emptyCache(cache: CacheDescriptor): {
   return { removed, bytes: failed ? 0 : (cache.bytes ?? 0), failed, skipped: null };
 }
 
+function collectDeviceLeases(now: number): DeviceLeaseGarbage {
+  const expired: LeaseFileEntry[] = [];
+  const kept: KeptLeaseFile[] = [];
+  for (const entry of listLeaseFiles()) {
+    const lease = entry.lease;
+    if (!lease) {
+      kept.push({
+        name: entry.name,
+        path: entry.path,
+        reason: 'it does not parse as a lease, so no run may take that device',
+      });
+      continue;
+    }
+    if (leaseIsExpired(lease, now)) {
+      expired.push(entry);
+      continue;
+    }
+    if (!existsSync(lease.holder)) {
+      kept.push({
+        name: entry.name,
+        path: entry.path,
+        reason: `${lease.holder} is not on this machine, but the lease runs until ${lease.expiresAt}`,
+      });
+    }
+  }
+  return { expired, kept };
+}
+
 export async function collectGcReport(
   {
     olderThan = null,
@@ -910,6 +976,7 @@ export async function collectGcReport(
       staleDeviceRecords: [],
       buildLocks: { stale: [], live: [] },
       buildSlots: { stale: [], live: [] },
+      deviceLeases: { expired: [], kept: [] },
       deviceSweepNotices: [],
       easSessionSweep: { projectScope: null, orphaned: [], notices: [], deletionSafe: true },
       caches,
@@ -1027,6 +1094,7 @@ export async function collectGcReport(
 
   const locks = listBuildLocks();
   const slots = listBuildSlots();
+  const deviceLeases = collectDeviceLeases(now);
 
   return {
     skipped,
@@ -1042,6 +1110,7 @@ export async function collectGcReport(
       stale: slots.filter((s) => !s.alive),
       live: slots.filter((s) => s.alive),
     },
+    deviceLeases,
     deviceSweepNotices,
     easSessionSweep,
     caches,
@@ -1158,6 +1227,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
     staleDeviceRecords,
     buildLocks,
     buildSlots,
+    deviceLeases,
     easSessionSweep,
     caches,
   } = report;
@@ -1168,6 +1238,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
     staleDeviceRecords.length > 0 ||
     buildLocks.stale.length > 0 ||
     buildSlots.stale.length > 0 ||
+    deviceLeases.expired.length > 0 ||
     easSessionSweep.orphaned.length > 0 ||
     ((olderThan !== null || all) && caches.length > 0);
 
@@ -1271,6 +1342,23 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
     } catch (err) {
       deleteFailures++;
       console.log(chalk.red(`Failed to clear the build slot at ${slot.path}: ${(err as Error)?.message || err}`));
+    }
+  }
+
+  for (const entry of deviceLeases.expired) {
+    try {
+      if (removeExpiredLease(entry)) {
+        console.log(
+          chalk.green(
+            `Cleared the expired ${entry.platform} device lease on ${entry.id ?? entry.name} (held by ${entry.lease?.holder ?? 'an unrecorded workspace'})`,
+          ),
+        );
+      } else {
+        console.log(chalk.dim(`${entry.name} is no longer an expired lease; left alone.`));
+      }
+    } catch (err) {
+      deleteFailures++;
+      console.log(chalk.red(`Failed to clear the device lease at ${entry.path}: ${(err as Error)?.message || err}`));
     }
   }
 
@@ -1500,7 +1588,7 @@ export default function gcCommand(program: Command): void {
   program
     .command('gc')
     .description(
-      'Report what Stim has left behind: dead project entries, orphaned owned devices and EAS sessions, records of devices that no longer exist, build locks whose builder is gone, and the shared build caches. Reports by default; pass --delete to act.',
+      'Report what Stim has left behind: dead project entries, orphaned owned devices and EAS sessions, records of devices that no longer exist, build locks whose builder is gone, expired physical-device leases, and the shared build caches. Reports by default; pass --delete to act.',
     )
     .option('--delete', 'actually prune the reported entries and reap the reported devices')
     .option(

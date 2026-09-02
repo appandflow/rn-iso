@@ -18,6 +18,7 @@ import {
 import { makeConfig, makeError, makeMetroResolution } from './_factories.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
+import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
 
 test('no supervisor recorded anywhere is "none", not an error', () => {
   const r = resolveSupervisorTarget({ state: null, record: null, reservedPort: 8083, isAlive: () => true });
@@ -1119,4 +1120,35 @@ test('an operator-supplied tunnel (metro.publicUrl) is never recorded, so `stop`
   });
   expect(called).toBe(false);
   expect(r.outcomes.metroTunnel.status).toBe('none');
+});
+
+test('stop releases the leases this workspace holds and lists them', async () => {
+  const taken = takeLease({ root: tmpRoot, platform: 'ios', id: 'UDID-1', deviceName: 'Old iPhone', kind: 'declared' });
+  assert(taken.status === 'taken');
+  takeLease({ root: '/w/other', platform: 'android', id: 'R5CT', kind: 'run' });
+
+  const reported: string[] = [];
+  const r = await runStop({
+    root: tmpRoot,
+    project: null,
+    state: null,
+    collectors: {},
+    report: (line: string) => reported.push(line),
+  });
+
+  expect(r.outcomes.releasedLeases).toEqual([
+    { platform: 'ios', id: 'UDID-1', deviceName: 'Old iPhone', expiresAt: taken.lease.expiresAt },
+  ]);
+  expect(r.summary).toMatch(/ios lease on UDID-1 released/);
+  expect(reported.join('\n')).toMatch(/released the ios lease on UDID-1/);
+  expect(listLeaseFiles().map((entry) => entry.id)).toEqual(['R5CT']);
+
+  const payload = JSON.parse(JSON.stringify({ root: tmpRoot, ok: r.ok, ...r.outcomes }));
+  expect(payload.releasedLeases).toHaveLength(1);
+});
+
+test('stop says nothing about leases when this workspace holds none', async () => {
+  const r = await runStop({ root: tmpRoot, project: null, state: null, collectors: {}, report: () => {} });
+  expect(r.outcomes.releasedLeases).toEqual([]);
+  expect(r.summary).not.toMatch(/lease/);
 });

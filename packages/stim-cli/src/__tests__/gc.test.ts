@@ -19,6 +19,7 @@ import { setExecutor, resetExecutor } from '../exec.ts';
 import { saveConfig, loadConfig } from '../config.ts';
 import { register } from '../cache-manifest.ts';
 import { ensureRemoteBootOwned, withRemoteSessionLock } from '../engine/device-remote.ts';
+import { deviceLeasePath, deviceLocksDir } from '../engine/device-lease.ts';
 import { withEasProjectLock } from '../engine/eas-project-lock.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../paths.ts';
 import gcCommand, {
@@ -2515,4 +2516,135 @@ test('--delete removes the stale build slot and leaves a live one alone', async 
   expect(existsSync(stale)).toBe(false);
   expect(existsSync(live)).toBe(true);
   expect(output).toMatch(/build slot/i);
+});
+
+function writeLeaseFile({
+  platform = 'ios',
+  id = 'UDID-LEASE',
+  holder = '/w/holder',
+  expiresInMs = 60_000,
+  body = null,
+}: {
+  platform?: string;
+  id?: string;
+  holder?: string;
+  expiresInMs?: number;
+  body?: string | null;
+}) {
+  mkdirSync(deviceLocksDir(), { recursive: true });
+  const path = deviceLeasePath(platform, id);
+  const now = Date.now();
+  writeFileSync(
+    path,
+    body ??
+      JSON.stringify({
+        version: 1,
+        platform,
+        id,
+        deviceName: 'Old iPhone',
+        holder,
+        token: 'token-1',
+        grantedAt: new Date(now - 60_000).toISOString(),
+        expiresAt: new Date(now + expiresInMs).toISOString(),
+      }),
+  );
+  return path;
+}
+
+describe('expired device leases', () => {
+  test('a bare gc reports an expired lease and removes nothing', async () => {
+    saveConfig({ version: 2, projects: {}, repos: {} });
+    installExecutor();
+    const path = writeLeaseFile({ expiresInMs: -1000 });
+
+    const output = await captureLog(() => sweepingGc({}));
+    expect(output).toMatch(/Expired device leases \(1\)/);
+    expect(output).toMatch(/UDID-LEASE/);
+    expect(output).toMatch(/\/w\/holder/);
+    expect(existsSync(path)).toBe(true);
+  });
+
+  test('--delete removes the expired lease and leaves a live one alone', async () => {
+    saveConfig({ version: 2, projects: {}, repos: {} });
+    installExecutor();
+    const expired = writeLeaseFile({ id: 'UDID-OLD', expiresInMs: -1000 });
+    const live = writeLeaseFile({ id: 'UDID-LIVE', holder: tmpHome, expiresInMs: 600_000 });
+
+    const output = await captureLog(() => sweepingGc({ delete: true }));
+    expect(existsSync(expired)).toBe(false);
+    expect(existsSync(live)).toBe(true);
+    expect(output).toMatch(/Cleared the expired ios device lease on UDID-OLD/);
+  });
+
+  test('a file that does not parse is reported and kept', async () => {
+    saveConfig({ version: 2, projects: {}, repos: {} });
+    installExecutor();
+    const path = writeLeaseFile({ id: 'UDID-BROKEN', body: '{ not a lease' });
+
+    const output = await captureLog(() => sweepingGc({ delete: true }));
+    expect(output).toMatch(/Device lease files kept \(1\)/);
+    expect(output).toMatch(/does not parse as a lease/);
+    expect(existsSync(path)).toBe(true);
+  });
+
+  test('an unexpired lease whose holder is gone is reported and kept', async () => {
+    saveConfig({ version: 2, projects: {}, repos: {} });
+    installExecutor();
+    const path = writeLeaseFile({ id: 'UDID-ABSENT', holder: join(fakeHome, 'unmounted'), expiresInMs: 600_000 });
+
+    const output = await captureLog(() => sweepingGc({ delete: true }));
+    expect(output).toMatch(/Device lease files kept \(1\)/);
+    expect(output).toMatch(/is not on this machine, but the lease runs until/);
+    expect(existsSync(path)).toBe(true);
+  });
+
+  test('a lease of a live workspace is not reported at all', async () => {
+    saveConfig({ version: 2, projects: {}, repos: {} });
+    installExecutor();
+    writeLeaseFile({ holder: tmpHome, expiresInMs: 600_000 });
+
+    const output = await captureLog(() => sweepingGc({}));
+    expect(output).not.toMatch(/device lease/i);
+  });
+});
+
+test('an expired lease counts as something to reclaim', () => {
+  const lines = formatGcReport({
+    deviceLeases: {
+      expired: [
+        {
+          path: '/h/device-locks/ios-U.json',
+          name: 'ios-U.json',
+          platform: 'ios',
+          id: 'U',
+          lease: {
+            version: 1,
+            platform: 'ios',
+            id: 'U',
+            deviceName: 'Old iPhone',
+            holder: '/w/dead',
+            token: 't',
+            grantedAt: null,
+            expiresAt: '2026-09-02T12:00:00.000Z',
+          },
+        },
+      ],
+      kept: [],
+    },
+  }).join('\n');
+  expect(lines.split('\n')[0]).not.toMatch(/^Nothing to reclaim\.$/);
+  expect(lines).toMatch(/Expired device leases \(1\)/);
+  expect(lines).toMatch(/Old iPhone/);
+  expect(lines).toMatch(/\/w\/dead/);
+});
+
+test('a kept lease file alone is not something to reclaim', () => {
+  const lines = formatGcReport({
+    deviceLeases: {
+      expired: [],
+      kept: [{ name: 'ios-U.json', path: '/h/device-locks/ios-U.json', reason: 'it does not parse as a lease' }],
+    },
+  }).join('\n');
+  expect(lines).toMatch(/Nothing to reclaim/);
+  expect(lines).toMatch(/Device lease files kept \(1\)/);
 });

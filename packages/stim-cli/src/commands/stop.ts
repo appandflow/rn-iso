@@ -18,6 +18,7 @@ import {
 import { verifyCollectorOwnership } from '../collector/ownership.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
+import { releaseWorkspaceLeases, type ReleasedLease } from '../engine/device-lease.ts';
 import { resolveEasCliBin } from '../engine/remote-cache.ts';
 import { stopTunnel } from '../engine/tunnel.ts';
 
@@ -267,6 +268,7 @@ interface StopOutcomes {
   device: DeviceOutcome;
   port: PortOutcome;
   metroTunnel: TunnelOutcome;
+  releasedLeases: ReleasedLease[];
 }
 
 interface TunnelOutcome {
@@ -304,6 +306,7 @@ export async function runStop({
   teardownRemoteSession = defaultTeardownRemoteSession,
   metroTunnel = undefined,
   stopMetroTunnel = stopTunnel,
+  releaseLeases = releaseWorkspaceLeases,
   freePort = defaultFreePort,
   clearRegistration = defaultClearRegistration,
   clearState = clearSupervisorState,
@@ -329,6 +332,7 @@ export async function runStop({
   remoteDevice?: RemoteDeviceRecord | null;
   metroTunnel?: ReturnType<typeof readMetroTunnel> | undefined;
   stopMetroTunnel?: typeof stopTunnel;
+  releaseLeases?: (root: string) => ReleasedLease[];
   teardownRemoteSession?: (root: string, sessionId: string) => { status: 'torn-down' | 'failed'; reason?: string };
   freePort?: (root: string, port: number) => void;
   clearRegistration?: (root: string) => Promise<void>;
@@ -348,6 +352,7 @@ export async function runStop({
     device: { ios: null, android: null },
     port: { status: 'none', port: reservedPort },
     metroTunnel: { status: 'none' },
+    releasedLeases: [],
   };
   let ok = true;
   let stillHolding: string | null | undefined = null;
@@ -460,6 +465,11 @@ export async function runStop({
     }
   } else if (tunnel?.kind === 'expo') {
     outcomes.metroTunnel = { status: 'not-managed' };
+  }
+
+  outcomes.releasedLeases = releaseLeases(root);
+  for (const lease of outcomes.releasedLeases) {
+    report(chalk.dim(`leases: released the ${lease.platform} lease on ${lease.id}`));
   }
 
   if (stillHolding) {
@@ -729,6 +739,7 @@ function summarize(root: string, outcomes: StopOutcomes, ok: boolean): string {
   if (outcomes.metroTunnel.status === 'stopped') parts.push(`${outcomes.metroTunnel.provider} tunnel stopped`);
   if (outcomes.metroTunnel.status === 'failed')
     parts.push(`${outcomes.metroTunnel.provider} tunnel could not be stopped`);
+  for (const lease of outcomes.releasedLeases) parts.push(`${lease.platform} lease on ${lease.id} released`);
   const what = parts.length ? parts.join(', ') : 'nothing was running';
   return `${ok ? 'Stopped' : 'Stopped with problems'}: ${what} (${root})`;
 }

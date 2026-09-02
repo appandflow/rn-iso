@@ -98,7 +98,7 @@ function sleepSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
-function segment(value: string): string {
+export function segment(value: string): string {
   return (
     String(value)
       .replace(/[^A-Za-z0-9._-]+/g, '-')
