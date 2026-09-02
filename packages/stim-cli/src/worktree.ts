@@ -496,21 +496,21 @@ export function addWorktree({
   path,
   branch,
   baseRef,
-  cwd,
+  createBranch,
 }: {
   path: string;
   branch: string;
   baseRef: string;
-  cwd: string;
+  createBranch: boolean;
 }): string {
   assertSafeWorktreePath(path);
   mkdirSync(dirname(path), { recursive: true });
-  if (branchExists(cwd || dirname(path), branch)) {
+  if (!createBranch) {
     getExecutor().runFile('git', ['worktree', 'add', '--', path, branch]);
-  } else {
-    assertSafeBaseRef(baseRef);
-    getExecutor().runFile('git', ['worktree', 'add', '-b', branch, '--', path, baseRef]);
+    return path;
   }
+  assertSafeBaseRef(baseRef);
+  getExecutor().runFile('git', ['worktree', 'add', '-b', branch, '--', path, baseRef]);
   return path;
 }
 

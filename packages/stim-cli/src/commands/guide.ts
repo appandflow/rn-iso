@@ -1004,9 +1004,13 @@ STIM_WORKTREE_BRANCH_EXISTS  (worktree create)
   A leftover branch is no longer the usual cause. When \`git worktree add -b\`
   fails AFTER git created the branch (a locked .git/config, a read-only
   parent), Stim deletes the branch it just made, so the retry branches from
-  --base instead of attaching. It rolls back only a branch that create made:
-  one that already existed, moved off the base, or is checked out somewhere is
-  KEPT, and the note names \`git branch -D\` for it.
+  --base instead of attaching. It rolls back only a branch that create made,
+  and it decides that from whether THIS run passed -b, not from re-reading the
+  refs afterwards. So a branch that appears between the check and the add is
+  KEPT: git answers "a branch named ... already exists", and that answer is
+  proof this create did not make it. A branch that no longer matches the base
+  sha captured before the add, or that is checked out anywhere, is KEPT too.
+  Every keep names \`git branch -D\`.
 
 "failed to scan dependencies for source ..." on pods you did not touch  (ios)
   The compilation cache holds a damaged object. Xcode reports it per source
@@ -1948,7 +1952,11 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         overrides it for one run and resolves against the
                         current directory instead.
   worktree.baseRef      "head" (current HEAD) or "fresh" (origin/HEAD).
-                        Unset means "head".
+                        Unset means "head". It is a default, not an assertion:
+                        only the --base FLAG triggers the
+                        STIM_WORKTREE_BRANCH_EXISTS refusal, so a create that
+                        finds an existing worktree-<name> still attaches to it
+                        and says which ref was not applied.
   worktree.include      carry-over patterns, same role as .worktreeinclude
   worktree.exclude      additional --carry-ignored skip list, same role as
                         .worktreeexclude. Registered nested Git worktrees are

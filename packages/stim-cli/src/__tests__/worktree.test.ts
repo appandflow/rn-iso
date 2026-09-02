@@ -542,7 +542,7 @@ test('addWorktree runs git via runFile (no shell) with a `--` terminator, path a
       spawn: () => {},
     });
 
-    const result = addWorktree({ path, branch: 'feat-x', baseRef: 'origin/main', cwd: tmp });
+    const result = addWorktree({ path, branch: 'feat-x', baseRef: 'origin/main', createBranch: true });
 
     expect(result).toBe(path);
     expect(calls).toEqual([['git', ['worktree', 'add', '-b', 'feat-x', '--', path, 'origin/main']]]);
@@ -552,7 +552,7 @@ test('addWorktree runs git via runFile (no shell) with a `--` terminator, path a
   }
 });
 
-test('addWorktree attaches to an existing branch instead of erroring on -b', () => {
+test('addWorktree runs the form the caller chose and never re-decides for itself', () => {
   const tmp = mkdtempSync(join(tmpdir(), 'stim-test-add-reuse-'));
   try {
     const path = join(tmp, 'repo2');
@@ -565,11 +565,13 @@ test('addWorktree attaches to an existing branch instead of erroring on -b', () 
         calls.push([file, args]);
         return '';
       },
-      runQuiet: (cmd) => (/rev-parse --verify --quiet/.test(cmd) ? 'deadbeef' : ''),
+      runQuiet: (cmd) => {
+        throw new Error(`addWorktree must not re-resolve anything: ${cmd}`);
+      },
       spawn: () => {},
     });
 
-    const result = addWorktree({ path, branch: 'worktree-fix-login', baseRef: 'origin/main', cwd: tmp });
+    const result = addWorktree({ path, branch: 'worktree-fix-login', baseRef: 'origin/main', createBranch: false });
 
     expect(result).toBe(path);
     expect(calls).toEqual([['git', ['worktree', 'add', '--', path, 'worktree-fix-login']]]);
@@ -578,7 +580,7 @@ test('addWorktree attaches to an existing branch instead of erroring on -b', () 
   }
 });
 
-test('addWorktree uses -b for a genuinely new branch name', () => {
+test('addWorktree uses -b when the caller says the branch is new, whatever the refs say now', () => {
   const tmp = mkdtempSync(join(tmpdir(), 'stim-test-add-fresh-'));
   try {
     const path = join(tmp, 'repo3');
@@ -591,11 +593,11 @@ test('addWorktree uses -b for a genuinely new branch name', () => {
         calls.push([file, args]);
         return '';
       },
-      runQuiet: () => null,
+      runQuiet: () => 'deadbeef',
       spawn: () => {},
     });
 
-    addWorktree({ path, branch: 'worktree-new-thing', baseRef: 'origin/main', cwd: tmp });
+    addWorktree({ path, branch: 'worktree-new-thing', baseRef: 'origin/main', createBranch: true });
 
     expect(calls).toEqual([['git', ['worktree', 'add', '-b', 'worktree-new-thing', '--', path, 'origin/main']]]);
   } finally {
@@ -1005,13 +1007,13 @@ test('C1: addWorktree never lets a $(...) baseRef reach a shell, and still creat
         path: join(base, 'wt-evil'),
         branch: 'worktree-evil',
         baseRef: '$(touch PWNED2)',
-        cwd: root,
+        createBranch: true,
       }),
     ).toThrow(/invalid reference/);
     expect(existsSync(join(root, 'PWNED2'))).toBe(false);
 
     const wt = join(base, 'wt-good');
-    addWorktree({ path: wt, branch: 'worktree-good', baseRef: 'HEAD', cwd: root });
+    addWorktree({ path: wt, branch: 'worktree-good', baseRef: 'HEAD', createBranch: true });
     expect(existsSync(join(wt, '.git'))).toBe(true);
     expect(git('git worktree list --porcelain')).toMatch(/worktree-good/);
   } finally {
@@ -1033,7 +1035,7 @@ test('C1: addWorktree rejects a leading-dash baseRef with a clear error (defense
     spawn: () => {},
   });
   expect(() =>
-    addWorktree({ path, branch: 'worktree-x', baseRef: '--upload-pack=touch EVIL', cwd: dirname(path) }),
+    addWorktree({ path, branch: 'worktree-x', baseRef: '--upload-pack=touch EVIL', createBranch: true }),
   ).toThrow(/Refusing base ref/);
 });
 
@@ -1048,11 +1050,11 @@ test('C1: addWorktree rejects a worktree path with a leading dash or shell metac
     runQuiet: () => null,
     spawn: () => {},
   });
-  expect(() => addWorktree({ path: '-evil/repo', branch: 'worktree-x', baseRef: 'HEAD', cwd: '/tmp' })).toThrow(
+  expect(() => addWorktree({ path: '-evil/repo', branch: 'worktree-x', baseRef: 'HEAD', createBranch: true })).toThrow(
     /a path beginning with "-"/,
   );
   expect(() =>
-    addWorktree({ path: '/tmp/a$(touch X)/repo', branch: 'worktree-x', baseRef: 'HEAD', cwd: '/tmp' }),
+    addWorktree({ path: '/tmp/a$(touch X)/repo', branch: 'worktree-x', baseRef: 'HEAD', createBranch: true }),
   ).toThrow(/shell metacharacters/);
 });
 

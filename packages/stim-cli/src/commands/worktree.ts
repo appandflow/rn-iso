@@ -129,15 +129,37 @@ function dependencyInstallCommands(target: string): string[] {
 
 const BRANCH_EXISTS_CODE = 'STIM_WORKTREE_BRANCH_EXISTS';
 
-function rollBackCreatedBranch({ root, branch, baseRef }: { root: string; branch: string; baseRef: string }): void {
-  const stranded = resolveFullRef(root, branch);
-  if (!stranded) return;
+const GIT_BRANCH_ALREADY_EXISTS = /a branch named .* already exists/i;
+
+function gitFailureText(error: unknown): string {
+  return `${(error as Error)?.message || String(error)}\n${String((error as { stderr?: unknown })?.stderr ?? '')}`;
+}
+
+function rollBackCreatedBranch({
+  root,
+  branch,
+  baseRef,
+  baseSha,
+  error,
+}: {
+  root: string;
+  branch: string;
+  baseRef: string;
+  baseSha: string | null;
+  error: unknown;
+}): void {
   const keep = (reason: string) => {
     console.error(chalk.yellow(`Kept the branch ${branch}: ${reason}`));
     console.error(chalk.dim(`  Delete it before retrying: git -C ${root} branch -D -- ${branch}`));
   };
-  if (stranded !== resolveFullRef(root, baseRef)) {
-    keep(`it points at ${stranded}, not at ${baseRef}, so Stim cannot prove this create made it`);
+  if (GIT_BRANCH_ALREADY_EXISTS.test(gitFailureText(error))) {
+    keep('git refused to create it because it already existed, so this create did not make it');
+    return;
+  }
+  const stranded = resolveFullRef(root, `refs/heads/${branch}`);
+  if (!stranded) return;
+  if (!baseSha || stranded !== baseSha) {
+    keep(`it points at ${stranded}, not at the ${baseRef} this create asked for, so Stim cannot prove it made it`);
     return;
   }
   const checkedOutAt = listWorktrees(root).find((candidate) => candidate.branch === branch)?.path;
@@ -148,8 +170,8 @@ function rollBackCreatedBranch({ root, branch, baseRef }: { root: string; branch
   try {
     deleteBranch(root, branch, stranded);
     console.error(chalk.dim(`Deleted ${branch}, which git created before the failure, so a retry starts clean.`));
-  } catch (error) {
-    keep(String((error as Error)?.message || error));
+  } catch (deleteError) {
+    keep(String((deleteError as Error)?.message || deleteError));
   }
 }
 
@@ -223,7 +245,7 @@ export function registerCreate(worktree: Command): void {
 
       const branch = `worktree-${name}`;
       const reusedBranch = branchExists(root, branch);
-      const branchSha = reusedBranch ? resolveRef(root, branch) : null;
+      const branchSha = reusedBranch ? resolveRef(root, `refs/heads/${branch}`) : null;
 
       if (opts.base && reusedBranch) {
         const diverged = branchSha !== baseSha;
@@ -254,11 +276,13 @@ export function registerCreate(worktree: Command): void {
         return;
       }
 
+      const createBranch = !reusedBranch;
+      const baseFullSha = createBranch ? resolveFullRef(root, baseRef) : null;
       try {
-        addWorktree({ path: target, branch, baseRef, cwd: root });
+        addWorktree({ path: target, branch, baseRef, createBranch });
       } catch (e) {
         console.error(String((e as Error)?.message || e));
-        if (!reusedBranch) rollBackCreatedBranch({ root, branch, baseRef });
+        if (createBranch) rollBackCreatedBranch({ root, branch, baseRef, baseSha: baseFullSha, error: e });
         process.exitCode = 1;
         return;
       }

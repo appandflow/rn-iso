@@ -56,6 +56,11 @@ A relative `worktreeDir` resolves against the settings root, the repository
 root, so a committed `.stim.json` can place worktrees inside the repository.
 A relative `worktree create --dir` resolves against the current directory.
 
+`worktree.baseRef` is a default, not an assertion: only the `--base` flag
+triggers the `STIM_WORKTREE_BRANCH_EXISTS` refusal, so a create that finds an
+existing `worktree-<name>` still attaches to it and says which ref was not
+applied.
+
 Do not put secrets in a committed `.stim.json`. Keep secrets in ignored files
 and carry those files into a worktree.
 

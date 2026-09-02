@@ -21,7 +21,7 @@ import {
   warmCarryCategories,
   warmCarrySummary,
 } from '../commands/worktree.ts';
-import { resetExecutor } from '../exec.ts';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { defaultWorktreeDir } from '../worktree.ts';
 import { findEnclosingWorktreeRoot, getProject, upsertProject } from '../config.ts';
 
@@ -561,7 +561,15 @@ test('create action: with no --base a leftover branch is still attached to', asy
   }
 });
 
-test('create action: a failed git worktree add rolls back the branch it just created', async () => {
+const UNWRITABLE_SKIP =
+  'runs as root, where a 0o500 directory does not block writes, so the git failure cannot be staged';
+
+function skipAsRoot(ctx: { skip: (note?: string) => void }): void {
+  if (process.getuid?.() === 0) ctx.skip(UNWRITABLE_SKIP);
+}
+
+test('create action: a failed git worktree add rolls back the branch it just created', async (ctx) => {
+  skipAsRoot(ctx);
   resetExecutor();
   const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-rollback-')));
   const repo = join(base, 'repo');
@@ -585,7 +593,8 @@ test('create action: a failed git worktree add rolls back the branch it just cre
   }
 });
 
-test('create action: a failed git worktree add keeps a branch it did not create', async () => {
+test('create action: a failed git worktree add keeps a branch it did not create', async (ctx) => {
+  skipAsRoot(ctx);
   resetExecutor();
   const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-rollback-keep-')));
   const repo = join(base, 'repo');
@@ -606,6 +615,152 @@ test('create action: a failed git worktree add keeps a branch it did not create'
   } finally {
     process.exitCode = 0;
     chmodSync(unwritable, 0o700);
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('create action: a branch that appears between the pre-check and the add is never rolled back', async (ctx) => {
+  skipAsRoot(ctx);
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-rollback-race-')));
+  const repo = join(base, 'repo');
+  const unwritable = join(base, 'unwritable');
+  try {
+    const git = initScratchRepo(repo);
+    mkdirSync(unwritable);
+    writeFileSync(join(repo, '.stim.json'), JSON.stringify({ worktreeDir: unwritable }));
+    chmodSync(unwritable, 0o500);
+
+    const real = getExecutor();
+    let verified = 0;
+    setExecutor({
+      run: (cmd: string, opts: unknown) => real.run(cmd, opts as never),
+      runFile: (file: string, args: string[], opts: unknown) => real.runFile(file, args, opts as never),
+      spawn: (cmd: string, args: string[], opts: unknown) => real.spawn(cmd, args, opts as never),
+      runQuiet: (cmd: string, opts: unknown) => {
+        const out = real.runQuiet(cmd, opts as never);
+        if (cmd.includes('refs/heads/worktree-feat-race') && ++verified === 1) {
+          git('git branch worktree-feat-race');
+        }
+        return out;
+      },
+    });
+
+    const { logs, errs } = await runCreateInRepo(repo, 'feat-race', { install: false });
+
+    expect(logs).toEqual([]);
+    expect(process.exitCode).toBe(1);
+    expect(git('git branch --list worktree-feat-race')).toMatch(/worktree-feat-race/);
+    const text = errs.join('\n');
+    expect(text).not.toMatch(/Deleted worktree-feat-race/);
+    expect(text).toMatch(/Kept the branch worktree-feat-race[\s\S]*already existed/);
+  } finally {
+    process.exitCode = 0;
+    resetExecutor();
+    chmodSync(unwritable, 0o700);
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('create action: the rollback reads refs/heads, so a same-named tag does not shield the branch', async (ctx) => {
+  skipAsRoot(ctx);
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-rollback-tag-')));
+  const repo = join(base, 'repo');
+  const unwritable = join(base, 'unwritable');
+  try {
+    const git = initScratchRepo(repo);
+    const firstSha = git('git rev-parse HEAD').trim();
+    writeFileSync(join(repo, 'NEW'), 'new');
+    git('git add NEW');
+    git('git commit -q -m second');
+    git(`git tag worktree-feat-tag ${firstSha}`);
+    mkdirSync(unwritable);
+    writeFileSync(join(repo, '.stim.json'), JSON.stringify({ worktreeDir: unwritable }));
+    chmodSync(unwritable, 0o500);
+
+    const { errs } = await runCreateInRepo(repo, 'feat-tag', { install: false });
+
+    expect(process.exitCode).toBe(1);
+    expect(git('git branch --list worktree-feat-tag').trim()).toBe('');
+    expect(git('git tag --list worktree-feat-tag').trim()).toBe('worktree-feat-tag');
+    expect(errs.join('\n')).toMatch(/Deleted worktree-feat-tag/);
+  } finally {
+    process.exitCode = 0;
+    chmodSync(unwritable, 0o700);
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('create action: the rollback compares against the base captured before the add, not a moved one', async (ctx) => {
+  skipAsRoot(ctx);
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-rollback-moved-')));
+  const repo = join(base, 'repo');
+  const unwritable = join(base, 'unwritable');
+  try {
+    const git = initScratchRepo(repo);
+    mkdirSync(unwritable);
+    writeFileSync(join(repo, '.stim.json'), JSON.stringify({ worktreeDir: unwritable }));
+    chmodSync(unwritable, 0o500);
+
+    const real = getExecutor();
+    setExecutor({
+      run: (cmd: string, opts: unknown) => real.run(cmd, opts as never),
+      runQuiet: (cmd: string, opts: unknown) => real.runQuiet(cmd, opts as never),
+      spawn: (cmd: string, args: string[], opts: unknown) => real.spawn(cmd, args, opts as never),
+      runFile: (file: string, args: string[], opts: unknown) => {
+        if (file === 'git' && args[0] === 'worktree' && args[1] === 'add') {
+          try {
+            return real.runFile(file, args, opts as never);
+          } catch (error) {
+            writeFileSync(join(repo, 'MOVED'), 'moved');
+            git('git add MOVED');
+            git('git commit -q -m moved');
+            throw error;
+          }
+        }
+        return real.runFile(file, args, opts as never);
+      },
+    });
+
+    const { errs } = await runCreateInRepo(repo, 'feat-moved', { install: false });
+
+    expect(process.exitCode).toBe(1);
+    expect(git('git branch --list worktree-feat-moved').trim()).toBe('');
+    expect(errs.join('\n')).toMatch(/Deleted worktree-feat-moved/);
+  } finally {
+    process.exitCode = 0;
+    resetExecutor();
+    chmodSync(unwritable, 0o700);
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('create action: a same-named tag does not stand in for the branch in the --base refusal', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-tag-refusal-')));
+  const repo = join(base, 'repo');
+  try {
+    const git = initScratchRepo(repo);
+    const firstSha = git('git rev-parse --short HEAD').trim();
+    writeFileSync(join(repo, 'NEW'), 'new');
+    git('git add NEW');
+    git('git commit -q -m second');
+    const headSha = git('git rev-parse --short HEAD').trim();
+    git(`git tag worktree-feat-tagbase ${firstSha}`);
+    git('git branch worktree-feat-tagbase');
+
+    const { errs } = await runCreateInRepo(repo, 'feat-tagbase', { base: 'head' });
+
+    expect(process.exitCode).toBe(1);
+    const text = errs.join('\n');
+    expect(text).toContain('STIM_WORKTREE_BRANCH_EXISTS');
+    expect(text).toContain(`already exists at ${headSha}`);
+    expect(text).not.toContain(firstSha);
+    expect(text).toMatch(/which is where --base head resolves right now/);
+  } finally {
+    process.exitCode = 0;
     rmSync(base, { recursive: true, force: true });
   }
 });

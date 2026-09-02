@@ -26,7 +26,8 @@ to.
 
 When `git worktree add` fails after git has created the branch, Stim deletes
 that branch, so a retry branches from the base instead of attaching to a
-leftover. It rolls back only a branch this create made.
+leftover. It rolls back only a branch this create made, judged by whether the
+run passed `-b` rather than by re-reading the refs afterwards.
 
 ## Carry a warm working state
 

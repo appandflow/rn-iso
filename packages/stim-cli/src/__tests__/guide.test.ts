@@ -404,7 +404,21 @@ test('the errors topic documents every code worktree create can emit, and the ru
   expect(section).toMatch(/INCLUDING the case where the branch happens to sit on the requested base/i);
   expect(section).toMatch(/Stim deletes the branch it just made/i);
   expect(section).toMatch(/only a branch that create made/i);
+  expect(section).toMatch(/decides that from whether THIS run passed -b/);
+  expect(section).toMatch(/a branch named \.\.\. already exists.{0,80}did not make it/i);
+  expect(section).toMatch(/base sha captured before the add/i);
   expect(src).not.toMatch(/--base does not apply/);
+
+  const settings = renderTopic('settings');
+  assert(settings);
+  const website = readFileSync(new URL('../../../../website/docs/settings.md', import.meta.url), 'utf-8');
+  for (const guidance of [settings, website]) {
+    const flat = guidance.replace(/\s+/g, ' ');
+    const entry = flat.slice(flat.lastIndexOf('worktree.baseRef'));
+    expect(entry).toMatch(/only the .{0,2}--base.{0,2} (FLAG|flag) triggers/i);
+    expect(entry).toMatch(/STIM_WORKTREE_BRANCH_EXISTS/);
+    expect(entry).toMatch(/still attaches/i);
+  }
 });
 
 test('the errors topic documents every code the engine can emit under a command', () => {
