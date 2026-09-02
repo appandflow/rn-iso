@@ -2393,6 +2393,26 @@ describe('--remote', () => {
     expect(remote.backends).toEqual(['proxy']);
   });
 
+  test('a wrong-typed known setting is refused before any device work, with nothing on stdout', async () => {
+    let asked = false;
+    const { exitCode, stderr, logs } = await run(
+      {},
+      {
+        resolveSettings: () => ({ ios: { configuration: {} } }),
+        resolveRemoteContext: () => {
+          asked = true;
+          return { failed: 'x', remedy: '' };
+        },
+      },
+    );
+    expect(asked).toBe(false);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain('STIM_BAD_ARG');
+    expect(stderr).toContain('Invalid ios.configuration setting {}. Expected a string.');
+    expect(stderr).not.toContain('not read by Stim');
+    expect(logs).toEqual([]);
+  });
+
   test('an invalid ios.remote value is a structured refusal', async () => {
     let asked = false;
     const { exitCode, stderr } = await run(
@@ -3196,9 +3216,9 @@ describe('the project cache provider', () => {
   });
 });
 
-test('an invalid cache.provider setting is reported once and the run continues', async () => {
+test('an unusable cache.provider value is reported once and the run continues', async () => {
   reserve();
-  writeFileSync(join(root, '.stim.json'), JSON.stringify({ cache: { provider: 42 } }));
+  writeFileSync(join(root, '.stim.json'), JSON.stringify({ cache: { provider: '  ' } }));
   const { exitCode, errs, calls } = await run(
     {},
     {
@@ -3214,6 +3234,24 @@ test('an invalid cache.provider setting is reported once and the run continues',
   const notices = errs.filter((line) => line.includes('Invalid cache.provider setting'));
   expect(notices.length).toBe(1);
   expect(notices[0]).toMatch(/Using the local cache\./);
+});
+
+test('a wrong-typed cache.provider setting is refused before the build', async () => {
+  reserve();
+  writeFileSync(join(root, '.stim.json'), JSON.stringify({ cache: { provider: 42 } }));
+  const { exitCode, errs, calls } = await run(
+    {},
+    {
+      repoRoot: () => root,
+      loadCacheProvider: async () => {
+        throw new Error('an invalid setting must not reach the loader');
+      },
+    },
+  );
+
+  expect(exitCode).toBe(1);
+  expect(calls.order.includes('buildIos')).toBe(false);
+  expect(errs.join('\n')).toContain('Invalid cache.provider setting 42. Expected a string.');
 });
 
 test('a local hit leaves no provider download directory behind', async () => {

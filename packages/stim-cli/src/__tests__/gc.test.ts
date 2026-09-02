@@ -104,6 +104,23 @@ describe('a cache-scoped report', () => {
   });
 });
 
+test('a wrong-typed setting refuses gc with nothing on stdout', async () => {
+  const errs: string[] = [];
+  const originalError = console.error;
+  console.error = (...args) => errs.push(args.join(' '));
+  try {
+    const output = await captureLog(() =>
+      runGc({}, { settingShapeErrors: () => ['Invalid caches setting {}. Expected an array of strings.'] }),
+    );
+    expect(output).toBe('');
+    expect(errs.join('\n')).toContain('Invalid caches setting {}. Expected an array of strings.');
+    expect(process.exitCode).toBe(1);
+  } finally {
+    console.error = originalError;
+    process.exitCode = 0;
+  }
+});
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 test('names skipped entries and why they were skipped', () => {

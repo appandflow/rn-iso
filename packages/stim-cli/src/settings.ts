@@ -25,51 +25,77 @@ export function mergeSettingsLayers(layers: Array<SettingsObject | null | undefi
   return out;
 }
 
-const KNOWN_SETTINGS = new Set([
-  'ios.deviceType',
-  'ios.runtime',
-  'ios.configuration',
-  'ios.remote',
-  'ios.simslimProfile',
-  'ios.signingIdentity',
-  'ios.signingIdentitySha1',
-  'ios.lanHost',
-  'android.systemImage',
-  'android.dataPartitionSizeGb',
-  'android.avdConfigFile',
-  'android.avdConfig',
-  'android.variant',
-  'android.keystore',
-  'android.keystorePassword',
-  'android.remote',
-  'metro.tunnel',
-  'metro.ngrokUrl',
-  'metro.publicUrl',
-  'worktreeDir',
-  'worktree.baseRef',
-  'worktree.include',
-  'worktree.exclude',
-  'cache.provider',
-  'cache.options',
-  'caches',
-]);
+type SettingShape = 'string' | 'path' | 'strings' | 'number' | 'object';
 
-const OPEN_SETTINGS_OBJECTS = new Set(['android.avdConfig', 'cache.options']);
+interface SettingShapeRule {
+  expected: string;
+  accepts: (value: unknown) => boolean;
+}
 
-// Keys outside this set have no validator on every command that reads them,
-// so an object value keeps the unknown-key warning; see issue #210.
-const VALIDATED_SCALAR_SETTINGS = new Set([
-  'worktreeDir',
-  'ios.lanHost',
-  'ios.signingIdentity',
-  'ios.signingIdentitySha1',
-  'ios.remote',
-  'ios.simslimProfile',
-  'android.remote',
-  'android.dataPartitionSizeGb',
-  'android.avdConfigFile',
-  'cache.provider',
-]);
+const SETTING_SHAPE_RULES: Record<SettingShape, SettingShapeRule> = {
+  string: { expected: 'a string', accepts: (value) => typeof value === 'string' },
+  path: { expected: 'a string path', accepts: (value) => typeof value === 'string' },
+  strings: {
+    expected: 'an array of strings',
+    accepts: (value) => Array.isArray(value) && value.every((entry) => typeof entry === 'string'),
+  },
+  number: { expected: 'a number', accepts: (value) => typeof value === 'number' },
+  object: { expected: 'an object', accepts: isPlainObject },
+};
+
+const SETTING_SHAPES: Record<string, SettingShape> = {
+  'ios.deviceType': 'string',
+  'ios.runtime': 'string',
+  'ios.configuration': 'string',
+  'ios.remote': 'string',
+  'ios.simslimProfile': 'path',
+  'ios.signingIdentity': 'string',
+  'ios.signingIdentitySha1': 'string',
+  'ios.lanHost': 'string',
+  'android.systemImage': 'string',
+  'android.dataPartitionSizeGb': 'number',
+  'android.avdConfigFile': 'path',
+  'android.avdConfig': 'object',
+  'android.variant': 'string',
+  'android.keystore': 'path',
+  'android.keystorePassword': 'string',
+  'android.remote': 'string',
+  'metro.tunnel': 'string',
+  'metro.ngrokUrl': 'string',
+  'metro.publicUrl': 'string',
+  worktreeDir: 'path',
+  'worktree.baseRef': 'string',
+  'worktree.include': 'strings',
+  'worktree.exclude': 'strings',
+  'cache.provider': 'string',
+  'cache.options': 'object',
+  caches: 'strings',
+};
+
+const KNOWN_SETTINGS = new Set(Object.keys(SETTING_SHAPES));
+
+function settingValueAt(settings: unknown, path: string): unknown {
+  let node: unknown = settings;
+  for (const segment of path.split('.')) {
+    if (!isPlainObject(node)) return undefined;
+    node = node[segment];
+  }
+  return node;
+}
+
+export function settingShapeErrors(settings: unknown): string[] {
+  const errors: string[] = [];
+  for (const [path, shape] of Object.entries(SETTING_SHAPES)) {
+    const value = settingValueAt(settings, path);
+    if (value === undefined) continue;
+    const rule = SETTING_SHAPE_RULES[shape];
+    if (rule.accepts(value)) continue;
+    errors.push(`Invalid ${path} setting ${JSON.stringify(value)}. Expected ${rule.expected}.`);
+  }
+  return errors;
+}
+
+export const SETTING_SHAPE_REMEDY = 'Run `stim guide settings` for the shape each setting takes.';
 
 export const MIN_ANDROID_DATA_PARTITION_SIZE_GB: number = 6;
 export const DEFAULT_ANDROID_DATA_PARTITION_SIZE_GB: number = 8;
@@ -403,29 +429,17 @@ export function iosLanHostSettingError(settings: unknown): string | null {
   return null;
 }
 
-export function worktreeDirSettingError(settings: unknown): string | null {
-  if (!isPlainObject(settings) || !('worktreeDir' in settings)) return null;
-  const raw = settings.worktreeDir;
-  if (typeof raw !== 'string') {
-    return `Invalid worktreeDir setting ${JSON.stringify(raw)}. Expected a string path.`;
-  }
-  return null;
-}
-
 export function unknownSettingKeys(settings: unknown, prefix = ''): string[] {
   if (!isPlainObject(settings)) return [];
   const unknown: string[] = [];
   for (const [key, value] of Object.entries(settings)) {
     const path = prefix ? `${prefix}.${key}` : key;
-    if (isPlainObject(value)) {
-      if (OPEN_SETTINGS_OBJECTS.has(path)) continue;
-      if (VALIDATED_SCALAR_SETTINGS.has(path)) continue;
-      const hasKnownChildren = [...KNOWN_SETTINGS].some((k) => k.startsWith(`${path}.`));
-      if (hasKnownChildren) unknown.push(...unknownSettingKeys(value, path));
-      else unknown.push(path);
+    if (KNOWN_SETTINGS.has(path)) continue;
+    if (isPlainObject(value) && [...KNOWN_SETTINGS].some((k) => k.startsWith(`${path}.`))) {
+      unknown.push(...unknownSettingKeys(value, path));
       continue;
     }
-    if (!KNOWN_SETTINGS.has(path)) unknown.push(path);
+    unknown.push(path);
   }
   return unknown;
 }

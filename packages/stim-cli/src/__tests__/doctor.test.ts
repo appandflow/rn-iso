@@ -612,6 +612,30 @@ test('runDoctor reports a configured SimSlim profile when the binary is missing'
   }
 });
 
+test('runDoctor reports a wrong-typed setting as a finding rather than refusing', () => {
+  const project = mkdtempSync(join(tmpdir(), 'stim-doctor-setting-shape-'));
+  const home = mkdtempSync(join(tmpdir(), 'stim-doctor-setting-home-'));
+  process.env.STIM_HOME = home;
+  try {
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
+    writeFileSync(join(project, '.stim.json'), JSON.stringify({ ios: { configuration: {} }, caches: 42 }));
+    const findings = runDoctor(project, { concurrency: { maxBuilds: 0, maxDevices: 0 } });
+    const shapeFindings = findings.filter((finding) => /wrong type/i.test(finding.title));
+    expect(shapeFindings.map((finding) => finding.detail)).toEqual([
+      'Invalid ios.configuration setting {}. Expected a string.',
+      'Invalid caches setting 42. Expected an array of strings.',
+    ]);
+    for (const finding of shapeFindings) {
+      expect(finding.level).toBe('cost');
+      expect(finding.fix).toMatch(/guide settings/);
+    }
+  } finally {
+    delete process.env.STIM_HOME;
+    rmSync(home, { recursive: true, force: true });
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
 test('a project with no provider configured at all is reported as nothing', () => {
   expect(checkBuildCacheProvider({ expo: {} }, 57)).toBe(null);
   expect(checkBuildCacheProvider({ expo: {} }, 53)).toBe(null);

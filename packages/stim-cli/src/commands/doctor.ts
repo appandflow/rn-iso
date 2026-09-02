@@ -106,7 +106,7 @@ export default function doctorCommand(program: Command): void {
         console.log(chalk.green('Nothing to flag.'));
         console.log(
           chalk.dim(
-            'Checked: main-checkout dependencies, CocoaPods, native warm state and local upstream; dev client, ccache, Metro cacheStores, compilation cache, build cache provider, EAS session, SimSlim profile and, on a checkout without installed dependencies, fingerprint parity.',
+            'Checked: main-checkout dependencies, CocoaPods, native warm state and local upstream; dev client, ccache, Metro cacheStores, compilation cache, build cache provider, EAS session, SimSlim profile, the type of every setting Stim reads and, on a checkout without installed dependencies, fingerprint parity.',
           ),
         );
         console.log(

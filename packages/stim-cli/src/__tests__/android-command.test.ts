@@ -505,6 +505,29 @@ describe('explicit remote backend behavior', () => {
     expect(selected).toEqual(['proxy']);
   });
 
+  test('a wrong-typed known setting is refused before device work, with nothing on stdout', async () => {
+    const h = harness({
+      resolveSettingsFor: () => ({ android: { variant: {} } }),
+      ensureDevice: never('the device'),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('STIM_BAD_ARG');
+    expect(result.error?.message).toBe('Invalid android.variant setting {}. Expected a string.');
+    expect(result.error?.remedy).toMatch(/guide settings/);
+    expect(h.calls.ensureDevice).toEqual([]);
+    expect(h.stdout).toEqual([]);
+    expect(h.stderr.join('\n')).not.toContain('not read by Stim');
+  });
+
+  test('stim android warns about an unknown setting key', async () => {
+    const h = harness({ resolveSettingsFor: () => ({ packageManager: 'pnpm' }) });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(h.stderr.join('\n')).toContain('setting "packageManager" is not read by Stim');
+    expect(h.stdout.join('\n')).not.toContain('packageManager');
+  });
+
   test('an invalid android.remote setting is a structured refusal', async () => {
     let resolved = false;
     const h = harness({

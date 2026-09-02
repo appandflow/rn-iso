@@ -567,15 +567,37 @@ test('the settings topic lists exactly the keys settings.js honours', () => {
   const body = renderTopic('settings');
   assert(body);
   const src = readFileSync(new URL('../settings.ts', import.meta.url), 'utf-8');
-  const knownStart = src.indexOf('const KNOWN_SETTINGS');
-  const knownEnd = src.indexOf(']);', knownStart);
-  const knownSource = src.slice(knownStart, knownEnd);
-  const known = [...knownSource.matchAll(/^\s*'([a-zA-Z.]+)',$/gm)]
-    .map((m) => m[1])
-    .filter((k): k is string => k !== undefined);
+  const table = src.slice(src.indexOf('const SETTING_SHAPES'), src.indexOf('};', src.indexOf('const SETTING_SHAPES')));
+  const known = [...table.matchAll(/^\s*'?([A-Za-z0-9.]+)'?: '[a-z]+',$/gm)]
+    .map((match) => match[1])
+    .filter((key): key is string => key !== undefined);
   expect(known.length > 0).toBeTruthy();
   for (const key of known) {
     expect(body.includes(key)).toBeTruthy();
+  }
+});
+
+test('the errors topic names a wrong-typed setting as a STIM_BAD_ARG cause', () => {
+  const errors = renderTopic('errors');
+  assert(errors);
+  const section = errors.slice(errors.indexOf('STIM_BAD_ARG')).replace(/\s+/g, ' ');
+  expect(section).toMatch(/a known setting with the wrong type/);
+  expect(section).toMatch(/Invalid <key> setting <value>\. Expected <shape>\./);
+  expect(section).toMatch(/guide settings.{0,4} names the type each key takes/);
+});
+
+test('the setting type rule is stated once and is consistent across user guidance', () => {
+  const guide = renderTopic('settings');
+  assert(guide);
+  const website = readFileSync(new URL('../../../../website/docs/settings.md', import.meta.url), 'utf-8');
+  for (const guidance of [guide, website]) {
+    const flat = guidance.replace(/\s+/g, ' ');
+    expect(flat.match(/wrong type is refused by name/gi)).toHaveLength(1);
+    expect(flat).toMatch(/takes ONE type: a string, an array of strings, a number/i);
+    expect(flat).toMatch(/android\.avdConfig.? and .?cache\.options.?, an object/i);
+    expect(flat).toMatch(/refused by name on every command that resolves settings/i);
+    expect(flat).toMatch(/never falls back to a default silently/i);
+    expect(flat).toMatch(/doctor.{0,3} reports it as a finding instead of refusing/i);
   }
 });
 

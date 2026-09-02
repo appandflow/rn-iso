@@ -5,7 +5,7 @@ import { METRO_NAMED_CACHE_LAYOUT } from '@stim-cli/core';
 import { directorySize } from './fs-util.ts';
 import { registeredCaches } from './cache-manifest.ts';
 import { findProjectRoot } from './project.ts';
-import { resolveSettings } from './settings.ts';
+import { resolveSettings, settingShapeErrors, type SettingsObject } from './settings.ts';
 import { gitCommonDir, repoRoot } from './worktree.ts';
 
 export interface CacheDescriptor {
@@ -80,15 +80,23 @@ function declaredCaches(paths: string[]): CacheDescriptor[] {
     .map((dir): CacheDescriptor => ({ name: 'declared', dir, prune: 'entries', note: 'from the `caches` setting' }));
 }
 
-export function declaredCachePaths(cwd: string = process.cwd()): string[] {
+function projectSettings(cwd: string): SettingsObject {
   const root = findProjectRoot(cwd);
-  if (!root) return [];
-  const settings = resolveSettings({
+  if (!root) return {};
+  return resolveSettings({
     projectPath: root,
     gitCommonDir: gitCommonDir(root),
     repoRoot: repoRoot(root),
   });
-  return Array.isArray(settings?.caches) ? (settings.caches as string[]) : [];
+}
+
+export function declaredCachePaths(cwd: string = process.cwd()): string[] {
+  const declared = projectSettings(cwd).caches;
+  return Array.isArray(declared) ? (declared as string[]) : [];
+}
+
+export function projectSettingShapeErrors(cwd: string = process.cwd()): string[] {
+  return settingShapeErrors(projectSettings(cwd));
 }
 
 export function discoverCaches({ declared = [] }: { declared?: string[] } = {}): CacheDescriptor[] {

@@ -1009,7 +1009,9 @@ STIM_SUPERVISOR_EXITED
   the full records. Fix that and run \`start\` again; nothing is left running.
 
 STIM_BAD_ARG / STIM_NO_PROJECT
-  The command refused before doing anything: an unusable --wait value, an invalid
+  The command refused before doing anything: an unusable --wait value, a known
+  setting with the wrong type ("Invalid <key> setting <value>. Expected <shape>."
+  -- \`guide settings\` names the type each key takes), an invalid
   Metro tunnel setting, an invalid android.dataPartitionSizeGb value, an unsafe
   android.avdConfig key or fragment, a malformed ios.signingIdentity,
   ios.signingIdentitySha1 or ios.lanHost value, \`--device\` with an empty
@@ -2104,6 +2106,12 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         environment or the machine layers.
   caches                extra shared-cache paths for \`gc\` to report. A JSON
                         array; every path is treated as a flat store.
+
+Every key above takes ONE type: a string, an array of strings, a number, or,
+for android.avdConfig and cache.options, an object. A value of the wrong type is
+refused by name on every command that resolves settings, so a wrong shape never
+falls back to a default silently. \`stim doctor\` reports it as a finding
+instead of refusing.
 
 Anything else is IGNORED, and Stim warns about it by name on every run that
 resolves settings. If you see such a warning, the key was either renamed or
