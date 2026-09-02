@@ -81,6 +81,14 @@ test('the facts topic documents the fields each --json payload actually carries'
   }
 });
 
+test('the facts topic says Android artifacts use the post-Gradle fingerprint', () => {
+  const body = renderTopic('facts');
+  assert(body);
+  expect(body).toMatch(/Android also fingerprints after Gradle/);
+  expect(body).toMatch(/stored only under that post-build hash/);
+  expect(body).toMatch(/fingerprint and cacheKey are null/);
+});
+
 test('the one-line JSON sentence names every command whose --json payload is a single line', () => {
   const body = renderTopic('facts');
   assert(body);

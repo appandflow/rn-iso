@@ -468,7 +468,7 @@ describe('explicit remote backend behavior', () => {
       expect(selected).toEqual([backend]);
       expect(remoteCalls).toEqual(['ensureDevice', 'ensureDeviceBooted', 'install', 'launch']);
       expect(h.calls.ensureDevice).toEqual([]);
-      expect(h.calls.fingerprint.length).toBe(1);
+      expect(h.calls.fingerprint.length).toBe(2);
     },
   );
 
@@ -2735,9 +2735,9 @@ test('android fingerprints with platforms scoped to android', async () => {
     },
   });
   await h.run();
-  expect(seen.length).toBe(1);
-  expect(seen[0]?.path).toBe(root);
-  expect(seen[0]?.options?.platform).toBe('android');
+  expect(seen).toHaveLength(2);
+  expect(seen.every((call) => call.path === root)).toBe(true);
+  expect(seen.every((call) => call.options?.platform === 'android')).toBe(true);
 });
 
 describe('concurrency limits', () => {
@@ -3295,13 +3295,101 @@ describe('re-fingerprint after prebuild', () => {
     expect(h.calls.storeCached[0]?.[1]).toBe(`${WARM}-debug-sim`);
   });
 
-  test('a tree that needs no prebuild fingerprints exactly once and prints no shift line', async () => {
+  test('a Gradle build re-fingerprints once and prints no shift line when the tree is stable', async () => {
     const h = harness();
     await h.run();
-    expect(h.calls.fingerprint.length).toBe(1);
+    expect(h.calls.fingerprint.length).toBe(2);
     expect(h.stderr.some((line) => /fingerprint\s+\S+ -> /.test(line))).toBe(false);
     expect(h.calls.storeCached[0]?.[1]).toBe(h.calls.resolveCached[0]?.[1]);
     expect(h.calls.resolveCached.length).toBe(1);
+  });
+});
+
+describe('re-fingerprint after Gradle', () => {
+  const BEFORE_BUILD = 'before1111';
+  const AFTER_BUILD = 'after2222';
+
+  test('stores under the fingerprint after a build mutation and hits it on the next run', async () => {
+    const manifest = join(root, 'node_modules', 'example', 'android', 'src', 'main', 'AndroidManifest.xml');
+    mkdirSync(join(root, 'node_modules', 'example', 'android', 'src', 'main'), { recursive: true });
+    writeFileSync(manifest, 'before');
+    const configuredUploads: unknown[] = [];
+    const fingerprint = async () => ({
+      hash: readFileSync(manifest, 'utf8') === 'before' ? BEFORE_BUILD : AFTER_BUILD,
+      sources: [{ type: 'dir', filePath: 'android' }],
+    });
+    const h = harness({
+      fingerprint,
+      build: async () => {
+        writeFileSync(manifest, 'after');
+        return { ok: true, apkPath: fakeApk(), durationMs: 161000, lastLines: [] };
+      },
+      resolveCacheProvider: () => ({ provider: './cache.cjs', options: {}, baseDir: root }),
+      loadCacheProviderModule: async () => ({
+        name: './cache.cjs',
+        provider: { builds: { resolve: () => null, store: (input: unknown) => configuredUploads.push(input) } },
+      }),
+      loadProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
+    });
+    const result = await h.run();
+
+    expect(h.calls.storeCached[0]?.[1]).toBe(`${AFTER_BUILD}-debug-sim`);
+    expect(configuredUploads[0]).toMatchObject({ key: `${AFTER_BUILD}-debug-sim` });
+    expect(h.calls.uploadRemoteBuild[0]?.fingerprintHash).toBe(AFTER_BUILD);
+    expect(result.facts?.fingerprint).toBe(AFTER_BUILD);
+    expect(result.facts?.cacheKey).toBe(`${AFTER_BUILD}-debug-sim`);
+    expect(readState().lastBuild.cacheKey).toBe(`${AFTER_BUILD}-debug-sim`);
+    expect(h.stderr.some((line) => /after Gradle/.test(line))).toBe(true);
+
+    const storedKey = String(h.calls.storeCached[0]?.[1]);
+    const cachedApk = fakeApk();
+    const lookedUp: string[] = [];
+
+    const warm = harness({
+      fingerprint,
+      resolveCached: (_platform: string, key: string) => {
+        lookedUp.push(key);
+        return key === storedKey ? cachedApk : null;
+      },
+      build: never('gradle'),
+    });
+    const warmResult = await warm.run();
+
+    expect(lookedUp).toEqual([`${AFTER_BUILD}-debug-sim`]);
+    expect(warmResult.facts?.cacheHit).toBe('local');
+    expect(warmResult.facts?.cacheKey).toBe(`${AFTER_BUILD}-debug-sim`);
+  });
+
+  test.each([
+    ['throws', async () => Promise.reject(new Error('fingerprint failed'))],
+    ['returns no hash', async () => ({ hash: '', sources: [] })],
+  ])('does not cache when the post-Gradle fingerprint %s', async (_label, unavailableFingerprint) => {
+    let fingerprintCalls = 0;
+    const configuredUploads: unknown[] = [];
+    const h = harness({
+      fingerprint: async () => {
+        if (fingerprintCalls++ === 0) return { hash: BEFORE_BUILD, sources: [] };
+        return unavailableFingerprint();
+      },
+      resolveCacheProvider: () => ({ provider: './cache.cjs', options: {}, baseDir: root }),
+      loadCacheProviderModule: async () => ({
+        name: './cache.cjs',
+        provider: { builds: { resolve: () => null, store: (input: unknown) => configuredUploads.push(input) } },
+      }),
+      loadProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
+    });
+
+    const result = await h.run();
+
+    expect(result.ok).toBe(true);
+    expect(h.calls.storeCached).toEqual([]);
+    expect(configuredUploads).toEqual([]);
+    expect(h.calls.uploadRemoteBuild).toEqual([]);
+    expect(result.facts?.fingerprint).toBeNull();
+    expect(result.facts?.cacheKey).toBeNull();
+    expect(readState().lastBuild.fingerprint).toBeNull();
+    expect(readState().lastBuild.cacheKey).toBeNull();
+    expect(h.stderr.some((line) => /installed but not cached/.test(line))).toBe(true);
   });
 });
 
