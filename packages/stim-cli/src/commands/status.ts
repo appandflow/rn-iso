@@ -103,17 +103,13 @@ export default function statusCommand(program: Command): void {
 
       if (opts.json) {
         console.log(
-          JSON.stringify(
-            {
-              environments: states.map((state, i) => (labelOnlyRoots[i] ? { ...state, labelOnly: true } : state)),
-              capacity: cap,
-              deviceLeases: leases,
-              unprovisionedWorktrees: orphanWorktrees,
-              simctlAvailable: simsAvailable,
-            },
-            null,
-            2,
-          ),
+          JSON.stringify({
+            environments: states.map((state, i) => (labelOnlyRoots[i] ? { ...state, labelOnly: true } : state)),
+            capacity: cap,
+            deviceLeases: leases,
+            unprovisionedWorktrees: orphanWorktrees,
+            simctlAvailable: simsAvailable,
+          }),
         );
         return;
       }

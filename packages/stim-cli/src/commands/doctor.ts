@@ -98,7 +98,7 @@ export default function doctorCommand(program: Command): void {
       }
 
       if (opts.json) {
-        console.log(JSON.stringify({ project: root, findings }, null, 2));
+        console.log(JSON.stringify({ project: root, findings }));
         return;
       }
 
