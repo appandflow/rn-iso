@@ -37,6 +37,7 @@ import {
   LAUNCH_BUNDLING,
   LAUNCH_FATAL,
   LAUNCH_UNVERIFIED,
+  RELEASE_VERIFY_WAIT_MS,
   devClientUrl,
   installIosApp,
   iosAppProcess,
@@ -66,6 +67,8 @@ import {
   resolveRemoteContext,
 } from '../engine/device-remote.ts';
 import {
+  DEVICECTL_INSTALL_TIMEOUT_MS,
+  LAUNCH_PROBE_TIMEOUT_MS,
   awaitIosDeviceLaunch,
   installIosDeviceApp,
   iosDeviceProcess,
@@ -74,6 +77,17 @@ import {
   resolveIosPhysicalDevice,
   verifyIosDeviceReleaseLaunch,
 } from '../engine/ios-device.ts';
+import {
+  DEBUG_VERIFY_STEP_MS,
+  acquireRunLease,
+  lostLine,
+  lostRefusal,
+  parseDeviceWait,
+  runLease,
+  waitFlagConflict,
+  type LeaseFacts,
+  type RunLease,
+} from '../engine/device-lease-run.ts';
 import { gateProfileForDevice, sealAppForDevice } from '../engine/ios-signing.ts';
 import { chooseLanAddress, copyAppAside, ensureLanReachable, lanOriginUrlFor, writeIpTxt } from '../engine/ios-lan.ts';
 import { hostLanCandidates } from '../engine/lan-address.ts';
@@ -226,6 +240,8 @@ interface IosCommandOptions {
   configuration?: string;
   device?: string | boolean;
   remote?: RemoteDeviceBackend;
+  wait?: string | boolean;
+  waitConflict?: boolean;
 }
 
 interface WaitedForBuild {
@@ -240,6 +256,7 @@ interface FailArgs {
   lines?: string[];
   logPath?: string | null;
   build?: BuildFailureFields | null;
+  lease?: LeaseFacts | null;
 }
 
 interface BuildFailureFields {
@@ -547,6 +564,7 @@ export function iosFacts({
   durationMs,
   launched = true,
   webPreviewUrl = null,
+  lease,
 }: {
   udid: string;
   deviceName?: string | null;
@@ -565,6 +583,7 @@ export function iosFacts({
   durationMs?: number;
   launched?: boolean | string;
   webPreviewUrl?: string | null;
+  lease?: { kind: string; expiresAt: string } | null;
 }): IosFacts {
   return {
     platform: PLATFORM,
@@ -585,6 +604,7 @@ export function iosFacts({
     logs: { dir: logsDir },
     durationMs,
     ...(webPreviewUrl ? { webPreviewUrl } : {}),
+    ...(lease === undefined ? {} : { lease }),
   };
 }
 
@@ -768,6 +788,8 @@ interface IosDeps {
   sealAppForDevice: typeof sealAppForDevice;
   installIosDeviceApp: typeof installIosDeviceApp;
   awaitIosDeviceLaunch: typeof awaitIosDeviceLaunch;
+  acquireRunLease: typeof acquireRunLease;
+  runLease: typeof runLease;
   iosDeviceProcess: typeof iosDeviceProcess;
   verifyIosDeviceReleaseLaunch: typeof verifyIosDeviceReleaseLaunch;
   readBundleId: typeof readBundleId;
@@ -837,6 +859,8 @@ const DEFAULT_DEPS: IosDeps = {
   sealAppForDevice,
   installIosDeviceApp,
   awaitIosDeviceLaunch,
+  acquireRunLease,
+  runLease,
   iosDeviceProcess,
   verifyIosDeviceReleaseLaunch,
   readBundleId,
@@ -888,8 +912,16 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
         throw new InvalidArgumentError(`expected one of: ${REMOTE_DEVICE_BACKENDS.join(', ')}`);
       },
     )
+    .option(
+      '--wait <seconds>',
+      'How long to wait for another workspace to release the phone it leases, before refusing with STIM_DEVICE_BUSY (default 60, 0 refuses at once). Only with --device.',
+    )
+    .option(
+      '--no-wait',
+      "Install on a phone another workspace leases instead of waiting: this run takes no lease and, when both workspaces build the same app id, the install terminates the holder's running app. Only with --device.",
+    )
     .action(async (opts: IosCommandOptions) => {
-      await runIos(opts, deps);
+      await runIos({ ...opts, waitConflict: waitFlagConflict(process.argv) }, deps);
     });
 }
 
@@ -1115,6 +1147,7 @@ interface ReportIosResultArgs {
   providerName: string | null;
   closeWriter: () => void;
   webPreviewUrl: string | null;
+  lease?: { kind: string; expiresAt: string } | null;
 }
 
 function reportIosResult({
@@ -1144,6 +1177,7 @@ function reportIosResult({
   providerName,
   closeWriter,
   webPreviewUrl,
+  lease,
 }: ReportIosResultArgs): IosFacts {
   const durationMs = elapsed();
   writeLastBuild(
@@ -1181,6 +1215,7 @@ function reportIosResult({
     durationMs,
     launched: launchState,
     webPreviewUrl,
+    lease,
   });
   if (json) {
     console.log(JSON.stringify(facts));
@@ -1261,6 +1296,8 @@ interface FinishIosRunArgs {
   useBuildCache: boolean;
   waitedForBuild: WaitedForBuild | null;
   closeWriter: () => void;
+  lease: RunLease | null;
+  releaseLease: () => void;
 }
 
 async function finishIosRun({
@@ -1304,8 +1341,24 @@ async function finishIosRun({
   useBuildCache,
   waitedForBuild,
   closeWriter,
+  lease,
+  releaseLease,
 }: FinishIosRunArgs): Promise<IosFacts | null> {
   let bundleId = initialBundleId;
+  let leaseWarned = false;
+  const raiseLeaseFor = (boundMs: number, beforeInstall: boolean): FailArgs | null => {
+    const step = lease?.raise(boundMs);
+    if (!step || step.ok) return null;
+    if (beforeInstall) {
+      const refusal = lostRefusal(step.holder, step.expiresAt, d.now());
+      return { code: refusal.code, message: refusal.message, remedy: refusal.remedy, lease: refusal.lease };
+    }
+    if (!leaseWarned) {
+      leaseWarned = true;
+      note(chalk.yellow(phaseLine('lease', lostLine(step.holder, step.expiresAt, d.now()))));
+    }
+    return null;
+  };
 
   if (appPath && !bundleId) {
     bundleId = d.readBundleId(appPath) || d.detectBundleId(root);
@@ -1344,6 +1397,8 @@ async function finishIosRun({
   let launchedAt = d.now();
 
   if (physical) {
+    const lostBeforeInstall = raiseLeaseFor(DEVICECTL_INSTALL_TIMEOUT_MS, true);
+    if (lostBeforeInstall) return fail(lostBeforeInstall);
     await d.stopPreviousCollector({ root, note });
     const installTimer = stepTimer(d.now);
     const installed = d.installIosDeviceApp({ udid, appPath: appPath!, bundleId });
@@ -1363,6 +1418,7 @@ async function finishIosRun({
     }
     dropSwapDir();
 
+    raiseLeaseFor(COLLECTOR_EXIT_WAIT_MS + LAUNCH_PROBE_TIMEOUT_MS, false);
     const payloadUrl = scheme && metroPort !== null && lanAddress ? devClientUrl(scheme, metroPort, lanAddress) : null;
     const launchTimer = stepTimer(d.now);
     launchedAt = d.now();
@@ -1461,6 +1517,7 @@ async function finishIosRun({
 
   if (!physical) await d.replaceCollector({ root, udid, bundleId: bundleId!, appName, note });
 
+  if (physical) raiseLeaseFor(release ? RELEASE_VERIFY_WAIT_MS : DEBUG_VERIFY_STEP_MS, false);
   const launchState = await verifyIosRun({
     d,
     release,
@@ -1493,6 +1550,9 @@ async function finishIosRun({
     });
   }
   logWriter().write(launchOutcomeRecord({ launchState, release, bundleId, configuration, metroPort }));
+
+  const leaseFacts = lease?.facts() ?? null;
+  releaseLease();
 
   const uploadWasAbandoned = await finishIosUpload(uploadPending, remote, phase, note);
   const providerOutcome = providerUploadOutcome(providerUpload ? await providerUpload : null, providerName);
@@ -1527,6 +1587,7 @@ async function finishIosRun({
     providerName,
     closeWriter,
     webPreviewUrl: remoteDevice?.webPreviewUrl() ?? null,
+    lease: physical ? leaseFacts : undefined,
   });
   if (remoteWasAbandoned || uploadWasAbandoned) exitAfterFlush(0);
   return facts;
@@ -1587,6 +1648,17 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     }
   };
 
+  let leaseHandle: RunLease | null = null;
+  const releaseLease = () => {
+    const held = leaseHandle;
+    leaseHandle = null;
+    try {
+      held?.release();
+    } catch (e) {
+      note(chalk.dim(`Could not release this run's device lease: ${(e as Error)?.message || e}`));
+    }
+  };
+
   let buildSlot: BuildSlotHandle | null = null;
   const releaseSlot = () => {
     if (!buildSlot) return;
@@ -1599,9 +1671,10 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     }
   };
 
-  const fail = ({ code, message, remedy = null, lines = [], logPath = null, build = null }: FailArgs): null => {
+  const fail = ({ code, message, remedy = null, lines = [], logPath = null, build = null, lease }: FailArgs): null => {
     releaseLock();
     releaseSlot();
+    releaseLease();
     if (message) note(chalk.red(phaseLine('error', message)));
     for (const line of lines) note(chalk.dim(phaseLine('', line)));
     if (remedy) note(chalk.dim(phaseLine('remedy', remedy)));
@@ -1613,7 +1686,16 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
         { write: d.writeWorkspaceState },
       );
     note(chalk.red(phaseLine('failed', code)));
-    if (json) console.log(JSON.stringify({ code, message: message ?? null, remedy: remedy ?? null }));
+    if (json) {
+      console.log(
+        JSON.stringify({
+          code,
+          message: message ?? null,
+          remedy: remedy ?? null,
+          ...(lease === undefined ? {} : { lease }),
+        }),
+      );
+    }
     writer?.close?.();
     process.exit(1);
     return null;
@@ -1683,6 +1765,32 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
       remedy: 'Pass only one of --device and --remote.',
     });
   }
+
+  const noWait = opts.wait === false;
+  const waitFlagged = opts.wait !== undefined;
+  if (opts.waitConflict) {
+    return fail({
+      code: 'STIM_BAD_ARG',
+      message: '--wait and --no-wait ask for opposite things.',
+      remedy: 'Pass `--wait <seconds>` to wait for the lease, or `--no-wait` to install without one.',
+    });
+  }
+  if (waitFlagged && !physical) {
+    return fail({
+      code: 'STIM_BAD_ARG',
+      message: '--wait and --no-wait only apply to a `--device` run.',
+      remedy: 'This workspace owns its simulator, so nothing contends for it. Drop the flag, or pass `--device`.',
+    });
+  }
+  const waitParsed = parseDeviceWait(noWait ? undefined : opts.wait);
+  if ('error' in waitParsed) {
+    return fail({
+      code: 'STIM_BAD_ARG',
+      message: waitParsed.error,
+      remedy: 'Pass a whole number of seconds, e.g. --wait 90. `--wait 0` refuses a leased device at once.',
+    });
+  }
+  const waitSeconds = waitParsed.seconds;
 
   const isExpo = d.detectIsExpo(root);
   const remoteBackend = physical ? null : (opts.remote ?? remoteIosSetting(settings));
@@ -2431,48 +2539,88 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   await prepareCachedArtifact();
   if (!(await buildArtifact())) return null;
 
-  return finishIosRun({
-    d,
-    root,
-    json,
-    release,
-    configuration,
-    isExpo,
-    metroCheck,
-    metroPort,
-    logsDir,
-    logFile,
-    device,
-    udid,
-    physical,
-    lanAddress,
-    lanOriginUrl,
-    remoteDevice,
-    bootPromise,
-    bootDuration: () => bootDuration,
-    appPath,
-    bundleId,
-    swapDir,
-    buildFailure,
-    fail,
-    phase,
-    note,
-    logWriter,
-    uploadPending,
-    providerUpload,
-    providerName,
-    remote,
-    abandonedRemote,
-    elapsed,
-    startedAt,
-    storeHash,
-    storeKey,
-    cacheHit,
-    compilationCache,
-    useBuildCache,
-    waitedForBuild,
-    closeWriter: () => writer?.close?.(),
-  });
+  if (physicalDevice) {
+    const acquired = await d.acquireRunLease({
+      root,
+      platform: PLATFORM,
+      id: physicalDevice.udid,
+      deviceName: physicalDevice.name,
+      idLabel: 'udid',
+      waitSeconds,
+      noWait,
+      installBoundMs: DEVICECTL_INSTALL_TIMEOUT_MS,
+      appId: bundleId ?? proj?.bundleId ?? null,
+      holderAppId: (holder: string) => d.getProject(holder)?.bundleId ?? null,
+      now: d.now,
+      warn: (line: string) => note(chalk.yellow(phaseLine('lease', line))),
+    });
+    if (acquired.status === 'refused') {
+      return fail({
+        code: acquired.refusal.code,
+        message: acquired.refusal.message,
+        remedy: acquired.refusal.remedy,
+        lease: acquired.refusal.lease,
+      });
+    }
+    leaseHandle = d.runLease({
+      root,
+      platform: PLATFORM,
+      kind: acquired.status === 'leased' ? acquired.kind : null,
+      expiresAt: acquired.status === 'leased' ? acquired.expiresAt : null,
+    });
+    if (acquired.status === 'leased') {
+      phase('lease', `${acquired.kind} lease on ${physicalDevice.udid} until ${acquired.expiresAt}`);
+    }
+  }
+
+  try {
+    return await finishIosRun({
+      d,
+      root,
+      json,
+      release,
+      configuration,
+      isExpo,
+      metroCheck,
+      metroPort,
+      logsDir,
+      logFile,
+      device,
+      udid,
+      physical,
+      lanAddress,
+      lanOriginUrl,
+      remoteDevice,
+      bootPromise,
+      bootDuration: () => bootDuration,
+      appPath,
+      bundleId,
+      swapDir,
+      buildFailure,
+      fail,
+      phase,
+      note,
+      logWriter,
+      uploadPending,
+      providerUpload,
+      providerName,
+      remote,
+      abandonedRemote,
+      elapsed,
+      startedAt,
+      storeHash,
+      storeKey,
+      cacheHit,
+      compilationCache,
+      useBuildCache,
+      waitedForBuild,
+      closeWriter: () => writer?.close?.(),
+      lease: leaseHandle,
+      releaseLease,
+    });
+  } finally {
+    releaseLease();
+  }
 }
 
 export function launchOutcomeRecord({

@@ -906,3 +906,35 @@ test('the cleanup guide documents what gc does with device lease files', () => {
   expect(cleanup).toMatch(/`stop` and\s+`worktree remove` release the leases/);
   expect(cleanup).toMatch(/never remove another workspace's/);
 });
+
+test('the guide documents the run-scoped device lease and the two flags that steer it', () => {
+  const lifecycle = renderTopic('lifecycle');
+  assert(lifecycle);
+  expect(lifecycle).toMatch(/THE DEVICE LEASE ON A/);
+  expect(lifecycle).toMatch(/AFTER the build[\s\S]*before the\s+install/);
+  expect(lifecycle).toMatch(/releases what it took when the command exits/);
+  expect(lifecycle).toMatch(/larger of 60 seconds and that step's own\s+upper bound/);
+  expect(lifecycle).toMatch(/`--wait\s+<seconds>` \(default 60\) polls every 2 seconds/);
+  expect(lifecycle).toMatch(/every 30 with the holder, the device and the holder's expiry/);
+  expect(lifecycle).toMatch(/`--wait 0` refuses at\s+once/);
+  expect(lifecycle).toMatch(/`--no-wait` changes only that case[\s\S]*NO lease/);
+  expect(lifecycle).toMatch(/same app id, that the install terminates the holder's\s+running app/);
+  expect(lifecycle).toMatch(/two\s+flags together are STIM_BAD_ARG, and so is either one without `--device`/);
+  expect(lifecycle).toMatch(/`lease: \{ kind, expiresAt \}`/);
+  expect(lifecycle).toMatch(/`lease: null`/);
+  expect(lifecycle).toMatch(/ios .*--device \[udid\] --wait <seconds> --no-wait/);
+  expect(lifecycle).toMatch(/android .*--device \[serial\] --wait <seconds> --no-wait/);
+});
+
+test('the errors topic documents both device-lease codes with their remedies', () => {
+  const body = renderTopic('errors');
+  assert(body);
+  expect(body).toMatch(/STIM_DEVICE_BUSY/);
+  expect(body).toMatch(/names the holder root, the device, and the\s+expiry/);
+  expect(body).toMatch(/lease: \{ platform, id, deviceName, holder, expiresAt \}/);
+  expect(body).toMatch(/wait longer with `--wait <seconds>`, pick another device by\s+id, or `--no-wait`/);
+  expect(body).toMatch(/lease\s+file that does not parse/);
+  expect(body).toMatch(/STIM_DEVICE_LOST/);
+  expect(body).toMatch(/raise before the\s+install found it gone or held under another token/);
+  expect(body).toMatch(/AFTER the install has started this is not a failure/);
+});

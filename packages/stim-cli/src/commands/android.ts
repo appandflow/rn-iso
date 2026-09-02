@@ -79,10 +79,12 @@ import { gitCommonDir, repoRoot } from '../worktree.ts';
 import { readCollectors } from '../collector/state.ts';
 import { MODE_BARE, MODE_EXPO, readWorkspaceState, writeWorkspaceState } from '../supervisor/state.ts';
 import {
+  ADB_INSTALL_TIMEOUT_MS,
   DEFAULT_METRO_PORT,
   LAUNCH_BUNDLING,
   LAUNCH_FATAL,
   LAUNCH_UNVERIFIED,
+  RELEASE_VERIFY_WAIT_MS,
   androidDevClientUrl,
   installAndroidApp,
   launchAndroidApp,
@@ -114,6 +116,17 @@ import {
   resolveRemoteContext,
 } from '../engine/device-remote.ts';
 import { detectProviders } from '../engine/metro-reach.ts';
+import {
+  DEBUG_VERIFY_STEP_MS,
+  acquireRunLease,
+  lostLine,
+  lostRefusal,
+  parseDeviceWait,
+  runLease,
+  waitFlagConflict,
+  type LeaseFacts,
+  type RunLease,
+} from '../engine/device-lease-run.ts';
 import { ownedSessionName } from '../engine/eas-simulator.ts';
 import type { OwnedDeviceRecord } from '../engine/device.ts';
 import { needsPrebuild, runPrebuild } from '../engine/prebuild.ts';
@@ -231,6 +244,7 @@ interface AndroidCommandOptions {
   variant?: string;
   remote?: RemoteDeviceBackend;
   device?: string | boolean;
+  wait?: string | boolean;
 }
 
 interface FailExtra {
@@ -238,6 +252,7 @@ interface FailExtra {
   diagnostics?: string[];
   lines?: string[];
   logPath?: string | null;
+  lease?: LeaseFacts | null;
 }
 
 interface AndroidRecord {
@@ -464,6 +479,7 @@ export function androidFacts({
   debugHttpHost = null,
   debugHttpHostNote = null,
   devClientUrl = null,
+  lease,
 }: {
   serial?: string | null;
   avdName?: string | null;
@@ -483,6 +499,7 @@ export function androidFacts({
   debugHttpHost?: string | null;
   debugHttpHostNote?: string | null;
   devClientUrl?: string | null;
+  lease?: { kind: string; expiresAt: string } | null;
 }): AndroidFacts {
   return {
     platform: PLATFORM,
@@ -504,6 +521,7 @@ export function androidFacts({
     debugHttpHostNote: debugHttpHostNote ?? null,
     devClientUrl: devClientUrl ?? null,
     logs: logs ?? null,
+    ...(lease === undefined ? {} : { lease }),
   };
 }
 
@@ -631,6 +649,14 @@ export function registerAndroid(program: Command): void {
         throw new InvalidArgumentError(`expected one of: ${REMOTE_DEVICE_BACKENDS.join(', ')}`);
       },
     )
+    .option(
+      '--wait <seconds>',
+      'How long to wait for another workspace to release the device it leases, before refusing with STIM_DEVICE_BUSY (default 60, 0 refuses at once). Only with --device.',
+    )
+    .option(
+      '--no-wait',
+      "Install on a device another workspace leases instead of waiting: this run takes no lease and, when both workspaces build the same app id, the install terminates the holder's running app. Only with --device.",
+    )
     .action(async (opts: AndroidCommandOptions) => {
       const root = findProjectRoot(process.cwd());
       if (!root) {
@@ -646,6 +672,8 @@ export function registerAndroid(program: Command): void {
         variant: opts.variant ?? null,
         remoteDevice: opts.remote ?? null,
         device: opts.device ?? null,
+        wait: opts.wait,
+        waitConflict: waitFlagConflict(process.argv),
       });
       if (!result.ok) process.exit(1);
     });
@@ -658,6 +686,10 @@ interface RunAndroidOptions {
   useBuildCache?: boolean;
   variant?: string | null;
   device?: string | boolean | null;
+  wait?: string | boolean;
+  waitConflict?: boolean;
+  acquireLease?: typeof acquireRunLease;
+  makeRunLease?: typeof runLease;
   listDevices?: typeof listAdbDevices;
   deviceModel?: typeof physicalDeviceModel;
   isEmulatorDevice?: typeof probeEmulatorSerial;
@@ -891,6 +923,7 @@ async function finishAndroidUpload(
 }
 
 interface ReportAndroidResultArgs {
+  lease?: { kind: string; expiresAt: string } | null;
   json: boolean;
   useBuildCache: boolean;
   variant: string | null;
@@ -936,6 +969,7 @@ function reportAndroidResult({
   launched,
   writer,
   emit,
+  lease,
 }: ReportAndroidResultArgs): AndroidFacts {
   const facts = androidFacts({
     serial,
@@ -956,6 +990,7 @@ function reportAndroidResult({
     installSkipped,
     launched: launchState,
     logs: logsDir,
+    lease,
   });
   writer.close();
 
@@ -996,6 +1031,8 @@ function reportAndroidResult({
 }
 
 interface FinishAndroidRunArgs {
+  lease: RunLease | null;
+  releaseLease: () => void;
   root: string;
   json: boolean;
   metroCheck: boolean;
@@ -1051,6 +1088,8 @@ interface FinishAndroidRunArgs {
 }
 
 async function finishAndroidRun({
+  lease,
+  releaseLease,
   root,
   json,
   metroCheck,
@@ -1100,6 +1139,20 @@ async function finishAndroidRun({
   emit,
 }: FinishAndroidRunArgs): Promise<RunAndroidResult> {
   let androidPackage = initialPackage;
+  let leaseWarned = false;
+  const raiseLeaseFor = (boundMs: number, beforeInstall: boolean): RunAndroidResult | null => {
+    const step = lease?.raise(boundMs);
+    if (!step || step.ok) return null;
+    if (beforeInstall) {
+      const refusal = lostRefusal(step.holder, step.expiresAt, now());
+      return fail(refusal.code, refusal.message, refusal.remedy, { lease: refusal.lease });
+    }
+    if (!leaseWarned) {
+      leaseWarned = true;
+      phase('lease', chalk.yellow(lostLine(step.holder, step.expiresAt, now())));
+    }
+    return null;
+  };
 
   const booted = await bootPromise;
   if (booted.failed) {
@@ -1128,6 +1181,8 @@ async function finishAndroidRun({
   }
   androidPackage = packageFromApk || androidPackage || detectAndroidPackage(root);
 
+  const lostBeforeInstall = physical ? raiseLeaseFor(ADB_INSTALL_TIMEOUT_MS, true) : null;
+  if (lostBeforeInstall) return lostBeforeInstall;
   const installTimer = stepTimer(now);
   const installed: InstallResultLike = install({
     serial,
@@ -1176,6 +1231,7 @@ async function finishAndroidRun({
     );
   }
 
+  if (physical) raiseLeaseFor(0, false);
   const scheme = release ? undefined : resolveDevClientScheme(root, apkPath);
   const launchTimer = stepTimer(now);
   const launchedAt = now();
@@ -1251,6 +1307,7 @@ async function finishAndroidRun({
     phase('logs', `${displayPath(root, logsDir)}${collectorPid ? ` (collector pid ${collectorPid})` : ''}`);
   }
 
+  if (physical) raiseLeaseFor(release ? RELEASE_VERIFY_WAIT_MS : DEBUG_VERIFY_STEP_MS, false);
   const launchState = await verifyAndroidRun({
     release,
     remoteRelease,
@@ -1280,6 +1337,9 @@ async function finishAndroidRun({
     launchOutcomeRecord({ launchState, release, bundleId: androidPackage, configuration: variant, metroPort }),
   );
 
+  const leaseFacts = lease?.facts() ?? null;
+  releaseLease();
+
   const facts = reportAndroidResult({
     json,
     useBuildCache,
@@ -1302,6 +1362,7 @@ async function finishAndroidRun({
     launched,
     writer,
     emit,
+    lease: physical ? leaseFacts : undefined,
   });
   if (remoteWasAbandoned || uploadWasAbandoned) exitAfterFlush(0);
   return { ok: true, facts };
@@ -1323,6 +1384,10 @@ function resolveRunAndroidOptions(
     useBuildCache = true,
     variant: variantFlag = null,
     device: deviceFlag = null,
+    wait: waitFlag = undefined,
+    waitConflict = false,
+    acquireLease = acquireRunLease,
+    makeRunLease = runLease,
     listDevices = listAdbDevices,
     deviceModel = physicalDeviceModel,
     isEmulatorDevice = probeEmulatorSerial,
@@ -1388,6 +1453,10 @@ function resolveRunAndroidOptions(
     useBuildCache,
     variantFlag,
     deviceFlag,
+    waitFlag,
+    waitConflict,
+    acquireLease,
+    makeRunLease,
     listDevices,
     deviceModel,
     isEmulatorDevice,
@@ -1455,6 +1524,10 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     useBuildCache,
     variantFlag,
     deviceFlag,
+    waitFlag,
+    waitConflict,
+    acquireLease,
+    makeRunLease,
     listDevices,
     deviceModel,
     isEmulatorDevice,
@@ -1566,7 +1639,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     code: string | undefined,
     message?: string | null,
     remedy?: string | null,
-    { lastBuildStatus = false, diagnostics = [], lines = [], logPath = null }: FailExtra = {},
+    { lastBuildStatus = false, diagnostics = [], lines = [], logPath = null, lease }: FailExtra = {},
   ): RunAndroidResult => {
     if (lastBuildStatus) {
       persistLastBuild({
@@ -1585,7 +1658,9 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     for (const line of lines) out(phaseLine('', chalk.dim(line)));
     if (remedy) out(phaseLine('remedy', remedy));
     if (logPath) out(phaseLine('log', logPath));
-    if (json) emit(JSON.stringify({ code, message, remedy: remedy ?? null }));
+    if (json) {
+      emit(JSON.stringify({ code, message, remedy: remedy ?? null, ...(lease === undefined ? {} : { lease }) }));
+    }
     writer.close();
     return { ok: false, error: { code, message, remedy: remedy ?? null } };
   };
@@ -1652,6 +1727,32 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       'Pass only one of --device and --remote.',
     );
   }
+  const noWait = waitFlag === false;
+  const waitFlagged = waitFlag !== undefined;
+  if (waitConflict) {
+    return fail(
+      'STIM_BAD_ARG',
+      '--wait and --no-wait ask for opposite things.',
+      'Pass `--wait <seconds>` to wait for the lease, or `--no-wait` to install without one.',
+    );
+  }
+  if (waitFlagged && !physical) {
+    return fail(
+      'STIM_BAD_ARG',
+      '--wait and --no-wait only apply to a `--device` run.',
+      'This workspace owns its emulator, so nothing contends for it. Drop the flag, or pass `--device`.',
+    );
+  }
+  const waitParsed = parseDeviceWait(noWait ? undefined : waitFlag);
+  if ('error' in waitParsed) {
+    return fail(
+      'STIM_BAD_ARG',
+      waitParsed.error,
+      'Pass a whole number of seconds, e.g. --wait 90. `--wait 0` refuses a leased device at once.',
+    );
+  }
+  const waitSeconds = waitParsed.seconds;
+
   const remoteBackend = physical ? null : (commandRemoteBackend ?? remoteAndroidSetting(settings));
   const requestedSerial = typeof deviceFlag === 'string' ? deviceFlag : null;
   let androidPackage = detectAndroidPackage(root);
@@ -2252,55 +2353,102 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   if (!(await buildArtifact())) return phaseFailure!;
   record.appPath = apkPath;
 
-  return finishAndroidRun({
-    root,
-    json,
-    metroCheck,
-    useBuildCache,
-    variant,
-    release,
-    isExpo,
-    metroPort,
-    logsDir,
-    emuLog,
-    device,
-    physical,
-    remoteDevice,
-    bootPromise,
-    bootDuration: () => bootDuration,
-    apkPath,
-    androidPackage,
-    swapDir,
-    record,
-    storeHash,
-    storeKey,
-    waitedForBuild,
-    uploadPending,
-    providerUpload,
-    providerName,
-    remote,
-    abandonedRemote,
-    started,
-    startedAt,
-    writer,
-    phase,
-    fail,
-    readApkPackage,
-    install,
-    launch,
-    launchRelease,
-    resolveDevClientScheme,
-    verifyLaunched,
-    verifyReleaseLaunched,
-    spawn,
-    kill,
-    pidAlive,
-    verifyCollector,
-    writeState,
-    now,
-    out,
-    emit,
-  });
+  let leaseHandle: RunLease | null = null;
+  const releaseLease = () => {
+    const held = leaseHandle;
+    leaseHandle = null;
+    try {
+      held?.release();
+    } catch (err) {
+      out(phaseLine('lease', chalk.dim(`could not release this run's lease: ${(err as Error)?.message || err}`)));
+    }
+  };
+  if (physical) {
+    const acquired = await acquireLease({
+      root,
+      platform: PLATFORM,
+      id: device.serial!,
+      deviceName: device.deviceName ?? null,
+      idLabel: 'serial',
+      waitSeconds,
+      noWait,
+      installBoundMs: ADB_INSTALL_TIMEOUT_MS,
+      appId: androidPackage,
+      holderAppId: (holder: string) => getProject(holder)?.androidPackage ?? null,
+      now,
+      warn: (line: string) => out(phaseLine('lease', chalk.yellow(line))),
+    });
+    if (acquired.status === 'refused') {
+      return fail(acquired.refusal.code, acquired.refusal.message, acquired.refusal.remedy, {
+        lease: acquired.refusal.lease,
+      });
+    }
+    leaseHandle = makeRunLease({
+      root,
+      platform: PLATFORM,
+      kind: acquired.status === 'leased' ? acquired.kind : null,
+      expiresAt: acquired.status === 'leased' ? acquired.expiresAt : null,
+    });
+    if (acquired.status === 'leased') {
+      phase('lease', `${acquired.kind} lease on ${device.serial} until ${acquired.expiresAt}`);
+    }
+  }
+
+  try {
+    return await finishAndroidRun({
+      lease: leaseHandle,
+      releaseLease,
+      root,
+      json,
+      metroCheck,
+      useBuildCache,
+      variant,
+      release,
+      isExpo,
+      metroPort,
+      logsDir,
+      emuLog,
+      device,
+      physical,
+      remoteDevice,
+      bootPromise,
+      bootDuration: () => bootDuration,
+      apkPath,
+      androidPackage,
+      swapDir,
+      record,
+      storeHash,
+      storeKey,
+      waitedForBuild,
+      uploadPending,
+      providerUpload,
+      providerName,
+      remote,
+      abandonedRemote,
+      started,
+      startedAt,
+      writer,
+      phase,
+      fail,
+      readApkPackage,
+      install,
+      launch,
+      launchRelease,
+      resolveDevClientScheme,
+      verifyLaunched,
+      verifyReleaseLaunched,
+      spawn,
+      kill,
+      pidAlive,
+      verifyCollector,
+      writeState,
+      now,
+      out,
+      emit,
+    });
+  } finally {
+    releaseLease();
+  }
 }
 
 export function cacheOutcome(cacheHit: unknown, providerName: string | null = null): string {

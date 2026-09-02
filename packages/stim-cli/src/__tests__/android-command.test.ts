@@ -38,10 +38,12 @@ import {
 } from '../commands/android.ts';
 import { newestBuildTools } from '../sim/android.ts';
 import { BUILD_ERROR } from '../engine/gradle.ts';
-import { LAUNCH_UNVERIFIED } from '../engine/app-install.ts';
+import { ADB_INSTALL_TIMEOUT_MS, LAUNCH_UNVERIFIED } from '../engine/app-install.ts';
 import type { AssetManifest } from '../engine/asset-manifest.ts';
 import { PREBUILD_ERROR } from '../engine/prebuild.ts';
 import { asProcessExit, makeChildProcess, makeError, makeExecutor } from './_factories.ts';
+import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
+import { DEBUG_VERIFY_STEP_MS, type RunLease } from '../engine/device-lease-run.ts';
 
 const FINGERPRINT = 'a3f9b1c2d3e4f5a6b7c8d9e0f1a2b3c4';
 const CACHE_KEY = `${FINGERPRINT}-debug-sim`;
@@ -3878,5 +3880,177 @@ describe('an APK the device already holds', () => {
     assert(result.facts);
     expect(result.facts.installSkipped).toBe(false);
     expect(labelled(h.stderr, 'install')[0]).not.toMatch(/skipped/);
+  });
+});
+
+describe('--device: the lease on the device', () => {
+  const SERIAL = 'RFCR7081Q9L';
+  const OTHER_ROOT = '/worktree/theirs';
+  const CONNECTED = { emulators: [], physical: [{ serial: SERIAL }], unhealthy: [] };
+
+  function fakeLease(over: Partial<RunLease> = {}) {
+    const raises: number[] = [];
+    const released: number[] = [];
+    const lease: RunLease = {
+      kind: 'run',
+      expiresAt: '2026-09-02T12:05:00.000Z',
+      lost: false,
+      raise: (boundMs: number) => {
+        raises.push(boundMs);
+        return { ok: true, holder: root, expiresAt: lease.expiresAt };
+      },
+      release: () => {
+        released.push(1);
+      },
+      facts: () => ({ kind: 'run', expiresAt: lease.expiresAt as string }),
+      ...over,
+    };
+    return { lease, raises, released };
+  }
+
+  function leased(lease: RunLease, overrides: Record<string, unknown> = {}) {
+    return harness({
+      device: true,
+      json: true,
+      listDevices: () => CONNECTED,
+      deviceModel: () => 'SM-G996W',
+      isEmulatorDevice: () => false,
+      acquireLease: async () => ({ status: 'leased', kind: 'run', expiresAt: lease.expiresAt }),
+      makeRunLease: () => lease,
+      ...overrides,
+    });
+  }
+
+  test('a successful device run reports the lease it held; an emulator run reports none', async () => {
+    const { lease } = fakeLease();
+    const h = leased(lease);
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(JSON.parse(h.stdout[0] as string).lease).toEqual({ kind: 'run', expiresAt: lease.expiresAt });
+
+    const emulator = harness({ json: true });
+    await emulator.run();
+    expect(JSON.parse(emulator.stdout[0] as string)).not.toHaveProperty('lease');
+  });
+
+  test('every device step raises the lease: the install timeout, the launch floor, the bundle deadline', async () => {
+    const { lease, raises } = fakeLease();
+    await leased(lease).run();
+    expect(raises).toEqual([ADB_INSTALL_TIMEOUT_MS, 0, DEBUG_VERIFY_STEP_MS]);
+  });
+
+  test('the lease is released on success and on failure', async () => {
+    const ok = fakeLease();
+    expect((await leased(ok.lease).run()).ok).toBe(true);
+    expect(ok.released).toHaveLength(1);
+
+    const failed = fakeLease();
+    const result = await leased(failed.lease, {
+      install: () => ({ failed: true, reason: 'adb said no' }),
+    }).run();
+    expect(result.ok).toBe(false);
+    expect(failed.released).toHaveLength(1);
+  });
+
+  test('a lease lost before the install refuses with STIM_DEVICE_LOST and installs nothing', async () => {
+    const { lease } = fakeLease({
+      raise: () => ({ ok: false, holder: OTHER_ROOT, expiresAt: null }),
+      facts: () => null,
+    });
+    const h = leased(lease);
+    const result = await h.run();
+
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('STIM_DEVICE_LOST');
+    expect(h.calls.install).toEqual([]);
+    expect(JSON.parse(h.stdout[0] as string).lease).toBe(null);
+  });
+
+  test('a device another workspace leases refuses with the holder in the JSON', async () => {
+    const taken = takeLease({
+      root: OTHER_ROOT,
+      platform: 'android',
+      id: SERIAL,
+      deviceName: 'Test Device',
+      kind: 'declared',
+    });
+    assert(taken.status === 'taken');
+    const h = harness({
+      device: true,
+      json: true,
+      wait: '0',
+      listDevices: () => CONNECTED,
+      deviceModel: () => 'SM-G996W',
+      isEmulatorDevice: () => false,
+    });
+    const result = await h.run();
+
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('STIM_DEVICE_BUSY');
+    expect(h.calls.install).toEqual([]);
+    expect(JSON.parse(h.stdout[0] as string).lease).toEqual({
+      platform: 'android',
+      id: SERIAL,
+      deviceName: 'Test Device',
+      holder: OTHER_ROOT,
+      expiresAt: taken.lease.expiresAt,
+    });
+  });
+
+  test('--no-wait installs on a leased device without taking one', async () => {
+    takeLease({ root: OTHER_ROOT, platform: 'android', id: SERIAL, deviceName: 'Test Device', kind: 'declared' });
+    const h = harness({
+      device: true,
+      json: true,
+      wait: false,
+      listDevices: () => CONNECTED,
+      deviceModel: () => 'SM-G996W',
+      isEmulatorDevice: () => false,
+    });
+    const result = await h.run();
+
+    expect(result.ok).toBe(true);
+    expect(h.calls.install[0]?.serial).toBe(SERIAL);
+    expect(h.stderr.join('\n')).toMatch(/--no-wait: \/worktree\/theirs holds Test Device/);
+    expect(JSON.parse(h.stdout[0] as string).lease).toBe(null);
+    expect(listLeaseFiles()).toHaveLength(1);
+  });
+
+  test('a free device is leased by the run and released at the end', async () => {
+    const h = harness({
+      device: true,
+      listDevices: () => CONNECTED,
+      deviceModel: () => 'SM-G996W',
+      isEmulatorDevice: () => false,
+    });
+    expect((await h.run()).ok).toBe(true);
+    expect(h.stderr.join('\n')).toMatch(new RegExp(`run lease on ${SERIAL} until`));
+    expect(listLeaseFiles()).toEqual([]);
+  });
+
+  test('--wait without --device, an unusable value, and both flags at once are all STIM_BAD_ARG', async () => {
+    const noDevice = await harness({ wait: '30' }).run();
+    expect(noDevice.error?.code).toBe('STIM_BAD_ARG');
+    expect(noDevice.error?.message).toMatch(/only apply to a `--device` run/);
+
+    const bypassNoDevice = await harness({ wait: false }).run();
+    expect(bypassNoDevice.error?.message).toMatch(/only apply to a `--device` run/);
+
+    const bad = await harness({
+      device: true,
+      wait: 'soon',
+      listDevices: () => CONNECTED,
+      isEmulatorDevice: () => false,
+    }).run();
+    expect(bad.error?.message).toMatch(/Invalid --wait value/);
+
+    const both = await harness({
+      device: true,
+      wait: false,
+      waitConflict: true,
+      listDevices: () => CONNECTED,
+      isEmulatorDevice: () => false,
+    }).run();
+    expect(both.error?.message).toMatch(/--wait and --no-wait ask for opposite things/);
   });
 });

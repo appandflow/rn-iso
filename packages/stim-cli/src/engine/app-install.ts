@@ -234,6 +234,8 @@ export function installConflictKind(text: unknown): 'signature' | 'downgrade' | 
   return null;
 }
 
+export const ADB_INSTALL_TIMEOUT_MS = 300_000;
+
 export function installAndroidApp(
   {
     serial,
@@ -248,7 +250,7 @@ export function installAndroidApp(
     return { ok: true, apkPath, skipped: true };
   }
   const install = () => {
-    e.runFile('adb', ['-s', serial, 'install', '-r', apkPath]);
+    e.runFile('adb', ['-s', serial, 'install', '-r', apkPath], { timeoutMs: ADB_INSTALL_TIMEOUT_MS });
   };
   try {
     install();
@@ -556,7 +558,7 @@ export type VerifyLaunchResult = {
   waitedMs: number;
 };
 
-const RELEASE_VERIFY_WAIT_MS = 3000;
+export const RELEASE_VERIFY_WAIT_MS = 3000;
 
 export type ReleaseVerifyResult = {
   verified: boolean;

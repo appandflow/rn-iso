@@ -152,7 +152,7 @@ export function resolveIosPhysicalDevice(requested: string | null, devices: IosD
   };
 }
 
-const DEVICECTL_INSTALL_TIMEOUT_MS = 300_000;
+export const DEVICECTL_INSTALL_TIMEOUT_MS = 300_000;
 
 const LOCKED_REMEDY = 'Unlock the phone and keep it awake, then run the command again.';
 
@@ -379,7 +379,7 @@ export interface IosDeviceLaunchResult {
   lines?: string[];
 }
 
-const LAUNCH_PROBE_TIMEOUT_MS = 45_000;
+export const LAUNCH_PROBE_TIMEOUT_MS = 45_000;
 const LAUNCH_PROBE_POLL_MS = 1000;
 const COLLECTOR_ENDED_EVENTS = new Set(['collector_failed', 'collector_stopped']);
 

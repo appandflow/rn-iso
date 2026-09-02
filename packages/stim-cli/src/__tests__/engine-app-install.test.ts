@@ -22,6 +22,7 @@ import {
   androidDevClientUrl,
   debugHttpHostScript,
   deviceShellArg,
+  ADB_INSTALL_TIMEOUT_MS,
   installAndroidApp,
   installConflictKind,
   installIosApp,
@@ -378,6 +379,20 @@ describe('android: install and launch', () => {
     const apkPath = '/tmp/out puts/app-debug.apk';
     expect(installAndroidApp({ serial: 'emulator-5554', apkPath }, { exec })).toEqual({ ok: true, apkPath });
     expect(exec.calls).toEqual([['adb', '-s', 'emulator-5554', 'install', '-r', apkPath]]);
+  });
+
+  test('adb install is bounded by the same five minutes devicectl install gets', () => {
+    const options: Array<Record<string, unknown> | undefined> = [];
+    const exec = recordingExec();
+    const runFile = exec.runFile.bind(exec);
+    exec.runFile = (file: string, args: string[] = [], opts?: Record<string, unknown>) => {
+      options.push(opts);
+      return runFile(file, args);
+    };
+
+    installAndroidApp({ serial: 'emulator-5554', apkPath: '/tmp/app-debug.apk' }, { exec });
+    expect(ADB_INSTALL_TIMEOUT_MS).toBe(300_000);
+    expect(options.at(-1)).toEqual({ timeoutMs: ADB_INSTALL_TIMEOUT_MS });
   });
 
   test('reverseMetroPorts maps only the reserved port to itself', () => {

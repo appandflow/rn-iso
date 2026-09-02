@@ -905,6 +905,31 @@ STIM_NO_DEVICE
   boot whose emulator process exited is also reported at once rather than after
   the full cold-boot timeout.
 
+STIM_DEVICE_BUSY
+  Only on a \`--device\` run. Another workspace holds the lease on that phone,
+  and the wait ran out: the message names the holder root, the device, and the
+  expiry as a clock time and a remaining duration, and \`--json\` adds
+  \`lease: { platform, id, deviceName, holder, expiresAt }\`. In order, the
+  remedies are: wait longer with \`--wait <seconds>\`, pick another device by
+  id, or \`--no-wait\`, which installs with NO lease -- and when both
+  workspaces build the same app id, that install terminates the app the holder
+  is running. Two other cases refuse with this code and no wait at all: a lease
+  file that does not parse (\`lease\` fields null, the file named -- nothing may
+  take that device until it is dealt with), and this workspace's OWN lease with
+  no token left in its \`state.json\` (its workspace directory was recreated).
+  That last one is this workspace's own file to remove -- \`stim status\` names
+  it -- or you can wait it out; releasing it by holder gets its own command in
+  a later release.
+
+STIM_DEVICE_LOST
+  Only on a \`--device\` run. The run held a lease, and the raise before the
+  install found it gone or held under another token -- another workspace took
+  the device in that window. The message names the new holder and its expiry.
+  Run the command again; it waits for that lease under \`--wait <seconds>\`.
+  AFTER the install has started this is not a failure: the app is already on
+  the phone, so the run prints one warning, continues, and reports
+  \`lease: null\` in \`--json\`.
+
 STIM_AT_CAPACITY
   Only when concurrency.maxDevices is set (it is UNSET by default, so this never
   fires unless you opted in). Booting a NEW owned device would exceed the cap:
@@ -1535,8 +1560,8 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
 
 THE OPTION SURFACE, IN FULL
   start           --json --wait <seconds> --remote
-  ios             --json --no-metro-check --no-build-cache --configuration <name> --device [udid] --remote <proxy|eas>
-  android         --json --no-metro-check --no-build-cache --variant <name> --device [serial] --remote <proxy|eas>
+  ios             --json --no-metro-check --no-build-cache --configuration <name> --device [udid] --wait <seconds> --no-wait --remote <proxy|eas>
+  android         --json --no-metro-check --no-build-cache --variant <name> --device [serial] --wait <seconds> --no-wait --remote <proxy|eas>
   logs            --source --level --since --grep --tail --follow --errors --json
   stop            --json --force
   status          --json          (already machine-wide)
@@ -1568,6 +1593,10 @@ THE OPTION SURFACE, IN FULL
   no serial it uses the one connected device, and refuses with the candidate
   list when adb reports several. It cannot be combined with --remote.
 
+  A \`--device\` run LEASES the device from just after the build until it
+  exits, so a second workspace cannot install over it mid-run (see THE DEVICE
+  LEASE below).
+
   The build, the fingerprint, the build cache and the Metro port gate are
   unchanged. What is skipped is everything that manages an owned device:
   no capacity check, no AVD creation, no boot wait, and no device record --
@@ -1581,7 +1610,35 @@ THE OPTION SURFACE, IN FULL
   that is unpaired or has Developer Mode off is refused with the fix. It
   cannot be combined with --remote, and it never creates, boots, or deletes
   hardware -- there is no capacity check, no simulator creation, no boot wait,
-  and no device record, so \`stop\` and \`gc\` never see the phone.
+  and no device record, so \`stop\` and \`gc\` never see the phone. Like
+  \`android --device\`, it leases the phone for the run (below).
+
+THE DEVICE LEASE ON A \`--device\` RUN
+  A physical device is shared, so a \`--device\` run takes a lease on it. The
+  lease step sits AFTER the build (a build touches no device) and before the
+  install, and the run releases what it took when the command exits, however it
+  exits. Before each device step -- install, launch, verification -- the run
+  raises the expiry to now plus the larger of 60 seconds and that step's own
+  upper bound, because a child process is synchronous and no timer can tick
+  during an install. A run killed with SIGKILL therefore leaves the device
+  leased for at most the current step's bound, never less than 60 seconds.
+
+  If nobody holds the device, the run takes a lease of its own and gives it
+  back at exit. If another workspace holds it, the run WAITS: \`--wait
+  <seconds>\` (default 60) polls every 2 seconds, prints a waiting line to
+  stderr every 30 with the holder, the device and the holder's expiry, and
+  refuses with STIM_DEVICE_BUSY when it runs out. \`--wait 0\` refuses at
+  once. \`--no-wait\` changes only that case: the run proceeds with NO lease
+  and prints one warning naming the holder and its expiry -- and when both
+  workspaces build the same app id, that the install terminates the holder's
+  running app. A free device is leased as usual under \`--no-wait\`. The two
+  flags together are STIM_BAD_ARG, and so is either one without \`--device\`,
+  because an owned simulator or emulator has no contention.
+
+  A successful \`--device\` run reports \`lease: { kind, expiresAt }\` in its
+  \`--json\`; a run that proceeded without one, or lost one after the install,
+  reports \`lease: null\`. \`stim status\` lists every lease file on the
+  machine, and \`stop\` releases the ones this workspace holds.
 
   A device build is LOCAL-TIER ONLY. Its cache key is
   \`<fingerprint>-<configuration>-device\`, so a device app can never collide
