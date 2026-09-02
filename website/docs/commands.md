@@ -40,8 +40,8 @@ passed.
 `doctor` also flags when an agent harness sandboxes shell commands and Stim is
 not allowed through it, which shows up as unrelated-looking failures against
 the simulator service, the adb server, and Stim's own state directory.
-`--fix` writes the missing allowance into `.claude/settings.local.json`, a
-per-user, gitignored file, merging it with whatever is already there and
+`--fix` writes the missing allowance into `.claude/settings.local.json` at the repository root, the
+per-user file, merging it with whatever is already there and
 touching nothing else. It refuses to change anything under Codex, whose
 sandbox has no per-path allowance to add, and it does nothing when no
 sandboxing harness is present. See `stim guide errors` for the failure
