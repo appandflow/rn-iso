@@ -45,13 +45,16 @@ test('cold and warm worktree creation report different guidance', () => {
 
   const plainWarm = create('plain-warm');
   assert.equal(plainWarm.status, 0, plainWarm.stderr);
-  assert.match(plainWarm.stderr, /Warm source not carried: dependencies, CocoaPods, native build output/);
+  assert.match(
+    plainWarm.stderr,
+    /^ {2}carry {7}warm source not carried: dependencies, CocoaPods, native build output/m,
+  );
   assert.match(plainWarm.stderr, /stim worktree create <name> --carry-ignored/);
 
   const carried = create('carried', ['--carry-ignored']);
   assert.equal(carried.status, 0, carried.stderr);
-  assert.match(carried.stderr, /Carried warm state: dependencies=yes, CocoaPods=yes, native build output=yes/);
-  assert.match(carried.stderr, /Copy mode: (APFS copy-on-write clone|full byte copy)/);
+  assert.match(carried.stderr, /^ {2}carry {7}node_modules, Pods, native build output \((APFS clone|byte copy)\)$/m);
+  assert.match(carried.stderr, /^ {2}ready {7}\//m);
   const carriedPath = carried.stdout.trim();
   assert.ok(existsSync(join(carriedPath, 'node_modules', 'pkg', 'index.js')));
   assert.ok(existsSync(join(carriedPath, 'ios', 'Pods', 'Manifest.lock')));
@@ -89,7 +92,7 @@ test('carried pods are judged against the Podfile.lock the new worktree ends up 
   const created = carried.stdout.trim();
   assert.equal(readFileSync(join(created, 'ios', 'Podfile.lock'), 'utf-8'), workingLock);
   assert.equal(readFileSync(join(created, 'ios', 'Pods', 'Manifest.lock'), 'utf-8'), workingLock);
-  assert.doesNotMatch(carried.stderr, /Carried ios\/Pods does not match/);
+  assert.doesNotMatch(carried.stderr, /carried ios\/Pods does not match/);
 });
 
 function create(name, extra = []) {

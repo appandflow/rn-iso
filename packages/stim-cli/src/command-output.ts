@@ -33,6 +33,12 @@ export function formatElapsed(ms: unknown): string {
   return minutes > 0 ? `${minutes}m${String(seconds).padStart(2, '0')}s` : `${seconds}s`;
 }
 
+export function clockTime(iso: string): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return iso;
+  return [at.getHours(), at.getMinutes(), at.getSeconds()].map((n) => String(n).padStart(2, '0')).join(':');
+}
+
 export function phaseLine(label: unknown, text: string): string {
   return `  ${String(label).padEnd(LABEL_WIDTH)} ${text}`;
 }

@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'fs
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { Command } from 'commander';
+import { clockTime } from '../command-output.ts';
 import { saveConfig, getProject } from '../config.ts';
 import { verifyCollectorOwnership } from '../collector/ownership.ts';
 import { ensureWorkspaceStorage, supervisorPidFile, workspaceStateFile } from '../paths.ts';
@@ -618,7 +619,7 @@ test('stop refuses to signal a collector pid it cannot prove, and keeps the reco
     { platform: 'android', pid: 222, status: 'stopped' },
   ]);
   expect(r.summary).toMatch(/1 collector left unsignalled/);
-  expect(reported.join('\n')).toMatch(/refusing to signal ios pid 111/);
+  expect(reported.join('\n')).toMatch(/^  stop {8}refusing to signal collector ios pid 111/m);
 
   const payload = JSON.parse(JSON.stringify({ root: '/proj/a', ok: r.ok, ...r.outcomes }));
   expect(payload.collectors).toEqual({
@@ -802,7 +803,7 @@ test('a stopped session with an unreconciled claim is reported and keeps its ret
   });
 
   expect(result.ok).toBe(false);
-  expect(lines.join('\n')).toMatch(/stopped session drs_8/i);
+  expect(lines.join('\n')).toMatch(/^  device {6}stopped remote session drs_8/m);
   expect(lines.join('\n')).toMatch(/ownership claim.*could not be removed/i);
   const state = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
   expect(state.remoteDevice.sessionId).toBe('drs_8');
@@ -1142,7 +1143,10 @@ test('stop releases the leases this workspace holds and lists them', async () =>
   ]);
   expect(r.summary).toMatch(/ios lease on UDID-1 released/);
   expect(reported.join('\n')).toMatch(
-    new RegExp(`released the ios lease on UDID-1 \\(it ran until ${taken.lease.expiresAt}\\)`),
+    new RegExp(
+      `^  lease {7}released the ios lease on UDID-1 \\(it ran until ${clockTime(taken.lease.expiresAt)}\\)$`,
+      'm',
+    ),
   );
   expect(listLeaseFiles().map((entry) => entry.id)).toEqual(['R5CT']);
 

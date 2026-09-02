@@ -2,6 +2,7 @@ import { existsSync, readdirSync, realpathSync } from 'fs';
 import { basename, dirname, resolve } from 'path';
 import chalk from 'chalk';
 import { type Command, InvalidArgumentError } from 'commander';
+import { phaseLine } from '../command-output.ts';
 import { resolveSettings, SETTING_SHAPE_REMEDY, settingShapeErrors, unknownSettingKeys } from '../settings.ts';
 import { getProject, isPathPrefix, loadConfig, removeProject, upsertProject } from '../config.ts';
 import { podInstallCommand } from '../engine/bundler.ts';
@@ -100,9 +101,20 @@ function warmCategoryNames(categories: WarmCarryCategories): string[] {
   return names;
 }
 
-export function warmCarrySummary(entries: string[], root?: string): string {
+export function warmCarrySummary(entries: string[], root: string | undefined, cloned: boolean): string {
   const categories = warmCarryCategories(entries, root);
-  return `Carried warm state: dependencies=${categories.dependencies ? 'yes' : 'no'}, CocoaPods=${categories.pods ? 'yes' : 'no'}, native build output=${categories.nativeOutput ? 'yes' : 'no'}.`;
+  const carried: string[] = [];
+  const absent: string[] = [];
+  for (const [name, present] of [
+    ['node_modules', categories.dependencies],
+    ['Pods', categories.pods],
+    ['native build output', categories.nativeOutput],
+  ] as const) {
+    (present ? carried : absent).push(name);
+  }
+  const mode = cloned ? 'APFS clone' : 'byte copy';
+  const parts = carried.length ? [`${carried.join(', ')} (${mode})`] : [];
+  return [...parts, ...absent.map((name) => `no ${name}`)].join('; ');
 }
 
 export function dependencyInstallCommand(target: string, dir = '.'): string {
@@ -296,16 +308,22 @@ export function registerCreate(worktree: Command): void {
 
       console.error(
         chalk.dim(
-          reusedBranch
-            ? `Attached to the existing branch ${branch}${branchSha ? ` (${branchSha})` : ''}; its tip is the base, and ${baseRef} was not applied.`
-            : `Branched ${branch} from ${baseRef} (${baseSha}).`,
+          phaseLine(
+            'branch',
+            reusedBranch
+              ? `attached to the existing ${branch}${branchSha ? ` (${branchSha})` : ''}; its tip is the base, ${baseRef} was not applied`
+              : `${branch} from ${baseRef} (${baseSha})`,
+          ),
         ),
       );
       if (!reusedBranch && base === 'fresh') {
         console.error(
           chalk.dim(
-            `  ${baseRef} is a local ref, current as of the last \`git fetch\`. If you need the very latest, ` +
-              `run \`git -C ${root} fetch\` first.`,
+            phaseLine(
+              '',
+              `${baseRef} is a local ref, current as of the last \`git fetch\`. If you need the very latest, ` +
+                `run \`git -C ${root} fetch\` first.`,
+            ),
           ),
         );
       }
@@ -313,9 +331,9 @@ export function registerCreate(worktree: Command): void {
       const included = readWorktreeInclude(root);
       const patterns = included && included.length ? included : settings?.worktree?.include || [];
       const { copied, failed } = carryOverFiles({ root, target, patterns });
-      if (copied.length) console.error(chalk.dim(`Carried over ${copied.length} file(s).`));
+      if (copied.length) console.error(chalk.dim(phaseLine('carry', `${copied.length} configured file(s)`)));
       for (const f of failed) {
-        console.error(chalk.yellow(`Failed to carry over ${f.file}: ${f.error}`));
+        console.error(chalk.yellow(phaseLine('carry', `could not carry ${f.file}: ${f.error}`)));
       }
 
       let carriedDeps = false;
@@ -326,32 +344,16 @@ export function registerCreate(worktree: Command): void {
         const res = cloneIgnoredEntries({ root, target, patterns: skip });
         carriedDeps = warmCarryCategories(res.copied, target).dependencies;
         if (res.copied.length) {
-          console.error(chalk.dim(`Cloned ${res.copied.length} gitignored path(s).`));
-          console.error(chalk.dim(warmCarrySummary(res.copied, target)));
-          console.error(
-            chalk.dim(
-              res.cloned
-                ? 'Copy mode: APFS copy-on-write clone.'
-                : 'Copy mode: full byte copy. APFS copy-on-write clone was unavailable.',
-            ),
-          );
-        }
-        if (!carriedDeps) {
-          const remedies = dependencyInstallCommands(target);
-          console.error(
-            chalk.yellow(
-              `Dependencies were not carried. Run ${remedies.map((command) => `\`${command}\``).join(' and ')} before building.`,
-            ),
-          );
+          console.error(chalk.dim(phaseLine('carry', warmCarrySummary(res.copied, target, res.cloned))));
         }
         for (const f of res.failed) {
-          console.error(chalk.yellow(`Failed to clone ${f.file}: ${f.error}`));
+          console.error(chalk.yellow(phaseLine('carry', `could not clone ${f.file}: ${f.error}`)));
         }
         const changes = carryUncommittedChanges({ root, target });
         if (changes?.applied) {
-          console.error(chalk.dim(carriedChangesLine(changes.files)));
+          console.error(chalk.dim(phaseLine('carry', carriedChangesLine(changes.files))));
         } else if (changes?.conflicted) {
-          console.error(chalk.yellow(carryConflictWarning(changes.files)));
+          console.error(chalk.yellow(phaseLine('carry', carryConflictWarning(changes.files))));
         }
         const staleDeps = depsOutOfSync(root, target, res.copied);
         if (staleDeps.length) {
@@ -361,7 +363,10 @@ export function registerCreate(worktree: Command): void {
           ];
           console.error(
             chalk.yellow(
-              `Carried dependencies do not match ${manifests}. Run ${remedies.map((command) => `\`${command}\``).join(' and ')} before building.`,
+              phaseLine(
+                'carry',
+                `carried dependencies may be stale: they do not match ${manifests}. Run ${remedies.map((command) => `\`${command}\``).join(' and ')} before building.`,
+              ),
             ),
           );
         }
@@ -370,9 +375,12 @@ export function registerCreate(worktree: Command): void {
           const pod = podInstallCommand(p.dir === '.' ? target : resolve(target, p.dir, '..'));
           console.error(
             chalk.yellow(
-              p.reason === 'missing'
-                ? `Carried ${p.dir === '.' ? 'Pods' : `${p.dir}/Pods`} but there is no ${where}. Run \`${pod}\` before building.`
-                : `Carried ${p.dir === '.' ? 'Pods' : `${p.dir}/Pods`} does not match the ${where} on disk here. Pods are gitignored and cloned; Podfile.lock is tracked, so the two can disagree. Run \`${pod}\` before building, or xcodebuild fails with "sandbox is not in sync" only after every pod has compiled.`,
+              phaseLine(
+                'carry',
+                p.reason === 'missing'
+                  ? `carried ${p.dir === '.' ? 'Pods' : `${p.dir}/Pods`} but there is no ${where}. Run \`${pod}\` before building.`
+                  : `carried ${p.dir === '.' ? 'Pods' : `${p.dir}/Pods`} does not match the ${where} on disk here. Pods are gitignored and cloned; Podfile.lock is tracked, so the two can disagree. Run \`${pod}\` before building, or xcodebuild fails with "sandbox is not in sync" only after every pod has compiled.`,
+              ),
             ),
           );
         }
@@ -391,20 +399,28 @@ export function registerCreate(worktree: Command): void {
         worktreeMainRoot: mainRoot,
       });
 
-      console.error(
-        chalk.dim(
-          carriedDeps
-            ? 'Worktree ready. Cloned dependencies may be stale; reinstall if this branch changes them.'
-            : 'Worktree ready. Install dependencies yourself before building.',
-        ),
-      );
-      if (warmSource.length) {
+      if (!carriedDeps) {
+        const remedies = dependencyInstallCommands(target);
         console.error(
           chalk.yellow(
-            `Warm source not carried: ${warmSource.join(', ')}. For the next worktree, use: stim worktree create <name> --carry-ignored`,
+            phaseLine(
+              'carry',
+              `no dependencies carried. Run ${remedies.map((command) => `\`${command}\``).join(' and ')} before building.`,
+            ),
           ),
         );
       }
+      if (warmSource.length) {
+        console.error(
+          chalk.yellow(
+            phaseLine(
+              'carry',
+              `warm source not carried: ${warmSource.join(', ')}. For the next worktree, use: stim worktree create <name> --carry-ignored`,
+            ),
+          ),
+        );
+      }
+      console.error(chalk.dim(phaseLine('ready', target)));
 
       console.log(target);
     });

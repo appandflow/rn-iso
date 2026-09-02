@@ -51,6 +51,17 @@ test('the lifecycle topic grids every label the output vocabulary allows, and no
   expect(body.slice(start)).toMatch(/`app` and `compilation cache` join them in the stdout block/);
 });
 
+test('the lifecycle topic shows the lifecycle commands in the same label column', () => {
+  const body = renderTopic('lifecycle');
+  assert(body);
+  expect(body).toMatch(/branch\s+worktree-e2e-1 from HEAD \(9d0ebc4\)/);
+  expect(body).toMatch(/carry\s+node_modules \(APFS clone\); no Pods; no native build output/);
+  expect(body).toMatch(/ready\s+\/w\/worktree-e2e-1/);
+  expect(body).toMatch(/metro\s+starting on port 8083 \(expo-child, supervisor pid 13724\)/);
+  expect(body).toMatch(/stop\s+collector ios pid 45268/);
+  expect(body).toMatch(/port\s+released 8084/);
+});
+
 test('the errors topic names the two device fallbacks under the label that prints them', () => {
   const body = renderTopic('errors');
   assert(body);
@@ -59,6 +70,13 @@ test('the errors topic names the two device fallbacks under the label that print
   expect(body).not.toMatch(/^ *device app {2}/m);
   const src = readFileSync(new URL('../commands/ios.ts', import.meta.url), 'utf-8');
   expect(src.includes("'device app'")).toBe(false);
+});
+
+test('the errors topic states that the stale-carry line only prints on a real difference', () => {
+  const body = renderTopic('errors');
+  assert(body);
+  expect(body).toMatch(/carry\s+carried dependencies may be stale/);
+  expect(body).toMatch(/a carry whose lockfile matches is\s+silent/);
 });
 
 test('an unknown topic renders nothing rather than throwing', () => {
