@@ -895,13 +895,12 @@ describe('unverifiedLaunchLines: the routed Local Network remedy', () => {
     expect(text).not.toMatch(/LOCAL NETWORK PERMISSION IS NOT GRANTED/);
   });
 
-  test('the Close press is the fallback for an app opened without the deep link', () => {
+  test('the Close press stays, because the deep link finishes onboarding only', () => {
     const text = devClientLines().join('\n');
-    expect(text).toMatch(/This launch's deep link carried disableOnboarding=1/);
-    expect(text).toMatch(/the Expo dev menu is not over the app/);
-    expect(text).toMatch(/if the app was started from the home screen instead/);
+    expect(text).toMatch(/On a fresh install the Expo dev menu can be over the app first/);
+    expect(text).toMatch(/finishes the launcher's onboarding, not EXDevMenuShowsAtLaunch/);
+    expect(text).toMatch(/defaults true on iOS/);
     expect(text).toContain(`agent-device press 'label="Close"'`);
-    expect(text).not.toMatch(/On a fresh install the Expo dev/);
   });
 
   test('a simulator never takes the routed remedy, whatever the flag says', () => {

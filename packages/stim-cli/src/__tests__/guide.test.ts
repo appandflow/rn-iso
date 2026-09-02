@@ -439,8 +439,8 @@ test('the guide gives the Local Network recovery commands and the taps that have
   }
   expect(errors).toMatch(/THE GRANT ALONE IS NOT ENOUGH[\s\S]*does not\s+retry/);
   expect(errors).toContain(`agent-device press 'label="Close"'`);
-  expect(errors).toMatch(/Stim's own launch\s+carries disableOnboarding=1 in its project url/);
-  expect(errors).toMatch(/started WITHOUT that deep link[\s\S]*shows the menu instead/);
+  expect(errors).toMatch(/ON A FRESH\s+INSTALL the Expo dev menu can be over the app first/);
+  expect(errors).toMatch(/finishes the launcher's ONBOARDING, but not\s+EXDevMenuShowsAtLaunch/);
   expect(errors).toMatch(/A BARE APP \(no expo-dev-client\)[\s\S]*Could not connect to development server/);
   expect(errors).toMatch(/reads that reason alone and knows nothing about dev\s+clients/);
   expect(errors).toMatch(/neither that text nor the button's accessibility label has been read\s+off hardware/);
@@ -459,28 +459,35 @@ test('the guide gives the Local Network recovery commands and the taps that have
 });
 
 // The preapproval is `simctl spawn defaults write`, which has no devicectl
-// equivalent, and the copied-plist route loses its keys to cfprefsd. What
-// closes the dev menu on every platform is the deep link's own flag.
-test('the guide scopes the dev-menu preapproval to a simulator and says what covers a phone instead', () => {
+// equivalent, and the copied-plist route loses its keys to cfprefsd. The deep
+// link's flag replaces only half of it: EXDevMenuShowsAtLaunch defaults true on
+// iOS and DevMenuManager arms auto-launch on `showsAtLaunch ||
+// shouldShowOnboarding()`, so a phone still opens the menu once per fresh
+// install. Android's intent extra sets both preferences.
+test('the guide scopes the dev-menu preapproval to a simulator and says what a phone still costs', () => {
   const facts = renderTopic('facts');
   assert(facts);
 
   expect(facts).toMatch(/EVERY DEV-CLIENT DEEP LINK CARRIES disableOnboarding=1\s+INSIDE ITS PROJECT URL/);
   expect(facts).toContain('?url=http%3A%2F%2Fhost%3Aport%2F%3FdisableOnboarding%3D1');
-  expect(facts).toMatch(/on the outer deep link it does\s+nothing/);
-  expect(facts).toMatch(/the dev menu does not open over the app on a\s+first launch/);
+  expect(facts).toMatch(/ON iOS it has to sit on the\s+PROJECT url/);
+  expect(facts).toMatch(/on the\s+outer deep link it does nothing there\. Android reads it on\s+either/);
   expect(facts).toMatch(
     /ON ANDROID the same deep link also carries the\s+`EXDevMenuDisableAutoLaunch` boolean intent extra/,
   );
   expect(facts).toContain("-d '<devClientUrl>'\n                  --ez EXDevMenuDisableAutoLaunch true");
   expect(facts).toMatch(/ON A SIMULATOR, before a local dev-client openurl, Stim\s+preapproves/);
+  expect(facts).toMatch(/the two together are what keep the menu off a simulator\s+entirely/);
   expect(facts).toMatch(/ON A PHONE NONE OF THAT PREAPPROVAL APPLIES/);
   expect(facts).toMatch(/devicectl has\s+no defaults command/);
   expect(facts).toMatch(/cfprefsd serves its cached domain and rewrites\s+the file/);
-  expect(facts).toMatch(/only comes up over an app that something ELSE\s+started/);
+  expect(facts).toMatch(/THE FLAG DOES NOT REPLACE THAT WRITE ON A\s+PHONE/);
+  expect(facts).toMatch(/EXDevMenuShowsAtLaunch defaults to TRUE on iOS/);
+  expect(facts).toMatch(/`showsAtLaunch \|\|\s+shouldShowOnboarding\(\)`/);
+  expect(facts).toMatch(/ONCE PER FRESH INSTALL/);
+  expect(facts).toMatch(/the launcher sets\s+showsAtLaunch false itself/);
   expect(facts).toContain(`agent-device press 'label="Close"'`);
   expect(facts).toMatch(/survive an\s+UPGRADE install/);
-  expect(facts).not.toMatch(/ONCE PER\s+FRESH INSTALL/);
 });
 
 test('the errors topic documents every code the build commands and the iOS signing gate can emit', () => {

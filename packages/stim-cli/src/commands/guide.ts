@@ -115,20 +115,23 @@ other line goes to stderr, so it is always safe to pipe.
                   EVERY DEV-CLIENT DEEP LINK CARRIES disableOnboarding=1
                   INSIDE ITS PROJECT URL
                   (\`...?url=http%3A%2F%2Fhost%3Aport%2F%3FdisableOnboarding%3D1\`),
-                  and expo-dev-launcher finishes its own dev-menu onboarding
-                  when it reads it. The flag has to sit on the PROJECT url --
-                  the value of the \`url\` parameter -- because that is the
-                  URL iOS hands to the check; on the outer deep link it does
-                  nothing. So the dev menu does not open over the app on a
-                  first launch, on a simulator, an emulator or a phone alike.
+                  and expo-dev-launcher finishes its own dev-menu ONBOARDING
+                  when it reads it. That is all the flag does: it sets
+                  EXDevMenuIsOnboardingFinished. ON iOS it has to sit on the
+                  PROJECT url -- the value of the \`url\` parameter -- because
+                  that is the URL the launcher hands to the check; on the
+                  outer deep link it does nothing there. Android reads it on
+                  either.
                   ON A SIMULATOR, before a local dev-client openurl, Stim
                   preapproves CoreSimulatorBridge for exactly the installed
                   bundle id and discovered scheme on its owned simulator. That
                   suppresses iOS's first-launch confirmation;
-                  unrelated schemes remain unapproved. It also disables the
-                  menu's automatic launch, which the flag does not cover, so
-                  device automation opens on the app. The unverified warning
-                  therefore leads with the picker, then prints the openurl
+                  unrelated schemes remain unapproved. It also writes
+                  EXDevMenuShowsAtLaunch=false, which the flag does NOT cover,
+                  and the two together are what keep the menu off a simulator
+                  entirely, so device automation opens on the app. The
+                  unverified warning therefore leads with the picker, then
+                  prints the openurl
                   retry. ON ANDROID the same deep link also carries the
                   \`EXDevMenuDisableAutoLaunch\` boolean intent extra, which
                   the launcher reads to set BOTH preferences -- so the
@@ -145,16 +148,21 @@ other line goes to stderr, so it is always safe to pipe.
                   onto Library/Preferences/<bundleId>.plist with the app
                   terminated, copies successfully and then loses the seeded
                   keys, because cfprefsd serves its cached domain and rewrites
-                  the file. The deep link's flag is what covers the phone
-                  instead, and Stim still writes nothing to it. The Expo dev
-                  menu therefore only comes up over an app that something ELSE
-                  started -- a home-screen tap, a relaunch with no
-                  \`--payload-url\` -- and it shows the runtime version,
-                  Close, Reload, Go home.
+                  the file. THE FLAG DOES NOT REPLACE THAT WRITE ON A
+                  PHONE. EXDevMenuShowsAtLaunch defaults to TRUE on iOS
+                  (DevMenuPreferences.setup), and DevMenuManager arms its
+                  auto-launch observer when \`showsAtLaunch ||
+                  shouldShowOnboarding()\`, so finishing onboarding clears
+                  only the second half. The dev menu can therefore still open
+                  over the app ONCE PER FRESH INSTALL -- the runtime version,
+                  Close, Reload, Go home -- after which the launcher sets
+                  showsAtLaunch false itself and later launches come up clean.
                   \`agent-device press 'label="Close"'\` dismisses it -- or
-                  \`snapshot -i\` and the ref. The onboarding flag the
-                  launcher writes and the Local Network grant both survive an
-                  UPGRADE install.
+                  \`snapshot -i\` and the ref. What the flag buys on a phone
+                  is the onboarding screen, not that menu. The keys it and the
+                  launcher write, and the Local Network grant, all survive an
+                  UPGRADE install. Android needs none of this: its intent
+                  extra sets both preferences.
                   The phone's unverified remedy is also ROUTED, not a fixed
                   list. When this launch's device records carry the Local
                   Network path reason, the remedy leads with that evidence and
@@ -857,12 +865,13 @@ LAUNCH UNVERIFIED, LOCAL NETWORK NOT GRANTED (not a code -- a routed remedy)
   retry, and stays on "Failed to load app ... The Internet connection appears
   to be offline." with a Reload button, which is why the last two lines are
   there. The text form of the press target is \`label="Reload"\` (or
-  \`text="Reload"\`); a bare \`press "Reload"\` is rejected. Stim's own launch
-  carries disableOnboarding=1 in its project url, so the Expo dev menu is not
-  over the app. If the app was started WITHOUT that deep link -- from the home
-  screen -- \`snapshot -i\` shows the menu instead:
-  \`agent-device press 'label="Close"'\` dismisses it, then press Reload. See
-  \`guide facts\`, under \`launched\`.
+  \`text="Reload"\`); a bare \`press "Reload"\` is rejected. ON A FRESH
+  INSTALL the Expo dev menu can be over the app first and \`snapshot -i\` shows
+  it instead: \`agent-device press 'label="Close"'\` dismisses it, then press
+  Reload. Stim's deep link finishes the launcher's ONBOARDING, but not
+  EXDevMenuShowsAtLaunch, which defaults true on iOS and which Stim cannot
+  write on a phone -- so the menu opens that once and the launcher clears the
+  key itself. See \`guide facts\`, under \`launched\`.
 
   A BARE APP (no expo-dev-client) gets the same first two commands and a
   different third. The prompt fires the same way, because it is fired by any

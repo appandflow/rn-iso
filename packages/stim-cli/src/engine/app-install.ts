@@ -123,10 +123,12 @@ export function jsLocationValue(metroPort: number | string): string {
   return `localhost:${metroPort}`;
 }
 
-// expo-dev-launcher reads disableOnboarding off the PROJECT url only, not the
-// outer deep link: EXDevLauncherController.m hands `devLauncherUrl.url` to
-// EXDevLauncherURLHelper.disableOnboardingPopupIfNeeded. Android reads either,
-// and also the EXDevMenuDisableAutoLaunch intent extra (DevLauncherController.kt).
+// On iOS expo-dev-launcher reads disableOnboarding off the PROJECT url only,
+// not the outer deep link: EXDevLauncherController.m hands `devLauncherUrl.url`
+// to EXDevLauncherURLHelper.disableOnboardingPopupIfNeeded. It sets
+// EXDevMenuIsOnboardingFinished alone; EXDevMenuShowsAtLaunch is a separate
+// preference. Android reads the flag on either url, and its
+// EXDevMenuDisableAutoLaunch intent extra sets both (DevLauncherController.kt).
 export function devClientDeepLink(scheme: string, projectOrigin: string): string {
   const projectUrl = `${projectOrigin.replace(/\/+$/, '')}/?${DEV_CLIENT_ONBOARDING_QUERY}`;
   return `${scheme}://expo-development-client/?url=${encodeURIComponent(projectUrl)}`;
@@ -1004,9 +1006,10 @@ export function unverifiedLaunchLines({
         push(
           'The app does NOT retry after the grant -- it stays on "Failed to load app ... The Internet connection ' +
             `appears to be offline." with a Reload button. Press it: agent-device snapshot -i --platform ios --udid ${udid}, ` +
-            `then agent-device press 'label="Reload"' --platform ios --udid ${udid}. This launch's deep link carried ` +
-            `disableOnboarding=1, so the Expo dev menu is not over the app; if the app was started from the home ` +
-            `screen instead, agent-device press 'label="Close"' --platform ios --udid ${udid} dismisses it.`,
+            `then agent-device press 'label="Reload"' --platform ios --udid ${udid}. On a fresh install the Expo dev ` +
+            `menu can be over the app first -- the deep link finishes the launcher's onboarding, not ` +
+            `EXDevMenuShowsAtLaunch, which defaults true on iOS -- so agent-device press 'label="Close"' ` +
+            `--platform ios --udid ${udid} dismisses it.`,
         );
         push(
           `Without agent-device, relaunching also recovers: ${relaunch}. It costs the device log -- it replaces the ` +
