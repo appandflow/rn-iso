@@ -3411,6 +3411,24 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     expect(parseFirst(logs).deviceName).toBe('Test Phone');
   });
 
+  test('two unhealthy cabled phones refuse with each one own reason, not the count message', async () => {
+    reserve();
+    const SECOND = '00008120-000A11223C44201E';
+    const { errs, exitCode } = await run(
+      { device: true },
+      connected([
+        { udid: PHONE, developerModeStatus: 'disabled' },
+        { udid: SECOND, name: 'Second', pairingState: 'unpaired' },
+      ]),
+    );
+    expect(exitCode).toBe(1);
+    expect(errs.join('\n')).toMatch(/STIM_NO_DEVICE/);
+    expect(errs.join('\n')).toMatch(new RegExp(`${PHONE} \\(Test Phone\\) has Developer Mode disabled`));
+    expect(errs.join('\n')).toMatch(new RegExp(`${SECOND} \\(Second\\) is connected but unpaired`));
+    expect(errs.join('\n')).not.toMatch(/Several devices are connected/);
+    expect(errs.join('\n')).not.toMatch(/Name the one to build for/);
+  });
+
   test('a phone another workspace leases is skipped for the free one, whatever the order', async () => {
     reserve();
     takeLease({ root: '/worktree/theirs', platform: 'ios', id: PHONE, kind: 'declared' });
