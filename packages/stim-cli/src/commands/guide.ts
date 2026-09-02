@@ -55,7 +55,7 @@ line by design (see \`guide logs\`), not this single-payload contract.
                   is printed on stderr as one dim line naming both short
                   hashes. A prebuild shift is RE-LOOKED-UP before anything
                   compiles (\`cache
-                  hit under the post-prebuild key\`), so a cold tree -- a
+                  hit 6564e2.. (post-prebuild key)\`), so a cold tree -- a
                   fresh worktree or clone of a CNG app -- installs an entry
                   another workspace already built instead of compiling
                   beside it. Android also fingerprints after Gradle because
@@ -109,8 +109,14 @@ line by design (see \`guide logs\`), not this single-payload contract.
                                  alive through a three-second stability window.
                                  The command checks process liveness when the
                                  platform exposes it. Errors from that window
-                                 are printed even when the app stays alive; the
-                                 agent decides whether a nonfatal error matters.
+                                 are printed even when the app stays alive,
+                                 EXCEPT the error-level device-log records that
+                                 did not come from the app's own process: those
+                                 are counted into one \`launch\` line pointing at
+                                 \`logs --source device\` (see \`guide logs\`),
+                                 because on iOS every Apple framework in the
+                                 app's process logs there. The agent decides
+                                 whether a nonfatal error matters.
                                  IT IS NOT A PAINTED SCREEN. Stim observes the
                                  bundle and the process, never a frame, and a
                                  cold app can keep rendering for a minute or
@@ -575,12 +581,21 @@ WHAT WRITES WHAT
                        the app's process also logs. The proven noise sources
                        are recorded at info rather than error; the rest is why
                        --errors leaves this source out unless asked. A VERIFIED
-                       LAUNCH also drops one iOS device record from the RUN
-                       SUMMARY: the connection refusal \`TCP Conn ... Failed :
-                       error 0:61 [61]\` (61 is ECONNREFUSED). The app got its
-                       bundle over this workspace's Metro and outlived the
-                       stability window, so it recovered. A refusal before the
-                       launch verifies still prints, and the record stays an
+                       LAUNCH prints NONE of these records one by one. It counts
+                       the error-level device records that did not come from the
+                       app's own process and prints one line instead:
+
+                         launch      12 error-level OS log lines during launch,
+                                     none from com.example.app
+                                     (logs --source device)
+
+                       The connection refusal \`TCP Conn ... Failed :
+                       error 0:61 [61]\` (61 is ECONNREFUSED) is not even
+                       counted. The app got its bundle over this workspace's
+                       Metro and outlived the stability window, so it
+                       recovered. A refusal before the
+                       launch verifies still prints, as does every record on a
+                       launch that does not verify, and the record stays an
                        error in device.ndjson either way; read it with
                        \`logs --errors --source device\`.
 
@@ -729,7 +744,7 @@ FALLBACK NOTES THAT ARE NOT CODES (release cache hits)
   copy of the APK. When any step of that swap fails (the bundle command,
   hermesc, the re-sign, zipalign, apksigner), the run does NOT install the
   cached artifact -- its baked-in JS is the builder's, not yours -- and does
-  NOT fail: it prints a \`js swap\` / \`apk swap  failed at <step>: ... --
+  NOT fail: it prints a \`swap        failed at <step>: ... --
   building fresh instead\` note on stderr and falls back to a full build. If
   the run then fails, the code is the build's own (STIM_BUILD_FAILED etc.);
   the swap note above it says why the cache hit was not used. A swap that
@@ -741,7 +756,7 @@ FALLBACK NOTES THAT ARE NOT CODES (release cache hits)
   against the assets the cached APK carries. Any added, removed or changed
   asset prints
 
-    apk swap    this workspace's asset set differs from the cached APK's
+    swap        this workspace's asset set differs from the cached APK's
                 (1 added, 0 changed, 0 removed; e.g. added
                 res/drawable-mdpi/new_logo.png) -- building fresh instead
 
@@ -1484,14 +1499,28 @@ Repeat step 3 whenever a NATIVE input changes. A JS-only edit needs nothing --
 that is what Fast Refresh over the running dev server is for.
 
 PROGRESS ON A LONG RUN
-  The whole summary is stderr; stdout carries only the \`--json\` payload. A
-  step that costs real time is named and timed, including the step that
+  The whole summary is stderr; stdout carries only the \`--json\` payload. Every
+  progress line has the same shape -- two spaces, a label padded to eleven
+  columns, the FACT, and the time the step cost:
+
+    <label>     <fact> (<duration>)
+
+  The labels are a closed set: device, metro, lan, lease, fingerprint,
+  prebuild, pods, gems, cache, build, swap, ip.txt, install, launch, verify,
+  logs, branch, carry, ready, stop, port, plus error / remedy / log / failed
+  on a failure. A line states a fact; the reason a fact matters lives in this
+  guide, not in the run output. Both platforms use the same words, so
+  \`build       ok (51.8s)\` and \`launch      com.example.app (2s)\` read the
+  same on iOS and Android; the artifact name is in the \`--json\` payload.
+
+  A step that costs real time is named and timed, including the step that
   creates or reconciles the owned device before anything is fingerprinted:
 
     device      stim-app-412 (BF2A..) created (2m14s)
 
   A step that is still running heartbeats every 30 seconds, on the 30-second
-  grid, so the values read 30s, 1m00s, 1m30s and never repeat:
+  grid, so the values read 30s, 1m00s, 1m30s and never repeat. A heartbeat
+  reuses its phase's label and column:
 
     build       still running (1m30s): > Task :app:compileDebugKotlin
     build       waiting on /w/app-411 (pid 41233, 1m30s elapsed)
@@ -1510,14 +1539,14 @@ AN ARTIFACT THE DEVICE ALREADY HOLDS IS NOT INSTALLED AGAIN
   is skipped. The phase still reports the cost of proving that identity, but
   avoids the ~43s a 400MB APK can cost to copy and install over USB.
 
-    install     skipped; emulator-5584 already holds this APK (0.4s)
+    install     unchanged (emulator-5584 already has this build) (0.4s)
 
   On iOS the install line names the identity proof separately from the Expo
   dev-client preference writes, so a slow simulator command is never charged
   to an install that did not run:
 
-    install     unchanged; stim-app (BF2A..) already holds this app; proof (0.4s)
-    dev client  prepared (0.9s)
+    install     unchanged (stim-app already has this build) (0.4s)
+    install     dev client prepared (0.9s)
 
   The skip needs PROOF. A package that is not installed, a split install, an
   image without \`sha256sum\`, and any adb or simctl failure all read as
@@ -1610,6 +1639,22 @@ THE BUILD CACHE HAS THREE LEVELS
   stored its fingerprint sources beside the cache entry, the fingerprint line
   gains " -- N sources changed: <up to three paths>", and the full list
   (capped at 20 names) lands in the build log as a fingerprint_diff record.
+
+  THE KEY CAN MOVE MID-RUN, and the run says so in two facts rather than two
+  explanations. \`expo prebuild\` and \`pod install\` rewrite fingerprinted
+  files while they work, so the run fingerprints again afterwards:
+
+    fingerprint dcbd8d.. -> 6564e2.. (after prebuild, pod install)
+    cache       hit 6564e2.. (post-prebuild/pod install key)
+
+  The first line means the artifact, the \`lastBuild\` record and any remote
+  upload are stored under the SECOND hash -- the one the next run in this tree
+  computes, and therefore the one it looks up. The second line only appears on
+  a tree that was COLD: the first lookup ran on the pre-prebuild hash and
+  could not find an entry another workspace had already stored under the
+  post-prebuild one, so re-resolving under the moved key installs it instead
+  of compiling beside it. No second line means nothing was found there and the
+  run compiles.
 
 WHAT MAKES THE CACHE ACTUALLY HIT: .FINGERPRINTIGNORE
   Every entry is keyed on what the tree hashes, so two workspaces share an

@@ -13,7 +13,7 @@ import {
   type ProviderCallResult,
 } from '@stim-cli/cache';
 import type { AndroidFacts, RemoteDeviceBackend, SettingsObject, WaitedForBuild } from '../types.ts';
-import { formatDuration, phaseLine, shortHash } from '../command-output.ts';
+import { formatDuration, launchErrorReport, phaseLine, shortHash, type LaunchErrorRecord } from '../command-output.ts';
 import { verifyCollectorOwnership } from '../collector/ownership.ts';
 import { getConcurrencyLimits, getProject, upsertProject } from '../config.ts';
 import { getExecutor } from '../exec.ts';
@@ -131,6 +131,7 @@ import { selectFromPool } from '../engine/device-pool.ts';
 import {
   DEBUG_VERIFY_STEP_MS,
   acquireRunLease,
+  leaseExpiryText,
   lostLine,
   lostRefusal,
   parseDeviceWait,
@@ -297,7 +298,7 @@ interface VerifyLaunchResultLike {
   requested?: boolean;
   fatal?: boolean;
   processAlive?: boolean | null;
-  errors?: Array<{ msg?: unknown }>;
+  errors?: LaunchErrorRecord[];
   waitedMs?: number;
 }
 
@@ -945,9 +946,9 @@ async function verifyAndroidRun({
         `, stable for 3s -- the first screen may still be rendering` +
         ` (${formatDuration(verification.waitedMs ?? 0)} total)`,
     );
-    for (const record of verification.errors ?? []) {
-      if (record.msg) phase('launch err', chalk.yellow(String(record.msg)));
-    }
+    const report = launchErrorReport(verification.errors ?? [], { appId: androidPackage, fromApp: () => true });
+    if (report.summary) phase('launch', chalk.dim(report.summary));
+    for (const line of report.lines) phase('launch', chalk.yellow(line));
     return true;
   }
   if (verification?.skipped) {
@@ -1292,8 +1293,8 @@ async function finishAndroidRun({
   phase(
     'install',
     installSkipped
-      ? `skipped; ${serial} already holds this APK ${installTimer()}`
-      : `${record.cacheHit ? `from ${record.cacheHit} cache` : basename(apkPath!)} ${installTimer()}`,
+      ? `unchanged (${serial} already has this build) ${installTimer()}`
+      : `${basename(apkPath!)} -> ${serial} ${installTimer()}`,
   );
   if (installed.note) {
     phase('install', chalk.yellow(installed.note));
@@ -1348,15 +1349,14 @@ async function finishAndroidRun({
       ? `launched ${androidPackage} on ${serial} (${variant}, embedded JS bundle, no Metro)`
       : `launched ${androidPackage} on ${serial} against Metro port ${metroPort}`,
   });
-  const launchMode = launched.mode === 'deep-link' ? 'expo-dev-client deep link' : launched.mode;
-  phase('launch', `${launchMode ? `${androidPackage} (${launchMode})` : androidPackage} ${launchTimer()}`);
+  phase('launch', `${androidPackage} ${launchTimer()}`);
 
   const reversedSummary = (launched.reversed ?? []).join(', ') || `tcp:${metroPort}->tcp:${metroPort}`;
   if (!release && launched.debugHttpHost) {
-    phase('wired', `debug_http_host ${launched.debugHttpHost} + adb reverse ${reversedSummary}`);
+    phase('metro', `debug_http_host ${launched.debugHttpHost} + adb reverse ${reversedSummary}`);
   } else if (!release) {
     phase(
-      'wired',
+      'metro',
       chalk.yellow(`adb reverse ${reversedSummary}; ${launched.debugHttpHostNote || 'debug_http_host not written'}`),
     );
     writer.write({
@@ -1367,7 +1367,7 @@ async function finishAndroidRun({
     });
   }
   if (launched.devClientNote) {
-    phase('wired', chalk.yellow(launched.devClientNote));
+    phase('metro', chalk.yellow(launched.devClientNote));
     writer.write({ src: 'build', level: 'warn', event: 'dev_client_link_failed', msg: launched.devClientNote });
   }
 
@@ -2085,8 +2085,11 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       });
     }
     const prepareMs = prepare();
-    if (prepareMs >= SLOW_STEP_MS) {
-      phase('device', `${device.avdName || device.deviceName || label} prepared (${formatDuration(prepareMs)})`);
+    if (device.created || prepareMs >= SLOW_STEP_MS) {
+      phase(
+        'device',
+        `${device.avdName || device.deviceName || label} ${device.created ? 'created' : 'prepared'} (${formatDuration(prepareMs)})`,
+      );
     }
 
     const bootTimer = stepTimer(now);
@@ -2357,7 +2360,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     let swapFellBack = false;
     const installableCachedApk = async (key: string, cachedPath: string): Promise<string | null> => {
       if (!release) return cachedPath;
-      phase('apk swap', `regenerating this workspace's JS for the cached ${variant} APK`);
+      phase('swap', `regenerating this workspace's JS for the cached ${variant} APK`);
       const swap = await swapApk({
         root,
         isExpo,
@@ -2367,17 +2370,17 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         storedAssets: storedAssets(PLATFORM, key),
       });
       if (swap?.ok && swap.apkPath) {
-        if (swap.note) phase('apk swap', chalk.yellow(swap.note));
+        if (swap.note) phase('swap', chalk.yellow(swap.note));
         swapDir = swap.tmpDir ?? null;
         phase(
-          'apk swap',
+          'swap',
           `${swap.hermes ? 'hermes bytecode' : 'plain JS'} repacked (store), zipaligned and re-signed (${formatDuration(swap.durationMs)})`,
         );
         return swap.apkPath;
       }
       if (swap?.assetMismatch) {
         phase(
-          'apk swap',
+          'swap',
           chalk.yellow(
             `${swap.reason} -- building fresh instead` +
               (swap.assetDiff ? ' (an APK cannot be made to carry an asset AAPT did not package)' : ''),
@@ -2385,7 +2388,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         );
       } else {
         phase(
-          'apk swap',
+          'swap',
           chalk.yellow(
             `failed at ${swap?.step || 'unknown step'}: ${swap?.reason || 'unknown reason'} -- ` +
               `building fresh instead (a cached ${variant} APK carries its builder's JS; it is never installed after a failed swap)`,
@@ -2448,13 +2451,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
               storeKey = buildCacheKey(PLATFORM, after.hash, variant ? { variant } : {});
               record.fingerprint = storeHash;
               record.cacheKey = storeKey;
-              phase(
-                'fingerprint',
-                chalk.dim(
-                  `${shortHash(hash)} -> ${shortHash(storeHash)} after prebuild; ` +
-                    'storing under the new key, which is the one the next run looks up',
-                ),
-              );
+              phase('fingerprint', chalk.dim(`${shortHash(hash)} -> ${shortHash(storeHash)} (after prebuild)`));
 
               const late = useBuildCache ? resolveCached(PLATFORM, storeKey) : null;
               if (late) {
@@ -2462,10 +2459,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
                 if (prepared) {
                   apkPath = prepared;
                   record.cacheHit = 'local';
-                  phase(
-                    'cache',
-                    'hit under the post-prebuild key (this tree was cold, so the first lookup could not find it)',
-                  );
+                  phase('cache', `hit ${shortHash(storeHash)} (post-prebuild key)`);
                 }
               }
             }
@@ -2497,7 +2491,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
               return false;
             }
             apkPath = built.apkPath ?? null;
-            phase('build', `${basename(apkPath!)} (${formatDuration(built.durationMs)})`);
+            phase('build', `ok (${formatDuration(built.durationMs)})`);
             if (built.apkNote) phase('build', chalk.yellow(built.apkNote));
 
             const beforeBuildHash = storeHash;
@@ -2523,10 +2517,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
                 record.cacheKey = storeKey;
                 phase(
                   'fingerprint',
-                  chalk.dim(
-                    `${shortHash(beforeBuildHash)} -> ${shortHash(storeHash)} after Gradle; ` +
-                      'storing under the new key, which is the one the next run looks up',
-                  ),
+                  chalk.dim(`${shortHash(beforeBuildHash)} -> ${shortHash(storeHash)} (after Gradle)`),
                 );
               }
 
@@ -2618,7 +2609,10 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       });
       if (acquired.status === 'leased') {
         stopLeaseSignals = onLeaseSignal(releaseLease);
-        phase('lease', `${acquired.kind} lease on ${device.serial} until ${acquired.expiresAt}`);
+        phase(
+          'lease',
+          `${acquired.kind} lease on ${device.serial} until ${leaseExpiryText(acquired.expiresAt, now())}`,
+        );
       }
     }
 

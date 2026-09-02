@@ -2,6 +2,7 @@ import type { ChildProcess } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import chalk from 'chalk';
+import { phaseLine } from '../command-output.ts';
 import { getExecutor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts';
@@ -462,11 +463,7 @@ export async function buildAndroid(
   const task = assembleTaskFor(variant);
   const args = gradleArgs(task, { buildCache });
   if (buildCache) {
-    onNote(
-      chalk.dim(
-        'gradle build cache on for this build: --build-cache (shared under the Gradle user home; gradle.properties is not touched)',
-      ),
-    );
+    onNote(chalk.dim(phaseLine('cache', 'gradle build cache on (--build-cache, shared under the Gradle user home)')));
   }
 
   logWriter?.write?.({

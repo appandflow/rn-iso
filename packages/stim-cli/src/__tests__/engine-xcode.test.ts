@@ -629,7 +629,7 @@ describe('reading the bundle id', () => {
 
 describe('the heartbeat line', () => {
   test('carries the activity hint, truncated to one readable line', () => {
-    expect(heartbeatLine(30_000, 'CompileC App.o')).toBe('build       still running (30s): CompileC App.o');
+    expect(heartbeatLine(30_000, 'CompileC App.o')).toBe('  build       still running (30s): CompileC App.o');
     const long = 'x'.repeat(200);
     const line = heartbeatLine(30_000, long);
     expect(line.endsWith('...')).toBe(true);
@@ -637,7 +637,7 @@ describe('the heartbeat line', () => {
   });
 
   test('omits the hint before the child has printed anything', () => {
-    expect(heartbeatLine(30_000, '')).toBe('build       still running (30s)');
+    expect(heartbeatLine(30_000, '')).toBe('  build       still running (30s)');
   });
 });
 
@@ -694,9 +694,9 @@ describe('the heartbeat cadence', () => {
     scheduler.advance(30_000);
     stop();
     expect(beats).toEqual([
-      'build       still running (30s)',
-      'build       still running (1m00s)',
-      'build       still running (1m30s)',
+      '  build       still running (30s)',
+      '  build       still running (1m00s)',
+      '  build       still running (1m30s)',
     ]);
     expect(scheduler.idle()).toBe(true);
   });
@@ -711,10 +711,10 @@ describe('the heartbeat cadence', () => {
     scheduler.advance(30_000);
     stop();
     expect(beats).toEqual([
-      'build       still running (30s)',
-      'build       still running (5m30s)',
-      'build       still running (6m00s)',
-      'build       still running (6m30s)',
+      '  build       still running (30s)',
+      '  build       still running (5m30s)',
+      '  build       still running (6m00s)',
+      '  build       still running (6m30s)',
     ]);
   });
 
@@ -725,10 +725,10 @@ describe('the heartbeat cadence', () => {
     scheduler.advance(30_000);
     scheduler.jump(29_999);
     scheduler.fire();
-    expect(beats).toEqual(['build       still running (30s)']);
+    expect(beats).toEqual(['  build       still running (30s)']);
     scheduler.advance(1);
     stop();
-    expect(beats).toEqual(['build       still running (30s)', 'build       still running (1m00s)']);
+    expect(beats).toEqual(['  build       still running (30s)', '  build       still running (1m00s)']);
   });
 
   test('a non-positive interval schedules nothing at all', () => {
@@ -845,7 +845,7 @@ describe('buildIos with a mocked executor', () => {
     child.emit('close', 0, null);
     await promise;
     expect(notes.length).toBe(1);
-    expect(notes[0]).toMatch(/compilation cache on for this build: CAS at .*compilation-cache/);
+    expect(notes[0]).toMatch(/^ {2}cache {7}compilation cache on \(CAS at .*compilation-cache\)$/);
     const args = spawnCalls[0]?.args ?? [];
     expect(args).toContain('COMPILATION_CACHE_ENABLE_CACHING=YES');
     expect(args).toContain(`CLANG_OTHER_PREFIX_MAPPINGS=${tmp}=/^src ${workspaceDerivedData(tmp)}=/^derived-data`);
@@ -961,7 +961,7 @@ describe('buildIos with a mocked executor', () => {
       cacheableTasks: 1520,
       hitRatePercent: 91.7,
     });
-    expect(notes).toEqual(['compilation cache 1394/1520 hits (91.7%)']);
+    expect(notes).toEqual(['  cache       compilation cache 1394/1520 hits (91.7%)']);
     expect(writer.records).toContainEqual(
       expect.objectContaining({
         event: 'compilation_cache',
@@ -1172,7 +1172,7 @@ describe('buildIos with a mocked executor', () => {
     child.stdout.emit('data', 'CompileC main.o\n');
     await new Promise((r) => setTimeout(r, 80));
     expect(beats.length).toBeGreaterThanOrEqual(1);
-    expect(beats[0]).toMatch(/^build {6} still running \(\d+s\): CompileC main\.o$/);
+    expect(beats[0]).toMatch(/^ {2}build {6} still running \(\d+s\): CompileC main\.o$/);
     makeProduct(dd);
     child.emit('close', 0, null);
     await promise;

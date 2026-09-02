@@ -29,7 +29,7 @@ import {
   untrackedNativeFiles,
 } from '../build-cache.ts';
 import type { FingerprintSource } from '@expo/fingerprint';
-import { formatDuration, phaseLine, shortHash } from '../command-output.ts';
+import { formatDuration, launchErrorReport, phaseLine, shortHash, type LaunchErrorRecord } from '../command-output.ts';
 import { verifyCollectorOwnership } from '../collector/ownership.ts';
 import { getConcurrencyLimits, getProject, upsertProject } from '../config.ts';
 import {
@@ -90,6 +90,7 @@ import { selectFromPool } from '../engine/device-pool.ts';
 import {
   DEBUG_VERIFY_STEP_MS,
   acquireRunLease,
+  leaseExpiryText,
   lostLine,
   lostRefusal,
   parseDeviceWait,
@@ -243,7 +244,7 @@ interface VerifyLaunchResultLike {
   requested?: boolean;
   fatal?: boolean;
   processAlive?: boolean | null;
-  errors?: Array<{ msg?: unknown }>;
+  errors?: LaunchErrorRecord[];
   waitedMs?: number;
 }
 
@@ -323,6 +324,10 @@ export function shortUdid(udid: unknown): string {
 export function deviceLabel(device: DeviceLike | null | undefined, udid: unknown): string {
   const name = device?.deviceName || device?.name || null;
   return name ? `${name} (${shortUdid(udid)})` : shortUdid(udid);
+}
+
+export function deviceShortName(device: DeviceLike | null | undefined, udid: unknown): string {
+  return device?.deviceName || device?.name || shortUdid(udid);
 }
 
 export function appNameFromPath(appPath: unknown): string | null {
@@ -1155,9 +1160,7 @@ async function verifyIosRun({
         `, stable for 3s -- the first screen may still be rendering` +
         ` (${formatDuration(verification.waitedMs ?? 0)} total)`,
     );
-    for (const record of verification.errors ?? []) {
-      if (record.msg) note(chalk.yellow(phaseLine('launch err', String(record.msg))));
-    }
+    reportLaunchErrors(verification.errors ?? [], { note, appId: bundleId, appProcess: appName ?? null });
     return true;
   }
   if (verification?.skipped) {
@@ -1202,6 +1205,18 @@ async function verifyIosRun({
   }))
     note(chalk.yellow(phaseLine('', line)));
   return LAUNCH_UNVERIFIED;
+}
+
+function reportLaunchErrors(
+  errors: LaunchErrorRecord[],
+  { note, appId, appProcess }: { note: (line: string) => void; appId: string; appProcess: string | null },
+): void {
+  const report = launchErrorReport(errors, {
+    appId,
+    fromApp: (record) => appProcess !== null && record.proc === appProcess,
+  });
+  if (report.summary) note(chalk.dim(phaseLine('launch', report.summary)));
+  for (const line of report.lines) note(chalk.yellow(phaseLine('launch', line)));
 }
 
 async function finishIosUpload(
@@ -1532,7 +1547,7 @@ async function finishIosRun({
         build: { ...buildFailure, appPath, bundleId },
       });
     }
-    phase('install', `-> ${deviceLabel(device, udid)} ${installTimer()}`);
+    phase('install', `${basename(appPath!)} -> ${deviceLabel(device, udid)} ${installTimer()}`);
     if (installed?.note) {
       note(chalk.yellow(phaseLine('install', installed.note)));
       logWriter().write({ src: 'build', level: 'warn', event: 'install_uninstalled_first', msg: installed.note });
@@ -1584,12 +1599,7 @@ async function finishIosRun({
       ...(payloadUrl ? { url: payloadUrl } : {}),
       ...(lanOriginUrl ? { jsLocation: lanOriginUrl } : {}),
     };
-    phase(
-      'launch',
-      `${bundleId!} pid ${started.pid} on the phone` +
-        (payloadUrl ? ', opened on the dev-client URL' : '') +
-        ` ${launchTimer()}`,
-    );
+    phase('launch', `${bundleId!} pid ${started.pid} ${launchTimer()}`);
   } else {
     const installTimer = stepTimer(d.now);
     const installed = d.installIosApp({ udid, appPath: appPath!, bundleId, devClientScheme: scheme }, { now: d.now });
@@ -1609,11 +1619,11 @@ async function finishIosRun({
     phase(
       'install',
       installSkipped
-        ? `unchanged; ${deviceLabel(device, udid)} already holds this app; proof ${artifactDuration}`
-        : `-> ${deviceLabel(device, udid)} ${artifactDuration}`,
+        ? `unchanged (${deviceShortName(device, udid)} already has this build) ${artifactDuration}`
+        : `${basename(appPath!)} -> ${deviceLabel(device, udid)} ${artifactDuration}`,
     );
     if (!remoteDevice && installed?.devClientPreparationDurationMs !== undefined) {
-      phase('dev client', `prepared (${formatDuration(installed.devClientPreparationDurationMs)})`);
+      phase('install', `dev client prepared (${formatDuration(installed.devClientPreparationDurationMs)})`);
     }
 
     dropSwapDir();
@@ -2441,7 +2451,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
         fail({ code, message: reason, remedy, build: { ...buildFailure, appPath: path } });
         return null;
       }
-      note(chalk.yellow(phaseLine('device app', `${reason} -- building fresh instead`)));
+      note(chalk.yellow(phaseLine('cache', `${reason} -- building fresh instead`)));
       note(chalk.dim(phaseLine('', remedy)));
       swapFellBack = true;
       return null;
@@ -2456,7 +2466,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
         note(
           chalk.yellow(
             phaseLine(
-              'device app',
+              'cache',
               `a cached ${configuration} device app carries its builder's JS, and the device JS swap lands with ` +
                 "phase 6 of appandflow/stim#178 -- building fresh instead, which bakes in this workspace's JS",
             ),
@@ -2513,13 +2523,13 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   const installableCachedApp = async (cachedPath: string): Promise<string | null> => {
     if (physical) return prepareDeviceApp(cachedPath, { fresh: false });
     if (!release) return cachedPath;
-    phase('js swap', `regenerating this workspace's JS for the cached ${configuration} app`);
+    phase('swap', `regenerating this workspace's JS for the cached ${configuration} app`);
     const swap = await d.swapJsBundle({ root, isExpo, cachedAppPath: cachedPath, logWriter: logWriter() });
     if (swap?.ok && swap.appPath) {
-      if (swap.note) note(chalk.yellow(phaseLine('js swap', swap.note)));
+      if (swap.note) note(chalk.yellow(phaseLine('swap', swap.note)));
       swapDir = swap.tmpDir ?? null;
       phase(
-        'js swap',
+        'swap',
         `${swap.hermes ? 'hermes bytecode' : 'plain JS'} + assets replaced, re-signed (${formatDuration(swap.durationMs ?? 0)})`,
       );
       return swap.appPath;
@@ -2527,7 +2537,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     note(
       chalk.yellow(
         phaseLine(
-          'js swap',
+          'swap',
           `failed at ${swap?.step || 'unknown step'}: ${swap?.reason || 'unknown reason'} -- ` +
             `building fresh instead (a cached ${configuration} app carries its builder's JS; it is never installed after a failed swap)`,
         ),
@@ -2627,8 +2637,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
               chalk.dim(
                 phaseLine(
                   'fingerprint',
-                  `${shortHash(fingerprint)} -> ${shortHash(storeHash)} after ${mutatingSteps.join(' + ')}; ` +
-                    'storing under the new key, which is the one the next run looks up',
+                  `${shortHash(fingerprint)} -> ${shortHash(storeHash)} (after ${mutatingSteps.join(', ')})`,
                 ),
               ),
             );
@@ -2639,10 +2648,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
               if (prepared) {
                 appPath = prepared;
                 cacheHit = 'local';
-                phase(
-                  'cache',
-                  `hit under the post-${mutatingSteps.join('/')} key (this tree was cold, so the first lookup could not find it)`,
-                );
+                phase('cache', `hit ${shortHash(storeHash)} (post-${mutatingSteps.join('/')} key)`);
               }
             }
           }
@@ -2755,7 +2761,10 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
       });
       if (acquired.status === 'leased') {
         stopLeaseSignals = d.releaseLeaseOnSignal(releaseLease);
-        phase('lease', `${acquired.kind} lease on ${physicalDevice.udid} until ${acquired.expiresAt}`);
+        phase(
+          'lease',
+          `${acquired.kind} lease on ${physicalDevice.udid} until ${leaseExpiryText(acquired.expiresAt, d.now())}`,
+        );
       }
     }
 
