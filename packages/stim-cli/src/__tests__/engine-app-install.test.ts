@@ -194,6 +194,18 @@ describe('ios', () => {
         'U1',
         'defaults',
         'write',
+        'com.example.app',
+        'EXDevMenuShowFloatingActionButton',
+        '-bool',
+        'false',
+      ],
+      [
+        'xcrun',
+        'simctl',
+        'spawn',
+        'U1',
+        'defaults',
+        'write',
         'com.apple.launchservices.schemeapproval',
         'com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app',
         '-string',
@@ -755,7 +767,8 @@ describe('unverifiedLaunchLines', () => {
     }).join('\n');
     expect(phone).toContain(
       "--payload-url 'io.tlon.groups://expo-development-client/" +
-        "?url=http%3A%2F%2F10.0.0.132%3A8082%2F%3FdisableOnboarding%3D1' io.tlon.groups",
+        "?url=http%3A%2F%2F10.0.0.132%3A8082%2F%3FdisableOnboarding%3D1' io.tlon.groups" +
+        ' -- -EXDevMenuShowsAtLaunch 0 -EXDevMenuShowFloatingActionButton 0',
     );
 
     const android = unverifiedLaunchLines({
@@ -883,6 +896,7 @@ describe('unverifiedLaunchLines: the routed Local Network remedy', () => {
       /xcrun devicectl device process launch --device BF2A1C3D --terminate-existing io\.tlon\.groups/,
     );
     expect(text).not.toMatch(/--payload-url/);
+    expect(text).not.toMatch(/EXDevMenu/);
     expect(text).not.toMatch(/label="Reload"/);
   });
 
@@ -895,12 +909,17 @@ describe('unverifiedLaunchLines: the routed Local Network remedy', () => {
     expect(text).not.toMatch(/LOCAL NETWORK PERMISSION IS NOT GRANTED/);
   });
 
-  test('the Close press stays, because the deep link finishes onboarding only', () => {
+  test('the Close press is the fallback for an app this launch did not start', () => {
     const text = devClientLines().join('\n');
-    expect(text).toMatch(/On a fresh install the Expo dev menu can be over the app first/);
-    expect(text).toMatch(/finishes the launcher's onboarding, not EXDevMenuShowsAtLaunch/);
-    expect(text).toMatch(/defaults true on iOS/);
+    expect(text).toMatch(/This launch carried -EXDevMenuShowsAtLaunch 0/);
+    expect(text).toMatch(/the Expo dev menu is not over the app/);
+    expect(text).toMatch(/if the app was started another way and the menu is on screen/);
     expect(text).toContain(`agent-device press 'label="Close"'`);
+    expect(text).toContain(
+      `--payload-url 'io.tlon.groups://expo-development-client/` +
+        `?url=http%3A%2F%2F10.0.0.132%3A8082%2F%3FdisableOnboarding%3D1' io.tlon.groups` +
+        ' -- -EXDevMenuShowsAtLaunch 0 -EXDevMenuShowFloatingActionButton 0',
+    );
   });
 
   test('a simulator never takes the routed remedy, whatever the flag says', () => {
@@ -2032,6 +2051,7 @@ describe('skipping an install the device already holds', () => {
     expect(result).toEqual({ ok: true, appPath, skipped: true });
     expect(exec.calls.some((c) => c.includes('install'))).toBe(false);
     expect(exec.calls.some((c) => c.includes('EXDevMenuShowsAtLaunch'))).toBe(true);
+    expect(exec.calls.some((c) => c.includes('EXDevMenuShowFloatingActionButton'))).toBe(true);
     expect(exec.calls.some((c) => c.includes('com.apple.CoreSimulator.CoreSimulatorBridge-->myapp'))).toBe(true);
   });
 

@@ -24,6 +24,7 @@ import {
 } from '../collector/android.ts';
 import {
   deviceConsoleArgs,
+  DEV_MENU_LAUNCH_ARGS,
   deviceConsoleLevel,
   parseDeviceConsoleLine,
   CONSOLE_ENV,
@@ -290,7 +291,27 @@ describe('ios: the physical-device console', () => {
 
   test('a dev-client deep link travels as --payload-url, before the bundle id', () => {
     const args = deviceConsoleArgs({ udid: 'U1', bundleId: 'com.example.app', payloadUrl: 'stim://x?url=y' });
-    expect(args.slice(-3)).toEqual(['--payload-url', 'stim://x?url=y', 'com.example.app']);
+    expect(args.slice(-8, -5)).toEqual(['--payload-url', 'stim://x?url=y', 'com.example.app']);
+  });
+
+  test('the dev-menu arguments follow the bundle id, after the -- devicectl passes on', () => {
+    const args = deviceConsoleArgs({ udid: 'U1', bundleId: 'com.example.app', payloadUrl: 'stim://x?url=y' });
+    expect(args.slice(-6)).toEqual([
+      'com.example.app',
+      '--',
+      '-EXDevMenuShowsAtLaunch',
+      '0',
+      '-EXDevMenuShowFloatingActionButton',
+      '0',
+    ]);
+    expect(DEV_MENU_LAUNCH_ARGS).toEqual(['-EXDevMenuShowsAtLaunch', '0', '-EXDevMenuShowFloatingActionButton', '0']);
+  });
+
+  test('a launch with no deep link carries no dev-menu arguments: a release app has no dev menu', () => {
+    const args = deviceConsoleArgs({ udid: 'U1', bundleId: 'com.example.app' });
+    expect(args).not.toContain('--');
+    expect(args.join(' ')).not.toMatch(/EXDevMenu/);
+    expect(args.at(-1)).toBe('com.example.app');
   });
 });
 

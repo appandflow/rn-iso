@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
 import { parseNdjsonText, type NdjsonRecord } from '../ndjson.ts';
 import { deviceHoldsApk, deviceHoldsBundle } from './installed-artifact.ts';
+import { DEV_MENU_LAUNCH_ARGS } from '../collector/ios-device.ts';
 
 export const INSTALL_ERROR = 'STIM_INSTALL_FAILED';
 export const LAUNCH_ERROR = 'STIM_LAUNCH_FAILED';
@@ -11,7 +12,7 @@ export const DEFAULT_METRO_PORT = 8081;
 
 const IOS_SCHEME_APPROVAL_DOMAIN = 'com.apple.launchservices.schemeapproval';
 const IOS_SCHEME_APPROVAL_OPENER = 'com.apple.CoreSimulator.CoreSimulatorBridge';
-const IOS_DEV_MENU_SHOWS_AT_LAUNCH_KEY = 'EXDevMenuShowsAtLaunch';
+const IOS_DEV_MENU_OFF_KEYS = ['EXDevMenuShowsAtLaunch', 'EXDevMenuShowFloatingActionButton'];
 const DEV_CLIENT_ONBOARDING_QUERY = 'disableOnboarding=1';
 const ANDROID_DISABLE_AUTO_LAUNCH_EXTRA = 'EXDevMenuDisableAutoLaunch';
 
@@ -84,17 +85,9 @@ export function installIosApp(
   }
   if (bundleId && devClientScheme) {
     try {
-      e.runFile('xcrun', [
-        'simctl',
-        'spawn',
-        udid,
-        'defaults',
-        'write',
-        bundleId,
-        IOS_DEV_MENU_SHOWS_AT_LAUNCH_KEY,
-        '-bool',
-        'false',
-      ]);
+      for (const key of IOS_DEV_MENU_OFF_KEYS) {
+        e.runFile('xcrun', ['simctl', 'spawn', udid, 'defaults', 'write', bundleId, key, '-bool', 'false']);
+      }
       for (const key of iosSchemeApprovalKeys(bundleId, devClientScheme)) {
         e.runFile('xcrun', [
           'simctl',
@@ -988,7 +981,8 @@ export function unverifiedLaunchLines({
     const relaunch =
       `xcrun devicectl device process launch --device ${udid} --terminate-existing ` +
       (url ? `--payload-url '${url}' ` : '') +
-      bundleId;
+      bundleId +
+      (url ? ` -- ${DEV_MENU_LAUNCH_ARGS.join(' ')}` : '');
     if (localNetwork) {
       push(
         `See the prompt: agent-device alert get --platform ios --udid ${udid}. It reads the alert without opening ` +
@@ -1006,10 +1000,10 @@ export function unverifiedLaunchLines({
         push(
           'The app does NOT retry after the grant -- it stays on "Failed to load app ... The Internet connection ' +
             `appears to be offline." with a Reload button. Press it: agent-device snapshot -i --platform ios --udid ${udid}, ` +
-            `then agent-device press 'label="Reload"' --platform ios --udid ${udid}. On a fresh install the Expo dev ` +
-            `menu can be over the app first -- the deep link finishes the launcher's onboarding, not ` +
-            `EXDevMenuShowsAtLaunch, which defaults true on iOS -- so agent-device press 'label="Close"' ` +
-            `--platform ios --udid ${udid} dismisses it.`,
+            `then agent-device press 'label="Reload"' --platform ios --udid ${udid}. This launch carried ` +
+            `-EXDevMenuShowsAtLaunch 0, so the Expo dev menu is not over the app; if the app was started another ` +
+            `way and the menu is on screen, agent-device press 'label="Close"' --platform ios --udid ${udid} ` +
+            'dismisses it.',
         );
         push(
           `Without agent-device, relaunching also recovers: ${relaunch}. It costs the device log -- it replaces the ` +
@@ -1065,7 +1059,7 @@ export function unverifiedLaunchLines({
       if (url && udid) {
         push(
           `Retry the deep link: xcrun devicectl device process launch --device ${udid} --terminate-existing ` +
-            `--payload-url '${url}' ${bundleId}`,
+            `--payload-url '${url}' ${bundleId} -- ${DEV_MENU_LAUNCH_ARGS.join(' ')}`,
         );
       }
     } else {

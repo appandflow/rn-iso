@@ -7,6 +7,17 @@ import type { NdjsonRecord } from '../ndjson.ts';
 // writes alone, and React Native logs through os_log (React/Base/RCTLog.mm).
 export const CONSOLE_ENV: Record<string, string> = { OS_ACTIVITY_DT_MODE: 'enable' };
 
+// devicectl passes everything after `--` to the app, and NSUserDefaults reads
+// the argument domain ahead of the persisted one, so these turn expo-dev-menu's
+// auto-launch and floating button off for this launch without writing to the
+// phone -- which devicectl cannot do (it has no `defaults` command).
+export const DEV_MENU_LAUNCH_ARGS: readonly string[] = [
+  '-EXDevMenuShowsAtLaunch',
+  '0',
+  '-EXDevMenuShowFloatingActionButton',
+  '0',
+];
+
 // Anchored, because a message that merely quotes one of these is an app
 // logging about a crash, not a crash. Swift prints its own file:line first.
 export const FATAL_MARKERS: RegExp[] = [
@@ -84,6 +95,7 @@ export function deviceConsoleArgs({
   ];
   if (payloadUrl) args.push('--payload-url', payloadUrl);
   args.push(bundleId);
+  if (payloadUrl) args.push('--', ...DEV_MENU_LAUNCH_ARGS);
   return args;
 }
 

@@ -345,7 +345,8 @@ describe('the ios device collector, spawned for real against a fake devicectl', 
   test('launches the app itself, parses BOTH streams, and clears the registration on SIGTERM', async () => {
     const expected =
       'devicectl device process launch --quiet --device UDID-1 --console --terminate-existing ' +
-      '--environment-variables {"OS_ACTIVITY_DT_MODE":"enable"} --payload-url stim://open com.example.MyApp';
+      '--environment-variables {"OS_ACTIVITY_DT_MODE":"enable"} --payload-url stim://open com.example.MyApp ' +
+      '-- -EXDevMenuShowsAtLaunch 0 -EXDevMenuShowFloatingActionButton 0';
     writeShim(
       'xcrun',
       [

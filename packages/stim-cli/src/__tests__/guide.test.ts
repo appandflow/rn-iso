@@ -439,8 +439,11 @@ test('the guide gives the Local Network recovery commands and the taps that have
   }
   expect(errors).toMatch(/THE GRANT ALONE IS NOT ENOUGH[\s\S]*does not\s+retry/);
   expect(errors).toContain(`agent-device press 'label="Close"'`);
-  expect(errors).toMatch(/ON A FRESH\s+INSTALL the Expo dev menu can be over the app first/);
-  expect(errors).toMatch(/finishes the launcher's ONBOARDING, but not\s+EXDevMenuShowsAtLaunch/);
+  expect(errors).toMatch(
+    /Stim's own launch\s+ends in `-- -EXDevMenuShowsAtLaunch 0 -EXDevMenuShowFloatingActionButton 0`/,
+  );
+  expect(errors).toMatch(/the Expo dev menu is not over the app, fresh install or not/);
+  expect(errors).toMatch(/An app started\s+ANOTHER way does not carry those arguments/);
   expect(errors).toMatch(/A BARE APP \(no expo-dev-client\)[\s\S]*Could not connect to development server/);
   expect(errors).toMatch(/reads that reason alone and knows nothing about dev\s+clients/);
   expect(errors).toMatch(/neither that text nor the button's accessibility label has been read\s+off hardware/);
@@ -459,12 +462,11 @@ test('the guide gives the Local Network recovery commands and the taps that have
 });
 
 // The preapproval is `simctl spawn defaults write`, which has no devicectl
-// equivalent, and the copied-plist route loses its keys to cfprefsd. The deep
-// link's flag replaces only half of it: EXDevMenuShowsAtLaunch defaults true on
-// iOS and DevMenuManager arms auto-launch on `showsAtLaunch ||
-// shouldShowOnboarding()`, so a phone still opens the menu once per fresh
-// install. Android's intent extra sets both preferences.
-test('the guide scopes the dev-menu preapproval to a simulator and says what a phone still costs', () => {
+// equivalent, and the copied-plist route loses its keys to cfprefsd. On a phone
+// the launch arguments take its place: devicectl passes everything after `--`
+// to the app and NSUserDefaults reads the argument domain first, so nothing is
+// written to the device. Android's intent extra sets both preferences.
+test('the guide scopes the dev-menu preapproval to a simulator and names what covers a phone', () => {
   const facts = renderTopic('facts');
   assert(facts);
 
@@ -477,15 +479,24 @@ test('the guide scopes the dev-menu preapproval to a simulator and says what a p
   );
   expect(facts).toContain("-d '<devClientUrl>'\n                  --ez EXDevMenuDisableAutoLaunch true");
   expect(facts).toMatch(/ON A SIMULATOR, before a local dev-client openurl, Stim\s+preapproves/);
-  expect(facts).toMatch(/the two together are what keep the menu off a simulator\s+entirely/);
+  expect(facts).toMatch(/those together are what keep the menu and its\s+button off a simulator entirely/);
+  expect(facts).toContain('EXDevMenuShowFloatingActionButton=false');
   expect(facts).toMatch(/ON A PHONE NONE OF THAT PREAPPROVAL APPLIES/);
   expect(facts).toMatch(/devicectl has\s+no defaults command/);
   expect(facts).toMatch(/cfprefsd serves its cached domain and rewrites\s+the file/);
-  expect(facts).toMatch(/THE FLAG DOES NOT REPLACE THAT WRITE ON A\s+PHONE/);
+  expect(facts).toMatch(/THE FLAG ALONE DOES NOT COVER A PHONE/);
   expect(facts).toMatch(/EXDevMenuShowsAtLaunch defaults to TRUE on iOS/);
   expect(facts).toMatch(/`showsAtLaunch \|\|\s+shouldShowOnboarding\(\)`/);
-  expect(facts).toMatch(/ONCE PER FRESH INSTALL/);
-  expect(facts).toMatch(/the launcher sets\s+showsAtLaunch false itself/);
+  expect(facts).toMatch(/THE LAUNCH ARGUMENTS COVER THE REST/);
+  expect(facts).toContain('-EXDevMenuShowsAtLaunch 0');
+  expect(facts).toContain('-EXDevMenuShowFloatingActionButton 0');
+  expect(facts).toMatch(/devicectl passes\s+everything after `--` to the app/);
+  expect(facts).toMatch(/reads\s+the argument domain AHEAD of the persisted one/);
+  expect(facts).toMatch(/a fresh install comes up on the\s+app, not on the menu, and with no floating button/);
+  expect(facts).toMatch(/THE FAB IS REAL ON A PHONE, and a screenshot is the only\s+way to see it/);
+  expect(facts).toMatch(/no accessibility label after the fade, so\s+`agent-device snapshot -i` stops listing it/);
+  expect(facts).toMatch(/the corner is clean at 4s and at 12s/);
+  expect(facts).toMatch(/an app started ANOTHER way -- a home-screen\s+tap/);
   expect(facts).toContain(`agent-device press 'label="Close"'`);
   expect(facts).toMatch(/survive an\s+UPGRADE install/);
 });
