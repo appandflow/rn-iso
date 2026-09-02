@@ -605,6 +605,36 @@ test('addWorktree uses -b when the caller says the branch is new, whatever the r
   }
 });
 
+test('addWorktree forces LC_ALL=C so the branch-exists guard can match git English text', () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'stim-test-add-locale-'));
+  try {
+    const path = join(tmp, 'repo4');
+    const opts: (Record<string, unknown> | undefined)[] = [];
+    setExecutor({
+      run: (cmd) => {
+        throw new Error(`unexpected shell run: ${cmd}`);
+      },
+      runFile: (_file, _args, options) => {
+        opts.push(options);
+        return '';
+      },
+      runQuiet: () => '',
+      spawn: () => {},
+    });
+
+    addWorktree({ path, branch: 'worktree-locale', baseRef: 'origin/main', createBranch: true });
+
+    expect(opts).toEqual([{ env: { LC_ALL: 'C' } }]);
+
+    opts.length = 0;
+    addWorktree({ path, branch: 'worktree-locale-attach', baseRef: 'origin/main', createBranch: false });
+
+    expect(opts).toEqual([{ env: { LC_ALL: 'C' } }]);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 test('removeWorktree runs git via runFile (no shell) and includes --force only when asked', () => {
   const path = '/tmp/my worktree/repo';
   const calls: string[][] = [];
