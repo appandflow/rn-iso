@@ -313,6 +313,10 @@ test('unknownSettingKeys still reports a genuinely unknown nested key under ios'
   expect(unknownSettingKeys({ ios: { bogus: {} } })).toEqual(['ios.bogus']);
 });
 
+test('unknownSettingKeys still reports an object value for a known scalar with no validator (transitional, see #210)', () => {
+  expect(unknownSettingKeys({ ios: { configuration: {} } })).toEqual(['ios.configuration']);
+});
+
 test('unknownSettingKeys tolerates empty and malformed input', () => {
   expect(unknownSettingKeys({})).toEqual([]);
   expect(unknownSettingKeys(null)).toEqual([]);
