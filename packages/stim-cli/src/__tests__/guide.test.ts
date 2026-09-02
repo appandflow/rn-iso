@@ -373,6 +373,72 @@ test('the guide says a phone loses its running app when the collector ends', () 
   expect(lifecycle).toMatch(/stays INSTALLED/);
 });
 
+test('the guide matches the Local Network path reason alone, not any errno-50 block', () => {
+  const errors = renderTopic('errors');
+  assert(errors);
+
+  expect(errors).toMatch(/LAUNCH UNVERIFIED, LOCAL NETWORK NOT GRANTED/);
+  expect(errors).toContain('_NSURLErrorNWPathKey=unsatisfied (Local network prohibited)');
+  expect(errors).toMatch(/THAT REASON IS THE WHOLE MATCH/);
+  expect(errors).toContain('unsatisfied (No network route)');
+  expect(errors).toContain('unsatisfied (Denied over cellular interface)');
+  expect(errors).toMatch(/would drop the same-SSID check that is the actual fix/);
+  expect(errors).toMatch(/THE PROMPT AND A PRIOR DENIAL READ THE SAME[\s\S]*persists across upgrade\s+installs/);
+  expect(errors).toMatch(/if the first `alert get` finds no alert,\s+it was denied earlier/i);
+  expect(errors).toMatch(/It is NOT origin-scoped[\s\S]*carries no URL/);
+  expect(errors).toMatch(/no record's\s+level changes[\s\S]*stays out of `logs --errors`/);
+});
+
+test('the guide gives the Local Network recovery commands and the taps that have no API', () => {
+  const errors = renderTopic('errors');
+  const facts = renderTopic('facts');
+  assert(errors);
+  assert(facts);
+
+  for (const command of [
+    'agent-device alert get --platform ios --udid <udid>',
+    'agent-device alert accept --platform ios --udid <udid>',
+    'agent-device snapshot -i --platform ios --udid <udid>',
+    `agent-device press 'label="Reload"' --platform ios --udid <udid>`,
+  ]) {
+    expect(errors).toContain(command);
+  }
+  expect(errors).toMatch(/THE GRANT ALONE IS NOT ENOUGH[\s\S]*does not\s+retry/);
+  expect(errors).toContain(`agent-device press 'label="Close"'`);
+  expect(errors).toMatch(/On a FRESH install[\s\S]*Expo dev menu is over the app first/);
+  expect(errors).toMatch(/A BARE APP \(no expo-dev-client\)[\s\S]*Could not connect to development server/);
+  expect(errors).toMatch(/reads that reason alone and knows nothing about dev\s+clients/);
+  expect(errors).toMatch(/neither that text nor the button's accessibility label has been read\s+off hardware/);
+  expect(errors).toMatch(/`agent-device metro reload` does NOT recover either screen/);
+  expect(errors).toMatch(/never connected/);
+  expect(errors).toMatch(/WHAT HAS ACTUALLY RUN[\s\S]*bare path has NOT been exercised on hardware/);
+  expect(errors).toMatch(/--terminate-existing[\s\S]*replaces the process the collector follows/);
+  expect(errors).toMatch(/`stim logs --source device` stops for the rest of that run/);
+  expect(errors).toMatch(/THE OTHER ONE-TIME TAP HAS NO API[\s\S]*agent-device's own runner included/);
+  expect(errors).toMatch(/its remedy is\s+"ask the user"/);
+
+  expect(facts).toMatch(/The phone's unverified remedy is also ROUTED, not a fixed/);
+  expect(facts).toMatch(/the grant\s+alone does not reload the dev client/);
+  expect(facts).toMatch(/Routing changes no record's level/);
+  expect(facts).toMatch(/developer trust, has no API at all and is always the user's/);
+});
+
+// The preapproval is `simctl spawn defaults write`, which has no devicectl
+// equivalent, and the copied-plist route loses its keys to cfprefsd.
+test('the guide scopes the dev-menu preapproval to a simulator and says what a phone costs instead', () => {
+  const facts = renderTopic('facts');
+  assert(facts);
+
+  expect(facts).toMatch(/ON A SIMULATOR, before a local dev-client openurl, Stim\s+preapproves/);
+  expect(facts).toMatch(/ON A PHONE NONE OF THAT PREAPPROVAL APPLIES/);
+  expect(facts).toMatch(/devicectl has\s+no defaults command/);
+  expect(facts).toMatch(/cfprefsd serves its cached domain and rewrites\s+the file/);
+  expect(facts).toMatch(/ONCE PER\s+FRESH INSTALL/);
+  expect(facts).toContain(`agent-device press 'label="Close"'`);
+  expect(facts).toMatch(/survive an UPGRADE install/);
+  expect(facts).toMatch(/Stim does not write to the\s+phone to avoid it/);
+});
+
 test('the errors topic documents every code the build commands and the iOS signing gate can emit', () => {
   const body = renderTopic('errors');
   assert(body);

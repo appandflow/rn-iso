@@ -3846,6 +3846,83 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     expect(out).toMatch(/carries the JS bundle baked in/);
   });
 
+  function writeLocalNetworkDeviceLog(pid = DEVICE_PID) {
+    const dir = workspaceLogsDir(root);
+    mkdirSync(dir, { recursive: true });
+    const lines = readFileSync(new URL('./fixtures/ios-device/local-network-pending.txt', import.meta.url), 'utf-8')
+      .split('\n')
+      .filter((line) => line.trim().length > 0)
+      .map((msg) =>
+        JSON.stringify({ ts: Date.now() + 60_000, src: 'device', level: 'info', msg, proc: `Fixture(${pid})` }),
+      );
+    writeFileSync(join(dir, 'device.ndjson'), `${lines.join('\n')}\n`);
+  }
+
+  test('a dev-client launch with the Local Network signature gets the routed remedy', async () => {
+    reserve();
+    writeLocalNetworkDeviceLog();
+    const { errs } = await run(
+      { device: true },
+      {
+        ...connected(),
+        detectIsExpo: () => true,
+        devClientScheme: () => 'com.example.app',
+        verifyLaunch: async () => ({ verified: false, timedOut: true, waitedMs: 20000 }),
+      },
+    );
+    const out = errs.join('\n');
+    expect(out).toMatch(/THE PHONE'S LOCAL NETWORK PERMISSION IS NOT GRANTED/);
+    expect(out).toContain('unsatisfied (Local network prohibited)');
+    expect(out).toMatch(/unanswered OR was answered Don't Allow earlier/);
+    expect(out).toMatch(/If the FIRST `alert get` already finds no alert/);
+    expect(out).toContain(`agent-device press 'label="Close"' --platform ios --udid ${PHONE}`);
+    expect(out).toContain(`agent-device alert get --platform ios --udid ${PHONE}`);
+    expect(out).toContain(`agent-device alert accept --platform ios --udid ${PHONE}`);
+    expect(out).toContain(`agent-device snapshot -i --platform ios --udid ${PHONE}`);
+    expect(out).toContain(`agent-device press 'label="Reload"' --platform ios --udid ${PHONE}`);
+    expect(out).toMatch(/--terminate-existing --payload-url/);
+    expect(out).toMatch(/`stim logs --source device` stops for the rest of this run/);
+    expect(out).toMatch(/`agent-device metro reload` does NOT recover either screen/);
+    expect(out).not.toMatch(/same Wi-Fi SSID/);
+    expect(out).not.toMatch(/socketfilterfw/);
+  });
+
+  test('a bare launch with the same signature gets the RedBox and the ip.txt relaunch', async () => {
+    reserve();
+    writeLocalNetworkDeviceLog();
+    const { errs } = await run(
+      { device: true },
+      {
+        ...connected(),
+        detectIsExpo: () => true,
+        devClientScheme: () => undefined,
+        verifyLaunch: async () => ({ verified: false, timedOut: true, waitedMs: 20000 }),
+      },
+    );
+    const out = errs.join('\n');
+    expect(out).toMatch(/THE PHONE'S LOCAL NETWORK PERMISSION IS NOT GRANTED/);
+    expect(out).toContain(`agent-device alert accept --platform ios --udid ${PHONE}`);
+    expect(out).toMatch(/Could not connect to development server/);
+    expect(out).toMatch(/NOT VERIFIED ON HARDWARE/);
+    expect(out).toMatch(/re-reads ip\.txt/);
+    expect(out).not.toMatch(/--payload-url/);
+    expect(out).not.toMatch(/label="Reload"/);
+  });
+
+  test('a device log from another process leaves the network list in place', async () => {
+    reserve();
+    writeLocalNetworkDeviceLog(DEVICE_PID + 1);
+    const { errs } = await run(
+      { device: true },
+      { ...connected(), verifyLaunch: async () => ({ verified: false, timedOut: true, waitedMs: 20000 }) },
+    );
+    const out = errs.join('\n');
+    expect(out).not.toMatch(/LOCAL NETWORK PERMISSION IS NOT GRANTED/);
+    expect(out).toMatch(/socketfilterfw --getglobalstate/);
+    expect(out).toMatch(/cannot be PRE-granted from this machine/);
+    expect(out).toMatch(/agent-device alert get, then agent-device alert accept/);
+  });
+
   test('a malformed ios.signingIdentitySha1 refuses the same way', async () => {
     reserve();
     const { errs, exitCode } = await run(

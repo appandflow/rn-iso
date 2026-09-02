@@ -1,0 +1,16 @@
+[HybridObjectRegistry] Registering HybridObject "MMKVFactory"...
+[HybridObjectRegistry] Successfully registered HybridObject "MMKVFactory"!
+[HybridObjectRegistry] Registering HybridObject "MMKVPlatformContext"...
+[HybridObjectRegistry] Successfully registered HybridObject "MMKVPlatformContext"!
+You've implemented -[<UIApplicationDelegate> application:didReceiveRemoteNotification:fetchCompletionHandler:], but you still need to add "remote-notification" to the list of your supported UIBackgroundModes in your Info.plist.
+_setUpFeatureFlags called with release level 2
+Connection 1: received failure notification
+Connection 1: failed to connect 1:50, reason -1
+Connection 1: encountered error(1:50)
+Task <5B9DC45E-818B-4358-90B6-F9C655D6BACC>.<1> HTTP load failed, 0/0 bytes (error code: -1009 [1:50])
+Task <5B9DC45E-818B-4358-90B6-F9C655D6BACC>.<1> finished with error [-1009] Error Domain=NSURLErrorDomain Code=-1009 "The Internet connection appears to be offline." UserInfo={_kCFStreamErrorCodeKey=50, NSUnderlyingError=0x302af38d0 {Error Domain=kCFErrorDomainCFNetwork Code=-1009 "(null)" UserInfo={_NSURLErrorNWPathKey=unsatisfied (Local network prohibited), interface: en0[802.11], ipv4, uses wifi, _kCFStreamErrorCodeKey=50, _kCFStreamErrorDomainKey=1}}, _NSURLErrorFailingURLSessionTaskErrorKey=LocalDataTask <5B9DC45E-818B-4358-90B6-F9C655D6BACC>.<1>, _NSURLErrorRelatedURLSessionTaskErrorKey=(
+Connection 2: received failure notification
+Connection 2: failed to connect 1:50, reason -1
+Connection 2: encountered error(1:50)
+Task <F9BDB457-2678-45D6-A3B3-0A89A315469A>.<2> HTTP load failed, 0/0 bytes (error code: -1009 [1:50])
+Task <F9BDB457-2678-45D6-A3B3-0A89A315469A>.<2> finished with error [-1009] Error Domain=NSURLErrorDomain Code=-1009 "The Internet connection appears to be offline." UserInfo={_kCFStreamErrorCodeKey=50, NSUnderlyingError=0x302af6100 {Error Domain=kCFErrorDomainCFNetwork Code=-1009 "(null)" UserInfo={_NSURLErrorNWPathKey=unsatisfied (Local network prohibited), interface: en0[802.11], ipv4, uses wifi, _kCFStreamErrorCodeKey=50, _kCFStreamErrorDomainKey=1}}, _NSURLErrorFailingURLSessionTaskErrorKey=LocalDataTask <F9BDB457-2678-45D6-A3B3-0A89A315469A>.<2>, _NSURLErrorRelatedURLSessionTaskErrorKey=(

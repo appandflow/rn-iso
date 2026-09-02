@@ -14,12 +14,14 @@ import {
   iosLaunchRefusalKind,
   iosLaunchRemedy,
   listIosDevices,
+  localNetworkPending,
   parseDevicectlDevices,
   parseDeviceProcesses,
   resolveIosPhysicalDevice,
   verifyIosDeviceReleaseLaunch,
   type IosDeviceEntry,
 } from '../engine/ios-device.ts';
+import { deviceConsoleLevel, parseDeviceConsoleLine } from '../collector/ios-device.ts';
 import { hostLanCandidates, lanCandidates } from '../engine/lan-address.ts';
 
 const PHONE = '00008030-001A2B3C4D5E802E';
@@ -563,6 +565,97 @@ test('verifyIosDeviceReleaseLaunch re-probes the phone rather than a host pid', 
     sleep: async () => {},
   });
   expect(blind).toMatchObject({ verified: false, reason: 'probe-failed' });
+});
+
+const LAN_ORIGIN = 'http://10.0.0.132:8082';
+const APP_PID = 909;
+
+function fixtureLines(name: string): string[] {
+  return readFileSync(new URL(`./fixtures/ios-device/${name}`, import.meta.url), 'utf-8')
+    .split('\n')
+    .filter((line) => line.trim().length > 0);
+}
+
+function deviceRecords(lines: readonly string[], { ts = 2000, pid = APP_PID }: { ts?: number; pid?: number } = {}) {
+  return lines.map((msg) => ({ ts, src: 'device', level: 'info', msg, proc: `Trailhead(${pid})`, raw: true }));
+}
+
+describe('localNetworkPending', () => {
+  const pending = deviceRecords(fixtureLines('local-network-pending.txt'));
+
+  test('matches the capture a phone produced while the prompt was up', () => {
+    expect(localNetworkPending(pending, { since: 1000, pid: APP_PID, lanOrigin: LAN_ORIGIN })).toBe(true);
+  });
+
+  test('only the NWPath reason carries the match, and it survives the pid filter', () => {
+    const carriers = pending.filter((record) => record.msg.includes('Local network prohibited'));
+    expect(carriers.length).toBeGreaterThan(0);
+    for (const record of carriers) {
+      expect(record.proc).toBe(`Trailhead(${APP_PID})`);
+      expect(localNetworkPending([record], { since: 0, pid: APP_PID, lanOrigin: LAN_ORIGIN })).toBe(true);
+    }
+    for (const record of pending.filter((r) => !r.msg.includes('Local network prohibited'))) {
+      expect(localNetworkPending([record], { since: 0, pid: APP_PID, lanOrigin: LAN_ORIGIN })).toBe(false);
+    }
+  });
+
+  test('a refused connection, unrelated nw_ noise, and the sibling NWPath reasons are not it', () => {
+    const negatives = deviceRecords(fixtureLines('local-network-negatives.txt'));
+    expect(localNetworkPending(negatives, { since: 0, pid: APP_PID, lanOrigin: LAN_ORIGIN })).toBe(false);
+    for (const record of negatives) {
+      expect(localNetworkPending([record], { since: 0, pid: APP_PID, lanOrigin: LAN_ORIGIN })).toBe(false);
+    }
+  });
+
+  test('the two errno-50 reasons that are NOT the permission are in that fixture', () => {
+    const negatives = fixtureLines('local-network-negatives.txt');
+    for (const reason of ['unsatisfied (No network route)', 'unsatisfied (Denied over cellular interface)']) {
+      const line = negatives.find((candidate) => candidate.includes(reason));
+      expect(line).toBeTruthy();
+      expect(line).toContain('_kCFStreamErrorCodeKey=50');
+      expect(line).toContain('Code=-1009');
+      expect(localNetworkPending(deviceRecords([line!]), { since: 0, pid: APP_PID, lanOrigin: LAN_ORIGIN })).toBe(
+        false,
+      );
+    }
+  });
+
+  test('records from before this launch and from another process do not count', () => {
+    const scope = { pid: APP_PID, lanOrigin: LAN_ORIGIN };
+    expect(
+      localNetworkPending(deviceRecords(fixtureLines('local-network-pending.txt'), { ts: 999 }), {
+        ...scope,
+        since: 1000,
+      }),
+    ).toBe(false);
+    expect(
+      localNetworkPending(deviceRecords(fixtureLines('local-network-pending.txt'), { pid: 42 }), {
+        ...scope,
+        since: 1000,
+      }),
+    ).toBe(false);
+    expect(
+      localNetworkPending(deviceRecords(fixtureLines('local-network-pending.txt'), { pid: 42 }), {
+        since: 1000,
+        pid: null,
+        lanOrigin: LAN_ORIGIN,
+      }),
+    ).toBe(true);
+  });
+
+  test('no LAN origin means no verdict', () => {
+    expect(localNetworkPending(pending, { since: 0, pid: APP_PID, lanOrigin: null })).toBe(false);
+  });
+
+  test('the capture stays info, so nothing new reaches `logs --errors`', () => {
+    for (const line of fixtureLines('local-network-pending.txt')) {
+      expect(deviceConsoleLevel(line)).toBe('info');
+      expect(parseDeviceConsoleLine(line)?.level).toBe('info');
+    }
+    const before = JSON.stringify(pending);
+    localNetworkPending(pending, { since: 0, pid: APP_PID, lanOrigin: LAN_ORIGIN });
+    expect(JSON.stringify(pending)).toBe(before);
+  });
 });
 
 describe('listIosDevices against a real devicectl', { skip: LIVE as unknown as boolean }, () => {

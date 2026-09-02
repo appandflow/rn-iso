@@ -92,11 +92,16 @@ app through the deep link (`--payload-url`), a bare app by writing
 The cache entry is never modified. Set `ios.lanHost` when this Mac has several
 interfaces and the phone shares one that is not the first.
 
-Two things a phone needs that a simulator does not, both one-time and both
-human: trusting the developer certificate under Settings > General > VPN &
+Two things a phone needs that a simulator does not, both one-time and both taps
+on the phone: trusting the developer certificate under Settings > General > VPN &
 Device Management, and allowing the Local Network prompt the first time the app
-looks for Metro. Until the second one is granted, `launched` comes back
-`unverified`.
+looks for Metro. Neither can be pre-granted from this Mac. The trust tap has no
+API at all and is always the user's; the Local Network prompt can be accepted by
+a device tool once it is showing, and Stim's `unverified` remedy prints those
+commands when this launch's device log carries iOS's path reason for an
+ungranted app. A prior Don't Allow logs the same reason, and the remedy covers
+that too. Until it is granted, `launched` comes back `unverified`. Run
+`stim guide errors` for the signature and the full recovery.
 
 A `--device` run in a Release configuration builds fresh every time: a cached
 Release app carries its builder's JavaScript, and the device JS swap lands with
@@ -147,6 +152,10 @@ stim stop [--force] [--json]
 Stops the supervisor and log collectors. It shuts down the owned local device,
 ends an owned remote session, and frees the port. A local device stays assigned
 for reuse. `--force` can stop an unverified listener on the reserved port.
+
+On a physical iPhone the device log collector is the launch, so stopping it
+closes the running app on the phone. Nothing is uninstalled and nothing about
+the phone is recorded or deleted.
 
 ## `status`
 

@@ -488,3 +488,28 @@ export async function verifyIosDeviceReleaseLaunch({
   if (pid === undefined) return { verified: false, reason: 'probe-failed', waitedMs };
   return pid === null ? { verified: false, reason: 'exited', waitedMs, pid: null } : { verified: true, waitedMs, pid };
 }
+
+// CFNetwork's errno-50 shapes -- `failed to connect 1:50`, `error(1:50)`,
+// `Code=-1009` with `_kCFStreamErrorCodeKey=50` -- are generic ENETDOWN and are
+// also what Wi-Fi being off or a cellular-only route produce. Only the NWPath
+// reason names the permission, so only it is matched: iOS reports every LAN
+// connection an ungranted app makes as unsatisfied (Local network prohibited),
+// and it reads the same whether the prompt is unanswered or was denied. The
+// sibling reasons that must NOT match are (No network route) and (Denied over
+// cellular interface). Captured shapes:
+// __tests__/fixtures/ios-device/local-network-pending.txt.
+const LOCAL_NETWORK_PROHIBITED = /_NSURLErrorNWPathKey=unsatisfied \(Local network prohibited\)/;
+
+export function localNetworkPending(
+  records: readonly NdjsonRecord[],
+  { since = 0, pid = null, lanOrigin }: { since?: number; pid?: number | null; lanOrigin: string | null },
+): boolean {
+  if (!lanOrigin) return false;
+  const fromApp = pid ? new RegExp(`\\(${pid}\\)$`) : null;
+  for (const entry of records) {
+    if (Number(entry.ts) < since) continue;
+    if (fromApp && !(typeof entry.proc === 'string' && fromApp.test(entry.proc))) continue;
+    if (LOCAL_NETWORK_PROHIBITED.test(typeof entry.msg === 'string' ? entry.msg : '')) return true;
+  }
+  return false;
+}
