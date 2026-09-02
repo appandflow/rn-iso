@@ -110,6 +110,14 @@ describe('stim device lock', () => {
     });
   });
 
+  test('a padded --for still prints a Renew hint that can be run as printed', async () => {
+    const h = harness();
+    const facts = await runLock('ios', PHONE, { for: ' 90s ' }, h.deps);
+    assert(!('code' in facts));
+    expect(facts.leaseSeconds).toBe(90);
+    expect(h.out[0]).toMatch(/\(90s\)\. Renew: stim device lock ios --for 90s\. Release: stim device unlock\./);
+  });
+
   test('--json prints the payload the spec lists, and nothing else', async () => {
     const h = harness();
     await runLock('ios', PHONE, { json: true, for: '90s' }, h.deps);

@@ -169,7 +169,7 @@ export async function runLock(
     });
   }
 
-  const durationText = opts.for ?? DEFAULT_FOR;
+  const durationText = String(opts.for ?? DEFAULT_FOR).trim();
   const duration = parseLeaseDuration(durationText);
   if ('error' in duration) {
     return report({

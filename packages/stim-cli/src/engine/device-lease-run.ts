@@ -125,7 +125,7 @@ function busyRefusal({
     code: DEVICE_BUSY,
     message:
       `${lease.holder} holds ${describeDevice(lease)} until ${leaseExpiryText(lease.expiresAt, now)}` +
-      (waitSeconds > 0 ? `, and this run waited ${waitSeconds}s for it.` : '.'),
+      (waitSeconds > 0 ? `, and this command waited ${waitSeconds}s for it.` : '.'),
     remedy:
       `Wait longer with \`--wait <seconds>\`, pick another device with \`--device <${idLabel}>\`, or pass ` +
       '`--no-wait` to install anyway -- which takes no lease and, when both workspaces build the same app id, ' +
