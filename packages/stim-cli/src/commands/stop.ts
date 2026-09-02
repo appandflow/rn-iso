@@ -1,7 +1,7 @@
 import chalk from 'chalk';
 import { rmSync } from 'fs';
 import type { Command } from 'commander';
-import { clockTime, phaseLine } from '../command-output.ts';
+import { clockTime, phaseLine, plural } from '../command-output.ts';
 import { clearSupervisor, getProject, upsertProject } from '../config.ts';
 import type { ProjectRecord, SupervisorRecord } from '../config.ts';
 import { findProjectRoot } from '../project.ts';
@@ -393,7 +393,7 @@ export async function runStop({
       chalk.dim(
         phaseLine(
           'stop',
-          `keeping the collector records; ${unverifiedCollectors.length} pid(s) could not be verified, and a later \`ios\` / \`android\` run replaces them`,
+          `keeping the collector records; ${plural(unverifiedCollectors.length, 'pid')} could not be verified, and a later \`ios\` / \`android\` run replaces them`,
         ),
       ),
     );

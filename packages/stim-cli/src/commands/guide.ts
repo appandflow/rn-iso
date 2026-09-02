@@ -1251,13 +1251,14 @@ STIM_LOCK_TIMEOUT
 
 --- TEARDOWN AND WORKSPACE REFUSALS ---
 
-"metro: refusing to kill port <n>: ... runs from <dir>, outside <project>"
-  (stop) Stim will not kill a process it cannot attribute to you.
+"metro       refusing to kill port <n>: ... runs from <dir>, outside
+<project>"  (stop)
+  Stim will not kill a process it cannot attribute to you.
   \`stim stop --force\` kills it without proving whose it is -- ask the user
   first. That flag is reachable only when no supervisor is recorded for this
   workspace, and it never deletes anything.
 
-"supervisor: refusing to signal pid <n>: ..."  (stop)
+"stop        refusing to signal supervisor pid <n>: ..."  (stop)
   The two records describing that supervisor disagree, or it records a port
   this project did not reserve. A pid is a number the OS reuses, so it is not
   signalled. The port reservation is KEPT -- it is the only handle a retry
@@ -1368,15 +1369,15 @@ worktree create <name> --carry-ignored"  (worktree create)
   BRANCH has. Nothing else prints this: a carry whose lockfile matches is
   silent, so the line always means a real difference. Run the printed command.
 
-"carry       carried N uncommitted change(s) from the source (...) --
-uncommitted here too; commit deliberately."  (worktree create --carry-ignored)
+"carry       carried 2 uncommitted changes from the source (...) --
+uncommitted here too; commit deliberately"  (worktree create --carry-ignored)
   The source tree had uncommitted tracked changes, and the cloned artifacts
   were installed against that working tree -- so the same changes were applied
   to the new worktree as a patch, still uncommitted. Whether they belong in a
   commit is your call; the tool never commits for you.
 
-"Could not carry the source's uncommitted changes (...)"  (worktree create
---carry-ignored)
+"carry       could not carry the source's uncommitted changes (...)"
+(worktree create --carry-ignored)
   The worktree's --base diverges from the source HEAD, so that patch does not
   apply and NOTHING was changed here. Until those changes are reconciled, this
   worktree fingerprints differently from the source and misses the cache

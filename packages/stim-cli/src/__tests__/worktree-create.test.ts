@@ -571,7 +571,7 @@ test('create action: a leftover branch already AT the base is refused too, since
     expect(text).toContain('STIM_WORKTREE_BRANCH_EXISTS');
     expect(text).toMatch(/coincidence, not the guarantee/);
     expect(text).toMatch(/branch -D worktree-feat-same/);
-    expect(text).not.toMatch(/Attached to the existing branch/);
+    expect(text).not.toMatch(/attached to the existing/);
   } finally {
     process.exitCode = 0;
     rmSync(base, { recursive: true, force: true });
@@ -805,8 +805,9 @@ test('create action: a same-named tag does not stand in for the branch in the --
 
 test('carriedChangesLine and carryConflictWarning cap at three files and count the rest', () => {
   expect(carriedChangesLine(['app.json'])).toBe(
-    'Carried 1 uncommitted change(s) from the source (app.json) -- uncommitted here too; commit deliberately.',
+    'carried 1 uncommitted change from the source (app.json) -- uncommitted here too; commit deliberately',
   );
+  expect(carriedChangesLine(['a', 'b'])).toContain('carried 2 uncommitted changes from the source');
   expect(carriedChangesLine(['a', 'b', 'c', 'd', 'e'])).toContain('(a, b, c, +2)');
   const warning = carryConflictWarning(['a', 'b', 'c', 'd']);
   expect(warning).toContain('(a, b, c, +1)');
@@ -836,7 +837,9 @@ test('create action: --carry-ignored applies the source uncommitted changes when
     expect(readFileSync(join(wt, 'app.json'), 'utf-8')).toContain('dirty-scheme');
     const status = execSync('git status --porcelain -- app.json', { cwd: wt, encoding: 'utf-8' }).trim();
     expect(status).toBe('M app.json');
-    expect(errs.some((e) => /Carried 1 uncommitted change\(s\) from the source \(app\.json\)/.test(e))).toBeTruthy();
+    expect(
+      errs.some((e) => /^  carry {7}carried 1 uncommitted change from the source \(app\.json\)/.test(e)),
+    ).toBeTruthy();
     expect(errs.some((e) => /uncommitted here too; commit deliberately/.test(e))).toBeTruthy();
     expect(process.exitCode).not.toBe(1);
   } finally {
@@ -866,7 +869,9 @@ test('create action: --carry-ignored warns and applies NOTHING when the base div
     expect(logs).toEqual([wt]);
     expect(readFileSync(join(wt, 'app.json'), 'utf-8')).toBe('first version\n');
     expect(execSync('git status --porcelain', { cwd: wt, encoding: 'utf-8' }).trim()).toBe('');
-    expect(errs.some((e) => /Could not carry the source's uncommitted changes \(app\.json\)/.test(e))).toBeTruthy();
+    expect(
+      errs.some((e) => /^  carry {7}could not carry the source's uncommitted changes \(app\.json\)/.test(e)),
+    ).toBeTruthy();
     expect(errs.some((e) => /base diverges from the source HEAD/.test(e))).toBeTruthy();
     expect(errs.some((e) => /fingerprints and cache keys/.test(e))).toBeTruthy();
     expect(process.exitCode).not.toBe(1);
@@ -892,7 +897,7 @@ test('create action: a plain create (no --carry-ignored) is pure HEAD -- no diff
     const wt = join(defaultWorktreeDir(repo), 'feat-plain');
     expect(readFileSync(join(wt, 'app.json'), 'utf-8')).toBe('{"expo":{}}\n');
     expect(execSync('git status --porcelain', { cwd: wt, encoding: 'utf-8' }).trim()).toBe('');
-    expect(errs.some((e) => /Carried .* uncommitted|Could not carry/.test(e))).toBe(false);
+    expect(errs.some((e) => /carried .* uncommitted|could not carry/.test(e))).toBe(false);
   } finally {
     process.exitCode = 0;
     rmSync(base, { recursive: true, force: true });
@@ -1022,8 +1027,8 @@ test('create action: pods installed against an uncommitted Podfile.lock carried 
     expect(readFileSync(join(wt, 'ios', 'Podfile.lock'), 'utf-8')).toBe(
       readFileSync(join(wt, 'ios', 'Pods', 'Manifest.lock'), 'utf-8'),
     );
-    expect(errs.some((e) => /Carried ios\/Pods does not match/.test(e))).toBe(false);
-    expect(errs.some((e) => /Carried 1 uncommitted change\(s\)/.test(e))).toBe(true);
+    expect(errs.some((e) => /carried ios\/Pods does not match/.test(e))).toBe(false);
+    expect(errs.some((e) => /^  carry {7}carried 1 uncommitted change /.test(e))).toBe(true);
   } finally {
     process.exitCode = 0;
     rmSync(base, { recursive: true, force: true });

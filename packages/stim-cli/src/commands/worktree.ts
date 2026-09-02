@@ -2,7 +2,7 @@ import { existsSync, readdirSync, realpathSync } from 'fs';
 import { basename, dirname, resolve } from 'path';
 import chalk from 'chalk';
 import { type Command, InvalidArgumentError } from 'commander';
-import { phaseLine } from '../command-output.ts';
+import { phaseLine, plural } from '../command-output.ts';
 import { resolveSettings, SETTING_SHAPE_REMEDY, settingShapeErrors, unknownSettingKeys } from '../settings.ts';
 import { getProject, isPathPrefix, loadConfig, removeProject, upsertProject } from '../config.ts';
 import { podInstallCommand } from '../engine/bundler.ts';
@@ -331,7 +331,7 @@ export function registerCreate(worktree: Command): void {
       const included = readWorktreeInclude(root);
       const patterns = included && included.length ? included : settings?.worktree?.include || [];
       const { copied, failed } = carryOverFiles({ root, target, patterns });
-      if (copied.length) console.error(chalk.dim(phaseLine('carry', `${copied.length} configured file(s)`)));
+      if (copied.length) console.error(chalk.dim(phaseLine('carry', plural(copied.length, 'configured file'))));
       for (const f of failed) {
         console.error(chalk.yellow(phaseLine('carry', `could not carry ${f.file}: ${f.error}`)));
       }
@@ -432,12 +432,12 @@ function carriedFileList(files: string[]): string {
 }
 
 export function carriedChangesLine(files: string[]): string {
-  return `Carried ${files.length} uncommitted change(s) from the source (${carriedFileList(files)}) -- uncommitted here too; commit deliberately.`;
+  return `carried ${plural(files.length, 'uncommitted change')} from the source (${carriedFileList(files)}) -- uncommitted here too; commit deliberately`;
 }
 
 export function carryConflictWarning(files: string[]): string {
   return (
-    `Could not carry the source's uncommitted changes (${carriedFileList(files)}): this worktree's base diverges from the source HEAD, so the patch does not apply and nothing was changed here. ` +
+    `could not carry the source's uncommitted changes (${carriedFileList(files)}): this worktree's base diverges from the source HEAD, so the patch does not apply and nothing was changed here. ` +
     "The carried artifacts were installed for the source's uncommitted state, so fingerprints and cache keys in this worktree will differ from the source's until those changes are reconciled."
   );
 }

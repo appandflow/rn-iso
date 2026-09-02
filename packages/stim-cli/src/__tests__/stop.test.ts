@@ -197,6 +197,35 @@ test('a live supervisor is SIGTERMed as a group and its Metro is left to it', as
   expect(calls.stateCleared).toBe(1);
 });
 
+test('the headline stop lines land in the label column, not as colon sentences', async () => {
+  const { opts } = seams({
+    state: { pid: 4242, port: 8083, mode: 'expo-child' },
+    collectors: { ios: { pid: 111 } },
+    project: { metroPort: 8083, platforms: { ios: { deviceUdid: 'U1', owned: true } } },
+    isAlive: () => true,
+  });
+  const reported: string[] = [];
+  const r = await runStop({ ...opts, report: (line: string) => reported.push(line) });
+  expect(r.ok).toBe(true);
+  const text = reported.join('\n');
+  expect(text).toMatch(/^  stop {8}supervisor pid 4242$/m);
+  expect(text).toMatch(/^  stop {8}collector ios pid 111$/m);
+  expect(text).toMatch(/^  device {6}shut down stim-a$/m);
+  expect(text).toMatch(/^  port {8}released 8083$/m);
+  expect(text).not.toMatch(/^(supervisor|collectors|metro|ios|android|port|leases):/m);
+});
+
+test('a metro stopped without a supervisor reports itself in the same column', async () => {
+  const { opts } = seams({
+    project: { metroPort: 8083, platforms: {} },
+    resolveMetro: async () => makeMetroResolution.identified({ metro: { pid: 90, leader: 88, cwd: '/proj/a' } }),
+  });
+  const reported: string[] = [];
+  const r = await runStop({ ...opts, report: (line: string) => reported.push(line) });
+  expect(r.outcomes.metro.status).toBe('stopped');
+  expect(reported.join('\n')).toMatch(/^  metro {7}stopped pid 90 on port 8083$/m);
+});
+
 test('a supervisor that outlives the wait is reported, never SIGKILLed', async () => {
   const { calls, opts } = seams({
     state: { pid: 4242, port: 8083 },
