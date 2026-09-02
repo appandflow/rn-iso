@@ -484,6 +484,7 @@ export function androidFacts({
   debugHttpHost = null,
   debugHttpHostNote = null,
   devClientUrl = null,
+  durationMs,
   lease,
 }: {
   serial?: string | null;
@@ -504,6 +505,7 @@ export function androidFacts({
   debugHttpHost?: string | null;
   debugHttpHostNote?: string | null;
   devClientUrl?: string | null;
+  durationMs?: number;
   lease?: { kind: string; expiresAt: string } | null;
 }): AndroidFacts {
   return {
@@ -526,6 +528,7 @@ export function androidFacts({
     debugHttpHostNote: debugHttpHostNote ?? null,
     devClientUrl: devClientUrl ?? null,
     logs: logs ?? null,
+    durationMs: typeof durationMs === 'number' && Number.isFinite(durationMs) ? durationMs : null,
     ...(lease === undefined ? {} : { lease }),
   };
 }
@@ -948,6 +951,7 @@ interface ReportAndroidResultArgs {
   providerName: string | null;
   launchState: boolean | string;
   launched: LaunchResultLike;
+  durationMs: number;
   writer: AndroidWriter;
   emit: (line: string) => void;
 }
@@ -970,6 +974,7 @@ function reportAndroidResult({
   providerName,
   launchState,
   launched,
+  durationMs,
   writer,
   emit,
   lease,
@@ -993,6 +998,7 @@ function reportAndroidResult({
     installSkipped,
     launched: launchState,
     logs: logsDir,
+    durationMs,
     lease,
   });
   writer.close();
@@ -1358,6 +1364,7 @@ async function finishAndroidRun({
     providerName,
     launchState,
     launched,
+    durationMs: now() - started,
     writer,
     emit,
     lease: physical ? leaseFacts : undefined,
