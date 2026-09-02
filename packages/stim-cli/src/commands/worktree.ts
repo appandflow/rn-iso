@@ -2,7 +2,7 @@ import { existsSync, readdirSync, realpathSync } from 'fs';
 import { basename, dirname, resolve } from 'path';
 import chalk from 'chalk';
 import { type Command, InvalidArgumentError } from 'commander';
-import { resolveSettings, unknownSettingKeys, worktreeDirSettingError } from '../settings.ts';
+import { resolveSettings, SETTING_SHAPE_REMEDY, settingShapeErrors, unknownSettingKeys } from '../settings.ts';
 import { getProject, isPathPrefix, loadConfig, removeProject, upsertProject } from '../config.ts';
 import { podInstallCommand } from '../engine/bundler.ts';
 import { reclaimProject } from '../reclaim.ts';
@@ -213,14 +213,15 @@ export function registerCreate(worktree: Command): void {
       }
       const common = gitCommonDir(process.cwd());
       const settings = resolveSettings({ gitCommonDir: common, repoRoot: root }) as WorktreeSettings;
-      for (const key of unknownSettingKeys(settings)) {
-        console.error(chalk.yellow(`Warning: setting "${key}" is not read by Stim and will be ignored.`));
-      }
-      const worktreeDirError = worktreeDirSettingError(settings);
-      if (worktreeDirError) {
-        console.error(chalk.red(worktreeDirError));
+      const shapeErrors = settingShapeErrors(settings);
+      if (shapeErrors.length) {
+        for (const message of shapeErrors) console.error(chalk.red(message));
+        console.error(chalk.dim(SETTING_SHAPE_REMEDY));
         process.exitCode = 1;
         return;
+      }
+      for (const key of unknownSettingKeys(settings)) {
+        console.error(chalk.yellow(`Warning: setting "${key}" is not read by Stim and will be ignored.`));
       }
 
       const base = opts.base || settings?.worktree?.baseRef || 'head';

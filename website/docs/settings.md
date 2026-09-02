@@ -17,7 +17,11 @@ Stim reads the first value found in this order:
 4. The Stim default.
 
 Nested objects merge by key. Arrays replace lower-precedence arrays. Unknown
-keys produce a warning.
+keys produce a warning. Every key below takes one type: a string, an array of
+strings, a number, or, for `android.avdConfig` and `cache.options`, an object.
+A value of the wrong type is refused by name on every command that resolves
+settings, so a wrong shape never falls back to a default silently. `stim doctor`
+reports it as a finding instead of refusing.
 
 ## Committed settings
 

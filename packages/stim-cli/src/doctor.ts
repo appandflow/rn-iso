@@ -22,7 +22,14 @@ import {
   providerFromConfig,
   resolveEasCliBin,
 } from './engine/remote-cache.ts';
-import { iosSimSlimProfileSetting, remoteAndroidSetting, remoteIosSetting, resolveSettings } from './settings.ts';
+import {
+  iosSimSlimProfileSetting,
+  remoteAndroidSetting,
+  remoteIosSetting,
+  resolveSettings,
+  SETTING_SHAPE_REMEDY,
+  settingShapeErrors,
+} from './settings.ts';
 import type { RemoteDeviceBackend } from './types.ts';
 
 type AnyJson = Record<string, unknown>;
@@ -614,6 +621,9 @@ export function runDoctor(
     gitCommonDir: gitCommonDir(projectRoot),
     repoRoot: settingsRepoRoot,
   });
+  const settingShapeFindings = settingShapeErrors(projectSettings).map((error) =>
+    finding('cost', 'A setting has the wrong type', error, SETTING_SHAPE_REMEDY),
+  );
   let simslimProfile: string | null = null;
   let simslimProfileError: string | null = null;
   try {
@@ -664,6 +674,7 @@ export function runDoctor(
     concurrencyFinding,
     simslimFinding,
     ...remoteFindings,
+    ...settingShapeFindings,
   ].filter((f): f is Finding => Boolean(f));
 }
 

@@ -30,6 +30,8 @@ import {
   remoteIosSetting,
   resolveCacheProviderConfig,
   resolveSettings,
+  SETTING_SHAPE_REMEDY,
+  settingShapeErrors,
   tunnelModeSetting,
   unknownSettingKeys,
 } from '../settings.ts';
@@ -330,6 +332,15 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
         repoRoot: worktreeRoot,
       };
       const settings = resolveSettings(settingsContext);
+      const [shapeError, ...moreShapeErrors] = settingShapeErrors(settings);
+      if (shapeError) {
+        return fail({
+          code: 'STIM_BAD_ARG',
+          message: shapeError,
+          lines: moreShapeErrors,
+          remedy: SETTING_SHAPE_REMEDY,
+        });
+      }
       const cacheProvider = resolveCacheProviderConfig(settingsContext);
       for (const key of unknownSettingKeys(settings)) {
         note(chalk.yellow(`Warning: setting "${key}" is not read by Stim and will be ignored.`));

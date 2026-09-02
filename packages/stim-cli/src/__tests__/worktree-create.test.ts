@@ -386,6 +386,26 @@ test('create action: a non-string worktreeDir setting refuses cleanly instead of
   }
 });
 
+test('create action: an object worktreeDir is one refusal, never an unknown-key warning', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-dir-object-')));
+  const repo = join(base, 'repo');
+  try {
+    initScratchRepo(repo);
+    writeFileSync(join(repo, '.stim.json'), JSON.stringify({ worktreeDir: {} }));
+
+    const { logs, errs } = await runCreateInRepo(repo, 'feat-object-dir', { install: false });
+
+    expect(logs).toEqual([]);
+    expect(errs.filter((e) => /Invalid worktreeDir setting/.test(e))).toHaveLength(1);
+    expect(errs.some((e) => /Invalid worktreeDir setting \{\}\. Expected a string path\./.test(e))).toBeTruthy();
+    expect(errs.some((e) => /not read by Stim/.test(e))).toBe(false);
+  } finally {
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test('create action: --dir takes precedence over the worktreeDir setting', async () => {
   resetExecutor();
   const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-dir-setting-')));

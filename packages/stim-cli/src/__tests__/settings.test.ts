@@ -1,5 +1,5 @@
 import assert from 'node:assert';
-import { mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'fs';
+import { mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import {
@@ -27,9 +27,9 @@ import {
   remoteIosSetting,
   resolveCacheProviderConfig,
   resolveSettings,
+  settingShapeErrors,
   tunnelModeSetting,
   unknownSettingKeys,
-  worktreeDirSettingError,
 } from '../settings.ts';
 import { setProjectSetting, setRepoSetting, upsertProject } from '../config.ts';
 
@@ -301,44 +301,93 @@ test('unknownSettingKeys reports a nested unknown without flagging its parent', 
   expect(unknownSettingKeys({ ios: { deviceType: 'x', bogus: 1 } })).toEqual(['ios.bogus']);
 });
 
-test('unknownSettingKeys treats a known scalar key with an object value as known, leaving refusal to its validator', () => {
+test('unknownSettingKeys treats a known scalar key with an object value as known, leaving refusal to the shape check', () => {
   expect(unknownSettingKeys({ worktreeDir: {} })).toEqual([]);
-  expect(worktreeDirSettingError({ worktreeDir: {} })).toMatch(/Invalid worktreeDir setting/);
+  expect(settingShapeErrors({ worktreeDir: {} })).toEqual(['Invalid worktreeDir setting {}. Expected a string path.']);
 
   expect(unknownSettingKeys({ ios: { lanHost: {} } })).toEqual([]);
-  expect(iosLanHostSettingError({ ios: { lanHost: {} } })).toMatch(/Invalid ios\.lanHost setting/);
+  expect(settingShapeErrors({ ios: { lanHost: {} } })).toEqual(['Invalid ios.lanHost setting {}. Expected a string.']);
 });
 
 test('unknownSettingKeys still reports a genuinely unknown nested key under ios', () => {
   expect(unknownSettingKeys({ ios: { bogus: {} } })).toEqual(['ios.bogus']);
 });
 
-test('unknownSettingKeys still reports an object value for a known scalar with no validator (transitional, see #210)', () => {
-  expect(unknownSettingKeys({ ios: { configuration: {} } })).toEqual(['ios.configuration']);
+test('a known key is never an unknown-key warning, whatever its value', () => {
+  for (const value of [{}, 42, true, [], null, 'x']) {
+    expect(unknownSettingKeys({ ios: { configuration: value } })).toEqual([]);
+    expect(unknownSettingKeys({ caches: value })).toEqual([]);
+  }
+  expect(settingShapeErrors({ ios: { configuration: {} } })).toEqual([
+    'Invalid ios.configuration setting {}. Expected a string.',
+  ]);
 });
 
-test('every validated scalar key is a known setting, as a string and as an object', () => {
-  const validated = [
-    'worktreeDir',
-    'ios.lanHost',
-    'ios.signingIdentity',
-    'ios.signingIdentitySha1',
-    'ios.remote',
-    'ios.simslimProfile',
-    'android.remote',
-    'android.dataPartitionSizeGb',
-    'android.avdConfigFile',
-    'cache.provider',
-  ];
-  const nested = (path: string, value: unknown): Record<string, unknown> =>
-    path
-      .split('.')
-      .toReversed()
-      .reduce<Record<string, unknown>>((inner, key) => ({ [key]: inner }), value as Record<string, unknown>);
-  for (const path of validated) {
-    expect(unknownSettingKeys(nested(path, 'x'))).toEqual([]);
-    expect(unknownSettingKeys(nested(path, {}))).toEqual([]);
+function nestedSetting(path: string, value: unknown): Record<string, unknown> {
+  return path
+    .split('.')
+    .toReversed()
+    .reduce<Record<string, unknown>>((inner, key) => ({ [key]: inner }), value as Record<string, unknown>);
+}
+
+const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: string }> = {
+  'ios.deviceType': { valid: 'iPhone 17 Pro', invalid: {}, expected: 'a string' },
+  'ios.runtime': { valid: '26.2', invalid: 26.2, expected: 'a string' },
+  'ios.configuration': { valid: 'Release', invalid: { name: 'Release' }, expected: 'a string' },
+  'ios.remote': { valid: 'proxy', invalid: true, expected: 'a string' },
+  'ios.simslimProfile': { valid: '.simslim/dev.json', invalid: {}, expected: 'a string path' },
+  'ios.signingIdentity': { valid: 'Apple Development: Jane', invalid: [], expected: 'a string' },
+  'ios.signingIdentitySha1': { valid: 'A'.repeat(40), invalid: 42, expected: 'a string' },
+  'ios.lanHost': { valid: '192.168.1.42', invalid: {}, expected: 'a string' },
+  'android.systemImage': { valid: 'system-images;android-36;google_apis;arm64-v8a', invalid: {}, expected: 'a string' },
+  'android.dataPartitionSizeGb': { valid: 8, invalid: '8', expected: 'a number' },
+  'android.avdConfigFile': { valid: 'avd/config.ini', invalid: {}, expected: 'a string path' },
+  'android.avdConfig': { valid: { 'hw.ramSize': 4096 }, invalid: 'hw.ramSize=4096', expected: 'an object' },
+  'android.variant': { valid: 'productionDebug', invalid: {}, expected: 'a string' },
+  'android.keystore': { valid: 'android/app/release.keystore', invalid: {}, expected: 'a string path' },
+  'android.keystorePassword': { valid: 'env:MY_KS_PASS', invalid: 1234, expected: 'a string' },
+  'android.remote': { valid: 'eas', invalid: true, expected: 'a string' },
+  'metro.tunnel': { valid: 'ngrok', invalid: {}, expected: 'a string' },
+  'metro.ngrokUrl': { valid: 'https://a.ngrok.app', invalid: {}, expected: 'a string' },
+  'metro.publicUrl': { valid: 'https://metro.example', invalid: false, expected: 'a string' },
+  worktreeDir: { valid: '.stim-worktrees', invalid: {}, expected: 'a string path' },
+  'worktree.baseRef': { valid: 'head', invalid: {}, expected: 'a string' },
+  'worktree.include': { valid: ['.env'], invalid: {}, expected: 'an array of strings' },
+  'worktree.exclude': { valid: ['node_modules'], invalid: ['ok', 7], expected: 'an array of strings' },
+  'cache.provider': { valid: './cache.cjs', invalid: {}, expected: 'a string' },
+  'cache.options': { valid: { bucket: 'a' }, invalid: 'nope', expected: 'an object' },
+  caches: { valid: ['~/.myapp-metro-cache'], invalid: {}, expected: 'an array of strings' },
+};
+
+test('every known setting has a shape, and a wrong-typed value is one refusal naming the key and the shape', () => {
+  const src = readFileSync(new URL('../settings.ts', import.meta.url), 'utf-8');
+  const table = src.slice(src.indexOf('const SETTING_SHAPES'), src.indexOf('};', src.indexOf('const SETTING_SHAPES')));
+  const known = [...table.matchAll(/^\s*'?([A-Za-z0-9.]+)'?: '[a-z]+',$/gm)]
+    .map((match) => match[1])
+    .filter((key): key is string => key !== undefined);
+  expect(known.length).toBeGreaterThan(0);
+  expect(Object.keys(SHAPE_CASES).toSorted()).toEqual(known.toSorted());
+
+  for (const key of known) {
+    const shapeCase = SHAPE_CASES[key];
+    assert(shapeCase);
+    expect(settingShapeErrors(nestedSetting(key, shapeCase.invalid))).toEqual([
+      `Invalid ${key} setting ${JSON.stringify(shapeCase.invalid)}. Expected ${shapeCase.expected}.`,
+    ]);
+    expect(settingShapeErrors(nestedSetting(key, shapeCase.valid))).toEqual([]);
+    expect(unknownSettingKeys(nestedSetting(key, shapeCase.invalid))).toEqual([]);
+    expect(unknownSettingKeys(nestedSetting(key, shapeCase.valid))).toEqual([]);
   }
+});
+
+test('settingShapeErrors reports one line per bad key and ignores absent keys', () => {
+  expect(settingShapeErrors({})).toEqual([]);
+  expect(settingShapeErrors(null)).toEqual([]);
+  expect(settingShapeErrors('nope')).toEqual([]);
+  expect(settingShapeErrors({ ios: { configuration: {} }, worktreeDir: 5, packageManager: 'pnpm' })).toEqual([
+    'Invalid ios.configuration setting {}. Expected a string.',
+    'Invalid worktreeDir setting 5. Expected a string path.',
+  ]);
 });
 
 test('unknownSettingKeys tolerates empty and malformed input', () => {
@@ -589,8 +638,8 @@ test('ios.lanHost takes a bare address and refuses everything that would break s
 });
 
 test('worktreeDir refuses a non-string value and accepts a valid path', () => {
-  expect(worktreeDirSettingError({ worktreeDir: 5 })).toMatch(/Invalid worktreeDir setting/);
-  expect(worktreeDirSettingError({ worktreeDir: '.stim-worktrees' })).toBe(null);
+  expect(settingShapeErrors({ worktreeDir: 5 })).toEqual(['Invalid worktreeDir setting 5. Expected a string path.']);
+  expect(settingShapeErrors({ worktreeDir: '.stim-worktrees' })).toEqual([]);
 });
 
 test('the three iOS device settings are known keys', () => {

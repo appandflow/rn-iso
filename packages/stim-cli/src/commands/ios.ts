@@ -123,6 +123,8 @@ import {
   remoteIosSetting,
   resolveCacheProviderConfig,
   resolveSettings,
+  SETTING_SHAPE_REMEDY,
+  settingShapeErrors,
   tunnelModeSetting,
   unknownSettingKeys,
   type SettingsObject,
@@ -1616,6 +1618,15 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     repoRoot: settingsRepoRoot,
   };
   const settings = d.resolveSettings(settingsContext);
+  const [shapeError, ...moreShapeErrors] = settingShapeErrors(settings);
+  if (shapeError) {
+    return fail({
+      code: 'STIM_BAD_ARG',
+      message: shapeError,
+      lines: moreShapeErrors,
+      remedy: SETTING_SHAPE_REMEDY,
+    });
+  }
   const cacheProviderConfig = d.resolveCacheProviderConfig(settingsContext);
   for (const key of unknownSettingKeys(settings)) {
     note(chalk.yellow(`Warning: setting "${key}" is not read by Stim and will be ignored.`));
@@ -1640,7 +1651,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
       return fail({
         code: 'STIM_BAD_ARG',
         message: settingError,
-        remedy: 'Run `stim guide settings` for the shape each ios.* key takes.',
+        remedy: SETTING_SHAPE_REMEDY,
       });
     }
   }

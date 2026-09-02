@@ -60,6 +60,7 @@ import {
 } from './ios.ts';
 import {
   REMOTE_DEVICE_BACKENDS,
+  SETTING_SHAPE_REMEDY,
   androidAvdConfigSettingError,
   androidDataPartitionSizeGbSettingError,
   cacheProviderSettingError,
@@ -68,7 +69,9 @@ import {
   remoteDeviceSettingError,
   resolveCacheProviderConfig,
   resolveSettings,
+  settingShapeErrors,
   tunnelModeSetting,
+  unknownSettingKeys,
 } from '../settings.ts';
 import { gitCommonDir, repoRoot } from '../worktree.ts';
 import { readCollectors } from '../collector/state.ts';
@@ -1592,6 +1595,13 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     repoRoot: settingsRepoRoot,
   };
   const settings = resolveSettingsFor(settingsContext);
+  const [shapeError, ...moreShapeErrors] = settingShapeErrors(settings);
+  if (shapeError) {
+    return fail('STIM_BAD_ARG', shapeError, SETTING_SHAPE_REMEDY, { lines: moreShapeErrors });
+  }
+  for (const key of unknownSettingKeys(settings)) {
+    out(phaseLine('setting', chalk.yellow(`Warning: setting "${key}" is not read by Stim and will be ignored.`)));
+  }
   const cacheProviderConfig = resolveCacheProvider(settingsContext);
   const cacheProviderError = cacheProviderSettingError(settings);
   if (cacheProviderError) out(phaseLine('cache', chalk.yellow(`${cacheProviderError} Using the local cache.`)));

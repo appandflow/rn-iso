@@ -23,10 +23,18 @@ import { getExecutor } from '../exec.ts';
 import { isPidAlive } from '../metro.ts';
 import { detectIsExpo, findProjectRoot } from '../project.ts';
 import { reclaimProject } from '../reclaim.ts';
+import { SETTING_SHAPE_REMEDY } from '../settings.ts';
 import { listAllIosSims, type IosSimRecord } from '../sim/ios.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.ts';
 import { listAvds, ownedAvdDirectory } from '../sim/android.ts';
-import { declaredCachePaths, discoverCaches, pruneCache, sizeCaches, type CacheDescriptor } from '../caches.ts';
+import {
+  declaredCachePaths,
+  discoverCaches,
+  projectSettingShapeErrors,
+  pruneCache,
+  sizeCaches,
+  type CacheDescriptor,
+} from '../caches.ts';
 import { workspaceDir, workspaceStateFile } from '../paths.ts';
 import { withRemoteSessionLock } from '../engine/device-remote.ts';
 import { withEasProjectLock } from '../engine/eas-project-lock.ts';
@@ -128,6 +136,7 @@ interface GcDependencies {
   precollectedEasSessionSweep?: EasSessionSweep;
   avdDirectory?: typeof ownedAvdDirectory;
   directorySize?: typeof directorySize;
+  settingShapeErrors?: () => string[];
 }
 
 // simctl and emulator listings can exceed 10 seconds on loaded hosts; 30 seconds still bounds hangs.
@@ -1043,6 +1052,13 @@ export async function collectGcReport(
 }
 
 export async function runGc(opts: RunGcOptions = {}, deps: GcDependencies = {}): Promise<void> {
+  const shapeErrors = (deps.settingShapeErrors ?? projectSettingShapeErrors)();
+  if (shapeErrors.length) {
+    for (const message of shapeErrors) console.error(chalk.red(message));
+    console.error(chalk.dim(SETTING_SHAPE_REMEDY));
+    process.exitCode = 1;
+    return;
+  }
   if (opts.cache) {
     return runGcCore(opts, {
       ...deps,
