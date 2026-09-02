@@ -82,7 +82,7 @@ Follow these rules during the loop:
   launch facts in Stim's final summary. Use the full reported device ID. Never
   assume that a simulator named `booted` belongs to this workspace.
 - An `OK` summary with no launch qualifier proves the launch. `bundle requested,
-still building` means Metro has not finished the bundle; wait and query the
+  still building` means Metro has not finished the bundle; wait and query the
   logs. For `launch UNVERIFIED`, follow the printed remedy before you claim
   success. JSON reports these as `true`, `"bundling"`, and `"unverified"` in
   `launched`.

@@ -778,8 +778,7 @@ describe('unverifiedLaunchLines: the routed Local Network remedy', () => {
     expect(at(/agent-device press 'label="Close"'/)).toBe(at(/agent-device snapshot -i/));
   });
 
-  // A Don't Allow persists across upgrade installs and logs the same reason,
-  // so the remedy has to hand back a path that does not depend on the alert.
+  // A Don't Allow persists across upgrade installs and logs the same reason.
   test('the denied case has its own step, and it is the Settings switch', () => {
     const denied = devClientLines().find((line) => /If the FIRST `alert get` already finds no alert/.test(line));
     expect(denied).toMatch(/denied on an earlier run/);
