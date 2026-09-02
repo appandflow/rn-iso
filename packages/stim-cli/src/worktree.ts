@@ -506,11 +506,11 @@ export function addWorktree({
   assertSafeWorktreePath(path);
   mkdirSync(dirname(path), { recursive: true });
   if (!createBranch) {
-    getExecutor().runFile('git', ['worktree', 'add', '--', path, branch]);
+    getExecutor().runFile('git', ['worktree', 'add', '--', path, branch], { env: { LC_ALL: 'C' } });
     return path;
   }
   assertSafeBaseRef(baseRef);
-  getExecutor().runFile('git', ['worktree', 'add', '-b', branch, '--', path, baseRef]);
+  getExecutor().runFile('git', ['worktree', 'add', '-b', branch, '--', path, baseRef], { env: { LC_ALL: 'C' } });
   return path;
 }
 
