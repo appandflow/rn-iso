@@ -73,6 +73,31 @@ test('the facts topic documents the fields each --json payload actually carries'
   }
 });
 
+test('the one-line JSON sentence names every command whose --json payload is a single line', () => {
+  const body = renderTopic('facts');
+  assert(body);
+  const singleLineJsonCommands = ['start', 'ios', 'android', 'stop', 'status', 'doctor'];
+  const files: Record<string, string> = {
+    start: 'start.ts',
+    ios: 'ios.ts',
+    android: 'android.ts',
+    stop: 'stop.ts',
+    status: 'status.ts',
+    doctor: 'doctor.ts',
+    device: 'device.ts',
+  };
+  for (const [, file] of Object.entries(files)) {
+    const src = readFileSync(new URL(`../commands/${file}`, import.meta.url), 'utf-8');
+    expect(src).toMatch(/--json/);
+    expect(src).not.toMatch(/JSON\.stringify\([^)]*,\s*null\s*,\s*2\s*\)/);
+    expect(src).not.toMatch(/JSON\.stringify\(\s*\n/);
+  }
+  for (const command of singleLineJsonCommands) expect(body.includes(`\`${command}\``)).toBeTruthy();
+  expect(body).toMatch(/device lock.*device unlock/s);
+  expect(body).toMatch(/exactly ONE line of JSON/);
+  expect(body).toMatch(/logs --json[^.]*NDJSON/);
+});
+
 test('the flags the guide advertises are the flags the commands define', () => {
   const lifecycle = renderTopic('lifecycle');
   assert(lifecycle);

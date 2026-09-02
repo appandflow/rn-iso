@@ -3,10 +3,11 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { Command } from 'commander';
 import { saveConfig, getProject } from '../config.ts';
 import { verifyCollectorOwnership } from '../collector/ownership.ts';
 import { ensureWorkspaceStorage, supervisorPidFile, workspaceStateFile } from '../paths.ts';
-import {
+import stopCommand, {
   clearCollectorState,
   clearSupervisorState,
   readCollectorState,
@@ -1153,4 +1154,28 @@ test('stop says nothing about leases when this workspace holds none', async () =
   const r = await runStop({ root: tmpRoot, project: null, state: null, collectors: {}, report: () => {} });
   expect(r.outcomes.releasedLeases).toEqual([]);
   expect(r.summary).not.toMatch(/lease/);
+});
+
+test('stop --json prints exactly one line of JSON on stdout', async () => {
+  writeFileSync(join(tmpRoot, 'package.json'), JSON.stringify({ name: 'app' }));
+  const cwd = process.cwd();
+  const logs: string[] = [];
+  const originalLog = console.log;
+  const program = new Command();
+  stopCommand(program);
+  console.log = (msg) => logs.push(String(msg));
+  process.chdir(tmpRoot);
+  try {
+    await program.parseAsync(['node', 'stim', 'stop', '--json']);
+  } finally {
+    process.chdir(cwd);
+    console.log = originalLog;
+  }
+  expect(logs.length).toBe(1);
+  const [line] = logs;
+  assert(line);
+  expect(line).not.toContain('\n');
+  const payload = JSON.parse(line);
+  expect(typeof payload.root).toBe('string');
+  expect(typeof payload.ok).toBe('boolean');
 });

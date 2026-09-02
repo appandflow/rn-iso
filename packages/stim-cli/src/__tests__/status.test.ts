@@ -169,7 +169,11 @@ async function runStatusJson() {
   } finally {
     console.log = originalLog;
   }
-  return JSON.parse(logs.join('\n'));
+  expect(logs.length).toBe(1);
+  const [line] = logs;
+  assert(line);
+  expect(line).not.toContain('\n');
+  return JSON.parse(line);
 }
 
 function writeLogs(root: string, records: NdjsonRecord[]) {

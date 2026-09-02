@@ -781,7 +781,7 @@ export default function stopCommand(program: Command): void {
       const { ok, outcomes, summary } = await runStop({ root, force: Boolean(opts.force) });
 
       if (opts.json) {
-        console.log(JSON.stringify({ root, ok, ...outcomes }, null, 2));
+        console.log(JSON.stringify({ root, ok, ...outcomes }));
       } else {
         console.log(ok ? chalk.green(summary) : chalk.yellow(summary));
       }

@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Command } from 'commander';
 import {
   checkBuildCacheProvider,
   checkCompilationCache,
@@ -20,6 +21,7 @@ import {
   parseXcodeMajor,
   checkConcurrency,
 } from '../doctor.ts';
+import doctorCommand from '../commands/doctor.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import type { EasAuthResult } from '../engine/remote-cache.ts';
 import assert from 'node:assert';
@@ -943,4 +945,34 @@ test.each([
   } finally {
     rmSync(project, { recursive: true, force: true });
   }
+});
+
+test('doctor --json prints exactly one line of JSON on stdout', async () => {
+  const project = mkdtempSync(join(tmpdir(), 'stim-doctor-cli-'));
+  const home = mkdtempSync(join(tmpdir(), 'stim-doctor-cli-home-'));
+  process.env.STIM_HOME = home;
+  const cwd = process.cwd();
+  const logs: string[] = [];
+  const originalLog = console.log;
+  writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
+  const program = new Command();
+  doctorCommand(program);
+  console.log = (msg) => logs.push(String(msg));
+  process.chdir(project);
+  try {
+    await program.parseAsync(['node', 'stim', 'doctor', '--json']);
+  } finally {
+    process.chdir(cwd);
+    console.log = originalLog;
+    delete process.env.STIM_HOME;
+    rmSync(home, { recursive: true, force: true });
+    rmSync(project, { recursive: true, force: true });
+  }
+  expect(logs.length).toBe(1);
+  const [line] = logs;
+  assert(line);
+  expect(line).not.toContain('\n');
+  const payload = JSON.parse(line);
+  expect(Array.isArray(payload.findings)).toBe(true);
+  expect(typeof payload.project).toBe('string');
 });

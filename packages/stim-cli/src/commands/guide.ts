@@ -9,11 +9,15 @@ interface GuideTopic {
 
 const TOPICS: Record<string, GuideTopic> = {
   facts: {
-    summary: 'The --json payloads: `start`, `ios`, `android`, and the error contract',
+    summary:
+      'The --json payloads: `start`, `ios`, `android`, `stop`, `status`, `doctor`, `device lock`/`unlock`, and the error contract',
     body: () => `FACTS CONTRACT
 
-Every command with \`--json\` prints exactly ONE line of JSON on stdout. Every
-other line goes to stderr, so it is always safe to pipe.
+\`start\`, \`ios\`, \`android\`, \`stop\`, \`status\`, \`doctor\`, and
+\`device lock\`/\`device unlock\` each print exactly ONE line of JSON on
+stdout for \`--json\`. Every other line goes to stderr, so it is always safe
+to pipe. \`logs --json\` is the one exception: it is NDJSON, one record per
+line by design (see \`guide logs\`), not this single-payload contract.
 
   stim start --json
 
