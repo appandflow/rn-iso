@@ -52,6 +52,10 @@ keys produce a warning.
 | `cache.options`               | Options passed to that provider                                                          |
 | `caches`                      | Additional cache paths reported by `gc`                                                  |
 
+A relative `worktreeDir` resolves against the settings root, the repository
+root, so a committed `.stim.json` can place worktrees inside the repository.
+A relative `worktree create --dir` resolves against the current directory.
+
 Do not put secrets in a committed `.stim.json`. Keep secrets in ignored files
 and carry those files into a worktree.
 

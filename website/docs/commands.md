@@ -171,7 +171,8 @@ Creates a git worktree and prints its absolute path.
 - `--base <ref>` accepts any branch, tag, or commit that git resolves.
 - `--dir <path>` creates the worktree under that directory instead of the
   `worktreeDir` setting or the default `<repo>-worktrees/` sibling. A relative
-  path resolves against the current directory. The worktree lands at
+  path resolves against the current directory, while a relative `worktreeDir`
+  setting resolves against the repository root. The worktree lands at
   `<dir>/<name>`.
 - `--label` sets the short Stim name used by the environment and device.
 - `--carry-ignored` copies safe ignored files and compatible uncommitted changes.

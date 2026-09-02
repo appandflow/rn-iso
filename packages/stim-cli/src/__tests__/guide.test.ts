@@ -480,6 +480,17 @@ test('the settings topic lists exactly the keys settings.js honours', () => {
   }
 });
 
+test('the worktreeDir resolution rule is consistent across user guidance', () => {
+  const guide = renderTopic('settings');
+  assert(guide);
+  const website = readFileSync(new URL('../../../../website/docs/settings.md', import.meta.url), 'utf-8');
+  for (const body of [guide, website]) {
+    const flat = body.replace(/\s+/g, ' ');
+    expect(flat).toMatch(/worktreeDir.*relative.*resolves against.{0,40}repository root/i);
+  }
+  expect(guide.replace(/\s+/g, ' ')).toMatch(/worktreeDir.*--dir.*current directory/i);
+});
+
 test('the safe Android AVD override contract is consistent across user guidance', () => {
   const guide = renderTopic('settings');
   assert(guide);

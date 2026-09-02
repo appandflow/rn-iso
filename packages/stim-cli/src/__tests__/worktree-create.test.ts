@@ -374,6 +374,64 @@ test('create action: --dir takes precedence over the worktreeDir setting', async
   }
 });
 
+test('create action: a relative worktreeDir resolves against the repository root, not the cwd', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-dir-relative-')));
+  const repo = join(base, 'repo');
+  try {
+    initScratchRepo(repo);
+    writeFileSync(join(repo, '.stim.json'), JSON.stringify({ worktreeDir: '.stim-worktrees' }));
+    const cwd = join(repo, 'apps', 'mobile');
+    mkdirSync(cwd, { recursive: true });
+
+    const { logs } = await runCreateInRepo(cwd, 'feat-relative', { install: false });
+
+    expect(logs).toEqual([join(repo, '.stim-worktrees', 'feat-relative')]);
+    expect(existsSync(join(cwd, '.stim-worktrees'))).toBeFalsy();
+  } finally {
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('create action: an absolute worktreeDir is used as written', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-dir-absolute-')));
+  const repo = join(base, 'repo');
+  try {
+    initScratchRepo(repo);
+    const configured = join(base, 'elsewhere');
+    writeFileSync(join(repo, '.stim.json'), JSON.stringify({ worktreeDir: configured }));
+    const cwd = join(repo, 'apps', 'mobile');
+    mkdirSync(cwd, { recursive: true });
+
+    const { logs } = await runCreateInRepo(cwd, 'feat-absolute', { install: false });
+
+    expect(logs).toEqual([join(configured, 'feat-absolute')]);
+  } finally {
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('create action: no worktreeDir setting uses the sibling default from any cwd', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-dir-default-')));
+  const repo = join(base, 'repo');
+  try {
+    initScratchRepo(repo);
+    const cwd = join(repo, 'apps', 'mobile');
+    mkdirSync(cwd, { recursive: true });
+
+    const { logs } = await runCreateInRepo(cwd, 'feat-fallback', { install: false });
+
+    expect(logs).toEqual([join(defaultWorktreeDir(repo), 'feat-fallback')]);
+  } finally {
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test('create action: an existing branch is reported as attached, not as branched from --base', async () => {
   resetExecutor();
   const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-reuse-')));
