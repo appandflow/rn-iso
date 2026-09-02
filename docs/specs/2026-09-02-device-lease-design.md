@@ -1,6 +1,8 @@
 # Physical device leases
 
-Date: 2026-09-02. Status: proposed. Issue: #221.
+Date: 2026-09-02. Status: implemented (phases 1 to 4 merged 2026-09-02);
+hardware-verified on one phone, see the device-lease checklist in
+`docs/field-test-protocol.md`. Issue: #221.
 
 ## Summary
 

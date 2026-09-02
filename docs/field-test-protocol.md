@@ -272,6 +272,55 @@ phone has to settle, and what is already settled:
    DENIED case -- a prior Don't Allow logs the identical path reason, so the
    remedy covers it, but nobody has provoked it on hardware.
 
+### The staged device-lease checklist
+
+Every item needs a phone and a second workspace on the same machine. Design
+and reasoning: `docs/specs/2026-09-02-device-lease-design.md`. Set up two
+workspaces of one project sharing the phone: the checkout as A with its own
+Metro, and `stim worktree create <name> --carry-ignored` from it as B (the
+carry brings the signing settings, so B needs no Xcode run).
+
+**D. Device leases.**
+
+1. **A declared lease blocks a run and names itself.** In A, `stim device
+lock ios --for 5m`; in B, `stim ios --device --wait 10`. B prints a waiting
+   line naming A, the device, and A's expiry, then refuses `STIM_DEVICE_BUSY`
+   with the same facts and the three remedies, and installs nothing.
+   **PASSED 2026-09-02** on an iPhone 12 Pro (iPhone13,3, cabled), 13.8 s
+   end to end; the busy `--json` carried the `lease` object.
+2. **`--no-wait` bypasses and says what it costs.** With A's lease still held,
+   B runs `stim ios --device --no-wait`. One warning names A and its expiry
+   and, when the app ids match, says the install terminates A's app; the run
+   installs, launches, reports `lease: null`, and A's lease file is untouched.
+   **PASSED 2026-09-02**: cache hit, `launched: true`, 8.4 s; A's file
+   remained; the same-app-id sentence printed because both workspaces build
+   `com.appandflow.trailhead`.
+3. **A run leases for itself and lets go.** After `stim device unlock` in A,
+   B runs `stim ios --device`. During the install, `stim status` from A lists
+   a lease held by B with `mine: false`; after the run the file is gone and
+   the run's `--json` carries `lease: { kind: "run", expiresAt }`.
+   **PASSED 2026-09-02**: the mid-run poll showed B's lease; zero lease files
+   afterwards.
+4. **Expiry frees the device.** In A, `stim device lock ios --for 10s`; in B,
+   `stim ios --device --wait 30`. B waits out the eight or so seconds and
+   proceeds. **PASSED 2026-09-02** (16 s total, `launched: true`).
+5. **The pool with one phone.** With A holding a lease, `stim device lock ios
+--wait 5` in B (no id) waits, then refuses `STIM_DEVICE_BUSY` naming every
+   holder ("Every connected device is leased by another workspace"). After A
+   unlocks, the same command grants B the phone by pool selection, and B's
+   id-less `stim ios --device` rides that declared lease: the run raises it
+   per step and leaves it, so `status` still lists B's lease after the run and
+   the run's `--json` says `kind: "declared"`. **PASSED 2026-09-02.**
+6. **Two-device ordering.** NOT YET RUN ON HARDWARE: it needs two connected
+   phones. Expected: an id-less run takes the lower case-folded UDID, a
+   workspace holding a lease on the higher one lands there instead, and a
+   leased-but-unplugged held device refuses `STIM_NO_DEVICE` naming it. The
+   selection is unit-tested; only the real listing order is unproven.
+7. **A corrupt lease file on a real listing.** NOT YET RUN ON HARDWARE: write
+   garbage into the phone's lease file, then an id-less run must refuse
+   `STIM_DEVICE_BUSY` naming the file rather than treat the phone as free, and
+   `stim gc` must report the file without deleting it.
+
 ## Launch-status contract
 
 | Value          | Meaning                                                                                        | Field-test verdict                                                                                 |
