@@ -127,9 +127,11 @@ other line goes to stderr, so it is always safe to pipe.
                   bundle id and discovered scheme on its owned simulator. That
                   suppresses iOS's first-launch confirmation;
                   unrelated schemes remain unapproved. It also writes
-                  EXDevMenuShowsAtLaunch=false, which the flag does NOT cover,
-                  and the two together are what keep the menu off a simulator
-                  entirely, so device automation opens on the app. The
+                  EXDevMenuShowsAtLaunch=false and
+                  EXDevMenuShowFloatingActionButton=false, which the flag does
+                  NOT cover, and those together are what keep the menu and its
+                  button off a simulator entirely, so device automation opens
+                  on the app. The
                   unverified warning therefore leads with the picker, then
                   prints the openurl
                   retry. ON ANDROID the same deep link also carries the
@@ -148,20 +150,37 @@ other line goes to stderr, so it is always safe to pipe.
                   onto Library/Preferences/<bundleId>.plist with the app
                   terminated, copies successfully and then loses the seeded
                   keys, because cfprefsd serves its cached domain and rewrites
-                  the file. THE FLAG DOES NOT REPLACE THAT WRITE ON A
-                  PHONE. EXDevMenuShowsAtLaunch defaults to TRUE on iOS
+                  the file. THE FLAG ALONE DOES NOT COVER A PHONE:
+                  EXDevMenuShowsAtLaunch defaults to TRUE on iOS
                   (DevMenuPreferences.setup), and DevMenuManager arms its
                   auto-launch observer when \`showsAtLaunch ||
                   shouldShowOnboarding()\`, so finishing onboarding clears
-                  only the second half. The dev menu can therefore still open
-                  over the app ONCE PER FRESH INSTALL -- the runtime version,
-                  Close, Reload, Go home -- after which the launcher sets
-                  showsAtLaunch false itself and later launches come up clean.
+                  only the second half. THE LAUNCH ARGUMENTS COVER THE REST.
+                  The device launch ends in
+                  \`<bundleId> -- -EXDevMenuShowsAtLaunch 0
+                  -EXDevMenuShowFloatingActionButton 0\`: devicectl passes
+                  everything after \`--\` to the app, and NSUserDefaults reads
+                  the argument domain AHEAD of the persisted one, so the menu
+                  and its floating button are off for that launch and nothing
+                  is written to the phone. So a fresh install comes up on the
+                  app, not on the menu, and with no floating button.
+                  THE FAB IS REAL ON A PHONE, and a screenshot is the only
+                  way to see it: about four seconds after launch a blue gear
+                  labelled Tools appears top-right over the app, the label
+                  fades after roughly ten seconds, and the gear stays as a
+                  translucent grey circle for the life of the app. It carries
+                  no accessibility label after the fade, so
+                  \`agent-device snapshot -i\` stops listing it. Measured
+                  with the argument on: the corner is clean at 4s and at 12s.
+                  Stim's own launch is the only one that
+                  carries these: an app started ANOTHER way -- a home-screen
+                  tap, a relaunch without the arguments -- still gets the
+                  stored value, and on a fresh install that is the menu
+                  (runtime version, Close, Reload, Go home) and the button.
                   \`agent-device press 'label="Close"'\` dismisses it -- or
-                  \`snapshot -i\` and the ref. What the flag buys on a phone
-                  is the onboarding screen, not that menu. The keys it and the
-                  launcher write, and the Local Network grant, all survive an
-                  UPGRADE install. Android needs none of this: its intent
+                  \`snapshot -i\` and the ref. The onboarding key the flag
+                  writes and the Local Network grant both survive an
+                  UPGRADE install. Android needs neither mechanism: its intent
                   extra sets both preferences.
                   The phone's unverified remedy is also ROUTED, not a fixed
                   list. When this launch's device records carry the Local
@@ -865,13 +884,12 @@ LAUNCH UNVERIFIED, LOCAL NETWORK NOT GRANTED (not a code -- a routed remedy)
   retry, and stays on "Failed to load app ... The Internet connection appears
   to be offline." with a Reload button, which is why the last two lines are
   there. The text form of the press target is \`label="Reload"\` (or
-  \`text="Reload"\`); a bare \`press "Reload"\` is rejected. ON A FRESH
-  INSTALL the Expo dev menu can be over the app first and \`snapshot -i\` shows
-  it instead: \`agent-device press 'label="Close"'\` dismisses it, then press
-  Reload. Stim's deep link finishes the launcher's ONBOARDING, but not
-  EXDevMenuShowsAtLaunch, which defaults true on iOS and which Stim cannot
-  write on a phone -- so the menu opens that once and the launcher clears the
-  key itself. See \`guide facts\`, under \`launched\`.
+  \`text="Reload"\`); a bare \`press "Reload"\` is rejected. Stim's own launch
+  ends in \`-- -EXDevMenuShowsAtLaunch 0 -EXDevMenuShowFloatingActionButton 0\`,
+  so the Expo dev menu is not over the app, fresh install or not. An app started
+  ANOTHER way does not carry those arguments and \`snapshot -i\` can show the
+  menu instead: \`agent-device press 'label="Close"'\` dismisses it, then press
+  Reload. See \`guide facts\`, under \`launched\`.
 
   A BARE APP (no expo-dev-client) gets the same first two commands and a
   different third. The prompt fires the same way, because it is fired by any
@@ -889,8 +907,10 @@ LAUNCH UNVERIFIED, LOCAL NETWORK NOT GRANTED (not a code -- a routed remedy)
 
   Without agent-device,
   \`xcrun devicectl device process launch --device <udid> --terminate-existing
-  [--payload-url '<devClientUrl>'] <bundleId>\` also recovers, and it costs the
-  device log: it replaces the process the collector follows, so
+  [--payload-url '<devClientUrl>'] <bundleId>
+  [-- -EXDevMenuShowsAtLaunch 0 -EXDevMenuShowFloatingActionButton 0]\`
+  also recovers, and it costs the device log:
+  it replaces the process the collector follows, so
   \`stim logs --source device\` stops for the rest of that run. For a dev
   client, pressing Reload is cheaper and keeps the collector alive. For a bare
   app the relaunch is the cleanest recovery, because it re-reads ip.txt. By
@@ -1760,8 +1780,10 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   the host and USB carries no reverse forward. Stim picks a non-internal IPv4
   address (en0 first, RN's own order from react-native-xcode.sh), gates it as
   this workspace's Metro, and then wires the app to it: an expo-dev-client app
-  through the deep link, passed to devicectl as \`--payload-url\`, and a bare
-  app by writing \`<addr>:<port>\` into the app bundle's ip.txt --
+  through the deep link, passed to devicectl as \`--payload-url\` and followed
+  by \`-- -EXDevMenuShowsAtLaunch 0 -EXDevMenuShowFloatingActionButton 0\`,
+  which is how a phone gets what a simulator gets from a defaults write, and a
+  bare app by writing \`<addr>:<port>\` into the app bundle's ip.txt --
   RCTBundleURLProvider's own mechanism, which honours a colon-bearing value
   verbatim and never consults the compiled RCT_METRO_PORT. Stim never sets
   that define: it would put the reserved port into a compiled input and fork
