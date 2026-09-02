@@ -1859,6 +1859,18 @@ BUILD LOCKS
   progress -- it is named in the report and touched by nothing, because
   removing it would put a second workspace on the same compile.
 
+DEVICE LEASES
+  A workspace can hold a timed lease on a physical device. The lease is one
+  file under ~/.stim/device-locks, and it expires on its own. \`gc\` reports
+  the lease files whose expiry has passed; \`gc --delete\` removes those
+  files, re-reading each one under its own lock first, so a lease renewed in
+  the meantime survives. Two kinds are reported and KEPT: a file that does
+  not parse, which no run may take the device around, and an unexpired lease
+  whose holder directory is gone. \`stim status\` lists every lease file with
+  its holder and expiry, including holders no config knows. \`stop\` and
+  \`worktree remove\` release the leases of the workspace they act on, and
+  nothing else deletes a lease file: never remove another workspace's.
+
 A device leaks when a project is abandoned WITHOUT either delete path -- the
 sim survives with nothing pointing at it. \`stim gc\` (no flag, writes
 nothing, always safe) reports those; \`gc --delete\` reaps them, and in the same

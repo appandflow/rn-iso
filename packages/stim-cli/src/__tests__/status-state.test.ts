@@ -1,6 +1,8 @@
 import assert from 'node:assert';
 import {
   capacity,
+  deviceLeaseLines,
+  deviceLeaseStates,
   diskIsTight,
   diskLine,
   environmentState,
@@ -8,7 +10,9 @@ import {
   parseDfFree,
   tightVolumes,
   unprovisionedWorktrees,
+  type DeviceLeaseState,
 } from '../status.ts';
+import type { LeaseFileEntry } from '../engine/device-lease.ts';
 import { makeEnvironmentState } from './_factories.ts';
 
 const BOOTED = { udid: 'U1', name: 'stim-app', state: 'Booted' };
@@ -219,4 +223,67 @@ test('tightVolumes names only the volumes that are actually tight', () => {
   ];
   expect(tightVolumes(volumes).map((v) => v.volume)).toEqual(['/']);
   expect(tightVolumes([])).toEqual([]);
+});
+
+describe('device lease state', () => {
+  const now = Date.parse('2026-09-02T12:00:00.000Z');
+  const entry = (over: Partial<LeaseFileEntry> = {}): LeaseFileEntry => ({
+    path: '/h/device-locks/ios-U.json',
+    name: 'ios-U.json',
+    platform: 'ios',
+    id: 'U',
+    lease: {
+      version: 1,
+      platform: 'ios',
+      id: 'U',
+      deviceName: 'Old iPhone',
+      holder: '/w/a',
+      token: 't',
+      grantedAt: new Date(now - 60_000).toISOString(),
+      expiresAt: new Date(now + 60_000).toISOString(),
+    },
+    ...over,
+  });
+
+  test('marks this workspace lease and an expired one', () => {
+    const states = deviceLeaseStates(
+      [
+        entry(),
+        entry({
+          name: 'android-R5.json',
+          platform: 'android',
+          id: 'R5',
+          lease: {
+            version: 1,
+            platform: 'android',
+            id: 'R5',
+            deviceName: null,
+            holder: '/w/b',
+            token: 't2',
+            grantedAt: null,
+            expiresAt: new Date(now - 1).toISOString(),
+          },
+        }),
+      ],
+      { root: '/w/a', now },
+    );
+    expect(states[0]).toMatchObject({ holder: '/w/a', mine: true, expired: false, parsed: true });
+    expect(states[1]).toMatchObject({ holder: '/w/b', mine: false, expired: true, parsed: true });
+  });
+
+  test('a file that does not parse keeps its name and claims nothing', () => {
+    const [state] = deviceLeaseStates([entry({ lease: null })], { root: '/w/a', now });
+    expect(state).toMatchObject({ platform: 'ios', id: 'U', holder: null, expiresAt: null, parsed: false });
+    expect(deviceLeaseLines([state as DeviceLeaseState], now).join('\n')).toMatch(/unreadable lease file/);
+  });
+
+  test('the lines name the device, the holder and the time left', () => {
+    const lines = deviceLeaseLines(deviceLeaseStates([entry()], { root: '/w/a', now }), now);
+    expect(lines[0]).toBe('Device leases (1):');
+    expect(lines[1]).toMatch(/ios U \(Old iPhone\) -- \/w\/a until \d\d:\d\d:\d\d \(1m00s left\) \[this workspace\]/);
+  });
+
+  test('no lease file prints no section', () => {
+    expect(deviceLeaseLines([], now)).toEqual([]);
+  });
 });

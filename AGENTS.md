@@ -83,6 +83,8 @@ changes, and wait for the new checks.
   thin I/O wrappers. Unit-test the pure functions.
 - **Locked state.** Lock every read-modify-write to global config or workspace
   state. Use atomic writes. Long-lived build locks use PID liveness, not mtime.
+  Device leases use a declared expiry because the holder can be an agent with no
+  process.
 - **Cache contracts.** The cache packages must work without `Stim` installed.
   Keep their config path, cache root, cache key, and registration behavior
   aligned with the CLI. Resolution order is environment, machine config, then
@@ -144,11 +146,15 @@ Stim can create, boot, shut down, or delete only devices it created, named
 user-created emulator or simulator. Keep a device record when teardown fails so
 `gc` can find the device later.
 
-A physical Android device reached through `android --device` is the one device
-Stim uses but does not own. Hardware cannot be created or booted, so that path
-installs, launches, and reads logs, and nothing more. It records no device, so
-`stop`, `gc`, and `teardown.ts` never see it. Keep it that way: a physical
-serial must never enter the project registry.
+A physical device reached through `android --device` or `ios --device` is
+used but not owned. Hardware cannot be created or booted, so those paths
+install, launch, and read what logs they can, and nothing more. The only
+state a physical device leaves is its lease: the file under
+`$STIM_HOME/device-locks/` and the holder's token in that workspace's
+`state.json`. A serial or UDID never enters the project registry, and
+`teardown.ts` never sees a physical device. `stop` and `worktree remove`
+release the workspace's leases; `gc --delete` deletes only expired lease
+files.
 
 ### 3. Fixed invocations; never derive commands from project scripts
 

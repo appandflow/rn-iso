@@ -19,6 +19,7 @@ import { asProcessExit } from './_factories.ts';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import { upsertProject, getProject } from '../config.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../paths.ts';
+import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
 
 type ActionFn = (target: string | undefined, opts: Record<string, unknown>) => void | Promise<void>;
 
@@ -1471,4 +1472,29 @@ test('against a real repo: pod churn PLUS a modified source file is refused exac
     process.exitCode = 0;
     rmSync(base, { recursive: true, force: true });
   }
+});
+
+test('action: removal releases this workspace lease and leaves another workspace lease alone', async () => {
+  upsertProject(mainDir, { metroPort: 8086 });
+  ensureWorkspaceStorage(mainDir);
+  expect(takeLease({ root: mainDir, platform: 'ios', id: 'UDID-MINE', kind: 'declared' }).status).toBe('taken');
+  expect(takeLease({ root: wtDir, platform: 'android', id: 'R5CT', kind: 'run' }).status).toBe('taken');
+  const exec = makeExecutor({
+    worktrees: porcelain([{ path: mainDir, branch: 'main' }]),
+    mainTrees: [mainDir],
+  });
+  setExecutor(exec);
+
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (m) => errs.push(String(m));
+  try {
+    const run = captureAction(registerRemove);
+    await run(mainDir, {});
+  } finally {
+    console.error = original;
+  }
+
+  expect(process.exitCode).not.toBe(1);
+  expect(listLeaseFiles().map((entry) => entry.id)).toEqual(['R5CT']);
 });

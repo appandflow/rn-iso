@@ -1,4 +1,6 @@
+import { formatElapsed } from './command-output.ts';
 import type { ProjectRecord } from './config.ts';
+import type { LeaseFileEntry } from './engine/device-lease.ts';
 
 const IOS_SIM_MB = 1500;
 const ANDROID_EMULATOR_MB = 2500;
@@ -195,4 +197,61 @@ export function tightVolumes(volumes: VolumeInfo[] | null | undefined): VolumeIn
 export function unprovisionedWorktrees(worktrees: WorktreeFacts[], projectPaths: string[]): WorktreeFacts[] {
   const known = new Set(projectPaths);
   return worktrees.filter((w) => !known.has(w.path));
+}
+
+export interface DeviceLeaseState {
+  path: string;
+  platform: string;
+  id: string | null;
+  deviceName: string | null;
+  holder: string | null;
+  grantedAt: string | null;
+  expiresAt: string | null;
+  mine: boolean;
+  expired: boolean;
+  parsed: boolean;
+}
+
+export function deviceLeaseStates(
+  entries: readonly LeaseFileEntry[],
+  { root, now }: { root: string | null; now: number },
+): DeviceLeaseState[] {
+  return entries.map((entry) => {
+    const lease = entry.lease;
+    return {
+      path: entry.path,
+      platform: entry.platform,
+      id: entry.id,
+      deviceName: lease?.deviceName ?? null,
+      holder: lease?.holder ?? null,
+      grantedAt: lease?.grantedAt ?? null,
+      expiresAt: lease?.expiresAt ?? null,
+      mine: Boolean(lease && root && lease.holder === root),
+      expired: Boolean(lease && Date.parse(lease.expiresAt) <= now),
+      parsed: Boolean(lease),
+    };
+  });
+}
+
+function clockTime(iso: string): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return iso;
+  return [at.getHours(), at.getMinutes(), at.getSeconds()].map((n) => String(n).padStart(2, '0')).join(':');
+}
+
+export function deviceLeaseLines(states: readonly DeviceLeaseState[], now: number): string[] {
+  if (states.length === 0) return [];
+  const lines = [`Device leases (${states.length}):`];
+  for (const state of states) {
+    const device = `${state.platform} ${state.id ?? state.path}${state.deviceName ? ` (${state.deviceName})` : ''}`;
+    if (!state.parsed || state.expiresAt === null) {
+      lines.push(`  ${device} -- unreadable lease file, so nothing may take the device: ${state.path}`);
+      continue;
+    }
+    const when = clockTime(state.expiresAt);
+    const remaining = Date.parse(state.expiresAt) - now;
+    const expiry = state.expired ? `expired at ${when}` : `until ${when} (${formatElapsed(remaining)} left)`;
+    lines.push(`  ${device} -- ${state.holder} ${expiry}${state.mine ? ' [this workspace]' : ''}`);
+  }
+  return lines;
 }

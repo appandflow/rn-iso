@@ -13,6 +13,7 @@ import {
   type ManagedTunnelRecord,
 } from './supervisor/state.ts';
 import { endRecordedSession } from './engine/device-remote.ts';
+import { releaseWorkspaceLeases, type ReleasedLease } from './engine/device-lease.ts';
 import { resolveEasCliBin } from './engine/remote-cache.ts';
 import { stopTunnel, type StopTunnelResult } from './engine/tunnel.ts';
 import { workspaceDir } from './paths.ts';
@@ -267,6 +268,7 @@ export interface ReclaimResult {
   keptEntry: boolean;
   stoppedSession: string | null;
   stoppedTunnel: string | null;
+  releasedLeases: ReleasedLease[];
   removedWorkspaceDirs: string[];
   failedWorkspaceDirs: string[];
 }
@@ -278,6 +280,7 @@ export async function reclaimProject(
     preserveProjectRecord = false,
     stopSession = defaultStopSession,
     stopMetroTunnel = defaultStopMetroTunnel,
+    releaseLeases = releaseWorkspaceLeases,
     verifyCollector = verifyCollectorOwnership,
     readCollectorStartTime = readProcessStartTime,
   }: {
@@ -285,6 +288,7 @@ export async function reclaimProject(
     preserveProjectRecord?: boolean;
     stopSession?: StopSession;
     stopMetroTunnel?: StopMetroTunnelFn;
+    releaseLeases?: (root: string) => ReleasedLease[];
     verifyCollector?: typeof verifyCollectorOwnership;
     readCollectorStartTime?: (pid: number) => Date | null;
   } = {},
@@ -319,6 +323,13 @@ export async function reclaimProject(
   if (tunnel.failed) {
     skippedDevices.push(tunnel.failed);
     failedDevices.push(tunnel.failed);
+  }
+
+  let releasedLeases: ReleasedLease[] = [];
+  try {
+    releasedLeases = releaseLeases(path);
+  } catch {
+    releasedLeases = [];
   }
 
   let killedPid: number | null = null;
@@ -362,6 +373,7 @@ export async function reclaimProject(
     keptEntry,
     stoppedSession: remote.stopped,
     stoppedTunnel: tunnel.stopped,
+    releasedLeases,
     removedWorkspaceDirs,
     failedWorkspaceDirs,
   };

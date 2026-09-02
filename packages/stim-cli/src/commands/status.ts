@@ -17,7 +17,17 @@ import type { IosSimRecord } from '../sim/ios.ts';
 import { listWorktrees } from '../worktree.ts';
 import type { WorktreeEntry } from '../worktree.ts';
 import { volumeRootFor } from '../fs-util.ts';
-import { capacity, diskLine, environmentState, parseDfFree, tightVolumes, unprovisionedWorktrees } from '../status.ts';
+import { listLeaseFiles } from '../engine/device-lease.ts';
+import {
+  capacity,
+  deviceLeaseLines,
+  deviceLeaseStates,
+  diskLine,
+  environmentState,
+  parseDfFree,
+  tightVolumes,
+  unprovisionedWorktrees,
+} from '../status.ts';
 import type { EnvironmentState, VolumeInfo, SimFacts, MetroFacts, WorktreeFacts } from '../status.ts';
 
 type SupervisorRecordExt = SupervisorRecord & { mode?: string | null };
@@ -81,6 +91,9 @@ export default function statusCommand(program: Command): void {
         );
       }
 
+      const leaseNow = Date.now();
+      const leases = deviceLeaseStates(listLeaseFiles(), { root: cwdRoot, now: leaseNow });
+
       const totalMemoryMb = Math.round(totalmem() / (1024 * 1024));
       const cap = capacity(states, totalMemoryMb);
       const orphanWorktrees = unprovisionedWorktrees(
@@ -94,6 +107,7 @@ export default function statusCommand(program: Command): void {
             {
               environments: states.map((state, i) => (labelOnlyRoots[i] ? { ...state, labelOnly: true } : state)),
               capacity: cap,
+              deviceLeases: leases,
               unprovisionedWorktrees: orphanWorktrees,
               simctlAvailable: simsAvailable,
             },
@@ -106,6 +120,7 @@ export default function statusCommand(program: Command): void {
 
       if (projects.length === 0 && orphanWorktrees.length === 0) {
         console.log(chalk.dim('No projects registered.'));
+        for (const line of deviceLeaseLines(leases, leaseNow)) console.log(line);
         return;
       }
 
@@ -155,6 +170,12 @@ export default function statusCommand(program: Command): void {
           );
         }
         for (const w of state.warnings) console.log(chalk.yellow(`  ! ${w}`));
+      }
+
+      const leaseLines = deviceLeaseLines(leases, leaseNow);
+      if (leaseLines.length) {
+        console.log('');
+        for (const line of leaseLines) console.log(line);
       }
 
       if (orphanWorktrees.length) {

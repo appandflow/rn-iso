@@ -11,6 +11,8 @@ import { makeConfig } from './_factories.ts';
 import statusCommand, { readVolumes } from '../commands/status.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
 import { ensureWorkspaceStorage, workspaceLogsDir, workspaceStateFile } from '../paths.ts';
+import { deviceLeasePath, deviceLocksDir } from '../engine/device-lease.ts';
+import { findProjectRoot } from '../project.ts';
 
 let tmpHome: string;
 
@@ -436,4 +438,73 @@ test('a volume df cannot answer for is dropped, not reported as empty', async ()
   dfExecutor({ '/': dfOutput({ totalKb: 926 * 1024 * 1024, availableKb: 38 * 1024 * 1024 }) });
   const volumes = readVolumes('/Volumes/Unplugged/app');
   expect(volumes.map((v) => v.volume)).toEqual(['/']);
+});
+
+function writeLease({
+  platform = 'ios',
+  id,
+  holder,
+  expiresInMs,
+  body = null,
+}: {
+  platform?: string;
+  id: string;
+  holder?: string;
+  expiresInMs?: number;
+  body?: string | null;
+}) {
+  mkdirSync(deviceLocksDir(), { recursive: true });
+  writeFileSync(
+    deviceLeasePath(platform, id),
+    body ??
+      JSON.stringify({
+        version: 1,
+        platform,
+        id,
+        deviceName: 'Old iPhone',
+        holder,
+        token: `token-${id}`,
+        grantedAt: new Date(Date.now() - 1000).toISOString(),
+        expiresAt: new Date(Date.now() + (expiresInMs ?? 60_000)).toISOString(),
+      }),
+  );
+}
+
+describe('the device lease section', () => {
+  test('lists every lease file, whose it is and whether it expired', async () => {
+    saveConfig(makeConfig({ version: 2, projects: {} }));
+    const mine = findProjectRoot(process.cwd());
+    assert(mine);
+    writeLease({ id: 'UDID-MINE', holder: mine, expiresInMs: 60_000 });
+    writeLease({ platform: 'android', id: 'R5CT', holder: '/gone/workspace', expiresInMs: -5000 });
+
+    const logs = await runStatus();
+    const text = logs.join('\n');
+    expect(text).toMatch(/Device leases \(2\)/);
+    expect(text).toMatch(/ios UDID-MINE \(Old iPhone\)[^\n]*\[this workspace\]/);
+    expect(text).toMatch(/android R5CT[^\n]*\/gone\/workspace expired at/);
+
+    const payload = await runStatusJson();
+    expect(payload.deviceLeases).toHaveLength(2);
+    const [android, ios] = payload.deviceLeases;
+    expect(ios).toMatchObject({ platform: 'ios', id: 'UDID-MINE', holder: mine, mine: true, expired: false });
+    expect(android).toMatchObject({
+      platform: 'android',
+      id: 'R5CT',
+      holder: '/gone/workspace',
+      mine: false,
+      expired: true,
+    });
+    expect(typeof ios.expiresAt).toBe('string');
+  });
+
+  test('an unreadable lease file still shows, so nothing looks free that is not', async () => {
+    saveConfig(makeConfig({ version: 2, projects: {} }));
+    writeLease({ id: 'UDID-BROKEN', body: '{ not a lease' });
+
+    const logs = await runStatus();
+    expect(logs.join('\n')).toMatch(/unreadable lease file/);
+    const payload = await runStatusJson();
+    expect(payload.deviceLeases[0]).toMatchObject({ parsed: false, holder: null, mine: false, expired: false });
+  });
 });
