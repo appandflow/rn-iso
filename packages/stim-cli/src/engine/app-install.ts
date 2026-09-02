@@ -11,8 +11,9 @@ export const DEFAULT_METRO_PORT = 8081;
 
 const IOS_SCHEME_APPROVAL_DOMAIN = 'com.apple.launchservices.schemeapproval';
 const IOS_SCHEME_APPROVAL_OPENER = 'com.apple.CoreSimulator.CoreSimulatorBridge';
-const IOS_DEV_MENU_ONBOARDING_KEY = 'EXDevMenuIsOnboardingFinished';
 const IOS_DEV_MENU_SHOWS_AT_LAUNCH_KEY = 'EXDevMenuShowsAtLaunch';
+const DEV_CLIENT_ONBOARDING_QUERY = 'disableOnboarding=1';
+const ANDROID_DISABLE_AUTO_LAUNCH_EXTRA = 'EXDevMenuDisableAutoLaunch';
 
 interface ExecOpt {
   exec?: Executor | null;
@@ -90,17 +91,6 @@ export function installIosApp(
         'defaults',
         'write',
         bundleId,
-        IOS_DEV_MENU_ONBOARDING_KEY,
-        '-bool',
-        'true',
-      ]);
-      e.runFile('xcrun', [
-        'simctl',
-        'spawn',
-        udid,
-        'defaults',
-        'write',
-        bundleId,
         IOS_DEV_MENU_SHOWS_AT_LAUNCH_KEY,
         '-bool',
         'false',
@@ -133,8 +123,17 @@ export function jsLocationValue(metroPort: number | string): string {
   return `localhost:${metroPort}`;
 }
 
+// expo-dev-launcher reads disableOnboarding off the PROJECT url only, not the
+// outer deep link: EXDevLauncherController.m hands `devLauncherUrl.url` to
+// EXDevLauncherURLHelper.disableOnboardingPopupIfNeeded. Android reads either,
+// and also the EXDevMenuDisableAutoLaunch intent extra (DevLauncherController.kt).
+export function devClientDeepLink(scheme: string, projectOrigin: string): string {
+  const projectUrl = `${projectOrigin.replace(/\/+$/, '')}/?${DEV_CLIENT_ONBOARDING_QUERY}`;
+  return `${scheme}://expo-development-client/?url=${encodeURIComponent(projectUrl)}`;
+}
+
 export function devClientUrl(scheme: string, metroPort: number | string, host = 'localhost'): string {
-  return `${scheme}://expo-development-client/?url=${encodeURIComponent(`http://${host}:${metroPort}`)}`;
+  return devClientDeepLink(scheme, `http://${host}:${metroPort}`);
 }
 
 export function iosSchemeApprovalKeys(bundleId: string, devClientScheme: string): string[] {
@@ -434,6 +433,9 @@ export function openAndroidDevClientUrl(
       'android.intent.action.VIEW',
       '-d',
       deviceShellArg(url),
+      '--ez',
+      ANDROID_DISABLE_AUTO_LAUNCH_EXTRA,
+      'true',
     ]);
   } catch (err) {
     return { failed: true, reason: `am start -d ${url} failed on ${serial}: ${describe(err)}` };
@@ -1002,8 +1004,9 @@ export function unverifiedLaunchLines({
         push(
           'The app does NOT retry after the grant -- it stays on "Failed to load app ... The Internet connection ' +
             `appears to be offline." with a Reload button. Press it: agent-device snapshot -i --platform ios --udid ${udid}, ` +
-            `then agent-device press 'label="Reload"' --platform ios --udid ${udid}. On a fresh install the Expo dev ` +
-            `menu is over the app first; agent-device press 'label="Close"' --platform ios --udid ${udid} dismisses it.`,
+            `then agent-device press 'label="Reload"' --platform ios --udid ${udid}. This launch's deep link carried ` +
+            `disableOnboarding=1, so the Expo dev menu is not over the app; if the app was started from the home ` +
+            `screen instead, agent-device press 'label="Close"' --platform ios --udid ${udid} dismisses it.`,
         );
         push(
           `Without agent-device, relaunching also recovers: ${relaunch}. It costs the device log -- it replaces the ` +
@@ -1082,7 +1085,7 @@ export function unverifiedLaunchLines({
   } else {
     if (url && serial) {
       push(
-        `Re-send the dev-client deep link -- this is the command that points the app at THIS workspace's Metro: adb -s ${serial} shell am start -a android.intent.action.VIEW -d '${url}'`,
+        `Re-send the dev-client deep link -- this is the command that points the app at THIS workspace's Metro: adb -s ${serial} shell am start -a android.intent.action.VIEW -d '${url}' --ez ${ANDROID_DISABLE_AUTO_LAUNCH_EXTRA} true`,
       );
     }
     push(picker);

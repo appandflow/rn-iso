@@ -783,7 +783,9 @@ describe('install and launch match their local counterparts', () => {
     });
     expect(result.mode).toBe('openurl');
     const open = exec.calls.find((c) => c.args[0] === 'open');
-    expect(open?.args[2]).toBe('myapp://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8082');
+    expect(open?.args[2]).toBe(
+      'myapp://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8082%2F%3FdisableOnboarding%3D1',
+    );
   });
 
   test('a bare RN launch has no url positional', async () => {
@@ -978,7 +980,9 @@ describe('Metro reachability', () => {
     await deps.ensureBooted({});
     deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' });
     const open = exec.calls.find((c) => c.args[0] === 'open');
-    expect(open?.args[2]).toBe('myapp://expo-development-client/?url=https%3A%2F%2Fabc.trycloudflare.com');
+    expect(open?.args[2]).toBe(
+      'myapp://expo-development-client/?url=https%3A%2F%2Fabc.trycloudflare.com%2F%3FdisableOnboarding%3D1',
+    );
   });
 });
 
@@ -1468,7 +1472,9 @@ describe('the android adapter', () => {
     deps.launch({ serial: 'drs_42', packageName: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' });
     const open = exec.calls.find((c) => c.args[0] === 'open');
     expect(open?.args[1]).toBe('com.example.app');
-    expect(open?.args[2]).toBe('myapp://expo-development-client/?url=https%3A%2F%2Fabc.trycloudflare.com');
+    expect(open?.args[2]).toBe(
+      'myapp://expo-development-client/?url=https%3A%2F%2Fabc.trycloudflare.com%2F%3FdisableOnboarding%3D1',
+    );
     const flat = (open?.args ?? []).join(' ');
     expect(flat).not.toContain('10.0.2.2');
     expect(flat).not.toContain('reverse');
