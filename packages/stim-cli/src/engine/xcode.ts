@@ -405,6 +405,7 @@ export function startBuildHeartbeat({
   if (!(intervalMs > 0)) return () => {};
   let stopped = false;
   let lastBeat = 0;
+  let cancel: (() => void) | null = null;
   function tick() {
     if (stopped) return;
     const ms = elapsed();
@@ -415,10 +416,10 @@ export function startBuildHeartbeat({
     }
     cancel = schedule(tick, intervalMs - (ms % intervalMs));
   }
-  let cancel = schedule(tick, intervalMs);
+  cancel = schedule(tick, intervalMs);
   return () => {
     stopped = true;
-    cancel();
+    cancel?.();
   };
 }
 

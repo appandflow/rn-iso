@@ -837,9 +837,7 @@ function isLaunchError(record: NdjsonRecord, platform: 'ios' | 'android' | null)
 }
 
 // Apple's Network framework logs a failed TCP connection at Error level with a
-// POSIX errno in the text, and 61 is ECONNREFUSED. A verified launch proves the
-// app recovered: it got its bundle over this workspace's Metro and outlived the
-// stability window. The record stays an error in device.ndjson.
+// POSIX errno in the text, and 61 is ECONNREFUSED.
 const TCP_REFUSAL = /^TCP Conn 0x[0-9a-f]+ Failed : error 0:61 \[61\]$/i;
 
 function isIosConnectionRefusal(record: NdjsonRecord, platform: 'ios' | 'android' | null): boolean {

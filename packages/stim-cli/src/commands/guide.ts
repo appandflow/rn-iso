@@ -468,7 +468,8 @@ WHAT WRITES WHAT
                        bundle over this workspace's Metro and outlived the
                        stability window, so it recovered. A refusal before the
                        launch verifies still prints, and the record stays an
-                       error in device.ndjson either way.
+                       error in device.ndjson either way; read it with
+                       \`logs --errors --source device\`.
 
   ON A PHYSICAL IPHONE THE SAME FILE CARRIES LESS, and the difference is not
   cosmetic. \`simctl spawn\` is simulator-only and there is no devicectl
