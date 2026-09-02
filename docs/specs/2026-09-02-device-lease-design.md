@@ -219,7 +219,9 @@ The chosen device is printed and returned in `--json` (`udid` or `serial`,
   duration; `--json` adds `lease: { platform, id, deviceName, holder,
 expiresAt }`. The remedy lists, in order: wait longer with `--wait
 <seconds>`, pick another device by id, or `--no-wait` with its consequence
-  spelled out.
+  spelled out. It also covers two refusals with no wait: a lease file that
+  does not parse (`lease` fields null, the file named) and this root's lease
+  with no known token (remedy `stim device unlock`).
 - `STIM_DEVICE_LOST`: the run's lease was taken by another workspace before
   the install. The message names the new holder and its expiry.
 - `STIM_BAD_ARG`: an unparseable or out-of-range `--for`, an unusable
