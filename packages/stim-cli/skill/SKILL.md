@@ -127,13 +127,16 @@ Ask the user before these actions:
 An agent harness that sandboxes shell commands usually permits writes inside
 the project and little else. Three things Stim needs sit outside that
 boundary, and none of the failures names the sandbox: writes to `STIM_HOME`
-fail with `EPERM` on a directory the user can write, the iOS simulator service
-looks dead, and the adb server looks unreachable. They are not a broken
-machine.
+(`~/.stim` unless set) fail with `EPERM` on a directory the user can write, the
+iOS simulator service looks dead, and the adb server looks unreachable. They
+are not a broken machine. Compare that path against the harness's own
+allowlist, and the conflict is visible before anything runs.
 
 Decide at the start of a session, not after the third failure: either run Stim
 with the harness's sandbox disabled, or ask the user to allow those three.
-`stim guide errors` lists what to allow.
+`stim guide errors` lists what to allow. The same boundary catches other
+commands: a git credential helper prints `failed to store` on a fetch that
+worked.
 
 ## Load advanced guidance only when needed
 
