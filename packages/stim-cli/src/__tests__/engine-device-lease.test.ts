@@ -168,6 +168,32 @@ describe('taking a lease', () => {
     expect(h.holders.get(ROOT_A)).toEqual({ ios: { id: 'OTHER-UDID', token: second.lease.token, kind: 'declared' } });
   });
 
+  test('a lease file this root left on another device goes even when the token is lost', () => {
+    const h = harness();
+    takeLease({ root: ROOT_A, platform: 'ios', id: UDID, kind: 'declared' }, h.io);
+    h.holders.delete(ROOT_A);
+
+    const second = takeLease({ root: ROOT_A, platform: 'ios', id: 'OTHER-UDID', kind: 'run' }, h.io);
+    assert(second.status === 'taken');
+    expect(h.read('ios', UDID)).toBe(null);
+    expect(listLeaseFiles(h.io).map((entry) => entry.id)).toEqual(['OTHER-UDID']);
+  });
+
+  test('a run set on this workspace declared lease neither converts nor shortens it', () => {
+    const h = harness();
+    const declared = takeLease(
+      { root: ROOT_A, platform: 'ios', id: UDID, kind: 'declared', durationMs: 600_000 },
+      h.io,
+    );
+    assert(declared.status === 'taken');
+
+    const run = takeLease({ root: ROOT_A, platform: 'ios', id: UDID, kind: 'run', durationMs: 60_000 }, h.io);
+    assert(run.status === 'set');
+    expect(run.lease.expiresAt).toBe(declared.lease.expiresAt);
+    expect(h.holders.get(ROOT_A)?.ios?.kind).toBe('declared');
+    expect(releaseRunLease({ root: ROOT_A, platform: 'ios' }, h.io)).toBe(null);
+  });
+
   test('a lease on the other platform survives', () => {
     const h = harness();
     takeLease({ root: ROOT_A, platform: 'ios', id: UDID, kind: 'declared' }, h.io);
@@ -261,6 +287,17 @@ describe('releasing a lease', () => {
 
     expect(releaseRunLease({ root: ROOT_A, platform: 'ios' }, h.io)).toBe(null);
     expect(h.read('ios', UDID)?.token).toBe(second.lease.token);
+  });
+
+  test('a stale state token does not strand this root own unexpired lease', () => {
+    const h = harness();
+    const taken = takeLease({ root: ROOT_A, platform: 'ios', id: UDID, kind: 'run' }, h.io);
+    assert(taken.status === 'taken');
+    h.holders.set(ROOT_A, { ios: { id: UDID, token: 'a-token-from-a-dead-run', kind: 'run' } });
+
+    const released = releaseWorkspaceLeases(ROOT_A, {}, h.io);
+    expect(released.map((r) => r.id)).toEqual([UDID]);
+    expect(h.read('ios', UDID)).toBe(null);
   });
 
   test('a lease whose token this workspace lost is released by holder root', () => {

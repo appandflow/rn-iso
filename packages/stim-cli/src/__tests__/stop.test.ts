@@ -1140,7 +1140,9 @@ test('stop releases the leases this workspace holds and lists them', async () =>
     { platform: 'ios', id: 'UDID-1', deviceName: 'Old iPhone', expiresAt: taken.lease.expiresAt },
   ]);
   expect(r.summary).toMatch(/ios lease on UDID-1 released/);
-  expect(reported.join('\n')).toMatch(/released the ios lease on UDID-1/);
+  expect(reported.join('\n')).toMatch(
+    new RegExp(`released the ios lease on UDID-1 \\(it ran until ${taken.lease.expiresAt}\\)`),
+  );
   expect(listLeaseFiles().map((entry) => entry.id)).toEqual(['R5CT']);
 
   const payload = JSON.parse(JSON.stringify({ root: tmpRoot, ok: r.ok, ...r.outcomes }));

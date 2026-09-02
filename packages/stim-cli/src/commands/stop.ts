@@ -469,7 +469,7 @@ export async function runStop({
 
   outcomes.releasedLeases = releaseLeases(root);
   for (const lease of outcomes.releasedLeases) {
-    report(chalk.dim(`leases: released the ${lease.platform} lease on ${lease.id}`));
+    report(chalk.dim(`leases: released the ${lease.platform} lease on ${lease.id} (it ran until ${lease.expiresAt})`));
   }
 
   if (stillHolding) {

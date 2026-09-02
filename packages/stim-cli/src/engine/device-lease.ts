@@ -232,19 +232,31 @@ export function takeLease(
 ): TakeLeaseResult {
   const previous = io.readHolder(root)[platform];
   if (previous && previous.id !== id) releaseHeld(root, platform, previous, io);
+  for (const entry of listLeaseFiles(io)) {
+    const other = entry.lease;
+    if (!other || other.platform !== platform || other.holder !== root || other.id === id) continue;
+    releaseByRoot(root, platform, other.id, io);
+  }
 
+  const declared = previous?.kind === 'declared' && previous.id === id;
   const path = deviceLeasePath(platform, id);
   const result = io.withLeaseLock(deviceLeaseLockPath(platform, id), (): TakeLeaseResult => {
     const now = io.now();
     const raw = io.readLease(path);
     const current = parseLease(raw);
     if (raw !== null && !current) return { status: 'unreadable', path };
-    const expiresAt = new Date(now + durationMs).toISOString();
+    const asked = now + durationMs;
     if (current && !leaseIsExpired(current, now)) {
       if (current.holder !== root) return { status: 'held', lease: current };
-      const kept = { ...current, deviceName: deviceName ?? current.deviceName, expiresAt };
+      const floor = declared && kind === 'run' ? Math.max(asked, Date.parse(current.expiresAt)) : asked;
+      const kept = {
+        ...current,
+        deviceName: deviceName ?? current.deviceName,
+        expiresAt: new Date(floor).toISOString(),
+      };
       return { status: 'set', lease: writeLease(kept, io) };
     }
+    const expiresAt = new Date(asked).toISOString();
     const granted: DeviceLease = {
       version: LEASE_VERSION,
       platform,
@@ -259,7 +271,8 @@ export function takeLease(
   });
 
   if (result.status === 'taken' || result.status === 'set') {
-    io.writeHolder(root, { ...io.readHolder(root), [platform]: { id, token: result.lease.token, kind } });
+    const recorded = result.status === 'set' && declared ? 'declared' : kind;
+    io.writeHolder(root, { ...io.readHolder(root), [platform]: { id, token: result.lease.token, kind: recorded } });
   }
   return result;
 }
@@ -318,6 +331,16 @@ function releaseHeld(
   return released;
 }
 
+function releaseByRoot(root: string, platform: LeasePlatform, id: string, io: LeaseIo): DeviceLease | null {
+  const path = deviceLeasePath(platform, id);
+  return io.withLeaseLock(deviceLeaseLockPath(platform, id), (): DeviceLease | null => {
+    const current = parseLease(io.readLease(path));
+    if (!current || current.holder !== root) return null;
+    io.removeLease(path);
+    return current;
+  });
+}
+
 export function releaseRunLease(
   { root, platform }: { root: string; platform: LeasePlatform },
   io: LeaseIo = fileLeaseIo,
@@ -334,10 +357,8 @@ export function releaseWorkspaceLeases(
   io: LeaseIo = fileLeaseIo,
 ): ReleasedLease[] {
   const released: ReleasedLease[] = [];
-  const seen = new Set<string>();
   for (const [name, record] of Object.entries(io.readHolder(root))) {
     if (!isPlatform(name) || (platform && name !== platform)) continue;
-    seen.add(`${name} ${record.id}`);
     const lease = releaseHeld(root, name, record, io);
     if (lease) released.push(summarize(lease));
   }
@@ -345,13 +366,7 @@ export function releaseWorkspaceLeases(
     const lease = entry.lease;
     if (!lease || lease.holder !== root) continue;
     if (platform && lease.platform !== platform) continue;
-    if (seen.has(`${lease.platform} ${lease.id}`)) continue;
-    const byRoot = io.withLeaseLock(deviceLeaseLockPath(lease.platform, lease.id), (): DeviceLease | null => {
-      const current = parseLease(io.readLease(entry.path));
-      if (!current || current.holder !== root) return null;
-      io.removeLease(entry.path);
-      return current;
-    });
+    const byRoot = releaseByRoot(root, lease.platform, lease.id, io);
     if (byRoot) released.push(summarize(byRoot));
   }
   return released;
