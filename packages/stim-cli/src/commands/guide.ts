@@ -13,8 +13,8 @@ const TOPICS: Record<string, GuideTopic> = {
       'The --json payloads: `start`, `ios`, `android`, `stop`, `status`, `doctor`, `device lock`/`unlock`, and the error contract',
     body: () => `FACTS CONTRACT
 
-\`start\`, \`ios\`, \`android\`, \`stop\`, \`status\`, \`doctor\`, and
-\`device lock\`/\`device unlock\` each print exactly ONE line of JSON on
+\`start\`, \`ios\`, \`android\`, \`stop\`, \`status\`, \`stats\`, \`doctor\`,
+and \`device lock\`/\`device unlock\` each print exactly ONE line of JSON on
 stdout for \`--json\`. Every other line goes to stderr, so it is always safe
 to pipe. \`logs --json\` is the one exception: it is NDJSON, one record per
 line by design (see \`guide logs\`), not this single-payload contract.
@@ -286,6 +286,36 @@ line by design (see \`guide logs\`), not this single-payload contract.
                   app back on THIS workspace's bundle
   logs            the workspace log directory
   durationMs      wall time for the whole run
+
+  stim stats --json
+
+  { "version": 1,
+    "project": { "key": "<path>", "ios": <bucket|null>,
+                 "android": <bucket|null> } | null,
+    "machine": { "ios": <bucket|null>, "android": <bucket|null> } }
+
+  \`project\` is null outside a project; a platform with no run yet is null.
+  A bucket carries runs, failed, hits, misses, coldRuns, coldRunMs, hitRuns,
+  hitRunMs, timeSavedMs, firstRunAt and lastRunAt. Milliseconds are integers.
+
+HOW A RUN IS COUNTED (\`stats\`)
+  Every \`ios\` or \`android\` invocation that got as far as computing a
+  cache key is one run, in this project's bucket and in the machine-wide one.
+  The project key is the app's path IN THE MAIN WORKING TREE, so every
+  worktree of a repository pools into one bucket and two apps in a monorepo
+  do not. A run that ends through an error or an uncaught exception counts
+  only as \`failed\`; \`launched: "unverified"\` or \`"bundling"\` is a
+  success. Otherwise the run's own \`cacheHit\` decides: "local" or "remote"
+  is a HIT, false is a MISS -- including a release run on a phone and a swap
+  that fell back to a full build. A miss adds its \`durationMs\` to the cold
+  runs; a hit adds it to the hit runs and credits \`timeSavedMs\` with this
+  project's mean cold run BEFORE it, minus its own duration, floored at zero.
+  A hit that WAITED for another workspace's build (\`waitedForBuild\`) counts
+  as a hit and is credited nothing: the compile it skipped was paid for in the
+  wait, and with no cold run recorded for this project and platform there is
+  nothing to compare against, so it credits nothing either. The saved figure
+  is therefore an ESTIMATE and is printed as one. Nothing per run is stored;
+  the file is $STIM_HOME/stats.json (see \`guide lifecycle\`).
 
 ON FAILURE
   \`start\`, \`ios\` and \`android\` all print the error contract instead,
@@ -1517,6 +1547,9 @@ OPTIONAL SIMSLIM PROFILE
 NOTHING ABOVE NEEDS A CHANGE TO THE REPO
 Runtime state is stored outside the project tree under
 $STIM_HOME/workspaces/<project>--<digest>/ (default ~/.stim/workspaces/).
+The aggregate run counters \`stats\` prints live beside it in
+$STIM_HOME/stats.json, one bucket per project and platform plus a machine-wide
+one; nothing per run is kept there.
 No .gitignore entry is created or required.
 Stim runs on a clean checkout. Runtime state is stored outside the project tree.
 runtime state lives under $STIM_HOME/workspaces/<project>--<digest>, and the performance caches ride on the command
@@ -1673,6 +1706,7 @@ THE OPTION SURFACE, IN FULL
   logs            --source --level --since --grep --tail --follow --errors --json
   stop            --json --force
   status          --json          (already machine-wide)
+  stats           --json          (this project and machine-wide)
   doctor          --json --fix    (--fix applies the findings Stim can repair)
   gc              --delete --older-than <days> --cache <name|all>
   worktree create <name> --carry-ignored --base <ref> --dir <path> --label <label>; remove [path] --force
@@ -2019,7 +2053,13 @@ CAPACITY
   A booted iOS sim is roughly 1-2 GB of RAM, an Android emulator 2-3 GB. On a
   16 GB machine plan for 2-3 live environments. Nothing enforces this;
   \`stim status\` is how you check -- it reports every workspace on the
-  machine, not just this one.`,
+  machine, not just this one.
+
+TWO REPORTS, TWO QUESTIONS
+  "What is running" is \`stim status\`: live state, right now. "How much the
+  cache saved" is \`stim stats\`: aggregate counters for this project and for
+  the machine, with a hit rate and an estimate of the time saved (see
+  \`guide facts\`).`,
   },
 
   cleanup: {
@@ -2037,6 +2077,13 @@ WHAT RECLAIMS AN OWNED DEVICE
 Those are the only two commands that delete. \`stim stop\` shuts a device
 DOWN and leaves it assigned, which is what makes returning to a branch cost a
 boot rather than a create, a provision and a reinstall.
+
+Neither touches $STIM_HOME/stats.json: \`gc\` never reports or trims the run
+counters \`stats\` prints, and there is no reset flag. Delete that one file to
+start the counters over. A file this version cannot read -- unparseable, or
+written by a newer Stim -- costs one dim line on stderr and is otherwise left
+alone; only the next \`ios\` or \`android\` run moves an unparseable one aside
+to stats.json.corrupt-<unix ms> and starts a new one.
 
 New owned Android AVDs use an 8 GiB data partition by default. This leaves room
 for repeated app installs while capping userdata growth below the 10 GiB

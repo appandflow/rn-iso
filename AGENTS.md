@@ -17,9 +17,9 @@ worktree create -> start -> ios|android -> logs --errors -> stop -> worktree rem
 ```
 
 The command surface is `doctor`, `worktree create|remove`, `start`, `stop`,
-`ios`, `android`, `device lock|unlock`, `logs`, `status`, `gc`, and `guide`. Do not add commands or
-flags without an explicit product decision. Projects can wrap Stim when they
-need custom behavior.
+`ios`, `android`, `device lock|unlock`, `logs`, `status`, `stats`, `gc`, and
+`guide`. Do not add commands or flags without an explicit product decision.
+Projects can wrap Stim when they need custom behavior.
 
 Runtime state belongs under `$STIM_HOME/workspaces/`, not in the project
 tree. Stim has no init step; do not add one. `doctor` reports setup that

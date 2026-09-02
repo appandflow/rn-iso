@@ -42,6 +42,7 @@ import {
 import { asProcessExit, makeChildProcess, makeError, makeExecutor, makeMetroResolution } from './_factories.ts';
 import { RELEASE_VERIFY_WAIT_MS } from '../engine/app-install.ts';
 import { DEVICECTL_INSTALL_TIMEOUT_MS, LAUNCH_PROBE_TIMEOUT_MS } from '../engine/ios-device.ts';
+import type { RecordStatsResult, StatsRun } from '../engine/stats.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
 
 const RUNTIMES = [
@@ -4540,5 +4541,143 @@ describe('the simulator model and runtime flags', () => {
     const payload = parseFirst(logs);
     expect(payload.deviceType).toBe(null);
     expect(payload.runtime).toBe(null);
+  });
+});
+
+describe('run statistics', () => {
+  function recorder(result: RecordStatsResult = { recorded: true, note: null }) {
+    const runs: Array<{ run: StatsRun; now: number }> = [];
+    const recordStats = (statsRun: StatsRun, now: number) => {
+      runs.push({ run: statsRun, now });
+      return result;
+    };
+    return { runs, recordStats };
+  }
+
+  test('a successful run is recorded once, with its cache result and duration', async () => {
+    reserve();
+    const { runs, recordStats } = recorder();
+    let clock = 1_700_000_000_000;
+    const { exitCode } = await run({}, { recordStats, now: () => (clock += 1000) });
+
+    expect(exitCode).toBe(null);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.run).toEqual({
+      platform: 'ios',
+      projectKey: root,
+      failed: false,
+      cacheHit: false,
+      waitedForBuild: false,
+      durationMs: expect.any(Number),
+    });
+    expect((runs[0]?.run.durationMs as number) > 0).toBe(true);
+    expect(runs[0]?.now).toBe(clock);
+  });
+
+  test('a cache hit is recorded as a hit', async () => {
+    reserve();
+    const { runs, recordStats } = recorder();
+    await run({}, { recordStats, resolveBuild: (_platform, _key) => join(root, 'cached', 'Fixture.app') });
+
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.run.cacheHit).toBe('local');
+  });
+
+  test('a run that ends through fail() is recorded once as failed', async () => {
+    reserve();
+    const { runs, recordStats } = recorder();
+    const { exitCode } = await run(
+      {},
+      {
+        recordStats,
+        buildIos: async () => ({ failed: true, code: 'STIM_BUILD_FAILED', durationMs: 90000, diagnostics: [] }),
+      },
+    );
+
+    expect(exitCode).toBe(1);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.run.failed).toBe(true);
+  });
+
+  test('a refusal before a cache key exists is not a run', async () => {
+    reserve();
+    const { runs, recordStats } = recorder();
+    const { exitCode } = await run({}, { recordStats, resolveProjectMetro: async () => ({ missing: true }) });
+
+    expect(exitCode).toBe(1);
+    expect(runs).toEqual([]);
+  });
+
+  test('an uncaught exception after the cache key is recorded as failed, once', async () => {
+    reserve();
+    const { runs, recordStats } = recorder();
+    await expect(() =>
+      run(
+        {},
+        {
+          recordStats,
+          buildIos: async () => {
+            throw new Error('xcodebuild exploded');
+          },
+        },
+      ),
+    ).rejects.toThrow(/xcodebuild exploded/);
+
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.run.failed).toBe(true);
+  });
+
+  test('a recorder that throws leaves the exit status alone and says so once', async () => {
+    reserve();
+    const throwing = () => {
+      throw new Error('stats disk is full');
+    };
+    const ok = await run({}, { recordStats: throwing });
+    expect(ok.exitCode).toBe(null);
+    expect(ok.stderr).toMatch(/Run statistics could not be recorded: stats disk is full/);
+
+    const failed = await run(
+      {},
+      {
+        recordStats: throwing,
+        buildIos: async () => ({ failed: true, code: 'STIM_BUILD_FAILED', durationMs: 90000, diagnostics: [] }),
+      },
+    );
+    expect(failed.exitCode).toBe(1);
+  });
+
+  test('a note from the recorder is printed as one dim line', async () => {
+    reserve();
+    const { recordStats } = recorder({ recorded: false, note: 'stats.json is from a newer Stim' });
+    const { exitCode, stderr } = await run({}, { recordStats });
+
+    expect(exitCode).toBe(null);
+    expect(stderr).toContain('stats.json is from a newer Stim');
+  });
+
+  test('a throw after the success reporter recorded does not add a second, failed run', async () => {
+    reserve();
+    const { runs, recordStats } = recorder();
+    await expect(() =>
+      run(
+        {},
+        {
+          recordStats,
+          createWriter: (file: string) => ({
+            file,
+            write: () => true,
+            close: () => {
+              throw new Error('the build log vanished');
+            },
+            written: 0,
+            dropped: 0,
+            lastError: null,
+          }),
+        },
+      ),
+    ).rejects.toThrow(/the build log vanished/);
+
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.run.failed).toBe(false);
   });
 });

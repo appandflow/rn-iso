@@ -1,4 +1,4 @@
-import { formatDuration, formatElapsed, phaseLine, shortHash } from '../command-output.ts';
+import { formatDuration, formatElapsed, formatLongDuration, phaseLine, shortHash } from '../command-output.ts';
 
 test('formatDuration uses one format for every command', () => {
   expect(formatDuration(0)).toBe('0ms');
@@ -23,6 +23,19 @@ test('formatElapsed keeps seconds at every scale, so a 30s progress line never r
   expect(formatElapsed(605_000)).toBe('10m05s');
   expect(formatElapsed(-5)).toBe('0s');
   expect(formatElapsed(undefined)).toBe('0s');
+});
+
+test('formatLongDuration adds hours and pads the smaller unit at every scale', () => {
+  expect(formatLongDuration(0)).toBe('0s');
+  expect(formatLongDuration(31_000)).toBe('31s');
+  expect(formatLongDuration(245_000)).toBe('4m05s');
+  expect(formatLongDuration(252_000)).toBe('4m12s');
+  expect(formatLongDuration(2_460_000)).toBe('41m');
+  expect(formatLongDuration(3_900_000)).toBe('1h05m');
+  expect(formatLongDuration(7_980_000)).toBe('2h13m');
+  expect(formatLongDuration(7_200_000)).toBe('2h');
+  expect(formatLongDuration(-1)).toBe('unknown');
+  expect(formatLongDuration(undefined)).toBe('unknown');
 });
 
 test('phaseLine uses one indented column', () => {
