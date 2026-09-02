@@ -2461,22 +2461,24 @@ describe('launch verification', () => {
     ).toBeTruthy();
   });
 
-  test('logcat is filtered to the app, so a verified launch keeps printing its device errors', async () => {
+  test('a verified launch counts the device log on Android too', async () => {
     const h = harness({
       verifyLaunched: async () => ({
         verified: true,
         waitedMs: 2500,
         errors: [
-          { src: 'device', proc: 'ReactNativeJS(1234)', msg: 'a native error from the app' },
+          { src: 'device', proc: 'ReactNativeJS(1234)', msg: 'a native framework error' },
           { src: 'client', msg: 'a redbox from the app' },
         ],
       }),
     });
     await h.run();
     const text = h.stderr.join('\n');
-    expect(text).toMatch(/^  launch {6}a native error from the app$/m);
+    expect(text).toMatch(
+      /^  launch {6}1 error-level record in the device log during launch \(logs --errors --source device\)$/m,
+    );
     expect(text).toMatch(/^  launch {6}a redbox from the app$/m);
-    expect(text).not.toMatch(/error-level OS log/);
+    expect(text).not.toMatch(/a native framework error/);
   });
 
   test('the picker: no bundle request makes it launched: "unverified", still exit ok', async () => {
@@ -2512,6 +2514,38 @@ describe('the workspace directory is gitignored first', () => {
     const h = harness();
     await h.run();
     expect(h.calls.ensureStorage).toEqual([root]);
+  });
+});
+
+describe('the owned emulator reports creation and slow preparation', () => {
+  test('a fresh AVD says created, however fast it was', async () => {
+    const h = harness({
+      ensureDevice: async () => ({ avdName: 'stim-app-412', consolePort: 5584, owned: true, created: true }),
+    });
+    await h.run();
+    expect(labelled(h.stderr, 'device')[0]).toMatch(/^  device {6}stim-app-412 created \(\d+m?s?\)$/);
+    expect(h.stderr.some((l) => /Created owned AVD/.test(l))).toBe(false);
+  });
+
+  test('an existing AVD says prepared only when the reconcile cost real time', async () => {
+    for (const [label, elapsedMs, expected] of [
+      ['a fast reconcile', 500, false],
+      ['a slow reconcile', 2000, true],
+    ] as const) {
+      let clock = 0;
+      const h = harness({
+        now: () => {
+          const at = clock;
+          clock += elapsedMs;
+          return at;
+        },
+      });
+      await h.run();
+      expect({ label, prepared: labelled(h.stderr, 'device').some((l) => / prepared \(/.test(l)) }).toEqual({
+        label,
+        prepared: expected,
+      });
+    }
   });
 });
 

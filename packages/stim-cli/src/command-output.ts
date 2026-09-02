@@ -85,29 +85,27 @@ export function isOutputLabel(label: unknown): boolean {
   return OUTPUT_LABELS.includes(String(label));
 }
 
+/** The two fields a launch report reads off a collector's NDJSON record. */
 export interface LaunchErrorRecord {
   src?: unknown;
-  proc?: unknown;
   msg?: unknown;
+  [key: string]: unknown;
 }
 
 /**
- * Splits the error-level records a verified launch collected into the OS-log
- * noise the run summarizes and the records it still prints one by one.
+ * Splits the error-level records a verified launch collected into the device
+ * log the run counts and the records it still prints one by one.
  */
-export function launchErrorReport(
-  records: readonly LaunchErrorRecord[],
-  { appId, fromApp }: { appId: string; fromApp: (record: LaunchErrorRecord) => boolean },
-): { summary: string | null; lines: string[] } {
-  const noise = records.filter((record) => record.src === 'device' && !fromApp(record));
+export function launchErrorReport(records: readonly LaunchErrorRecord[]): { summary: string | null; lines: string[] } {
+  const fromDevice = records.filter((record) => record.src === 'device');
   const lines = records
-    .filter((record) => !noise.includes(record))
+    .filter((record) => record.src !== 'device')
     .map((record) => (record.msg === undefined || record.msg === null ? '' : String(record.msg)))
     .filter((msg) => msg !== '');
-  const noun = noise.length === 1 ? 'line' : 'lines';
+  const noun = fromDevice.length === 1 ? 'record' : 'records';
   const summary =
-    noise.length === 0
+    fromDevice.length === 0
       ? null
-      : `${noise.length} error-level OS log ${noun} during launch, none from ${appId} (logs --source device)`;
+      : `${fromDevice.length} error-level ${noun} in the device log during launch (logs --errors --source device)`;
   return { summary, lines };
 }

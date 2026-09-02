@@ -610,7 +610,7 @@ describe('launch verification', () => {
     );
   });
 
-  test('a verified launch counts the OS log noise instead of printing it', async () => {
+  test('a verified launch counts the device log instead of printing it', async () => {
     reserve();
     const { errs } = await run(
       {},
@@ -619,9 +619,8 @@ describe('launch verification', () => {
           verified: true,
           waitedMs: 2500,
           errors: [
-            { src: 'device', proc: 'SpringBoard', msg: 'attention client lost event tag is not a number: (null)' },
-            { src: 'device', proc: 'amsengagementd', msg: 'Object decoding failed' },
-            { src: 'device', proc: 'Fixture', msg: 'the app itself complained' },
+            { src: 'device', proc: 'Fixture', msg: 'Failed to send CA Event for app launch measurements' },
+            { src: 'device', proc: 'Fixture', msg: 'NSBundle (null) initWithPath failed' },
             { src: 'client', msg: 'a redbox from the app' },
           ],
         }),
@@ -629,12 +628,11 @@ describe('launch verification', () => {
     );
     const text = errs.join('\n');
     expect(text).toMatch(
-      /^  launch {6}2 error-level OS log lines during launch, none from com\.example\.app \(logs --source device\)$/m,
+      /^  launch {6}2 error-level records in the device log during launch \(logs --errors --source device\)$/m,
     );
-    expect(text).toMatch(/^  launch {6}the app itself complained$/m);
     expect(text).toMatch(/^  launch {6}a redbox from the app$/m);
-    expect(text).not.toMatch(/attention client lost/);
-    expect(text).not.toMatch(/Object decoding failed/);
+    expect(text).not.toMatch(/Failed to send CA Event/);
+    expect(text).not.toMatch(/NSBundle/);
   });
 
   test('a launch that does not verify still prints every error it collected', async () => {
@@ -3638,6 +3636,15 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     expect(facts.udid).toBe(PHONE);
     expect(facts.launched).toBe(true);
     expect(facts.cacheKey).toBe(`${FINGERPRINT}-debug-device`);
+  });
+
+  test('the phone launch line is the shared shape plus the pid that proves it', async () => {
+    reserve();
+    const { errs } = await run({ device: true }, connected());
+    const text = errs.join('\n');
+    expect(text).toMatch(new RegExp(`^  launch {6}com\\.example\\.app pid ${DEVICE_PID} \\(\\d+m?s?\\)$`, 'm'));
+    expect(text).not.toMatch(/on the phone/);
+    expect(text).not.toMatch(/opened on the dev-client URL/);
   });
 
   test('the collector is the launch: it carries --physical and the run reads the device pid', async () => {

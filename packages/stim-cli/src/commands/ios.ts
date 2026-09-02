@@ -1160,7 +1160,7 @@ async function verifyIosRun({
         `, stable for 3s -- the first screen may still be rendering` +
         ` (${formatDuration(verification.waitedMs ?? 0)} total)`,
     );
-    reportLaunchErrors(verification.errors ?? [], { note, appId: bundleId, appProcess: appName ?? null });
+    reportLaunchErrors(verification.errors ?? [], note);
     return true;
   }
   if (verification?.skipped) {
@@ -1207,14 +1207,8 @@ async function verifyIosRun({
   return LAUNCH_UNVERIFIED;
 }
 
-function reportLaunchErrors(
-  errors: LaunchErrorRecord[],
-  { note, appId, appProcess }: { note: (line: string) => void; appId: string; appProcess: string | null },
-): void {
-  const report = launchErrorReport(errors, {
-    appId,
-    fromApp: (record) => appProcess !== null && record.proc === appProcess,
-  });
+function reportLaunchErrors(errors: LaunchErrorRecord[], note: (line: string) => void): void {
+  const report = launchErrorReport(errors);
   if (report.summary) note(chalk.dim(phaseLine('launch', report.summary)));
   for (const line of report.lines) note(chalk.yellow(phaseLine('launch', line)));
 }
@@ -1872,7 +1866,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   }
   const cacheProviderConfig = d.resolveCacheProviderConfig(settingsContext);
   for (const key of unknownSettingKeys(settings)) {
-    note(chalk.yellow(`Warning: setting "${key}" is not read by Stim and will be ignored.`));
+    note(phaseLine('setting', chalk.yellow(`Warning: setting "${key}" is not read by Stim and will be ignored.`)));
   }
   const cacheProviderError = cacheProviderSettingError(settings);
   if (cacheProviderError) note(chalk.yellow(phaseLine('cache', `${cacheProviderError} Using the local cache.`)));

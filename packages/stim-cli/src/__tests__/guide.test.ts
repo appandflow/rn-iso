@@ -2,6 +2,7 @@ import assert from 'node:assert';
 import { readdirSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_FINGERPRINT_IGNORES } from '../build-cache.ts';
+import { OUTPUT_LABELS } from '../command-output.ts';
 import { topicNames, renderTopic, renderIndex } from '../commands/guide.ts';
 import { ANDROID_AVD_CONFIG_HELP } from '../settings.ts';
 import { CONSOLE_ENV, deviceConsoleArgs } from '../collector/ios-device.ts';
@@ -28,6 +29,31 @@ test('the lifecycle topic separates an iOS install proof from dev-client prepara
   expect(body).toMatch(/install\s+unchanged \(stim-app already has this build\)/);
   expect(body).toMatch(/install\s+dev client prepared/);
   expect(body).toMatch(/slow simulator command is never charged\s+to an install that did not run/);
+});
+
+test('the lifecycle topic names every label the output vocabulary allows', () => {
+  const body = renderTopic('lifecycle');
+  assert(body);
+  const paragraph = body.slice(body.indexOf('The labels are a closed set'));
+  assert(paragraph);
+  for (const label of OUTPUT_LABELS) {
+    if (label === '') continue;
+    expect({ label, named: new RegExp(`\\b${label.replace('.', '\\.')}\\b`).test(paragraph) }).toEqual({
+      label,
+      named: true,
+    });
+  }
+  expect(paragraph).toMatch(/`app` and `compilation cache` join them in the stdout block/);
+});
+
+test('the errors topic names the two device fallbacks under the label that prints them', () => {
+  const body = renderTopic('errors');
+  assert(body);
+  expect(body).toMatch(/both print a `cache` note and\s+build fresh/);
+  expect(body).toMatch(/cache\s+a cached Release device app carries its builder's JS/);
+  expect(body).not.toMatch(/^ *device app {2}/m);
+  const src = readFileSync(new URL('../commands/ios.ts', import.meta.url), 'utf-8');
+  expect(src.includes("'device app'")).toBe(false);
 });
 
 test('an unknown topic renders nothing rather than throwing', () => {

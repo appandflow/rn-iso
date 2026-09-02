@@ -946,7 +946,7 @@ async function verifyAndroidRun({
         `, stable for 3s -- the first screen may still be rendering` +
         ` (${formatDuration(verification.waitedMs ?? 0)} total)`,
     );
-    const report = launchErrorReport(verification.errors ?? [], { appId: androidPackage, fromApp: () => true });
+    const report = launchErrorReport(verification.errors ?? []);
     if (report.summary) phase('launch', chalk.dim(report.summary));
     for (const line of report.lines) phase('launch', chalk.yellow(line));
     return true;

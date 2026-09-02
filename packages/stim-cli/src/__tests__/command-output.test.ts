@@ -80,28 +80,29 @@ test('every label ios.ts and android.ts print comes from that one set', () => {
   }
 });
 
-test('a verified launch summarizes the OS log noise and still prints the rest', () => {
+test("a verified launch counts the device log and still prints the app's own errors", () => {
   const records = [
-    { src: 'device', proc: 'Fixture', msg: 'the app itself complained' },
-    { src: 'device', proc: 'SpringBoard', msg: 'attention client lost event tag' },
-    { src: 'device', proc: 'amsengagementd', msg: 'Object decoding failed' },
+    { src: 'device', proc: 'Trailhead', msg: 'Failed to send CA Event for app launch measurements' },
+    { src: 'device', proc: 'Trailhead', msg: 'TCP Conn 0x106f86d00 Failed : error 0:61 [61]' },
+    { src: 'device', proc: 'Trailhead', msg: 'NSBundle (null) initWithPath failed' },
     { src: 'client', msg: 'a redbox' },
+    { src: 'metro', msg: 'a bundler error' },
   ];
-  const report = launchErrorReport(records, {
-    appId: 'com.example.app',
-    fromApp: (record) => record.proc === 'Fixture',
-  });
-  expect(report.summary).toBe(
-    '2 error-level OS log lines during launch, none from com.example.app (logs --source device)',
-  );
-  expect(report.lines).toEqual(['the app itself complained', 'a redbox']);
+  const report = launchErrorReport(records);
+  expect(report.summary).toBe('3 error-level records in the device log during launch (logs --errors --source device)');
+  expect(report.lines).toEqual(['a redbox', 'a bundler error']);
 });
 
-test('one noise line is singular, and no noise means no line at all', () => {
-  expect(launchErrorReport([{ src: 'device', msg: 'x' }], { appId: 'app', fromApp: () => false }).summary).toBe(
-    '1 error-level OS log line during launch, none from app (logs --source device)',
-  );
-  const quiet = launchErrorReport([{ src: 'client', msg: 'x' }], { appId: 'app', fromApp: () => false });
+test('the count never depends on the process a record names', () => {
+  const named = launchErrorReport([{ src: 'device', proc: 'Trailhead', msg: 'x' }]);
+  const unnamed = launchErrorReport([{ src: 'device', msg: 'x' }]);
+  expect(named.summary).toBe(unnamed.summary);
+  expect(named.summary).toBe('1 error-level record in the device log during launch (logs --errors --source device)');
+  expect(named.lines).toEqual([]);
+});
+
+test('no device record means no count line at all', () => {
+  const quiet = launchErrorReport([{ src: 'client', msg: 'x' }]);
   expect(quiet.summary).toBe(null);
   expect(quiet.lines).toEqual(['x']);
 });

@@ -110,13 +110,10 @@ line by design (see \`guide logs\`), not this single-payload contract.
                                  The command checks process liveness when the
                                  platform exposes it. Errors from that window
                                  are printed even when the app stays alive,
-                                 EXCEPT the error-level device-log records that
-                                 did not come from the app's own process: those
-                                 are counted into one \`launch\` line pointing at
-                                 \`logs --source device\` (see \`guide logs\`),
-                                 because on iOS every Apple framework in the
-                                 app's process logs there. The agent decides
-                                 whether a nonfatal error matters.
+                                 EXCEPT the device log's, which is COUNTED into
+                                 one \`launch\` line instead (see
+                                 \`guide logs\`). The agent decides whether a
+                                 nonfatal error matters.
                                  IT IS NOT A PAINTED SCREEN. Stim observes the
                                  bundle and the process, never a frame, and a
                                  cold app can keep rendering for a minute or
@@ -582,12 +579,26 @@ WHAT WRITES WHAT
                        are recorded at info rather than error; the rest is why
                        --errors leaves this source out unless asked. A VERIFIED
                        LAUNCH prints NONE of these records one by one. It counts
-                       the error-level device records that did not come from the
-                       app's own process and prints one line instead:
+                       them and prints one line instead:
 
-                         launch      12 error-level OS log lines during launch,
-                                     none from com.example.app
-                                     (logs --source device)
+                         launch      9 error-level records in the device log
+                                     during launch
+                                     (logs --errors --source device)
+
+                       THE COUNT IS NOT ATTRIBUTED TO ANYTHING, and that is the
+                       point. Both collectors already narrow the stream to the
+                       app: the simulator's \`log stream\` runs under a
+                       processImagePath predicate, and \`adb logcat\` is filtered
+                       to the app's pid. So every record left is inside the
+                       app's own process, and the error-level ones are the Apple
+                       frameworks running there -- "Failed to send CA Event for
+                       app launch measurements", "NSBundle (null) initWithPath
+                       failed", the TCP refusal. Nothing about the record says
+                       which of them wrote it, so the run does not guess; a
+                       count plus the command that shows the records is the
+                       honest report. The app's OWN errors are not in this
+                       number: a redbox or a console.error arrives on the client
+                       or metro source and still prints line by line.
 
                        The connection refusal \`TCP Conn ... Failed :
                        error 0:61 [61]\` (61 is ECONNREFUSED) is not even
@@ -790,10 +801,10 @@ FALLBACK NOTES THAT ARE NOT CODES (release cache hits)
   until someone taps Trust again. The retry is one uninstall and one install --
   it is not a way around a tap that has no API.
 
-  THE DEVICE FALLBACKS are the fourth, and both print a \`device app\` note and
+  THE DEVICE FALLBACKS are the fourth, and both print a \`cache\` note and
   build fresh rather than failing:
 
-    device app  a cached Release device app carries its builder's JS, and the
+    cache       a cached Release device app carries its builder's JS, and the
                 device JS swap lands with phase 6 of appandflow/stim#178 --
                 building fresh instead, which bakes in this workspace's JS
 
@@ -1505,13 +1516,22 @@ PROGRESS ON A LONG RUN
 
     <label>     <fact> (<duration>)
 
-  The labels are a closed set: device, metro, lan, lease, fingerprint,
-  prebuild, pods, gems, cache, build, swap, ip.txt, install, launch, verify,
-  logs, branch, carry, ready, stop, port, plus error / remedy / log / failed
-  on a failure. A line states a fact; the reason a fact matters lives in this
-  guide, not in the run output. Both platforms use the same words, so
-  \`build       ok (51.8s)\` and \`launch      com.example.app (2s)\` read the
-  same on iOS and Android; the artifact name is in the \`--json\` payload.
+  The labels are a closed set, and nothing else is ever printed in that
+  column:
+
+    device      metro       lan         lease       fingerprint
+    prebuild    pods        gems        cache       build
+    swap        ip.txt      install     launch      verify
+    logs        branch      carry       ready       stop
+    port        setting     state       stats       error
+    remedy      log         failed
+
+  \`app\` and \`compilation cache\` join them in the stdout block a successful
+  run ends with, and nowhere else. A line states a fact; the reason a fact
+  matters lives in this guide, not in the run output. Both platforms use the
+  same words, so \`build       ok (51.8s)\` and
+  \`launch      com.example.app (2s)\` read the same on iOS and Android; the
+  artifact name is in the \`--json\` payload.
 
   A step that costs real time is named and timed, including the step that
   creates or reconciles the owned device before anything is fingerprinted:
