@@ -209,7 +209,7 @@ describe('taking the lease a run needs', () => {
     assert(result.status === 'refused');
     expect(result.refusal.code).toBe('STIM_DEVICE_BUSY');
     expect(result.refusal.message).toMatch(/its own record of that lease is gone/);
-    expect(result.refusal.remedy).toMatch(/this workspace's own/);
+    expect(result.refusal.remedy).toMatch(/stim device unlock`, which releases by holder/);
     expect(result.refusal.lease?.holder).toBe(ROOT);
   });
 
@@ -275,7 +275,7 @@ describe('waiting for a device another workspace holds', () => {
     assert(result.status === 'refused');
     expect(result.refusal.code).toBe('STIM_DEVICE_BUSY');
     expect(result.refusal.message).toMatch(new RegExp(`^${OTHER} holds Test Phone \\(${UDID}\\) until`));
-    expect(result.refusal.message).toMatch(/waited 4s for it/);
+    expect(result.refusal.message).toMatch(/this command waited 4s for it/);
     expect(result.refusal.remedy).toMatch(/Wait longer with `--wait <seconds>`/);
     expect(result.refusal.remedy).toMatch(/pick another device with `--device <udid>`/);
     expect(result.refusal.remedy).toMatch(/`--no-wait`[\s\S]*terminates the holder's running app/);

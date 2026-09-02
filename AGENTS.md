@@ -17,7 +17,7 @@ worktree create -> start -> ios|android -> logs --errors -> stop -> worktree rem
 ```
 
 The command surface is `doctor`, `worktree create|remove`, `start`, `stop`,
-`ios`, `android`, `logs`, `status`, `gc`, and `guide`. Do not add commands or
+`ios`, `android`, `device lock|unlock`, `logs`, `status`, `gc`, and `guide`. Do not add commands or
 flags without an explicit product decision. Projects can wrap Stim when they
 need custom behavior.
 
