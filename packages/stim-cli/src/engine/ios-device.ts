@@ -117,6 +117,10 @@ function unhealthy(device: IosDeviceEntry): ResolvedIosDevice | null {
   return null;
 }
 
+export function iosPoolCandidates(devices: readonly IosDeviceEntry[]): IosDeviceEntry[] {
+  return (Array.isArray(devices) ? devices : []).filter((device) => isWired(device) && unhealthy(device) === null);
+}
+
 export function resolveIosPhysicalDevice(requested: string | null, devices: IosDeviceEntry[]): ResolvedIosDevice {
   const listed = Array.isArray(devices) ? devices : [];
   const cabled = listed.filter(isWired);

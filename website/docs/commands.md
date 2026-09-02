@@ -74,8 +74,8 @@ machine, including remote-device workflows.
 
 - `--configuration <name>` selects an Xcode configuration. The default is Debug.
 - `--device [udid]` builds, installs, and launches on a connected iPhone instead
-  of the owned simulator. With no UDID the one connected device is used. Stim
-  never creates, boots, or deletes hardware.
+  of the owned simulator. With no UDID it takes the first connected device it
+  can lease. Stim never creates, boots, or deletes hardware.
 - `--remote proxy` uses a configured Agent Device daemon.
 - `--remote eas` uses an EAS remote simulator.
 - `--no-metro-check` skips the Debug dev-server gate.
@@ -181,6 +181,11 @@ number of seconds or minutes from `10s` to `30m` and defaults to `5m`;
 `--wait` bounds how long to wait for a device another workspace holds
 (default 60 seconds, `0` refuses at once). Locking a device this workspace
 already holds sets a new expiry, which can shorten it.
+
+With no id, `lock` picks from the connected devices the resolver accepts: the
+one this workspace already leases when it is connected, otherwise the first
+free one in id order. The same rule serves `ios --device` and
+`android --device` with no id, so two devices on one machine no longer refuse.
 
 `unlock` releases every lease this workspace holds, or only the platform
 named; releasing nothing is not an error. A `--device` run takes a lease of

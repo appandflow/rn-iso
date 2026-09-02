@@ -330,6 +330,26 @@ function emulatorRefusal(serial: string): ResolvedPhysicalDevice {
   };
 }
 
+export function memoizeEmulatorProbe(
+  probe: (serial: string) => boolean = probeEmulatorSerial,
+): (serial: string) => boolean {
+  const seen = new Map<string, boolean>();
+  return (serial: string) => {
+    const cached = seen.get(serial);
+    if (cached !== undefined) return cached;
+    const probed = probe(serial);
+    seen.set(serial, probed);
+    return probed;
+  };
+}
+
+export function androidPoolCandidates(
+  adb: AdbDevices,
+  isEmulator: (serial: string) => boolean = probeEmulatorSerial,
+): AdbPhysicalEntry[] {
+  return (adb?.physical ?? []).filter((entry) => !isEmulator(entry.serial));
+}
+
 export function resolvePhysicalDevice(
   requested: string | null,
   adb: AdbDevices,

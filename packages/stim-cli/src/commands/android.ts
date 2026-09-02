@@ -97,6 +97,8 @@ import {
 } from '../engine/app-install.ts';
 import {
   androidHome,
+  androidPoolCandidates,
+  memoizeEmulatorProbe,
   emulatorDiskSpaceRemedy,
   emulatorFailureRemedy,
   extractEmulatorFailure,
@@ -116,6 +118,7 @@ import {
   resolveRemoteContext,
 } from '../engine/device-remote.ts';
 import { detectProviders } from '../engine/metro-reach.ts';
+import { selectFromPool } from '../engine/device-pool.ts';
 import {
   DEBUG_VERIFY_STEP_MS,
   acquireRunLease,
@@ -640,7 +643,7 @@ export function registerAndroid(program: Command): void {
     .option(
       '--device [serial]',
       "Install and launch on a connected physical device instead of this workspace's owned emulator. " +
-        'With no serial, the one connected device is used. Stim never creates, boots, or deletes a physical device.',
+        'With no serial, the first connected device this workspace can lease is used. Stim never creates, boots, or deletes a physical device.',
     )
     .option(
       '--remote <backend>',
@@ -691,6 +694,7 @@ interface RunAndroidOptions {
   waitConflict?: boolean;
   acquireLease?: typeof acquireRunLease;
   makeRunLease?: typeof runLease;
+  selectPool?: typeof selectFromPool;
   onLeaseSignal?: typeof releaseLeaseOnSignal;
   listDevices?: typeof listAdbDevices;
   deviceModel?: typeof physicalDeviceModel;
@@ -1371,6 +1375,55 @@ async function finishAndroidRun({
   return { ok: true, facts };
 }
 
+async function pooledAndroidDevice({
+  root,
+  selectPool,
+  listDevices,
+  isEmulatorDevice,
+  deviceModel,
+  waitSeconds,
+  noWait,
+  now,
+  warn,
+}: {
+  root: string;
+  selectPool: typeof selectFromPool;
+  listDevices: typeof listAdbDevices;
+  isEmulatorDevice: typeof probeEmulatorSerial;
+  deviceModel: typeof physicalDeviceModel;
+  waitSeconds: number;
+  noWait: boolean;
+  now: () => number;
+  warn: (line: string) => void;
+}): Promise<{ device: OwnedDeviceRecord } | { code: string; message: string; remedy: string; extra: FailExtra }> {
+  const isEmulator = memoizeEmulatorProbe(isEmulatorDevice);
+  const pooled = await selectPool({
+    root,
+    platform: PLATFORM,
+    idLabel: 'serial',
+    list: () => androidPoolCandidates(listDevices(), isEmulator).map((entry) => ({ id: entry.serial })),
+    noCandidates: () => {
+      const resolved = resolvePhysicalDevice(null, listDevices(), isEmulator);
+      return { message: resolved.error as string, remedy: resolved.remedy as string };
+    },
+    waitSeconds,
+    noWait,
+    now,
+    warn,
+  });
+  if (pooled.status === 'refused') {
+    const { code, message, remedy, lease } = pooled.refusal;
+    return { code, message, remedy, extra: lease === null ? {} : { lease } };
+  }
+  return {
+    device: {
+      serial: pooled.candidate.id,
+      deviceName: deviceModel(pooled.candidate.id) ?? pooled.candidate.id,
+      owned: false,
+    },
+  };
+}
+
 function resolveRunAndroidOptions(
   {
     root,
@@ -1391,6 +1444,7 @@ function resolveRunAndroidOptions(
     waitConflict = false,
     acquireLease = acquireRunLease,
     makeRunLease = runLease,
+    selectPool = selectFromPool,
     onLeaseSignal = releaseLeaseOnSignal,
     listDevices = listAdbDevices,
     deviceModel = physicalDeviceModel,
@@ -1461,6 +1515,7 @@ function resolveRunAndroidOptions(
     waitConflict,
     acquireLease,
     makeRunLease,
+    selectPool,
     onLeaseSignal,
     listDevices,
     deviceModel,
@@ -1533,6 +1588,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     waitConflict,
     acquireLease,
     makeRunLease,
+    selectPool,
     onLeaseSignal,
     listDevices,
     deviceModel,
@@ -1723,7 +1779,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     return fail(
       'STIM_BAD_ARG',
       '--device was given an empty serial.',
-      'Pass `--device` on its own to use the one connected device, or `--device <serial>` to name one.',
+      'Pass `--device` on its own to take the first connected device this workspace can lease, or ' +
+        '`--device <serial>` to name one.',
     );
   }
   if (physical && commandRemoteBackend) {
@@ -1861,7 +1918,22 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   let bootDuration = '';
   let bootPromise: Promise<AndroidBootLike>;
 
-  if (physical) {
+  if (physical && !requestedSerial) {
+    const pooled = await pooledAndroidDevice({
+      root,
+      selectPool,
+      listDevices,
+      isEmulatorDevice,
+      deviceModel,
+      waitSeconds,
+      noWait,
+      now,
+      warn: (line: string) => out(phaseLine('lease', chalk.yellow(line))),
+    });
+    if ('code' in pooled) return fail(pooled.code, pooled.message, pooled.remedy, pooled.extra);
+    device = pooled.device;
+    bootPromise = Promise.resolve({ ok: true, serial: pooled.device.serial });
+  } else if (physical) {
     const resolved = resolvePhysicalDevice(requestedSerial, listDevices(), isEmulatorDevice);
     if (!resolved.serial) return fail(NO_DEVICE, resolved.error!, resolved.remedy!);
     device = {

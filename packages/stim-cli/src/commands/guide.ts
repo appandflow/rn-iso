@@ -1591,8 +1591,8 @@ THE OPTION SURFACE, IN FULL
 
   \`android --device [serial]\` installs and launches on a physical device
   connected to this machine instead of this workspace's owned emulator. With
-  no serial it uses the one connected device, and refuses with the candidate
-  list when adb reports several. It cannot be combined with --remote.
+  no serial it takes the first device it can lease (THE POOL, below). It
+  cannot be combined with --remote.
 
   A \`--device\` run LEASES the device from just after the build until it
   exits, so a second workspace cannot install over it mid-run (see THE DEVICE
@@ -1606,8 +1606,8 @@ THE OPTION SURFACE, IN FULL
   10.0.2.2. Stim never creates, boots, shuts down, or deletes hardware.
 
   \`ios --device [udid]\` selects a connected iPhone, the same way
-  \`android --device\` selects a connected phone: with no UDID the one
-  connected device is used, several is a refusal listing them, and an iPhone
+  \`android --device\` selects a connected phone: with no UDID it takes the
+  first device it can lease (THE POOL, below), and an iPhone
   that is unpaired or has Developer Mode off is refused with the fix. It
   cannot be combined with --remote, and it never creates, boots, or deletes
   hardware -- there is no capacity check, no simulator creation, no boot wait,
@@ -1677,9 +1677,37 @@ HOLDING A DEVICE ACROSS RUNS
   and \`--json\` prints an empty list. It releases by holder, so it still
   works when the workspace directory was recreated and the token is gone.
 
-  With no id, \`lock\` takes the one connected device and refuses when several
-  are connected, exactly as \`--device\` does today. Picking the first FREE
-  device out of several is the pool rule, and it is not implemented yet.
+  With no id, \`lock\` and a \`--device\` run pick from the POOL of connected
+  devices, so two phones on one machine no longer refuse.
+
+THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
+  Candidates are the connected devices the resolver already accepts: on iOS,
+  wired, paired, with Developer Mode on; on Android, every serial adb reports
+  in the \`device\` state that is not an emulator, TCP serials included. Then,
+  in order:
+
+    1. the device this workspace already leases, when it is among them;
+    2. otherwise the first one not leased -- or leased and EXPIRED -- in
+       case-folded id order.
+
+  Ids are sorted on, never names: adb has no name without one \`getprop\` per
+  serial, and models repeat.
+
+  A device this workspace leases that is NOT connected refuses with
+  STIM_NO_DEVICE naming it, rather than quietly moving to another phone. Naming
+  a different one with \`--device <id>\` refuses the same way, because a
+  workspace holds at most one lease per platform: \`stim device unlock\` first.
+
+  Candidates with none free is the wait: under \`--wait <seconds>\` the poll
+  re-LISTS devices, so a phone plugged in mid-wait is picked up as well as one
+  released mid-wait. When the wait runs out, STIM_DEVICE_BUSY names every
+  holder and its expiry. No candidate at all is the existing STIM_NO_DEVICE,
+  with the resolver's own message. \`--no-wait\` takes the first candidate
+  anyway and proceeds with no lease, as it does for one named device.
+
+  The chosen device is on the phase line and in \`--json\` (\`udid\` or
+  \`serial\`, plus \`deviceName\`), so an agent can hand the same id to its
+  device tool.
 
   A device build is LOCAL-TIER ONLY. Its cache key is
   \`<fingerprint>-<configuration>-device\`, so a device app can never collide

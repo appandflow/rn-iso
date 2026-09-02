@@ -72,11 +72,13 @@ import {
   awaitIosDeviceLaunch,
   installIosDeviceApp,
   iosDeviceProcess,
+  iosPoolCandidates,
   listIosDevices,
   localNetworkPending,
   resolveIosPhysicalDevice,
   verifyIosDeviceReleaseLaunch,
 } from '../engine/ios-device.ts';
+import { selectFromPool } from '../engine/device-pool.ts';
 import {
   DEBUG_VERIFY_STEP_MS,
   acquireRunLease,
@@ -791,6 +793,7 @@ interface IosDeps {
   awaitIosDeviceLaunch: typeof awaitIosDeviceLaunch;
   acquireRunLease: typeof acquireRunLease;
   runLease: typeof runLease;
+  selectFromPool: typeof selectFromPool;
   releaseLeaseOnSignal: typeof releaseLeaseOnSignal;
   iosDeviceProcess: typeof iosDeviceProcess;
   verifyIosDeviceReleaseLaunch: typeof verifyIosDeviceReleaseLaunch;
@@ -863,6 +866,7 @@ const DEFAULT_DEPS: IosDeps = {
   awaitIosDeviceLaunch,
   acquireRunLease,
   runLease,
+  selectFromPool,
   releaseLeaseOnSignal,
   iosDeviceProcess,
   verifyIosDeviceReleaseLaunch,
@@ -904,7 +908,7 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     .option(
       '--device [udid]',
       "Build the iphoneos slice for a connected iPhone, install it, and launch it, instead of using this workspace's " +
-        'owned simulator. With no UDID, the one connected device is used. In Debug the app is wired to this ' +
+        'owned simulator. With no UDID, the first connected device this workspace can lease is used. In Debug the app is wired to this ' +
         "workspace's Metro over the LAN. Stim never creates, boots, or deletes a physical device.",
     )
     .option(
@@ -1762,7 +1766,9 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     return fail({
       code: 'STIM_BAD_ARG',
       message: '--device was given an empty UDID.',
-      remedy: 'Pass `--device` on its own to use the one connected device, or `--device <udid>` to name one.',
+      remedy:
+        'Pass `--device` on its own to take the first connected device this workspace can lease, or ' +
+        '`--device <udid>` to name one.',
     });
   }
   if (physical && opts.remote) {
@@ -1831,13 +1837,38 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   const limits = d.getConcurrencyLimits();
 
   let physicalDevice: { udid: string; name: string } | null = null;
-  if (physical) {
+  if (physical && typeof deviceFlag !== 'string') {
+    const pooled = await d.selectFromPool({
+      root,
+      platform: PLATFORM,
+      idLabel: 'udid',
+      list: () => iosPoolCandidates(d.listIosDevices()).map((entry) => ({ id: entry.udid, name: entry.name })),
+      noCandidates: () => {
+        const resolved = resolveIosPhysicalDevice(null, d.listIosDevices());
+        return { message: resolved.error as string, remedy: resolved.remedy as string };
+      },
+      waitSeconds,
+      noWait,
+      now: d.now,
+      warn: (line: string) => note(chalk.yellow(phaseLine('lease', line))),
+    });
+    if (pooled.status === 'refused') {
+      return fail({
+        code: pooled.refusal.code,
+        message: pooled.refusal.message,
+        remedy: pooled.refusal.remedy,
+        ...(pooled.refusal.lease === null ? {} : { lease: pooled.refusal.lease }),
+      });
+    }
+    physicalDevice = { udid: pooled.candidate.id, name: pooled.candidate.name ?? pooled.candidate.id };
+  } else if (physical) {
     const resolved = resolveIosPhysicalDevice(typeof deviceFlag === 'string' ? deviceFlag : null, d.listIosDevices());
     if (!resolved.udid) {
       return fail({ code: 'STIM_NO_DEVICE', message: resolved.error!, remedy: resolved.remedy! });
     }
     physicalDevice = { udid: resolved.udid, name: resolved.name ?? resolved.udid };
-  } else {
+  }
+  if (!physical) {
     const capacity = d.checkDeviceCapacity({
       platform: PLATFORM,
       project: proj,
