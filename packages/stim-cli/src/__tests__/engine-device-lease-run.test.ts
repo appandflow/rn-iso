@@ -209,7 +209,7 @@ describe('taking the lease a run needs', () => {
     assert(result.status === 'refused');
     expect(result.refusal.code).toBe('STIM_DEVICE_BUSY');
     expect(result.refusal.message).toMatch(/its own record of that lease is gone/);
-    expect(result.refusal.remedy).toMatch(/this workspace's own/);
+    expect(result.refusal.remedy).toMatch(/stim device unlock`, which releases by holder/);
     expect(result.refusal.lease?.holder).toBe(ROOT);
   });
 

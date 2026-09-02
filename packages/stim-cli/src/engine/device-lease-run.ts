@@ -149,9 +149,7 @@ function untokenedRefusal(lease: DeviceLease, now: number): RunLeaseRefusal {
     message:
       `This workspace holds ${describeDevice(lease)} until ${leaseExpiryText(lease.expiresAt, now)}, ` +
       'but its own record of that lease is gone, so this run cannot prove the lease is still its own.',
-    remedy:
-      "That lease file is this workspace's own: remove it (`stim status` names it), or wait for it to expire, " +
-      'then run this command again.',
+    remedy: 'Run `stim device unlock`, which releases by holder, then run this command again.',
     lease: facts(lease),
   };
 }
@@ -160,9 +158,7 @@ function otherDeviceRefusal(leasedId: string, requestedId: string): RunLeaseRefu
   return {
     code: 'STIM_NO_DEVICE',
     message: `This workspace already leases ${leasedId}, and this run asked for ${requestedId}.`,
-    remedy:
-      `Use the device this workspace leases with \`--device ${leasedId}\`, or wait for that lease to expire; ` +
-      '`stim status` prints its expiry.',
+    remedy: `Run \`stim device unlock\` to give up ${leasedId}, or use it with \`--device ${leasedId}\`.`,
     lease: null,
   };
 }
@@ -279,6 +275,65 @@ export type AcquireRunLeaseResult =
   | { status: 'unleased' }
   | { status: 'refused'; refusal: RunLeaseRefusal };
 
+export type LeaseWaitOutcome =
+  | { status: 'free' }
+  | { status: 'ours'; lease: DeviceLease }
+  | { status: 'bypassed'; lease: DeviceLease }
+  | { status: 'refused'; refusal: RunLeaseRefusal };
+
+export async function waitForDevice({
+  root,
+  platform,
+  id,
+  idLabel,
+  waitSeconds,
+  noWait = false,
+  appId = null,
+  holderAppId = () => null,
+  now = Date.now,
+  sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms)),
+  warn = () => {},
+  io = fileLeaseIo,
+  deadline,
+  lastLine,
+}: {
+  root: string;
+  platform: LeasePlatform;
+  id: string;
+  idLabel: string;
+  waitSeconds: number;
+  noWait?: boolean;
+  appId?: string | null;
+  holderAppId?: (holder: string) => string | null;
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+  warn?: (line: string) => void;
+  io?: LeaseIo;
+  deadline: number;
+  lastLine: { at: number | null };
+}): Promise<LeaseWaitOutcome> {
+  const path = deviceLeasePath(platform, id);
+  for (;;) {
+    const raw = io.readLease(path);
+    const current = parseLease(raw);
+    if (raw !== null && !current) return { status: 'refused', refusal: unreadableRefusal(path) };
+    if (!current || leaseIsExpired(current, now())) return { status: 'free' };
+    if (current.holder === root) return { status: 'ours', lease: current };
+    if (noWait) {
+      for (const line of bypassLines(current, now(), appIdMatch(appId, holderAppId(current.holder)))) warn(line);
+      return { status: 'bypassed', lease: current };
+    }
+    if (now() >= deadline) {
+      return { status: 'refused', refusal: busyRefusal({ lease: current, now: now(), idLabel, waitSeconds }) };
+    }
+    if (lastLine.at === null || now() - lastLine.at >= DEVICE_WAIT_LINE_MS) {
+      lastLine.at = now();
+      warn(waitingLine(current, now()));
+    }
+    await sleep(DEVICE_WAIT_POLL_MS);
+  }
+}
+
 export async function acquireRunLease({
   root,
   platform,
@@ -322,13 +377,10 @@ export async function acquireRunLease({
 
   const path = deviceLeasePath(platform, id);
   const deadline = now() + waitSeconds * 1000;
-  let lastLine: number | null = null;
+  const lastLine: { at: number | null } = { at: null };
 
   for (;;) {
-    const raw = io.readLease(path);
-    const current = parseLease(raw);
-    if (raw !== null && !current) return { status: 'refused', refusal: unreadableRefusal(path) };
-
+    const current = parseLease(io.readLease(path));
     const mine = current && held && current.token === held.token ? { lease: current, record: held } : null;
     if (mine && (mine.record.kind === 'run' || !leaseIsExpired(mine.lease, now()))) {
       const raised = raiseLease({ root, platform, minMs: leaseStepMs(installBoundMs) }, io);
@@ -337,27 +389,25 @@ export async function acquireRunLease({
       }
     }
 
-    if (current && !leaseIsExpired(current, now())) {
-      if (current.holder === root) {
-        if (held && held.token === current.token) {
-          return { status: 'leased', kind: held.kind, expiresAt: current.expiresAt };
-        }
-        return { status: 'refused', refusal: untokenedRefusal(current, now()) };
-      }
-      if (noWait) {
-        for (const line of bypassLines(current, now(), appIdMatch(appId, holderAppId(current.holder)))) warn(line);
-        return { status: 'unleased' };
-      }
-      if (now() >= deadline) {
-        return { status: 'refused', refusal: busyRefusal({ lease: current, now: now(), idLabel, waitSeconds }) };
-      }
-      if (lastLine === null || now() - lastLine >= DEVICE_WAIT_LINE_MS) {
-        lastLine = now();
-        warn(waitingLine(current, now()));
-      }
-      await sleep(DEVICE_WAIT_POLL_MS);
-      continue;
-    }
+    const outcome = await waitForDevice({
+      root,
+      platform,
+      id,
+      idLabel,
+      waitSeconds,
+      noWait,
+      appId,
+      holderAppId,
+      now,
+      sleep,
+      warn,
+      io,
+      deadline,
+      lastLine,
+    });
+    if (outcome.status === 'refused') return outcome;
+    if (outcome.status === 'bypassed') return { status: 'unleased' };
+    if (outcome.status === 'ours') return { status: 'refused', refusal: untokenedRefusal(outcome.lease, now()) };
 
     const taken = takeLease(
       { root, platform, id, deviceName, kind: 'run', durationMs: leaseStepMs(installBoundMs) },

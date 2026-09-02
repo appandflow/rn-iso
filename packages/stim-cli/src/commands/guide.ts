@@ -917,9 +917,8 @@ STIM_DEVICE_BUSY
   file that does not parse (\`lease\` fields null, the file named -- nothing may
   take that device until it is dealt with), and this workspace's OWN lease with
   no token left in its \`state.json\` (its workspace directory was recreated).
-  That last one is this workspace's own file to remove -- \`stim status\` names
-  it -- or you can wait it out; releasing it by holder gets its own command in
-  a later release.
+  The remedy for that last one is \`stim device unlock\`, which releases by
+  holder rather than by token.
 
 STIM_DEVICE_LOST
   Only on a \`--device\` run. The run held a lease, and the raise before the
@@ -1562,6 +1561,8 @@ THE OPTION SURFACE, IN FULL
   start           --json --wait <seconds> --remote
   ios             --json --no-metro-check --no-build-cache --configuration <name> --device [udid] --wait <seconds> --no-wait --remote <proxy|eas>
   android         --json --no-metro-check --no-build-cache --variant <name> --device [serial] --wait <seconds> --no-wait --remote <proxy|eas>
+  device          lock <ios|android> [id] --for <duration> --wait <seconds> --json;
+                  unlock [ios|android] --json
   logs            --source --level --since --grep --tail --follow --errors --json
   stop            --json --force
   status          --json          (already machine-wide)
@@ -1646,6 +1647,40 @@ THE DEVICE LEASE ON A \`--device\` RUN
   \`--json\`; a run that proceeded without one, or lost one after the install,
   reports \`lease: null\`. \`stim status\` lists every lease file on the
   machine, and \`stop\` releases the ones this workspace holds.
+
+HOLDING A DEVICE ACROSS RUNS
+  A run-scoped lease dies with the command, which is not enough for a
+  device-tool session: the next workspace's \`ios --device\` would install over
+  the app you are driving. \`stim device lock\` grants a DECLARED lease that
+  outlives the run:
+
+    stim device lock ios --for 10m     # or: android; add a UDID/serial to name one
+    stim ios --device                  # builds, installs, launches; raises the lease
+    ... device-tool work on the phone ...
+    stim device unlock                 # give it back; or let it expire
+
+  \`--for\` takes a whole number of seconds or minutes, 10s to 30m, and
+  defaults to 5m; anything else is STIM_BAD_ARG. \`--wait <seconds>\`
+  (default 60, \`0\` refuses at once) is the same wait a run does. Both
+  commands need a project and refuse outside one with STIM_NO_PROJECT, and
+  \`lock\` runs the same resolver \`--device\` does, so an unpaired phone or
+  one with Developer Mode off is refused with that resolver's own remedy
+  before any lease is written.
+
+  Locking a device this workspace already holds SETS the expiry to now plus
+  \`--for\`, which can shorten it. Locking a different device of the same
+  platform releases the first one: a workspace holds at most one lease per
+  platform. Nothing else moves an expiry -- not the app running afterwards, not
+  device-tool work, not \`status\`. Only \`lock\` and a run's own steps do.
+
+  \`stim device unlock\` releases every lease this workspace holds, or only
+  the platform named. Releasing nothing is not an error: it says so on stderr,
+  and \`--json\` prints an empty list. It releases by holder, so it still
+  works when the workspace directory was recreated and the token is gone.
+
+  With no id, \`lock\` takes the one connected device and refuses when several
+  are connected, exactly as \`--device\` does today. Picking the first FREE
+  device out of several is the pool rule, and it is not implemented yet.
 
   A device build is LOCAL-TIER ONLY. Its cache key is
   \`<fingerprint>-<configuration>-device\`, so a device app can never collide

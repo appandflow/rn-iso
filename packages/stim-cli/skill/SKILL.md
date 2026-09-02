@@ -28,31 +28,31 @@ E404 in a repo with a private registry, use:
 npx --registry=https://registry.npmjs.org stim-cli <command>
 ```
 
-Prefer plain output for agent workflows: it streams each phase and ends with the
-full device ID, app ID, Metro state, cache result, and log path. Use `--json`
-only when a script must parse a stable payload.
+Prefer plain output: it streams each phase and ends with the device ID, app ID,
+Metro state, cache result, and log path. Use `--json` only when a script must
+parse a stable payload.
 
 ## Normal workflow
 
 Work in the current checkout by default. When the agent creates an app worktree
 for isolation or parallel work, carry its dependencies and native outputs.
 
-Before a native worktree task, run `stim doctor`. Doctor checks the main
-checkout even when it runs from a linked worktree. Fix its main-checkout
-dependency and CocoaPods findings. Inspect any locally known upstream gap.
+Before a native worktree task, run `stim doctor`: it checks the main checkout
+even from a linked worktree. Fix its dependency and CocoaPods findings, and
+inspect any locally known upstream gap.
 
 ```bash
 stim doctor
 
-# In the main checkout, build once to seed the shared build caches when more
-# native worktrees are coming. Skip for one-off or JavaScript-only work.
+# In the main checkout, seed the shared build caches when more native
+# worktrees are coming; skip one-off or JavaScript-only work.
 stim start
 stim ios                    # or: stim android
 stim stop
 
-# Branches from the current HEAD. --carry-ignored carries installed dependencies
-# and native output: pass it on the first creation, never a cold worktree and a
-# retry. It prints the new absolute path.
+# Branches from HEAD. --carry-ignored carries installed dependencies and
+# native output: pass it on the first creation, never on a retry. It prints
+# the new absolute path.
 stim worktree create <name> --carry-ignored
 cd <printed-path>
 
@@ -65,7 +65,6 @@ stim logs --since 30s --level error
 
 stim stop
 
-# If this workflow created a worktree, ask the user before deleting it.
 stim worktree remove
 ```
 
@@ -104,12 +103,17 @@ simulator.
 connected physical device. Stim never creates, boots, or deletes hardware, and
 records nothing about it, so `stop` and `gc` leave it alone.
 
-A physical iPhone's first launch can need two one-time phone taps: developer
+A `--device` run leases that device for the run. `stim device lock ios --for
+10m` holds it across runs; `stim device unlock` gives it back
+(`stim guide lifecycle`). Never delete another workspace's lease file under
+`~/.stim/device-locks`; `gc --delete` removes the expired ones.
+
+A physical iPhone's first launch can need two one-time taps: developer
 trust, which only the user can grant, and Local Network, which a device tool
 accepts. The remedy names which; an uninstall clears both.
 
-Treat a refusal as an ownership or state mismatch. Read its code and remedy.
-Do not add `--force` as a first response.
+Treat a refusal as an ownership or state mismatch: read its code and remedy.
+Never reach for `--force` first.
 
 Ask the user before these actions:
 
@@ -131,8 +135,8 @@ the project and little else. Three things Stim needs sit outside that
 boundary, and none of the failures names the sandbox: writes to `STIM_HOME`
 (`~/.stim` unless set) fail with `EPERM` on a directory the user can write, the
 iOS simulator service looks dead, and the adb server looks unreachable. They
-are not a broken machine. Compare that path against the harness's own
-allowlist, and the conflict is visible before anything runs.
+are not a broken machine: compare that path against the harness's allowlist,
+and the conflict is visible before anything runs.
 
 Decide at the start of a session, not after the third failure: either run Stim
 with the harness's sandbox disabled, or ask the user to allow those three.
@@ -144,7 +148,7 @@ worked.
 
 The installed CLI is the source of truth for flags, payloads, settings, error
 codes, remote devices, release builds, caches, and cleanup. Read the topic
-before an advanced operation:
+first:
 
 ```bash
 stim guide             # list topics

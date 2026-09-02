@@ -168,6 +168,26 @@ On a physical iPhone the device log collector is the launch, so stopping it
 closes the running app on the phone. Nothing is uninstalled and nothing about
 the phone is recorded or deleted.
 
+## `device lock` and `device unlock`
+
+```text
+stim device lock <ios|android> [id] [--for <duration>] [--wait <seconds>] [--json]
+stim device unlock [ios|android] [--json]
+```
+
+Leases a connected physical device to this workspace, so another workspace's
+`--device` run waits instead of installing over it. `--for` takes a whole
+number of seconds or minutes from `10s` to `30m` and defaults to `5m`;
+`--wait` bounds how long to wait for a device another workspace holds
+(default 60 seconds, `0` refuses at once). Locking a device this workspace
+already holds sets a new expiry, which can shorten it.
+
+`unlock` releases every lease this workspace holds, or only the platform
+named; releasing nothing is not an error. A `--device` run takes a lease of
+its own for the length of the run, so `lock` is for holding a device across
+runs, such as a device-tool session. `stim status` lists every lease on the
+machine.
+
 ## `status`
 
 ```text

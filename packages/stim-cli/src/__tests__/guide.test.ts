@@ -314,15 +314,7 @@ test('the guide distinguishes local stop behavior from EAS session teardown', ()
 });
 
 test('no topic teaches a command this binary does not have', () => {
-  const gone = [
-    'stim up',
-    'stim release',
-    'stim shutdown',
-    'stim device',
-    'build-cache resolve',
-    '--wait-metro',
-    '--serial',
-  ];
+  const gone = ['stim up', 'stim release', 'stim shutdown', 'build-cache resolve', '--wait-metro', '--serial'];
   for (const name of topicNames()) {
     const body = renderTopic(name);
     assert(body);
@@ -850,6 +842,7 @@ test('the binary command surface remains intentional', () => {
   );
   expect(registered.toSorted()).toEqual([
     'android',
+    'device',
     'doctor',
     'gc',
     'guide',
@@ -942,4 +935,40 @@ test('the errors topic documents both device-lease codes with their remedies', (
   expect(body).toMatch(/STIM_DEVICE_LOST/);
   expect(body).toMatch(/raise before the\s+install found it gone or held under another token/);
   expect(body).toMatch(/AFTER the install has started this is not a failure/);
+});
+
+test('the guide documents holding a device across runs with lock and unlock', () => {
+  const lifecycle = renderTopic('lifecycle');
+  assert(lifecycle);
+  expect(lifecycle).toMatch(/HOLDING A DEVICE ACROSS RUNS/);
+  expect(lifecycle).toMatch(/stim device lock ios --for 10m/);
+  expect(lifecycle).toMatch(/stim ios --device[\s\S]*device-tool work on the phone[\s\S]*stim device unlock/);
+  expect(lifecycle).toMatch(/`--for` takes a whole number of seconds or minutes, 10s to 30m, and\s+defaults to 5m/);
+  expect(lifecycle).toMatch(/`--wait <seconds>`\s+\(default 60, `0` refuses at once\)/);
+  expect(lifecycle).toMatch(/refuse outside one with STIM_NO_PROJECT/);
+  expect(lifecycle).toMatch(/`lock` runs the same resolver `--device` does/);
+  expect(lifecycle).toMatch(/SETS the expiry to now plus\s+`--for`, which can shorten it/);
+  expect(lifecycle).toMatch(/at most one lease per\s+platform/);
+  expect(lifecycle).toMatch(/Nothing else moves an expiry[\s\S]*Only `lock` and a run's own steps do/);
+  expect(lifecycle).toMatch(/Releasing nothing is not an error/);
+  expect(lifecycle).toMatch(/releases by holder/);
+  expect(lifecycle).toMatch(
+    /With no id, `lock` takes the one connected device[\s\S]*pool rule, and it is not implemented yet/,
+  );
+  expect(lifecycle).toMatch(/device\s+lock <ios\|android> \[id\] --for <duration> --wait <seconds> --json/);
+  expect(lifecycle).toMatch(/unlock \[ios\|android\] --json/);
+});
+
+test('the busy remedy for this root own lease names the command that releases by holder', () => {
+  const errors = renderTopic('errors');
+  assert(errors);
+  expect(errors).toMatch(/remedy for that last one is `stim device unlock`, which releases by\s+holder/);
+});
+
+test('the skill routes the lease to the guide and states the permanent lease rule', () => {
+  const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
+  expect(skill).toMatch(/A `--device` run leases that device for the run/);
+  expect(skill).toMatch(/stim device lock ios --for\s+10m` holds it across runs; `stim device unlock` gives it back/);
+  expect(skill).toMatch(/Never delete another workspace's lease file under\s+`~\/\.stim\/device-locks`/);
+  expect(skill).toMatch(/`gc --delete` removes the expired ones/);
 });
