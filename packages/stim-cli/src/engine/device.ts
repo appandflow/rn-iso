@@ -3,7 +3,9 @@ import {
   allConsolePortsAndSerials,
   clearDevice,
   loadConfig,
+  releaseAndroidConsolePort,
   setDevice,
+  withConfigLock,
   type Config,
   type ProjectRecord,
 } from '../config.ts';
@@ -20,6 +22,7 @@ import {
   bootAndroidEmulator,
   configureNewOwnedAvd,
   createOwnedAvd,
+  getAvdNameForSerial,
   listAdbDevices,
   listAvds,
   nextConsolePort,
@@ -445,6 +448,52 @@ async function ensureOwnedAndroidDevice({
   });
 }
 
+export interface AndroidConsolePortClaim {
+  avdName: string;
+  consolePort: number;
+  owned: true;
+  deviceName: string;
+  [key: string]: unknown;
+}
+
+export function claimAndroidConsolePort(
+  {
+    projectPath,
+    avdName,
+    deviceName,
+    livePorts = [],
+  }: { projectPath: string; avdName: string; deviceName?: string; livePorts?: number[] },
+  {
+    lock = withConfigLock,
+    recordedPorts = () => allConsolePortsAndSerials().androidConsolePorts,
+    record = setDevice,
+  }: {
+    lock?: <T>(fn: () => T) => T;
+    recordedPorts?: () => number[];
+    record?: typeof setDevice;
+  } = {},
+): AndroidConsolePortClaim {
+  return lock(() => {
+    const consolePort = nextConsolePort([...recordedPorts(), ...livePorts]);
+    const claim: AndroidConsolePortClaim = {
+      avdName,
+      consolePort,
+      owned: true,
+      deviceName: deviceName ?? avdName,
+    };
+    record(projectPath, 'android', claim);
+    return claim;
+  });
+}
+
+function liveAndroidConsolePorts(): number[] {
+  const adbLive = listAdbDevices();
+  return [
+    ...adbLive.emulators.map((e) => e.consolePort),
+    ...adbLive.unhealthy.map((u) => u.consolePort).filter((p): p is number => p != null),
+  ];
+}
+
 async function bootOwnedAvdOnFreshPort({
   avdName,
   projectPath,
@@ -458,25 +507,33 @@ async function bootOwnedAvdOnFreshPort({
   deviceName?: string;
   out: Notify;
 } & EmulatorLogging): Promise<OwnedDeviceRecord> {
-  const adbLive = listAdbDevices();
-  const livePorts: number[] = [
-    ...adbLive.emulators.map((e) => e.consolePort),
-    ...adbLive.unhealthy.map((u) => u.consolePort).filter((p): p is number => p != null),
-  ];
-  const claimedPorts = [...allConsolePortsAndSerials().androidConsolePorts, ...livePorts];
-  const consolePort = nextConsolePort(claimedPorts);
-  const newRecord = { avdName, consolePort, owned: true, deviceName: deviceName ?? avdName };
-  setDevice(projectPath, 'android', newRecord);
-  const pid = bootAndroidEmulator(avdName, consolePort, { logFile });
-  const serial = `emulator-${consolePort}`;
-  out(chalk.dim(`Waiting for ${serial} to finish booting...`));
-  const result = await waitForBoot(serial, 120000, { aborted: emulatorGone(pid, alive) });
-  if (!result.ok) {
-    throw new Error(
-      `${bootFailurePrefix(serial, result.exited, 120000)} Diagnostic: ${JSON.stringify(result.diagnostic)}`,
-    );
+  const claim = claimAndroidConsolePort({
+    projectPath,
+    avdName,
+    deviceName,
+    livePorts: liveAndroidConsolePorts(),
+  });
+  const serial = `emulator-${claim.consolePort}`;
+  try {
+    const pid = bootAndroidEmulator(avdName, claim.consolePort, { logFile });
+    out(chalk.dim(`Waiting for ${serial} to finish booting...`));
+    const result = await waitForBoot(serial, 120000, { aborted: emulatorGone(pid, alive) });
+    if (!result.ok) {
+      throw new Error(
+        `${bootFailurePrefix(serial, result.exited, 120000)} Diagnostic: ${JSON.stringify(result.diagnostic)}`,
+      );
+    }
+    const running = getAvdNameForSerial(serial);
+    if (running && running !== avdName) {
+      throw new Error(
+        `${serial} is running AVD ${running}, not this workspace's owned AVD ${avdName}; refusing to use it.`,
+      );
+    }
+    return { ...claim, serial };
+  } catch (error) {
+    releaseAndroidConsolePort(projectPath);
+    throw error;
   }
-  return { ...newRecord, serial };
 }
 
 function emulatorGone(pid: number | null, alive: Liveness): () => boolean {
@@ -769,11 +826,7 @@ async function ensureAndroidBooted({
 }
 
 function pickConsolePort(recorded: number | undefined) {
-  const adb = listAdbDevices();
-  const live: number[] = [
-    ...adb.emulators.map((e) => e.consolePort),
-    ...adb.unhealthy.map((u) => u.consolePort).filter((p): p is number => p != null),
-  ];
+  const live = liveAndroidConsolePorts();
   if (recorded && !live.includes(Number(recorded))) return Number(recorded);
   return nextConsolePort([...allConsolePortsAndSerials().androidConsolePorts, ...live]);
 }

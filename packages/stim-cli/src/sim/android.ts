@@ -676,7 +676,7 @@ export function shutdownAndroidEmulator(serial: string): void {
   getExecutor().runQuiet(`${androidTool('adb')} -s ${serial} emu kill`);
 }
 
-function getAvdNameForSerial(serial: string): string | null {
+export function getAvdNameForSerial(serial: string): string | null {
   const out = getExecutor().runQuiet(`${androidTool('adb')} -s ${serial} emu avd name`);
   if (!out) return null;
   return out.split('\n')[0]?.trim() || null;

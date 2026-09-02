@@ -14,6 +14,14 @@ test('every advertised topic renders non-empty content', () => {
   }
 });
 
+test('the facts topic pins how an owned emulator gets its console port', () => {
+  const body = renderTopic('facts');
+  assert(body);
+  expect(body).toMatch(/CHOSEN AND RECORDED under the global config lock\s+BEFORE the emulator starts/);
+  expect(body).toMatch(/passed to it as `-port`/);
+  expect(body).toMatch(/A boot that fails releases the port again and\s+keeps the AVD recorded for `gc`/);
+});
+
 test('an unknown topic renders nothing rather than throwing', () => {
   expect(renderTopic('nope')).toBe(null);
 });
