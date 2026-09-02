@@ -9,8 +9,9 @@ grants one for a declared duration, `stim device unlock` releases it, and
 `ios --device` / `android --device` take a run-scoped lease of their own,
 wait for a device held by another workspace, or proceed without one on
 request. With several devices connected, `--device` with no id takes the
-first free one. A lease lasts as long as it was declared, plus at most one
-device step of a run that overlapped its end, so an interrupted or forgetful
+first free one. A lease lasts as long as it was declared, plus the remainder of a run that
+overlapped its end (each device step raises it; none lowers it), so an
+interrupted or forgetful
 agent costs the device a bounded time, and the expiry is printed wherever the
 lease is mentioned.
 
@@ -99,8 +100,9 @@ the primitive that already guards `state.json`. Under the lock the command
 re-reads the file, applies one rule, and writes with a temp file and rename.
 Rules:
 
-1. A lease whose `expiresAt` is in the past is free. A file that does not
-   parse, or lacks `expiresAt`, is not free: it is reported and left alone.
+1. A lease whose `expiresAt` is in the past is free. A file that does not parse, or lacks `expiresAt`, is not free: `gc` reports
+   it and leaves it alone, and a run treats it as held by an unknown holder
+   and refuses at once with `STIM_DEVICE_BUSY` naming the file.
 2. A free device is taken by deleting any expired file and writing a new one
    with a fresh token.
 3. Renew and release compare the file's `token` with the caller's and do
@@ -120,17 +122,22 @@ before it does not touch the device and stays under the build lock. So the
 lease step sits after the build and before install.
 
 Child processes are synchronous, so a run cannot renew on a timer. Instead,
-before each device step (install, launch, verification) the run raises the
-expiry to now plus that step's timeout, and releases a run-scoped lease when
-the command exits. The iOS install timeout is the existing five minutes;
+before each device step the run raises the expiry to now plus the larger of
+60 seconds and that step's upper bound, and releases a run-scoped lease when
+the command exits. The bounds: install, its timeout (five minutes on both
+platforms); launch on iOS, the collector exit wait plus the 45-second launch
+probe; verification, the bundle deadline plus the stability window in Debug
+(`VERIFY_TIMEOUT_MS + STABILITY_WINDOW_MS`, 23 seconds today) and the release
+probe otherwise. The 60-second floor absorbs poll granularity and constant
+changes. The iOS install timeout is the existing five minutes;
 `adb install` gains the same timeout, which also ends the hang a stuck adb
-causes today. A run killed with SIGKILL leaves the device leased for at most
-the current step's timeout.
+causes today. A run killed with SIGKILL leaves the device leased for at most the current
+step's bound, never less than 60 seconds.
 
 - If the workspace holds a lease on the chosen device (matched by token), the
-  run raises its expiry as above and leaves it where that lands at exit: a
-  declared lease that would have expired during an install ends after that
-  step instead; a declared lease longer than the run is untouched. A run
+  run raises its expiry as above and leaves it where that lands at exit: a declared lease that would have expired during the run ends after the
+  run's last device step instead; a declared lease longer than the run is
+  untouched. A run
   never converts a declared lease into a run-scoped one.
 - If nobody holds the device, the run takes a run-scoped lease and releases
   it at command exit, whatever the exit path. The iOS collector and the app
@@ -144,8 +151,16 @@ the current step's timeout.
   refuses with `STIM_DEVICE_BUSY`. `--wait 0` refuses at once.
 - A raise that finds the lease gone or held under another token fails.
   Before the install the run refuses with `STIM_DEVICE_LOST` naming the new
-  holder; after the install has started it continues and prints one warning,
-  because the app is already on the phone.
+  holder; after the install has started it continues, prints one warning, and reports
+  `lease: null` in `--json`, because the app is already on the phone.
+- A run with an id that differs from this workspace's leased device of that
+  platform refuses with `STIM_NO_DEVICE` naming the leased device; `unlock`
+  first, or use it.
+- A lease whose holder is this root but whose token is unknown (the workspace
+  directory was recreated) refuses at once with `STIM_DEVICE_BUSY` and the
+  remedy `stim device unlock`, which releases by holder root.
+- A raise on an expired file that still carries the run's own token succeeds
+  and revives the lease: nobody took it under the lock.
 - `--no-wait` changes only what happens when another workspace holds the
   device: instead of waiting, the run proceeds without a lease and prints
   one warning line to stderr naming the holder and its expiry, and, when the
@@ -265,6 +280,8 @@ Invariant 3's option list gains `--wait <seconds> --no-wait` on `ios` and
   no file) and on a free one (lease taken), the per-step raise, the run
   lease released on success, failure, and exception; `status`, `stop`,
   `worktree remove`, `gc`.
+- The verification raise covers the stability window: a proof arriving at
+  the bundle deadline leaves the lease unexpired until the window ends.
 - Guide contract tests for the paragraph, the codes, and the option lines.
 
 Hardware, one phone: lock from workspace A; `ios --device` from B waits and
@@ -276,24 +293,25 @@ only when two are connected; until then its selection is unit-tested.
 
 ## Decisions
 
-| Question                                               | Decision                                                                                       | Why                                                                                                                                           |
-| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| Adding `device lock` and `device unlock` and two flags | Approved by the maintainer, 2026-09-02                                                         | A shared phone has no other arbiter                                                                                                           |
-| What keeps a lease alive                               | A declared duration, raised only by a run's own device steps                                   | Activity-based refresh keeps a dead agent's phone busy for as long as its app runs, which is forever; a declared lease is bounded and visible |
-| How a run keeps the device during an install           | Raise the expiry before each step to now plus the step's timeout                               | Child processes are synchronous, so no timer can tick during an install                                                                       |
-| Mutations                                              | Under the directory lock, re-read, one rule, temp file and rename                              | A plain rename on renew overwrites a claimant that just took an expired lease                                                                 |
-| Opt-out of waiting                                     | `--no-wait` proceeds without a lease when the device is held; a free device is leased as usual | Maintainer's call; the warning names the holder and the cost                                                                                  |
-| Holder identity                                        | The workspace root, at most one lease per platform                                             | Agents have no stable process; every other Stim state is per workspace                                                                        |
-| Default lease                                          | 5 minutes, range 10 seconds to 30 minutes                                                      | Long enough for a device-tool session, short enough that a forgotten lease clears within a run                                                |
-| Pool order                                             | Id, case-folded                                                                                | Deterministic and free; adb has no names without a probe                                                                                      |
+| Question                                               | Decision                                                                                          | Why                                                                                                                                           |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Adding `device lock` and `device unlock` and two flags | Approved by the maintainer, 2026-09-02                                                            | A shared phone has no other arbiter                                                                                                           |
+| What keeps a lease alive                               | A declared duration, raised only by a run's own device steps                                      | Activity-based refresh keeps a dead agent's phone busy for as long as its app runs, which is forever; a declared lease is bounded and visible |
+| How a run keeps the device during an install           | Raise the expiry before each step to now plus the larger of 60 seconds and the step's upper bound | Child processes are synchronous, so no timer can tick during an install                                                                       |
+| Mutations                                              | Under the directory lock, re-read, one rule, temp file and rename                                 | A plain rename on renew overwrites a claimant that just took an expired lease                                                                 |
+| Opt-out of waiting                                     | `--no-wait` proceeds without a lease when the device is held; a free device is leased as usual    | Maintainer's call; the warning names the holder and the cost                                                                                  |
+| Holder identity                                        | The workspace root, at most one lease per platform                                                | Agents have no stable process; every other Stim state is per workspace                                                                        |
+| Default lease                                          | 5 minutes, range 10 seconds to 30 minutes                                                         | Long enough for a device-tool session, short enough that a forgotten lease clears within a run                                                |
+| Pool order                                             | Id, case-folded                                                                                   | Deterministic and free; adb has no names without a probe                                                                                      |
 
 ## Phases
 
 1. `engine/device-lease.ts`, the file protocol, `status`, `stop`, `worktree
-remove`, `gc`, and the AGENTS.md deltas (a lease file exists from here
-   on).
+remove`, `gc`, and the AGENTS.md deltas except the command-surface
+   sentence (a lease file exists from here on).
 2. `ios`/`android`: the run-scoped lease, the per-step raise, the adb install
    timeout, `--wait`, `--no-wait`, `STIM_DEVICE_BUSY`, `STIM_DEVICE_LOST`.
-3. `device lock` and `device unlock`, guide and skill text.
+3. `device lock` and `device unlock`, guide and skill text, and the AGENTS.md
+   command-surface sentence.
 4. The pool.
 5. Hardware verification.
