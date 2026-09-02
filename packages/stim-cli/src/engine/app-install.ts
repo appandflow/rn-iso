@@ -14,6 +14,7 @@ const IOS_SCHEME_APPROVAL_DOMAIN = 'com.apple.launchservices.schemeapproval';
 const IOS_SCHEME_APPROVAL_OPENER = 'com.apple.CoreSimulator.CoreSimulatorBridge';
 const IOS_DEV_MENU_OFF_KEYS = ['EXDevMenuShowsAtLaunch', 'EXDevMenuShowFloatingActionButton'];
 const DEV_CLIENT_ONBOARDING_QUERY = 'disableOnboarding=1';
+const DEV_CLIENT_DISABLE_FAB_QUERY = 'disableFab=1';
 const ANDROID_DISABLE_AUTO_LAUNCH_EXTRA = 'EXDevMenuDisableAutoLaunch';
 
 interface ExecOpt {
@@ -120,11 +121,12 @@ export function jsLocationValue(metroPort: number | string): string {
 // not the outer deep link: EXDevLauncherController.m hands `devLauncherUrl.url`
 // to EXDevLauncherURLHelper.disableOnboardingPopupIfNeeded. It sets
 // EXDevMenuIsOnboardingFinished alone; EXDevMenuShowsAtLaunch is a separate
-// preference. Android reads the flag on either url, and its
-// EXDevMenuDisableAutoLaunch intent extra sets both (DevLauncherController.kt).
+// preference. Android reads the flag on either url. DevLauncherController.kt's
+// EXDevMenuDisableAutoLaunch extra does not disable the FAB; expo/expo#49651
+// adds the outer disableFab query parameter for that.
 export function devClientDeepLink(scheme: string, projectOrigin: string): string {
   const projectUrl = `${projectOrigin.replace(/\/+$/, '')}/?${DEV_CLIENT_ONBOARDING_QUERY}`;
-  return `${scheme}://expo-development-client/?url=${encodeURIComponent(projectUrl)}`;
+  return `${scheme}://expo-development-client/?url=${encodeURIComponent(projectUrl)}&${DEV_CLIENT_DISABLE_FAB_QUERY}`;
 }
 
 export function devClientUrl(scheme: string, metroPort: number | string, host = 'localhost'): string {

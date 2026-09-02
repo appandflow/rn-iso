@@ -123,7 +123,7 @@ line by design (see \`guide logs\`), not this single-payload contract.
                                  dev-client server picker awaiting a tap
                   EVERY DEV-CLIENT DEEP LINK CARRIES disableOnboarding=1
                   INSIDE ITS PROJECT URL
-                  (\`...?url=http%3A%2F%2Fhost%3Aport%2F%3FdisableOnboarding%3D1\`),
+                  (\`...?url=http%3A%2F%2Fhost%3Aport%2F%3FdisableOnboarding%3D1&disableFab=1\`),
                   and expo-dev-launcher finishes its own dev-menu ONBOARDING
                   when it reads it. That is all the flag does: it sets
                   EXDevMenuIsOnboardingFinished. ON iOS it has to sit on the
@@ -143,14 +143,23 @@ line by design (see \`guide logs\`), not this single-payload contract.
                   on the app. The
                   unverified warning therefore leads with the picker, then
                   prints the openurl
-                  retry. ON ANDROID the same deep link also carries the
+                  retry. ON LOCAL ANDROID the same deep link also carries the
                   \`EXDevMenuDisableAutoLaunch\` boolean intent extra, which
-                  the launcher reads to set BOTH preferences -- so the
-                  emulator and the phone need no writes at all -- and the
-                  list leads with that command (\`am start -a
+                  the launcher reads to set EXDevMenuShowsAtLaunch=false and
+                  EXDevMenuIsOnboardingFinished=true. It stops the menu
+                  opening automatically, but does NOT set expo-dev-menu's
+                  showFab preference, so its floating Tools button can remain.
+                  Remote Android opens only the URL, so that intent-extra
+                  suppression does not apply there.
+                  Every Stim deep link also carries an outer \`disableFab=1\`
+                  query parameter. Versions with expo/expo#49651 use that as a
+                  session-only override; earlier versions ignore it. Stim does
+                  not rewrite expo-dev-menu's private SharedPreferences XML:
+                  that internal file is not a supported API, and changing it
+                  would persist over the user's own Tools-button setting. The
+                  list leads with the supported launch command (\`am start -a
                   android.intent.action.VIEW -d '<devClientUrl>'
-                  --ez EXDevMenuDisableAutoLaunch true\`), which is the whole
-                  answer when the app has a scheme.
+                  --ez EXDevMenuDisableAutoLaunch true\`).
                   ON A PHONE NONE OF THAT PREAPPROVAL APPLIES. The
                   preapproval and that write both go
                   through \`simctl spawn defaults write\`, and devicectl has
@@ -189,8 +198,9 @@ line by design (see \`guide logs\`), not this single-payload contract.
                   \`agent-device press 'label="Close"'\` dismisses it -- or
                   \`snapshot -i\` and the ref. The onboarding key the flag
                   writes and the Local Network grant both survive an
-                  UPGRADE install. Android needs neither mechanism: its intent
-                  extra sets both preferences.
+                  UPGRADE install. Android's intent extra prevents the menu's
+                  automatic launch; versions with expo/expo#49651 also honor
+                  the session-only FAB flag in Stim's deep link.
                   The phone's unverified remedy is also ROUTED, not a fixed
                   list. When this launch's device records carry the Local
                   Network path reason, the remedy leads with that evidence and
