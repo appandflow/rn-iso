@@ -14,12 +14,14 @@ import {
   iosLaunchRefusalKind,
   iosLaunchRemedy,
   listIosDevices,
+  localNetworkPending,
   parseDevicectlDevices,
   parseDeviceProcesses,
   resolveIosPhysicalDevice,
   verifyIosDeviceReleaseLaunch,
   type IosDeviceEntry,
 } from '../engine/ios-device.ts';
+import { deviceConsoleLevel, parseDeviceConsoleLine } from '../collector/ios-device.ts';
 import { hostLanCandidates, lanCandidates } from '../engine/lan-address.ts';
 
 const PHONE = '00008030-001A2B3C4D5E802E';
@@ -563,6 +565,98 @@ test('verifyIosDeviceReleaseLaunch re-probes the phone rather than a host pid', 
     sleep: async () => {},
   });
   expect(blind).toMatchObject({ verified: false, reason: 'probe-failed' });
+});
+
+const LAN_ORIGIN = 'http://10.0.0.132:8082';
+const APP_PID = 909;
+
+function fixtureLines(name: string): string[] {
+  return readFileSync(new URL(`./fixtures/ios-device/${name}`, import.meta.url), 'utf-8')
+    .split('\n')
+    .filter((line) => line.trim().length > 0);
+}
+
+function deviceRecords(lines: readonly string[], { ts = 2000, pid = APP_PID }: { ts?: number; pid?: number } = {}) {
+  return lines.map((msg) => ({ ts, src: 'device', level: 'info', msg, proc: `Trailhead(${pid})`, raw: true }));
+}
+
+describe('localNetworkPending', () => {
+  const pending = deviceRecords(fixtureLines('local-network-pending.txt'));
+
+  test('matches the capture a phone produced while the prompt was up', () => {
+    expect(localNetworkPending(pending, { since: 1000, pid: APP_PID, lanOrigin: LAN_ORIGIN })).toBe(true);
+  });
+
+  test('each carrying line in that capture matches on its own', () => {
+    const carriers = pending.filter((record) =>
+      /failed to connect 1:50|encountered error\(1:50\)|error code: -1009 \[1:50\]|Local network prohibited/.test(
+        record.msg,
+      ),
+    );
+    expect(carriers.length).toBeGreaterThan(0);
+    for (const record of carriers) {
+      expect(localNetworkPending([record], { since: 0, pid: APP_PID, lanOrigin: LAN_ORIGIN })).toBe(true);
+    }
+  });
+
+  test('a refused connection, a satisfied path, and unrelated nw_ noise are not it', () => {
+    const negatives = deviceRecords(fixtureLines('local-network-negatives.txt'));
+    expect(localNetworkPending(negatives, { since: 0, pid: APP_PID, lanOrigin: LAN_ORIGIN })).toBe(false);
+    for (const record of negatives) {
+      expect(localNetworkPending([record], { since: 0, pid: APP_PID, lanOrigin: LAN_ORIGIN })).toBe(false);
+    }
+  });
+
+  // The last negative IS the signature; only the origin it names disqualifies
+  // it, so pointing the workspace at that origin has to flip the verdict.
+  test("the same -1009 matches when the origin it names is this workspace's", () => {
+    const negatives = deviceRecords(fixtureLines('local-network-negatives.txt'));
+    const foreign = negatives[negatives.length - 1]!;
+    expect(foreign.msg).toContain('Local network prohibited');
+    expect(localNetworkPending([foreign], { since: 0, pid: APP_PID, lanOrigin: LAN_ORIGIN })).toBe(false);
+    expect(localNetworkPending([foreign], { since: 0, pid: APP_PID, lanOrigin: 'http://192.168.4.21:8081' })).toBe(
+      true,
+    );
+  });
+
+  test('records from before this launch and from another process do not count', () => {
+    const scope = { pid: APP_PID, lanOrigin: LAN_ORIGIN };
+    expect(
+      localNetworkPending(deviceRecords(fixtureLines('local-network-pending.txt'), { ts: 999 }), {
+        ...scope,
+        since: 1000,
+      }),
+    ).toBe(false);
+    expect(
+      localNetworkPending(deviceRecords(fixtureLines('local-network-pending.txt'), { pid: 42 }), {
+        ...scope,
+        since: 1000,
+      }),
+    ).toBe(false);
+    expect(
+      localNetworkPending(deviceRecords(fixtureLines('local-network-pending.txt'), { pid: 42 }), {
+        since: 1000,
+        pid: null,
+        lanOrigin: LAN_ORIGIN,
+      }),
+    ).toBe(true);
+  });
+
+  test('no LAN origin means no verdict', () => {
+    expect(localNetworkPending(pending, { since: 0, pid: APP_PID, lanOrigin: null })).toBe(false);
+  });
+
+  // Design rule: severity is never guessed for a phone's records. Routing the
+  // remedy must not promote one, or `logs --errors` would grow a device source.
+  test('the capture stays info, so nothing new reaches `logs --errors`', () => {
+    for (const line of fixtureLines('local-network-pending.txt')) {
+      expect(deviceConsoleLevel(line)).toBe('info');
+      expect(parseDeviceConsoleLine(line)?.level).toBe('info');
+    }
+    const before = JSON.stringify(pending);
+    localNetworkPending(pending, { since: 0, pid: APP_PID, lanOrigin: LAN_ORIGIN });
+    expect(JSON.stringify(pending)).toBe(before);
+  });
 });
 
 describe('listIosDevices against a real devicectl', { skip: LIVE as unknown as boolean }, () => {

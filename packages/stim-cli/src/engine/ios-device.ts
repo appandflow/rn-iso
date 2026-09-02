@@ -488,3 +488,55 @@ export async function verifyIosDeviceReleaseLaunch({
   if (pid === undefined) return { verified: false, reason: 'probe-failed', waitedMs };
   return pid === null ? { verified: false, reason: 'exited', waitedMs, pid: null } : { verified: true, waitedMs, pid };
 }
+
+// iOS answers every LAN connection with POSIX ENETDOWN (stream error 50) for as
+// long as the "find and connect to devices on your local network" prompt is
+// unanswered or denied, and CFNetwork reports that as NSURLErrorDomain -1009
+// with _NSURLErrorNWPathKey=unsatisfied (Local network prohibited). Captured
+// shapes: __tests__/fixtures/ios-device/local-network-pending.txt.
+const LOCAL_NETWORK_MARKERS: RegExp[] = [
+  /_NSURLErrorNWPathKey=unsatisfied \(Local network prohibited\)/,
+  /Code=-1009\b[\s\S]*_kCFStreamErrorCodeKey=50\b/,
+  /\bfailed to connect 1:50\b/,
+  /\bencountered error\(1:50\)/,
+  /\(error code: -1009 \[1:50\]\)/,
+];
+
+const LOGGED_URL = /\bhttps?:\/\/[^\s,;"')\]}]+/gi;
+
+function originOf(value: string): string | null {
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
+}
+
+function namesOtherOrigin(message: string, lanOrigin: string): boolean {
+  const expected = originOf(lanOrigin);
+  if (!expected) return false;
+  for (const found of message.match(LOGGED_URL) ?? []) {
+    const origin = originOf(found);
+    if (origin && origin !== expected) return true;
+  }
+  return false;
+}
+
+// Remedy routing only: no record's level is touched, because device severity is
+// never guessed (`guide logs`).
+export function localNetworkPending(
+  records: readonly NdjsonRecord[],
+  { since = 0, pid = null, lanOrigin }: { since?: number; pid?: number | null; lanOrigin: string | null },
+): boolean {
+  if (!lanOrigin) return false;
+  const fromApp = pid ? new RegExp(`\\(${pid}\\)$`) : null;
+  for (const entry of records) {
+    if (Number(entry.ts) < since) continue;
+    if (fromApp && !(typeof entry.proc === 'string' && fromApp.test(entry.proc))) continue;
+    const msg = typeof entry.msg === 'string' ? entry.msg : '';
+    if (!LOCAL_NETWORK_MARKERS.some((marker) => marker.test(msg))) continue;
+    if (namesOtherOrigin(msg, lanOrigin)) continue;
+    return true;
+  }
+  return false;
+}

@@ -104,6 +104,17 @@ other line goes to stderr, so it is always safe to pipe.
                                  finishing
                     "unverified" nothing was observed at all: usually a
                                  dev-client server picker awaiting a tap
+                  ON A PHONE the unverified remedy is ROUTED, not a fixed list.
+                  When this launch's device records carry the Local Network
+                  ENETDOWN signature against this workspace's LAN origin, the
+                  remedy leads with that evidence and with
+                  \`agent-device alert get\`, \`alert accept\`, then
+                  \`snapshot -i\` and \`press 'label="Reload"'\` -- the grant
+                  alone does not reload the dev client. Otherwise the network
+                  list stays. Routing changes no record's level, so nothing new
+                  reaches \`logs --errors\`. The OTHER first-launch tap,
+                  developer trust, has no API at all and is always the user's.
+                  \`guide errors\` has the signature and the full commands.
                   Before a local dev-client openurl, Stim preapproves
                   CoreSimulatorBridge for exactly the installed bundle id and
                   discovered scheme on its owned simulator. That suppresses
@@ -755,6 +766,67 @@ STIM_LAN_METRO_UNREACHABLE
   routes a host connection to its own address over loopback, so the gate passes
   through a firewall that will block the phone. That evidence only ever arrives
   from the phone's own bundle request, which is what \`launched\` reports.
+
+LAUNCH UNVERIFIED WITH THE LOCAL NETWORK PROMPT UP (not a code -- a routed remedy)
+  iOS answers every LAN connection with ENETDOWN -- POSIX error 50, surfaced by
+  CFNetwork as NSURLErrorDomain -1009 "The Internet connection appears to be
+  offline." with _kCFStreamErrorCodeKey=50 and _NSURLErrorNWPathKey=unsatisfied
+  (Local network prohibited) -- for the whole time the "would like to find and
+  connect to devices on your local network" prompt is unanswered. That
+  signature is read out of THIS launch's device records (since the launch, and
+  the app's pid when it is known) and matched against THIS workspace's LAN
+  origin; a -1009 naming another origin is not it. Matching only picks the
+  remedy: no record's level changes, so the device source stays out of
+  \`logs --errors\` (\`guide logs\`: severity is never guessed on a phone).
+  When it matches, \`launched: "unverified"\` leads with that evidence and with
+  the recovery, in this order:
+
+    agent-device alert get --platform ios --udid <udid>
+    agent-device alert accept --platform ios --udid <udid>
+    agent-device snapshot -i --platform ios --udid <udid>
+    agent-device press 'label="Reload"' --platform ios --udid <udid>
+
+  \`alert get\` reads the alert without opening anything, so it works while the
+  app sits behind it. THE GRANT ALONE IS NOT ENOUGH: the dev client does not
+  retry, and stays on "Failed to load app ... The Internet connection appears
+  to be offline." with a Reload button, which is why the last two lines are
+  there. The text form of the press target is \`label="Reload"\` (or
+  \`text="Reload"\`); a bare \`press "Reload"\` is rejected.
+
+  A BARE APP (no expo-dev-client) gets the same first two commands and a
+  different third. The prompt fires the same way, because it is fired by any
+  LAN connection to the Metro host, and the log signature is CFNetwork's either
+  way -- the classifier keys on the LAN origin alone and knows nothing about
+  dev clients. What differs is the screen: a bare app shows React Native's
+  RedBox, "Could not connect to development server". Press its Reload button,
+  found with \`agent-device snapshot -i\`; the button's exact accessibility
+  label has not been read off hardware, so \`snapshot -i\` is how you get the
+  target rather than a literal to copy.
+
+  \`agent-device metro reload\` does NOT recover either screen. It only reaches
+  an app already connected to Metro's websocket, and an app stopped by this
+  permission never connected.
+
+  Without agent-device,
+  \`xcrun devicectl device process launch --device <udid> --terminate-existing
+  [--payload-url '<devClientUrl>'] <bundleId>\` also recovers, and it costs the
+  device log: it replaces the process the collector follows, so
+  \`stim logs --source device\` stops for the rest of that run. For a dev
+  client, pressing Reload is cheaper and keeps the collector alive. For a bare
+  app the relaunch is the cleanest recovery, because it re-reads ip.txt. By
+  hand it is two taps either way: Allow, then Reload.
+
+  WHAT HAS ACTUALLY RUN: the dev-client path above was performed on a phone --
+  the alert, the accept, the unchanged error screen, the Reload press, and the
+  bundle that followed. The bare path has NOT been exercised on hardware; there
+  is no provisioned bare project to run it on. Its signature and its remedy are
+  reasoned from the same CFNetwork evidence and from React Native's own
+  RedBox, not observed.
+
+  THE OTHER ONE-TIME TAP HAS NO API. The developer-trust tap (Settings >
+  General > VPN & Device Management) is refused to automation by the same gate
+  that refuses the app, agent-device's own runner included, so its remedy is
+  "ask the user" and nothing else. An uninstall clears both.
 
 STIM_NO_DEVICE
   With \`--device\`, no physical device answered the selection: none connected,

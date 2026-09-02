@@ -1,0 +1,9 @@
+Connection 3: received failure notification
+Connection 3: failed to connect 1:61, reason -1
+Connection 3: encountered error(1:61)
+Task <9C0E1F22-1A0B-4E58-9F1D-6D2C2B77A1E4>.<3> HTTP load failed, 0/0 bytes (error code: -1004 [1:61])
+Task <9C0E1F22-1A0B-4E58-9F1D-6D2C2B77A1E4>.<3> finished with error [-1004] Error Domain=NSURLErrorDomain Code=-1004 "Could not connect to the server." UserInfo={_kCFStreamErrorCodeKey=61, NSUnderlyingError=0x302af7220 {Error Domain=kCFErrorDomainCFNetwork Code=-1004 "(null)" UserInfo={_NSURLErrorNWPathKey=satisfied (Path is satisfied), interface: en0[802.11], ipv4, dns, uses wifi, _kCFStreamErrorCodeKey=61, _kCFStreamErrorDomainKey=1}}, NSErrorFailingURLStringKey=http://10.0.0.132:8082/, NSErrorFailingURLKey=http://10.0.0.132:8082/}
+nw_connection_copy_connected_local_endpoint_block_invoke [C4] Client called nw_connection_copy_connected_local_endpoint on unconnected nw_connection
+nw_endpoint_handler_add_multipath_subflow [C5.1 10.0.0.9:443 waiting parent-flow (satisfied (Path is satisfied), interface: en0[802.11], ipv4, dns, uses wifi)] no multipath service
+nw_socket_handle_socket_event [C6:2] Socket SO_ERROR [50: Network is down]
+Task <2AB4F0C1-77D3-4C0A-9E5F-1B8E9A0D3C77>.<4> finished with error [-1009] Error Domain=NSURLErrorDomain Code=-1009 "The Internet connection appears to be offline." UserInfo={_kCFStreamErrorCodeKey=50, NSUnderlyingError=0x302ac1180 {Error Domain=kCFErrorDomainCFNetwork Code=-1009 "(null)" UserInfo={_NSURLErrorNWPathKey=unsatisfied (Local network prohibited), interface: en0[802.11], ipv4, uses wifi, _kCFStreamErrorCodeKey=50, _kCFStreamErrorDomainKey=1}}, NSErrorFailingURLStringKey=http://192.168.4.21:8081/, NSErrorFailingURLKey=http://192.168.4.21:8081/}

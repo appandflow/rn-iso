@@ -373,6 +373,41 @@ test('the guide says a phone loses its running app when the collector ends', () 
   expect(lifecycle).toMatch(/stays INSTALLED/);
 });
 
+test('the guide gives the Local Network signature, its recovery commands, and the tap that has none', () => {
+  const errors = renderTopic('errors');
+  const facts = renderTopic('facts');
+  assert(errors);
+  assert(facts);
+
+  expect(errors).toMatch(/LAUNCH UNVERIFIED WITH THE LOCAL NETWORK PROMPT UP/);
+  expect(errors).toMatch(/_kCFStreamErrorCodeKey=50[\s\S]*_NSURLErrorNWPathKey=unsatisfied/);
+  expect(errors).toMatch(/matched against THIS workspace's LAN\s+origin/);
+  expect(errors).toMatch(/no record's level changes[\s\S]*stays out of\s+`logs --errors`/);
+  for (const command of [
+    'agent-device alert get --platform ios --udid <udid>',
+    'agent-device alert accept --platform ios --udid <udid>',
+    'agent-device snapshot -i --platform ios --udid <udid>',
+    `agent-device press 'label="Reload"' --platform ios --udid <udid>`,
+  ]) {
+    expect(errors).toContain(command);
+  }
+  expect(errors).toMatch(/THE GRANT ALONE IS NOT ENOUGH[\s\S]*does not\s+retry/);
+  expect(errors).toMatch(/A BARE APP \(no expo-dev-client\)[\s\S]*Could not connect to development server/);
+  expect(errors).toMatch(/keys on the LAN origin alone and knows nothing about\s+dev clients/);
+  expect(errors).toMatch(/`agent-device metro reload` does NOT recover either screen/);
+  expect(errors).toMatch(/never connected/);
+  expect(errors).toMatch(/WHAT HAS ACTUALLY RUN[\s\S]*bare path has NOT been exercised on hardware/);
+  expect(errors).toMatch(/--terminate-existing[\s\S]*replaces the process the collector follows/);
+  expect(errors).toMatch(/`stim logs --source device` stops for the rest of that run/);
+  expect(errors).toMatch(/THE OTHER ONE-TIME TAP HAS NO API[\s\S]*agent-device's own runner included/);
+  expect(errors).toMatch(/its remedy is\s+"ask the user"/);
+
+  expect(facts).toMatch(/ON A PHONE the unverified remedy is ROUTED, not a fixed list/);
+  expect(facts).toMatch(/the grant\s+alone does not reload the dev client/);
+  expect(facts).toMatch(/Routing changes no record's level/);
+  expect(facts).toMatch(/developer trust, has no API at all and is always the user's/);
+});
+
 test('the errors topic documents every code the build commands and the iOS signing gate can emit', () => {
   const body = renderTopic('errors');
   assert(body);

@@ -12,7 +12,7 @@ device with another workspace. Run it without installing:
 npx stim-cli <command>
 ```
 
-The user can instead install it once, which provides the same `stim` command:
+Or install it once, which provides the same `stim` command:
 
 ```bash
 npm install --global stim-cli
@@ -21,8 +21,8 @@ npm install --global stim-cli
 Do not change the installation mode unless the user asks. Later examples use
 `stim`. If it is not installed globally, replace `stim` with the `npx` form above.
 
-Stim requires Node 20.19.4 or later on Node 20, or Node 22.12.0 or
-later. If `npx` returns E401 or E404 in a repo with a private registry, use:
+Stim requires Node 20.19.4+, or 22.12.0+ on Node 22. If `npx` returns E401 or
+E404 in a repo with a private registry, use:
 
 ```bash
 npx --registry=https://registry.npmjs.org stim-cli <command>
@@ -40,21 +40,20 @@ outputs.
 
 Before a native worktree task, run `stim doctor`. Doctor checks the main
 checkout even when it runs from a linked worktree. Fix its main-checkout
-dependency and CocoaPods findings. Inspect any locally known upstream gap.
+dependency and CocoaPods findings.
 
 ```bash
 stim doctor
 
-# When more native worktrees are expected, build the main checkout once to
-# seed the shared build caches. Run these commands in the main checkout. Skip
-# this for one-off or JavaScript-only work.
+# In the main checkout, build once to seed the shared build caches when more
+# native worktrees are coming. Skip for one-off or JavaScript-only work.
 stim start
 stim ios                    # or: stim android
 stim stop
 
-# By default, this branches from the current HEAD. The warm flag carries installed
-# dependencies and native output. Use it on the first creation. Do not create a
-# cold worktree first and retry. The command prints the new absolute path.
+# Branches from the current HEAD. --carry-ignored carries installed dependencies
+# and native output: pass it on the first creation, never a cold worktree and a
+# retry. It prints the new absolute path.
 stim worktree create <name> --carry-ignored
 cd <printed-path>
 
@@ -76,9 +75,9 @@ Follow these rules during the loop:
 - Run `start` before a debug `ios` or `android` build. If the build returns
   `STIM_NO_METRO`, run `stim start` and retry.
 - Run `ios` or `android` again after a native input changes. A JavaScript-only
-  change does not need another native build.
-- A cold native build can outlive a shell timeout. Run the same build command
-  again. The second call joins the active build or returns its result.
+  change does not need one.
+- A cold native build can outlive a shell timeout. Run the same command again:
+  the second call joins the active build or returns its result.
 - `ios` and `android` install the app, launch it, and check its readiness. No
   separate device tool is required. Trust the exact device, app, Metro, and
   launch facts in Stim's final summary. Use the full reported device ID. Never
@@ -93,7 +92,7 @@ Follow these rules during the loop:
   records match. Do not read the NDJSON files directly.
 - Use `stim status` when resuming a workspace or recovering missing device,
   port, server, or build facts. A normal `start` and platform run already print
-  the facts needed for the next step. Use `stim doctor` when a build is
+  what the next step needs. Use `stim doctor` when a build is
   unexpectedly slow or the environment looks incomplete.
 
 ## Ownership and deletion
@@ -105,6 +104,10 @@ simulator.
 `stim android --device [serial]` and `stim ios --device [udid]` install on a
 connected physical device. Stim never creates, boots, or deletes hardware, and
 records nothing about it, so `stop` and `gc` leave it alone.
+
+A physical iPhone's first launch can need two one-time phone taps: developer
+trust, which only the user can grant, and Local Network, which a device tool
+accepts. The remedy names which; an uninstall clears both.
 
 Treat a refusal as an ownership or state mismatch. Read its code and remedy.
 Do not add `--force` as a first response.

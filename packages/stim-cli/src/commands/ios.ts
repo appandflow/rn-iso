@@ -70,6 +70,7 @@ import {
   installIosDeviceApp,
   iosDeviceProcess,
   listIosDevices,
+  localNetworkPending,
   resolveIosPhysicalDevice,
   verifyIosDeviceReleaseLaunch,
 } from '../engine/ios-device.ts';
@@ -1035,6 +1036,13 @@ async function verifyIosRun({
     devClient: Boolean(scheme),
     lanOrigin,
     metroOrigin,
+    localNetworkPending:
+      physical &&
+      localNetworkPending(readCollectorRecords(logsDir), {
+        since: launchedAt,
+        pid: launched?.pid ?? null,
+        lanOrigin,
+      }),
   }))
     note(chalk.yellow(phaseLine('', line)));
   return LAUNCH_UNVERIFIED;

@@ -737,6 +737,85 @@ describe('unverifiedLaunchLines: the action comes first', () => {
   });
 });
 
+describe('unverifiedLaunchLines: the routed Local Network remedy', () => {
+  const base = {
+    platform: 'ios',
+    metroPort: 8082,
+    waitedMs: 20000,
+    bundleId: 'io.tlon.groups',
+    udid: 'BF2A1C3D',
+    physical: true,
+    lanOrigin: 'http://10.0.0.132:8082',
+    localNetworkPending: true,
+  } as const;
+
+  function devClientLines() {
+    return unverifiedLaunchLines({
+      ...base,
+      devClient: true,
+      devClientUrl: devClientUrl('io.tlon.groups', 8082, '10.0.0.132'),
+    });
+  }
+
+  test('the evidence leads, then the commands in the order they have to run', () => {
+    const lines = devClientLines();
+    expect(lines[1]).toMatch(/THE PHONE'S LOCAL NETWORK PERMISSION IS NOT GRANTED/);
+    expect(lines[1]).toMatch(/http:\/\/10\.0\.0\.132:8082/);
+    const at = (pattern: RegExp) => lines.findIndex((line) => pattern.test(line));
+    const order = [
+      at(/agent-device alert get/),
+      at(/agent-device alert accept/),
+      at(/agent-device snapshot -i/),
+      at(/xcrun devicectl device process launch/),
+      at(/By hand/),
+    ];
+    expect(order.every((i) => i >= 0)).toBe(true);
+    expect(order).toEqual([...order].toSorted((a, b) => a - b));
+    expect(at(/agent-device press 'label="Reload"'/)).toBe(at(/agent-device snapshot -i/));
+  });
+
+  test('it replaces the network list rather than adding to it', () => {
+    const text = devClientLines().join('\n');
+    expect(text).not.toMatch(/socketfilterfw/);
+    expect(text).not.toMatch(/same Wi-Fi SSID/);
+    expect(text).not.toMatch(/DEVELOPMENT SERVERS/);
+    expect(text).toMatch(/replaces the process the collector follows/);
+    expect(text).toMatch(/`agent-device metro reload` does NOT recover either screen/);
+  });
+
+  test('a bare app gets the RedBox and a relaunch with no payload URL', () => {
+    const text = unverifiedLaunchLines({ ...base, devClient: false }).join('\n');
+    expect(text).toMatch(/agent-device alert accept/);
+    expect(text).toMatch(/Could not connect to development server/);
+    expect(text).toMatch(/re-reads ip\.txt/);
+    expect(text).toMatch(
+      /xcrun devicectl device process launch --device BF2A1C3D --terminate-existing io\.tlon\.groups/,
+    );
+    expect(text).not.toMatch(/--payload-url/);
+    expect(text).not.toMatch(/label="Reload"/);
+  });
+
+  test('without the signature the network list stays, with the pre-grant wording fixed', () => {
+    const text = unverifiedLaunchLines({ ...base, localNetworkPending: false, devClient: true }).join('\n');
+    expect(text).toMatch(/cannot be PRE-granted from this machine/);
+    expect(text).toMatch(/agent-device alert get, then agent-device alert accept/);
+    expect(text).not.toMatch(/cannot be granted from this machine/);
+    expect(text).toMatch(/socketfilterfw/);
+    expect(text).not.toMatch(/LOCAL NETWORK PERMISSION IS NOT GRANTED/);
+  });
+
+  test('a simulator never takes the routed remedy, whatever the flag says', () => {
+    const text = unverifiedLaunchLines({
+      ...base,
+      physical: false,
+      devClient: true,
+      devClientUrl: devClientUrl('io.tlon.groups', 8082),
+    }).join('\n');
+    expect(text).not.toMatch(/LOCAL NETWORK PERMISSION IS NOT GRANTED/);
+    expect(text).toMatch(/DEVELOPMENT SERVERS/);
+  });
+});
+
 describe('the debug_http_host script, run for real under sh', () => {
   let dir: string;
   const PKG = 'com.example.app';

@@ -946,6 +946,7 @@ export function unverifiedLaunchLines({
   devClient = false,
   lanOrigin = null,
   metroOrigin = null,
+  localNetworkPending = false,
 }: {
   platform: string;
   metroPort: number | string;
@@ -960,18 +961,27 @@ export function unverifiedLaunchLines({
   devClient?: boolean;
   lanOrigin?: string | null;
   metroOrigin?: string | null;
+  localNetworkPending?: boolean;
   // Explicit return type: isolatedDeclarations requires one at every module
   // boundary.
 }): string[] {
   const seconds = Math.round(Number(waitedMs || 0) / 1000);
+  const localNetwork = localNetworkPending && platform === 'ios' && physical;
   const lines = [
     `The app was started, but nothing fetched a bundle from this workspace's Metro (port ${metroPort}) within ${seconds}s.`,
-    'The app is launched; what is unproven is that it is talking to THIS dev server. Do this, in order:',
   ];
   const origin = metroOrigin || `http://localhost:${metroPort}`;
   const picker = `If expo-dev-launcher's DEVELOPMENT SERVERS picker is showing, tap the entry for ${origin} -- NOT another workspace's, which would load a different project's bundle onto this device.`;
   let step = 0;
   const push = (text: string) => lines.push(`  ${++step}. ${text}`);
+  lines.push(
+    localNetwork
+      ? `THE PHONE'S LOCAL NETWORK PERMISSION IS NOT GRANTED: every LAN connection this launch made failed with stream ` +
+          `error 50 (ENETDOWN) as NSURLErrorDomain -1009, which is what iOS returns for the whole time the ` +
+          `"would like to find and connect to devices on your local network" prompt is unanswered. Nothing the app ` +
+          `sends reaches ${lanOrigin || origin} until it is accepted. Do this, in order:`
+      : 'The app is launched; what is unproven is that it is talking to THIS dev server. Do this, in order:',
+  );
   if (remote) {
     push(
       `Check that ${origin} is reachable FROM THE DEVICE's network, not just from this machine. That is the usual cause: a tunnel that stopped, or one this machine can reach and the device cannot.`,
@@ -984,11 +994,55 @@ export function unverifiedLaunchLines({
   }
   if (platform === 'ios' && physical) {
     const target = lanOrigin || origin;
+    const relaunch =
+      `xcrun devicectl device process launch --device ${udid} --terminate-existing ` +
+      (url ? `--payload-url '${url}' ` : '') +
+      bundleId;
+    if (localNetwork) {
+      push(
+        `See the prompt: agent-device alert get --platform ios --udid ${udid}. It reads the alert without opening ` +
+          'anything, so it works while the app sits behind it.',
+      );
+      push(
+        `Tap Allow: agent-device alert accept --platform ios --udid ${udid}. A second \`alert get\` then finds none.`,
+      );
+      if (devClient) {
+        push(
+          'The app does NOT retry after the grant -- it stays on "Failed to load app ... The Internet connection ' +
+            `appears to be offline." with a Reload button. Press it: agent-device snapshot -i --platform ios --udid ${udid}, ` +
+            `then agent-device press 'label="Reload"' --platform ios --udid ${udid}.`,
+        );
+        push(
+          `Without agent-device, relaunching also recovers: ${relaunch}. It costs the device log -- it replaces the ` +
+            'process the collector follows, so `stim logs --source device` stops for the rest of this run. Pressing ' +
+            'Reload keeps the collector alive.',
+        );
+        push('By hand: tap Allow on the phone, then tap Reload on the app.');
+      } else {
+        push(
+          'The app does NOT retry after the grant -- a bare app shows React Native\'s RedBox, "Could not connect to ' +
+            'development server". Press the RedBox\'s Reload button, found with agent-device snapshot -i --platform ' +
+            `ios --udid ${udid}.`,
+        );
+        push(
+          `Cleanest for a bare app: relaunch, which re-reads ip.txt: ${relaunch}. It costs the device log -- it ` +
+            'replaces the process the collector follows, so `stim logs --source device` stops for the rest of this run.',
+        );
+        push('By hand: tap Allow on the phone, then tap Reload on the RedBox.');
+      }
+      lines.push(
+        '`agent-device metro reload` does NOT recover either screen: it only reaches an app already connected to ' +
+          "Metro's websocket, and this app never connected.",
+      );
+      lines.push(`Then check \`stim logs --source metro\`${mode ? ` (${mode})` : ''} for a bundle request.`);
+      return lines;
+    }
     push(
       `Tap Allow on the phone's "would like to find and connect to devices on your local network" prompt if it is showing, ` +
         'or turn the app on under Settings > Privacy & Security > Local Network. iOS gates every LAN connection behind ' +
-        'that permission, it cannot be granted from this machine, and until it is granted nothing the app sends reaches ' +
-        `${target}.`,
+        'that permission, it cannot be PRE-granted from this machine -- but once the prompt is up a device tool can ' +
+        `accept it (agent-device alert get, then agent-device alert accept, both --platform ios --udid ${udid}) -- and ` +
+        `until it is granted nothing the app sends reaches ${target}.`,
     );
     push(
       'Check the phone is on the same network as this Mac -- the same Wi-Fi SSID, not cellular, not a VPN -- and that ' +
