@@ -182,7 +182,7 @@ With no id, on `lock` or on a `--device` run:
    state that are not emulators, TCP serials included.
 2. If this workspace leases a device of that platform, that device wins when
    it is a candidate. When it is not connected, an id-less run refuses with
-   `STIM_NO_DEVICE` naming it; an id selects another device.
+   `STIM_NO_DEVICE` naming it; `unlock` first, or use that device.
 3. Otherwise the first candidate not leased, or leased and expired, wins, in
    id order (case-folded). Names are printed, never sorted on: adb has none
    without one `getprop` per serial, and models repeat.
@@ -193,6 +193,12 @@ With no id, on `lock` or on a `--device` run:
 
 The chosen device is printed and returned in `--json` (`udid` or `serial`,
 `deviceName`) so the agent can hand the same id to its device tool.
+
+**Amendment, 2026-09-02 (#233).** Rule 2 said "an id selects another device",
+which contradicts "ios and android": a run whose id differs from this
+workspace's leased device of that platform refuses with `STIM_NO_DEVICE`
+naming the leased one. Naming an id does not escape a lease this workspace
+holds, so the remedy is `unlock` first, or use the device already leased.
 
 ## Other commands
 

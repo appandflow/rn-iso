@@ -3399,15 +3399,81 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     expect(calls.order.includes('checkDeviceCapacity')).toBe(false);
   });
 
-  test('several connected phones refuse with the candidate list', async () => {
+  test('several connected phones no longer refuse: the first free one in id order is taken', async () => {
     reserve();
-    const { errs, exitCode } = await run(
-      { device: true },
+    const { errs, exitCode, logs } = await run(
+      { device: true, json: true },
+      connected([{ udid: '00008120-000A11223C44201E', name: 'Second' }, { udid: PHONE }]),
+    );
+    expect(exitCode).toBe(null);
+    expect(errs.join('\n')).not.toMatch(/STIM_NO_DEVICE/);
+    expect(parseFirst(logs).udid).toBe(PHONE);
+    expect(parseFirst(logs).deviceName).toBe('Test Phone');
+  });
+
+  test('a phone another workspace leases is skipped for the free one, whatever the order', async () => {
+    reserve();
+    takeLease({ root: '/worktree/theirs', platform: 'ios', id: PHONE, kind: 'declared' });
+    const { exitCode, logs } = await run(
+      { device: true, json: true },
+      connected([{ udid: PHONE }, { udid: '00008120-000A11223C44201E', name: 'Second' }]),
+    );
+    expect(exitCode).toBe(null);
+    expect(parseFirst(logs).udid).toBe('00008120-000A11223C44201E');
+  });
+
+  test('the phone this workspace leases wins even when another sorts first', async () => {
+    reserve();
+    const mine = takeLease({ root, platform: 'ios', id: '00008120-000A11223C44201E', kind: 'declared' });
+    assert(mine.status === 'taken');
+    const { exitCode, logs } = await run(
+      { device: true, json: true },
+      connected([{ udid: PHONE }, { udid: '00008120-000A11223C44201E', name: 'Second' }]),
+    );
+    expect(exitCode).toBe(null);
+    expect(parseFirst(logs).udid).toBe('00008120-000A11223C44201E');
+    expect(parseFirst(logs).lease).toEqual({ kind: 'declared', expiresAt: expect.any(String) });
+  });
+
+  test('a leased phone that is not connected refuses rather than silently using another', async () => {
+    reserve();
+    takeLease({ root, platform: 'ios', id: 'GONE-PHONE', kind: 'declared' });
+    const { errs, exitCode, calls } = await run({ device: true }, connected());
+    expect(exitCode).toBe(1);
+    expect(errs.join('\n')).toMatch(/STIM_NO_DEVICE/);
+    expect(errs.join('\n')).toMatch(/This workspace leases GONE-PHONE, and it is not connected/);
+    expect(errs.join('\n')).toMatch(/stim device unlock/);
+    expect(calls.order.includes('buildIos')).toBe(false);
+  });
+
+  test('every connected phone leased elsewhere refuses with all of them named', async () => {
+    reserve();
+    takeLease({ root: '/worktree/one', platform: 'ios', id: PHONE, deviceName: 'Test Phone', kind: 'declared' });
+    takeLease({ root: '/worktree/two', platform: 'ios', id: '00008120-000A11223C44201E', kind: 'declared' });
+    const { errs, exitCode, logs } = await run(
+      { device: true, json: true, wait: '0' },
       connected([{ udid: PHONE }, { udid: '00008120-000A11223C44201E', name: 'Second' }]),
     );
     expect(exitCode).toBe(1);
-    expect(errs.join('\n')).toMatch(/STIM_NO_DEVICE/);
-    expect(errs.join('\n')).toMatch(/stim ios --device <udid>/);
+    expect(errs.join('\n')).toMatch(/STIM_DEVICE_BUSY/);
+    expect(errs.join('\n')).toMatch(/\/worktree\/one/);
+    expect(errs.join('\n')).toMatch(/\/worktree\/two/);
+    expect(parseFirst(logs).lease).toMatchObject({ platform: 'ios', id: PHONE, holder: '/worktree/one' });
+  });
+
+  test('no connected phone at all still refuses with the resolver own message', async () => {
+    reserve();
+    const { errs, exitCode } = await run({ device: true }, { listIosDevices: () => [] });
+    expect(exitCode).toBe(1);
+    expect(errs.join('\n')).toMatch(/No physical iOS device is connected/);
+    expect(errs.join('\n')).toMatch(/Developer Mode/);
+  });
+
+  test('a named udid still goes through the resolver, not the pool', async () => {
+    reserve();
+    const { errs, exitCode } = await run({ device: '00008120-000A11223C44201E' }, connected([{ udid: PHONE }]));
+    expect(exitCode).toBe(1);
+    expect(errs.join('\n')).toMatch(/is not connected\. devicectl reports these cabled devices/);
   });
 
   test('the one connected phone is used, never owned, and never booted', async () => {

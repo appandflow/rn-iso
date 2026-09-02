@@ -952,9 +952,7 @@ test('the guide documents holding a device across runs with lock and unlock', ()
   expect(lifecycle).toMatch(/Nothing else moves an expiry[\s\S]*Only `lock` and a run's own steps do/);
   expect(lifecycle).toMatch(/Releasing nothing is not an error/);
   expect(lifecycle).toMatch(/releases by holder/);
-  expect(lifecycle).toMatch(
-    /With no id, `lock` takes the one connected device[\s\S]*pool rule, and it is not implemented yet/,
-  );
+  expect(lifecycle).toMatch(/With no id, `lock` and a `--device` run pick from the POOL/);
   expect(lifecycle).toMatch(/device\s+lock <ios\|android> \[id\] --for <duration> --wait <seconds> --json/);
   expect(lifecycle).toMatch(/unlock \[ios\|android\] --json/);
 });
@@ -971,4 +969,22 @@ test('the skill routes the lease to the guide and states the permanent lease rul
   expect(skill).toMatch(/stim device lock ios --for\s+10m` holds it across runs; `stim device unlock` gives it back/);
   expect(skill).toMatch(/Never delete another workspace's lease file under\s+`~\/\.stim\/device-locks`/);
   expect(skill).toMatch(/`gc --delete` removes the expired ones/);
+});
+
+test('the guide documents the pool an id-less --device picks from', () => {
+  const lifecycle = renderTopic('lifecycle');
+  assert(lifecycle);
+  expect(lifecycle).toMatch(/THE POOL: WHICH DEVICE AN ID-LESS/);
+  expect(lifecycle).toMatch(/wired, paired, with Developer Mode on/);
+  expect(lifecycle).toMatch(/not an emulator, TCP serials included/);
+  expect(lifecycle).toMatch(/the device this workspace already leases, when it is among them/);
+  expect(lifecycle).toMatch(/first one not leased -- or leased and EXPIRED -- in\s+case-folded id order/);
+  expect(lifecycle).toMatch(/Ids are sorted on, never names/);
+  expect(lifecycle).toMatch(/NOT connected refuses with\s+STIM_NO_DEVICE naming it/);
+  expect(lifecycle).toMatch(/`stim device unlock` first/);
+  expect(lifecycle).toMatch(/the poll\s+re-LISTS devices/);
+  expect(lifecycle).toMatch(/STIM_DEVICE_BUSY names every\s+holder and its expiry/);
+  expect(lifecycle).toMatch(/No candidate at all is the existing STIM_NO_DEVICE/);
+  expect(lifecycle).toMatch(/`--no-wait` takes the first candidate\s+anyway/);
+  expect(lifecycle).toMatch(/in `--json` \(`udid` or\s+`serial`, plus `deviceName`\)/);
 });

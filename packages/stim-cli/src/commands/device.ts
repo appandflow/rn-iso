@@ -10,9 +10,16 @@ import {
   type ReleasedLease,
 } from '../engine/device-lease.ts';
 import { parseDeviceWait, waitForDevice } from '../engine/device-lease-run.ts';
-import { listIosDevices, resolveIosPhysicalDevice } from '../engine/ios-device.ts';
+import { selectFromPool } from '../engine/device-pool.ts';
+import { iosPoolCandidates, listIosDevices, resolveIosPhysicalDevice } from '../engine/ios-device.ts';
 import { findProjectRoot } from '../project.ts';
-import { listAdbDevices, physicalDeviceModel, probeEmulatorSerial, resolvePhysicalDevice } from '../sim/android.ts';
+import {
+  androidPoolCandidates,
+  listAdbDevices,
+  physicalDeviceModel,
+  probeEmulatorSerial,
+  resolvePhysicalDevice,
+} from '../sim/android.ts';
 
 const DEFAULT_FOR = '5m';
 
@@ -25,6 +32,7 @@ export interface DeviceDeps {
   takeLease: typeof takeLease;
   releaseLeases: typeof releaseWorkspaceLeases;
   waitForDevice: typeof waitForDevice;
+  selectFromPool: typeof selectFromPool;
   io: LeaseIo;
   now: () => number;
   sleep: (ms: number) => Promise<void>;
@@ -41,6 +49,7 @@ const DEFAULT_DEPS: DeviceDeps = {
   takeLease,
   releaseLeases: releaseWorkspaceLeases,
   waitForDevice,
+  selectFromPool,
   io: fileLeaseIo,
   now: () => Date.now(),
   sleep: (ms: number) => new Promise<void>((r) => setTimeout(r, ms)),
@@ -127,6 +136,49 @@ function isFailure(value: object): value is DeviceFailure {
   return 'code' in value;
 }
 
+async function poolDevice(
+  platform: LeasePlatform,
+  idLabel: string,
+  waitSeconds: number,
+  deadline: number,
+  root: string,
+  d: DeviceDeps,
+): Promise<ResolvedDevice | DeviceFailure> {
+  const pooled = await d.selectFromPool({
+    root,
+    platform,
+    idLabel,
+    list: () =>
+      platform === 'ios'
+        ? iosPoolCandidates(d.listIosDevices()).map((entry) => ({ id: entry.udid, name: entry.name }))
+        : androidPoolCandidates(d.listAdbDevices(), d.probeEmulatorSerial).map((entry) => ({ id: entry.serial })),
+    noCandidates: () => {
+      const resolved =
+        platform === 'ios'
+          ? resolveIosPhysicalDevice(null, d.listIosDevices())
+          : resolvePhysicalDevice(null, d.listAdbDevices(), d.probeEmulatorSerial);
+      return { message: resolved.error as string, remedy: resolved.remedy as string };
+    },
+    waitSeconds,
+    deadline,
+    now: d.now,
+    sleep: d.sleep,
+    warn: (line: string) => d.note(chalk.yellow(line)),
+    io: d.io,
+  });
+  if (pooled.status === 'refused') {
+    return {
+      code: pooled.refusal.code,
+      message: pooled.refusal.message,
+      remedy: pooled.refusal.remedy,
+      ...(pooled.refusal.lease === null ? {} : { lease: pooled.refusal.lease }),
+    };
+  }
+  const name =
+    pooled.candidate.name ?? (platform === 'ios' ? pooled.candidate.id : d.physicalDeviceModel(pooled.candidate.id));
+  return { id: pooled.candidate.id, deviceName: name ?? pooled.candidate.id };
+}
+
 export async function runLock(
   platformArg: string,
   idArg: string | undefined,
@@ -188,12 +240,14 @@ export async function runLock(
     });
   }
 
-  const device = resolveDevice(platform, idArg ?? null, d);
-  if (isFailure(device)) return report(device);
-
   const idLabel = platform === 'ios' ? 'udid' : 'serial';
   const deadline = d.now() + wait.seconds * 1000;
   const lastLine: { at: number | null } = { at: null };
+
+  const device = idArg
+    ? resolveDevice(platform, idArg, d)
+    : await poolDevice(platform, idLabel, wait.seconds, deadline, root, d);
+  if (isFailure(device)) return report(device);
 
   for (;;) {
     const outcome = await d.waitForDevice({
@@ -304,7 +358,7 @@ export function registerDevice(program: Command, deps: Partial<DeviceDeps> = {})
   device
     .command('lock')
     .argument('<platform>', 'ios or android')
-    .argument('[id]', 'the UDID or serial to lease; without one, the connected device is used')
+    .argument('[id]', 'the UDID or serial to lease; without one, the first free connected device is used')
     .description(
       "Lease a connected physical device to this workspace for a declared time, so another workspace's " +
         '`--device` run waits instead of installing over it. Nothing but this command and a `--device` run moves the expiry.',

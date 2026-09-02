@@ -243,6 +243,74 @@ describe('stim device lock', () => {
     expect(h.out).toEqual([]);
   });
 
+  test('with no id, the first free device in id order is leased', async () => {
+    const h = harness({
+      listIosDevices: () =>
+        ['00008120-BBB', '00008030-AAA'].map((udid) => ({
+          udid,
+          name: `name-${udid}`,
+          bootState: 'booted',
+          developerModeStatus: 'enabled',
+          pairingState: 'paired',
+          transportType: 'wired',
+        })),
+    });
+    takeLease({ root: OTHER_ROOT, platform: 'ios', id: '00008030-AAA', kind: 'declared' }, h.io);
+
+    const facts = await runLock('ios', undefined, {}, h.deps);
+    assert(!('code' in facts));
+    expect(facts.id).toBe('00008120-BBB');
+    expect(facts.deviceName).toBe('name-00008120-BBB');
+  });
+
+  test('with no id and several android serials, the pool picks and adb names it', async () => {
+    const h = harness({
+      listAdbDevices: () => ({
+        emulators: [],
+        physical: [{ serial: 'ZY224' }, { serial: 'RFCR7081Q9L' }],
+        unhealthy: [],
+      }),
+    });
+    const facts = await runLock('android', undefined, {}, h.deps);
+    assert(!('code' in facts));
+    expect(facts.id).toBe('RFCR7081Q9L');
+    expect(facts.deviceName).toBe('SM-G996W');
+  });
+
+  test('a device this workspace leases but is not connected refuses, naming the way out', async () => {
+    const h = harness();
+    takeLease({ root, platform: 'ios', id: 'GONE-PHONE', kind: 'declared' }, h.io);
+    const failure = await runLock('ios', undefined, {}, h.deps);
+    assert('code' in failure);
+    expect(failure.code).toBe('STIM_NO_DEVICE');
+    expect(failure.message).toMatch(/This workspace leases GONE-PHONE, and it is not connected/);
+    expect(failure.remedy).toMatch(/stim device unlock/);
+  });
+
+  test('every connected device leased elsewhere refuses under --wait 0, naming all of them', async () => {
+    const h = harness({
+      listIosDevices: () =>
+        [PHONE, '00008120-BBB'].map((udid) => ({
+          udid,
+          name: 'Old iPhone',
+          bootState: 'booted',
+          developerModeStatus: 'enabled',
+          pairingState: 'paired',
+          transportType: 'wired',
+        })),
+    });
+    heldByAnother(h.io);
+    takeLease({ root: '/worktree/third', platform: 'ios', id: '00008120-BBB', kind: 'declared' }, h.io);
+
+    const failure = await runLock('ios', undefined, { wait: '0', json: true }, h.deps);
+    assert('code' in failure);
+    expect(failure.code).toBe('STIM_DEVICE_BUSY');
+    expect(failure.message).toMatch(/Every connected device is leased by another workspace/);
+    expect(failure.message).toMatch(new RegExp(`${OTHER_ROOT}`));
+    expect(failure.message).toMatch(/\/worktree\/third/);
+    expect(JSON.parse(h.out[0] as string).lease).toMatchObject({ platform: 'ios', id: PHONE, holder: OTHER_ROOT });
+  });
+
   test('a bad platform, --for and --wait are all STIM_BAD_ARG, before any device is listed', async () => {
     const listed: number[] = [];
     const h = harness({

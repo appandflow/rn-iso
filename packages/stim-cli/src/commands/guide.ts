@@ -1677,9 +1677,37 @@ HOLDING A DEVICE ACROSS RUNS
   and \`--json\` prints an empty list. It releases by holder, so it still
   works when the workspace directory was recreated and the token is gone.
 
-  With no id, \`lock\` takes the one connected device and refuses when several
-  are connected, exactly as \`--device\` does today. Picking the first FREE
-  device out of several is the pool rule, and it is not implemented yet.
+  With no id, \`lock\` and a \`--device\` run pick from the POOL of connected
+  devices, so two phones on one machine no longer refuse.
+
+THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
+  Candidates are the connected devices the resolver already accepts: on iOS,
+  wired, paired, with Developer Mode on; on Android, every serial adb reports
+  in the \`device\` state that is not an emulator, TCP serials included. Then,
+  in order:
+
+    1. the device this workspace already leases, when it is among them;
+    2. otherwise the first one not leased -- or leased and EXPIRED -- in
+       case-folded id order.
+
+  Ids are sorted on, never names: adb has no name without one \`getprop\` per
+  serial, and models repeat.
+
+  A device this workspace leases that is NOT connected refuses with
+  STIM_NO_DEVICE naming it, rather than quietly moving to another phone. Naming
+  a different one with \`--device <id>\` refuses the same way, because a
+  workspace holds at most one lease per platform: \`stim device unlock\` first.
+
+  Candidates with none free is the wait: under \`--wait <seconds>\` the poll
+  re-LISTS devices, so a phone plugged in mid-wait is picked up as well as one
+  released mid-wait. When the wait runs out, STIM_DEVICE_BUSY names every
+  holder and its expiry. No candidate at all is the existing STIM_NO_DEVICE,
+  with the resolver's own message. \`--no-wait\` takes the first candidate
+  anyway and proceeds with no lease, as it does for one named device.
+
+  The chosen device is on the phase line and in \`--json\` (\`udid\` or
+  \`serial\`, plus \`deviceName\`), so an agent can hand the same id to its
+  device tool.
 
   A device build is LOCAL-TIER ONLY. Its cache key is
   \`<fingerprint>-<configuration>-device\`, so a device app can never collide

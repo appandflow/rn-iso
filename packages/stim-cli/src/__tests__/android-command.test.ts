@@ -4054,3 +4054,80 @@ describe('--device: the lease on the device', () => {
     expect(both.error?.message).toMatch(/--wait and --no-wait ask for opposite things/);
   });
 });
+
+describe('--device with no serial: the pool', () => {
+  const FIRST = 'RFCR7081Q9L';
+  const SECOND = 'ZY224T8XYZ';
+
+  function pool(serials: string[], overrides: Record<string, unknown> = {}) {
+    return harness({
+      device: true,
+      json: true,
+      listDevices: () => ({ emulators: [], physical: serials.map((serial) => ({ serial })), unhealthy: [] }),
+      deviceModel: (serial: string) => `model-${serial}`,
+      isEmulatorDevice: () => false,
+      checkCapacity: never('the device-capacity check'),
+      ensureDevice: never('the owned-device path'),
+      ...overrides,
+    });
+  }
+
+  test('the first free serial in case-folded id order is taken', async () => {
+    const h = pool([SECOND, FIRST]);
+    expect((await h.run()).ok).toBe(true);
+    expect(h.calls.install[0]?.serial).toBe(FIRST);
+    expect(JSON.parse(h.stdout[0] as string).serial).toBe(FIRST);
+    expect(JSON.parse(h.stdout[0] as string).deviceName).toBe(`model-${FIRST}`);
+  });
+
+  test('a serial another workspace leases is skipped for the free one', async () => {
+    takeLease({ root: '/worktree/theirs', platform: 'android', id: FIRST, kind: 'declared' });
+    const h = pool([FIRST, SECOND]);
+    expect((await h.run()).ok).toBe(true);
+    expect(h.calls.install[0]?.serial).toBe(SECOND);
+  });
+
+  test('a TCP serial is a candidate like any other', async () => {
+    const h = pool(['192.168.1.5:5555']);
+    expect((await h.run()).ok).toBe(true);
+    expect(h.calls.install[0]?.serial).toBe('192.168.1.5:5555');
+    expect(listLeaseFiles().map((entry) => entry.id)).toEqual([]);
+  });
+
+  test('an emulator serial is never a candidate', async () => {
+    const h = pool([FIRST], { isEmulatorDevice: (serial: string) => serial === FIRST });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe(NO_DEVICE);
+  });
+
+  test('a leased device that is not connected refuses, naming it and the way out', async () => {
+    takeLease({ root, platform: 'android', id: 'GONE-SERIAL', kind: 'declared' });
+    const h = pool([FIRST]);
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe(NO_DEVICE);
+    expect(result.error?.message).toMatch(/This workspace leases GONE-SERIAL, and it is not connected/);
+    expect(result.error?.remedy).toMatch(/stim device unlock/);
+    expect(h.calls.install).toEqual([]);
+  });
+
+  test('every connected device leased elsewhere refuses with all of them named', async () => {
+    takeLease({ root: '/worktree/one', platform: 'android', id: FIRST, kind: 'declared' });
+    takeLease({ root: '/worktree/two', platform: 'android', id: SECOND, kind: 'declared' });
+    const h = pool([FIRST, SECOND], { wait: '0' });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('STIM_DEVICE_BUSY');
+    expect(result.error?.message).toMatch(/\/worktree\/one/);
+    expect(result.error?.message).toMatch(/\/worktree\/two/);
+    expect(JSON.parse(h.stdout[0] as string).lease).toMatchObject({ platform: 'android', id: FIRST });
+  });
+
+  test('a named serial still goes through the resolver, not the pool', async () => {
+    const h = pool([FIRST], { device: SECOND });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(result.error?.message).toMatch(/is not connected\. adb reports these physical devices/);
+  });
+});

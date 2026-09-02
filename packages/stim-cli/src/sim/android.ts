@@ -330,6 +330,13 @@ function emulatorRefusal(serial: string): ResolvedPhysicalDevice {
   };
 }
 
+export function androidPoolCandidates(
+  adb: AdbDevices,
+  isEmulator: (serial: string) => boolean = probeEmulatorSerial,
+): AdbPhysicalEntry[] {
+  return (adb?.physical ?? []).filter((entry) => !isEmulator(entry.serial));
+}
+
 export function resolvePhysicalDevice(
   requested: string | null,
   adb: AdbDevices,

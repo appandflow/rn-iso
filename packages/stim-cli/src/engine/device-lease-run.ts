@@ -18,9 +18,9 @@ export const LEASE_STEP_FLOOR_MS = 60_000;
 export const DEBUG_VERIFY_STEP_MS: number = VERIFY_TIMEOUT_MS + STABILITY_WINDOW_MS;
 export const DEFAULT_DEVICE_WAIT_SECONDS = 60;
 export const DEVICE_WAIT_POLL_MS = 2_000;
-const DEVICE_WAIT_LINE_MS = 30_000;
+export const DEVICE_WAIT_LINE_MS = 30_000;
 
-const DEVICE_BUSY = 'STIM_DEVICE_BUSY';
+export const DEVICE_BUSY = 'STIM_DEVICE_BUSY';
 const DEVICE_LOST = 'STIM_DEVICE_LOST';
 
 export function leaseStepMs(boundMs = 0): number {
@@ -62,7 +62,7 @@ function clockTime(iso: string): string {
   return [at.getHours(), at.getMinutes(), at.getSeconds()].map((n) => String(n).padStart(2, '0')).join(':');
 }
 
-function leaseExpiryText(expiresAt: string, now: number): string {
+export function leaseExpiryText(expiresAt: string, now: number): string {
   const remaining = Date.parse(expiresAt) - now;
   return `${clockTime(expiresAt)} (${formatElapsed(Math.max(0, remaining))} from now)`;
 }
