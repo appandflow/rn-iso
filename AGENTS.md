@@ -164,7 +164,8 @@ and Android use fixed `xcodebuild` and Gradle arguments.
 
 The supported build selectors are `ios --configuration <name>` and
 `android --variant <name>`. `android --device [serial]` and
-`ios --device [udid]` select a connected physical device. Non-Debug iOS
+`ios --device [udid]` select a connected physical device, and take
+`--wait <seconds>` or `--no-wait` for the lease on it. Non-Debug iOS
 configurations and Android variants ending in `Release` skip Metro. A release
 cache hit must inject the current JS into a copy of the artifact. A swap
 failure must run a full build; it must never install stale JS. Android swaps

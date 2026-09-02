@@ -101,6 +101,11 @@ export interface CompilationCacheActivity {
   hitRatePercent: number | null;
 }
 
+interface RunLeaseFacts {
+  kind: string;
+  expiresAt: string;
+}
+
 export interface IosFacts {
   platform: string;
   udid: string;
@@ -120,6 +125,7 @@ export interface IosFacts {
   logs: LogsInfo;
   durationMs?: number;
   webPreviewUrl?: string | null;
+  lease?: RunLeaseFacts | null;
 }
 
 export interface AndroidFacts {
@@ -142,6 +148,7 @@ export interface AndroidFacts {
   debugHttpHostNote: string | null;
   devClientUrl: string | null;
   logs: string | null;
+  lease?: RunLeaseFacts | null;
 }
 
 export interface StartFacts {

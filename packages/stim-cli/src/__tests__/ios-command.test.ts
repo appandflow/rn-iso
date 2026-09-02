@@ -38,6 +38,10 @@ import {
   writeLastBuild,
 } from '../commands/ios.ts';
 import { asProcessExit, makeChildProcess, makeError, makeExecutor, makeMetroResolution } from './_factories.ts';
+import { RELEASE_VERIFY_WAIT_MS } from '../engine/app-install.ts';
+import { DEVICECTL_INSTALL_TIMEOUT_MS, LAUNCH_PROBE_TIMEOUT_MS } from '../engine/ios-device.ts';
+import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
+import { DEBUG_VERIFY_STEP_MS, type RunLease } from '../engine/device-lease-run.ts';
 
 const UDID = 'BF2A1C3D-4E5F-6071-8293-A4B5C6D7E8F9';
 const FINGERPRINT = 'a3f9b1c2d3e4f5';
@@ -4020,5 +4024,219 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     );
     expect(exitCode).toBe(1);
     expect(errs.join('\n')).toMatch(/Invalid ios\.signingIdentitySha1/);
+  });
+});
+
+describe('ios --device: the lease on the phone', () => {
+  const PHONE = '00008030-001A2B3C4D5E802E';
+  const OTHER_ROOT = '/worktree/theirs';
+
+  beforeEach(() => {
+    mkdirSync(join(root, 'build', 'Fixture.app'), { recursive: true });
+  });
+
+  function connected() {
+    return {
+      listIosDevices: () => [
+        {
+          udid: PHONE,
+          name: 'Test Phone',
+          bootState: 'booted',
+          developerModeStatus: 'enabled',
+          pairingState: 'paired',
+          transportType: 'wired',
+        },
+      ],
+    };
+  }
+
+  function fakeLease(over: Partial<RunLease> = {}) {
+    const raises: number[] = [];
+    const released: number[] = [];
+    const lease: RunLease = {
+      kind: 'run',
+      expiresAt: '2026-09-02T12:05:00.000Z',
+      lost: false,
+      raise: (boundMs: number) => {
+        raises.push(boundMs);
+        return { ok: true, holder: root, expiresAt: lease.expiresAt };
+      },
+      release: () => {
+        released.push(1);
+      },
+      facts: () => ({ kind: 'run', expiresAt: lease.expiresAt as string }),
+      ...over,
+    };
+    return { lease, raises, released };
+  }
+
+  function leaseDeps(lease: RunLease, acquired: Record<string, unknown> = {}) {
+    return {
+      ...connected(),
+      acquireRunLease: async () => ({ status: 'leased', kind: 'run', expiresAt: lease.expiresAt, ...acquired }),
+      runLease: () => lease,
+    };
+  }
+
+  test('a successful device run reports the lease it held, and a simulator run reports none', async () => {
+    reserve();
+    const { lease } = fakeLease();
+    const { logs, exitCode } = await run({ device: true, json: true }, leaseDeps(lease));
+    expect(exitCode).toBe(null);
+    expect(parseFirst(logs).lease).toEqual({ kind: 'run', expiresAt: lease.expiresAt });
+
+    const sim = await run({ json: true });
+    expect(parseFirst(sim.logs)).not.toHaveProperty('lease');
+  });
+
+  test('every device step raises the lease to its own bound, in order', async () => {
+    reserve();
+    const { lease, raises } = fakeLease();
+    await run({ device: true }, leaseDeps(lease));
+    expect(raises).toEqual([DEVICECTL_INSTALL_TIMEOUT_MS, 2000 + LAUNCH_PROBE_TIMEOUT_MS, DEBUG_VERIFY_STEP_MS]);
+  });
+
+  test('a release build raises for the release probe instead of the bundle deadline', async () => {
+    reserve();
+    const { lease, raises } = fakeLease();
+    await run({ device: true, configuration: 'Release' }, leaseDeps(lease));
+    expect(raises.at(-1)).toBe(RELEASE_VERIFY_WAIT_MS);
+  });
+
+  test('the lease is released on success, on failure, and on an exception', async () => {
+    reserve();
+    const ok = fakeLease();
+    await run({ device: true }, leaseDeps(ok.lease));
+    expect(ok.released).toHaveLength(1);
+
+    const failed = fakeLease();
+    const failure = await run(
+      { device: true },
+      {
+        ...leaseDeps(failed.lease),
+        installIosDeviceApp: () => ({ failed: true, reason: 'devicectl said no' }),
+      },
+    );
+    expect(failure.exitCode).toBe(1);
+    expect(failed.released).toHaveLength(1);
+
+    const threw = fakeLease();
+    await expect(
+      run(
+        { device: true },
+        {
+          ...leaseDeps(threw.lease),
+          replaceCollector: () => {
+            throw new Error('the collector blew up');
+          },
+        },
+      ),
+    ).rejects.toThrow(/collector blew up/);
+    expect(threw.released).toHaveLength(1);
+  });
+
+  test('a lease lost before the install refuses with STIM_DEVICE_LOST and installs nothing', async () => {
+    reserve();
+    const { lease } = fakeLease({
+      raise: () => ({ ok: false, holder: OTHER_ROOT, expiresAt: '2026-09-02T12:30:00.000Z' }),
+      facts: () => null,
+    });
+    const { errs, logs, exitCode, calls } = await run({ device: true, json: true }, leaseDeps(lease));
+
+    expect(exitCode).toBe(1);
+    expect(errs.join('\n')).toMatch(/STIM_DEVICE_LOST/);
+    expect(errs.join('\n')).toMatch(new RegExp(`${OTHER_ROOT} took this device's lease`));
+    expect(calls.order.includes('installIosDeviceApp')).toBe(false);
+    expect(parseFirst(logs).lease).toBe(null);
+  });
+
+  test('a lease lost after the install warns once and finishes with lease null', async () => {
+    reserve();
+    let raised = 0;
+    const { lease } = fakeLease({
+      raise: () => {
+        raised += 1;
+        return raised === 1
+          ? { ok: true, holder: root, expiresAt: '2026-09-02T12:05:00.000Z' }
+          : { ok: false, holder: OTHER_ROOT, expiresAt: null };
+      },
+      facts: () => null,
+    });
+    const { errs, logs, exitCode, calls } = await run({ device: true, json: true }, leaseDeps(lease));
+
+    expect(exitCode).toBe(null);
+    expect(calls.order.includes('installIosDeviceApp')).toBe(true);
+    const warnings = errs.filter((line) => line.includes('took this device'));
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/The app is already installed, so this run continues without one/);
+    expect(parseFirst(logs).lease).toBe(null);
+  });
+
+  test('a device another workspace leases refuses with the holder in the JSON', async () => {
+    reserve();
+    const taken = takeLease({
+      root: OTHER_ROOT,
+      platform: 'ios',
+      id: PHONE,
+      deviceName: 'Test Phone',
+      kind: 'declared',
+    });
+    assert(taken.status === 'taken');
+    const { errs, logs, exitCode, calls } = await run({ device: true, json: true, wait: '0' }, connected());
+
+    expect(exitCode).toBe(1);
+    expect(errs.join('\n')).toMatch(/STIM_DEVICE_BUSY/);
+    expect(calls.order.includes('installIosDeviceApp')).toBe(false);
+    expect(parseFirst(logs).lease).toEqual({
+      platform: 'ios',
+      id: PHONE,
+      deviceName: 'Test Phone',
+      holder: OTHER_ROOT,
+      expiresAt: taken.lease.expiresAt,
+    });
+  });
+
+  test('--no-wait installs on a leased phone without taking one', async () => {
+    reserve();
+    takeLease({ root: OTHER_ROOT, platform: 'ios', id: PHONE, deviceName: 'Test Phone', kind: 'declared' });
+    const { errs, logs, exitCode, calls } = await run({ device: true, json: true, wait: false }, connected());
+
+    expect(exitCode).toBe(null);
+    expect(calls.order.includes('installIosDeviceApp')).toBe(true);
+    expect(errs.join('\n')).toMatch(/--no-wait: \/worktree\/theirs holds Test Phone/);
+    expect(parseFirst(logs).lease).toBe(null);
+    expect(listLeaseFiles()).toHaveLength(1);
+  });
+
+  test('a free phone is leased by the run and released at the end', async () => {
+    reserve();
+    const { exitCode, errs } = await run({ device: true }, connected());
+    expect(exitCode).toBe(null);
+    expect(errs.join('\n')).toMatch(new RegExp(`run lease on ${PHONE} until`));
+    expect(listLeaseFiles()).toEqual([]);
+  });
+
+  test('--wait without --device, an unusable value, and both flags at once are all STIM_BAD_ARG', async () => {
+    reserve();
+    const noDevice = await run({ wait: '30' });
+    expect(noDevice.exitCode).toBe(1);
+    expect(noDevice.errs.join('\n')).toMatch(/--wait and --no-wait only apply to a `--device` run/);
+
+    const bypassNoDevice = await run({ wait: false });
+    expect(bypassNoDevice.errs.join('\n')).toMatch(/only apply to a `--device` run/);
+
+    const bad = await run({ device: true, wait: 'soon' }, connected());
+    expect(bad.exitCode).toBe(1);
+    expect(bad.errs.join('\n')).toMatch(/Invalid --wait value/);
+
+    const argv = process.argv;
+    process.argv = ['node', 'stim', 'ios', '--device', '--wait', '30', '--no-wait'];
+    try {
+      const both = await run({ device: true, wait: false }, connected());
+      expect(both.exitCode).toBe(1);
+      expect(both.errs.join('\n')).toMatch(/--wait and --no-wait ask for opposite things/);
+    } finally {
+      process.argv = argv;
+    }
   });
 });
