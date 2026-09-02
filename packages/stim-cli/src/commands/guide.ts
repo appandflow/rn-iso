@@ -36,6 +36,14 @@ line by design (see \`guide logs\`), not this single-payload contract.
                   physical device gets no config entry, so \`stop\` and \`gc\`
                   never see it
   deviceName      its name, or null
+  deviceType      the owned simulator's MODEL, as
+                  \`xcrun simctl list devicetypes\` names it ("iPad Pro 13-inch
+                  (M4)"). Read from the simulator itself, so a run driven by
+                  the ios.deviceType setting reports it too, not only a
+                  \`--device-type\` run. Null on \`--device\` and on a
+                  simulator Stim does not own
+  runtime         that simulator's iOS runtime version ("18.5"), from the same
+                  record. Null on the same paths as deviceType
   fingerprint     the @expo/fingerprint hash of the native inputs, AS STORED.
                   A run that had to \`expo prebuild\` or \`pod install\`
                   rewrote fingerprinted files while it worked (the generated
@@ -236,6 +244,12 @@ line by design (see \`guide logs\`), not this single-payload contract.
                   one serial. A boot that fails releases the port again and
                   keeps the AVD recorded for \`gc\`
   deviceName      the same name, matching the iOS payload's field
+  systemImage     the sdkmanager package id the owned AVD was created from
+                  ("system-images;android-36;google_apis;arm64-v8a"), read from
+                  the AVD's own config.ini, so a run driven by the
+                  android.systemImage setting reports it too, not only a
+                  \`--system-image\` run. Null on \`--device\` and on an
+                  emulator Stim does not own
   fingerprint / cacheKey / cacheHit / cacheSkipped / waitedForBuild /
   appPath / installSkipped / launched
                   as above -- cacheKey keys on the VARIANT here
@@ -1129,11 +1143,24 @@ STIM_BAD_ARG / STIM_NO_PROJECT
   android.avdConfig key or fragment, a malformed ios.signingIdentity,
   ios.signingIdentitySha1 or ios.lanHost value, \`--device\` with an empty
   serial or UDID, \`--device\` together with \`--remote\`, a working directory
-  with no package.json above it, or an android/app/build.gradle that
+  with no package.json above it, an android/app/build.gradle that
   declares product flavors with
-  no variant selected (the refusal names the debug variants).
-  These errors are caught before the port is reserved and before anything is
-  spawned, so nothing was started.
+  no variant selected (the refusal names the debug variants), or a
+  \`--device-type\`, \`--runtime\` or \`--system-image\` name that is BLANK or
+  is not installed on this machine. For the unknown-name case the installed
+  names are printed in the message -- the versions \`xcrun simctl list
+  runtimes\` reports, the models those runtimes can actually CREATE (not the
+  whole \`simctl list devicetypes\` table, which also names watchOS, tvOS and
+  visionOS models no iOS runtime offers), or the system images the SDK has --
+  so the remedy is to re-run with one of them. An ios.deviceType, ios.runtime
+  or android.systemImage setting is checked the same way, and the check applies
+  even when this workspace ALREADY owns a device, so a name that could never
+  create anything is caught rather than left to a later run.
+  These errors are caught before the port is reserved and before any build or
+  device work, so nothing was started. The one listing they need
+  (\`simctl list runtimes\`, the SDK's system-images directory) runs only when
+  a name was actually given, and a listing that fails is reported as
+  STIM_NO_DEVICE naming the tool, never as a crash.
 
 "@stim-cli/metro is not installed ... so bundler and client logs will not be
 captured"  (in metro.ndjson, bare RN)
@@ -1639,8 +1666,8 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
 
 THE OPTION SURFACE, IN FULL
   start           --json --wait <seconds> --remote
-  ios             --json --no-metro-check --no-build-cache --configuration <name> --device [udid] --wait <seconds> --no-wait --remote <proxy|eas>
-  android         --json --no-metro-check --no-build-cache --variant <name> --device [serial] --wait <seconds> --no-wait --remote <proxy|eas>
+  ios             --json --no-metro-check --no-build-cache --configuration <name> --device-type <name> --runtime <version> --device [udid] --wait <seconds> --no-wait --remote <proxy|eas>
+  android         --json --no-metro-check --no-build-cache --variant <name> --system-image <id> --device [serial] --wait <seconds> --no-wait --remote <proxy|eas>
   device          lock <ios|android> [id] --for <duration> --wait <seconds> --json;
                   unlock [ios|android] --json
   logs            --source --level --since --grep --tail --follow --errors --json
@@ -1668,6 +1695,41 @@ THE OPTION SURFACE, IN FULL
   and leave nothing to pick from. That parse is best-effort: flavors built
   from a variable, a loop, or an applied script are not detected, and such a
   project builds as before.
+
+  \`ios --device-type <name>\` and \`ios --runtime <version>\` choose the
+  MODEL and the iOS version of the simulator this workspace owns --
+  \`--device-type "iPad Pro 13-inch (M4)" --runtime 18.5\` is how a ticket that
+  says "happens on iPad on iOS 18.5" gets reproduced without writing a
+  \`.stim.json\`. \`android --system-image <id>\` is the Android half, taking
+  the sdkmanager package id
+  ("system-images;android-36;google_apis;arm64-v8a"). Each overrides its
+  setting (ios.deviceType, ios.runtime, android.systemImage) for that one
+  invocation, exactly as \`--configuration\` overrides ios.configuration.
+
+  A name that is not INSTALLED on this machine refuses with STIM_BAD_ARG
+  before anything is created, and the message lists the installed names, so a
+  wrong guess is one command, not a created simulator. A blank value is the
+  same refusal.
+
+  What counts as installed for \`--device-type\` is what an installed RUNTIME
+  can create, not what \`xcrun simctl list devicetypes\` prints: that table
+  also names watchOS, tvOS and visionOS models, and older iPhones no current
+  runtime supports, none of which \`simctl create\` would accept. So the
+  refusal lists the models the installed runtimes offer -- narrowed to the one
+  runtime when \`--runtime\` also resolved, which is what catches a pair like
+  \`--device-type "iPhone 8" --runtime 26.5\` that each half would pass alone.
+  \`--runtime\` takes a version (\`26.5\`) or a runtime's full name
+  (\`iOS 26.5\`), exactly; no prefix or suffix matches.
+
+  These flags describe a device that does not exist yet. When this workspace
+  ALREADY owns a simulator and \`--device-type\` names a different model,
+  Stim refuses rather than silently booting the wrong one: reap the current
+  sim with \`stim worktree remove\` (or \`stim gc --delete\`), then run
+  \`stim ios\` again to create the requested one. \`--runtime\` and
+  \`--system-image\` apply at creation only, so an existing device keeps the
+  version it was made with. The --json payload reports what was actually
+  used: \`deviceType\` and \`runtime\` on iOS, \`systemImage\` on Android,
+  read from the device itself, so a settings-driven run reports them too.
 
   \`android --device [serial]\` installs and launches on a physical device
   connected to this machine instead of this workspace's owned emulator. With
@@ -2193,8 +2255,18 @@ belongs there:
   }
 
 KEYS STIM READS
-  ios.deviceType        e.g. "iPhone 17 Pro"
-  ios.runtime           e.g. "26.2"
+  ios.deviceType        e.g. "iPhone 17 Pro" -- the simulator model this
+                        workspace's owned sim is created as, spelled exactly as
+                        \`xcrun simctl list devicetypes\` names it, and one an
+                        installed runtime can create. The \`--device-type\`
+                        flag overrides this per invocation. A name no installed
+                        runtime offers is STIM_BAD_ARG and the creatable names
+                        are printed
+  ios.runtime           e.g. "26.2" -- the iOS runtime that sim is created on,
+                        as a version ("26.2") or a runtime's full name
+                        ("iOS 26.2"); nothing else matches. The \`--runtime\`
+                        flag overrides this per invocation, and an uninstalled
+                        version refuses the same way
   ios.configuration     e.g. "Release" -- the Xcode configuration to build
                         (simulator only). Committing
                         { "ios": { "configuration": "Release" } } makes every
@@ -2243,6 +2315,10 @@ KEYS STIM READS
                         heuristic, so Stim and a plain Xcode run pick the same
                         interface.
   android.systemImage   e.g. "system-images;android-36;google_apis;arm64-v8a"
+                        -- the sdkmanager package id the owned AVD is created
+                        from. The \`--system-image\` flag overrides this per
+                        invocation, and an id this SDK has not installed is
+                        STIM_BAD_ARG with the installed ids printed
   android.dataPartitionSizeGb
                         whole GiB for a newly created owned AVD's data
                         partition. Defaults to 8; accepts 6 through 16384.

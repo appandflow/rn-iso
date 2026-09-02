@@ -8,13 +8,22 @@ import {
   deviceTypeMismatch,
   ensureBooted,
   ensureOwnedDevice,
+  unknownAndroidSystemImageRefusal,
+  unknownIosDeviceTypeRefusal,
+  unknownIosRuntimeRefusal,
 } from '../engine/device.ts';
 import { allConsolePortsAndSerials, getProject, setDevice, upsertProject } from '../config.ts';
 import type { DeviceRecord } from '../types.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { makeAdbDevices, makeConfig, makeIosSim } from './_factories.ts';
 
-type SimEntry = { udid: string; name: string; state: string; isAvailable: boolean };
+type SimEntry = {
+  udid: string;
+  name: string;
+  state: string;
+  isAvailable: boolean;
+  deviceTypeIdentifier?: string;
+};
 
 let tmpHome: string;
 let savedAndroidHome: string | undefined;
@@ -1225,5 +1234,180 @@ describe('deviceCapacityRefusal', () => {
     });
     assert(refusal);
     expect(refusal.code).toBe('STIM_AT_CAPACITY');
+  });
+});
+
+const RUNTIMES = [
+  {
+    identifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-2',
+    name: 'iOS 26.2',
+    version: '26.2',
+    supportedDeviceTypes: TYPES,
+  },
+];
+
+const VISION_PRO = { identifier: 'com.apple.CoreSimulator.SimDeviceType.Apple-Vision-Pro', name: 'Apple Vision Pro' };
+const SIMCTL_DEVICE_TYPES = [...TYPES, VISION_PRO];
+
+const IMAGES = [
+  { api: 36, tag: 'google_apis', arch: 'arm64-v8a', pkg: 'system-images;android-36;google_apis;arm64-v8a' },
+];
+
+describe('the unknown-name refusals', () => {
+  test('a device type an installed runtime supports passes, and nothing is refused when none was asked for', () => {
+    expect(unknownIosDeviceTypeRefusal('iPhone 17 Pro', RUNTIMES)).toBe(null);
+    expect(unknownIosDeviceTypeRefusal(null, RUNTIMES)).toBe(null);
+    expect(unknownIosDeviceTypeRefusal(undefined, [])).toBe(null);
+  });
+
+  test('a device type simctl lists but no iOS runtime can create is refused, not left to fail at creation', () => {
+    expect(SIMCTL_DEVICE_TYPES.some((d) => d.name === VISION_PRO.name)).toBe(true);
+    const refusal = unknownIosDeviceTypeRefusal(VISION_PRO.name, RUNTIMES);
+    assert(refusal);
+    expect(refusal.message).toMatch(
+      /No device type named "Apple Vision Pro" can be created on any installed simulator runtime/,
+    );
+    expect(refusal.message).toMatch(/Device types the installed runtimes support: iPhone 17 Pro, iPhone 16\./);
+    expect(refusal.message).not.toMatch(/Apple Vision Pro\./);
+    expect(refusal.remedy).toMatch(/--device-type/);
+    expect(refusal.remedy).toMatch(/watchOS, tvOS and visionOS/);
+  });
+
+  test('the printed set narrows to the requested runtime, and a pair no runtime offers is refused', () => {
+    const runtimes = [
+      ...RUNTIMES,
+      {
+        identifier: 'com.apple.CoreSimulator.SimRuntime.iOS-18-5',
+        name: 'iOS 18.5',
+        version: '18.5',
+        supportedDeviceTypes: [TYPE_16],
+      },
+    ];
+    expect(unknownIosDeviceTypeRefusal('iPhone 17 Pro', runtimes, '26.2')).toBe(null);
+    const refusal = unknownIosDeviceTypeRefusal('iPhone 17 Pro', runtimes, '18.5');
+    assert(refusal);
+    expect(refusal.message).toMatch(/No device type named "iPhone 17 Pro" can be created on runtime 18\.5/);
+    expect(refusal.message).toMatch(/Device types runtime 18\.5 supports: iPhone 16\./);
+  });
+
+  test('a machine with nothing installed says so rather than printing an empty list', () => {
+    const refusal = unknownIosDeviceTypeRefusal('iPhone 17 Pro', []);
+    assert(refusal);
+    expect(refusal.message).toMatch(/Device types the installed runtimes support: none\./);
+  });
+
+  test('a runtime matches by exact version or exact name, never by suffix', () => {
+    expect(unknownIosRuntimeRefusal('26.2', RUNTIMES)).toBe(null);
+    expect(unknownIosRuntimeRefusal('iOS 26.2', RUNTIMES)).toBe(null);
+    expect(unknownIosRuntimeRefusal('6.2', RUNTIMES)).not.toBe(null);
+    expect(unknownIosRuntimeRefusal('2', RUNTIMES)).not.toBe(null);
+    const refusal = unknownIosRuntimeRefusal('18.5', RUNTIMES);
+    assert(refusal);
+    expect(refusal.message).toMatch(/No installed simulator runtime matches "18\.5"\. Installed runtimes: 26\.2\./);
+    expect(refusal.remedy).toMatch(/ios\.runtime/);
+    expect(refusal.remedy).toMatch(/"iOS 26\.5"/);
+  });
+
+  test('an Android system image is matched on the exact sdkmanager package id', () => {
+    expect(unknownAndroidSystemImageRefusal('system-images;android-36;google_apis;arm64-v8a', IMAGES)).toBe(null);
+    expect(unknownAndroidSystemImageRefusal(null, IMAGES)).toBe(null);
+    const refusal = unknownAndroidSystemImageRefusal('system-images;android-99;google_apis;arm64-v8a', IMAGES);
+    assert(refusal);
+    expect(refusal.message).toMatch(/No installed Android system image is named/);
+    expect(refusal.message).toMatch(/Installed system images: system-images;android-36;google_apis;arm64-v8a\./);
+    expect(refusal.remedy).toMatch(/android\.systemImage/);
+  });
+});
+
+describe('ensureOwnedDevice: the requested model against the sim this workspace already owns', () => {
+  test('a different model refuses with the reap-then-rerun remedy and boots nothing', async () => {
+    const root = projectDir();
+    try {
+      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app' });
+      const { run, exec } = iosExecutor([
+        {
+          udid: 'U1',
+          name: 'stim-app',
+          state: 'Shutdown',
+          isAvailable: true,
+          deviceTypeIdentifier: TYPE_16.identifier,
+        },
+      ]);
+      setExecutor(exec);
+
+      await expect(
+        ensureOwnedDevice({
+          platform: 'ios',
+          project: getProject(root),
+          projectPath: root,
+          label: 'app',
+          settings: {},
+          flags: { deviceType: 'iPhone 17 Pro' },
+        }),
+      ).rejects.toThrow(
+        /this project's sim is iPhone 16, but --device-type asked for iPhone 17 Pro\. Stim will not silently boot a different model\. Run `stim worktree remove` \(or `stim gc --delete`\) to reap the current sim, then `stim ios` again to create the requested one\./,
+      );
+
+      expect(run.some((cmd) => /simctl boot/.test(cmd))).toBe(false);
+      expect(run.some((cmd) => /simctl create/.test(cmd))).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a matching model reuses the sim and reports its model and runtime', async () => {
+    const root = projectDir();
+    try {
+      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app' });
+      const { exec } = iosExecutor([
+        {
+          udid: 'U1',
+          name: 'stim-app',
+          state: 'Booted',
+          isAvailable: true,
+          deviceTypeIdentifier: TYPE_16.identifier,
+        },
+      ]);
+      setExecutor(exec);
+
+      const device = await ensureOwnedDevice({
+        platform: 'ios',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: {},
+        flags: { deviceType: 'iPhone 16' },
+      });
+
+      expect(device.deviceType).toBe('iPhone 16');
+      expect(device.runtime).toBe('26.2');
+      expect(getProject(root)?.platforms?.ios?.deviceType).toBe(undefined);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a created sim reports the model and runtime it was created with', async () => {
+    const root = projectDir();
+    try {
+      const { run, exec } = iosExecutor([]);
+      setExecutor(exec);
+
+      const device = await ensureOwnedDevice({
+        platform: 'ios',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: {},
+        flags: { deviceType: 'iPhone 16', runtime: '26.2' },
+      });
+
+      expect(device.deviceType).toBe('iPhone 16');
+      expect(device.runtime).toBe('26.2');
+      expect(run.some((cmd) => cmd.includes(`simctl create "stim-app" "${TYPE_16.identifier}"`))).toBe(true);
+      expect(getProject(root)?.platforms?.ios?.runtime).toBe(undefined);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

@@ -139,11 +139,11 @@ function androidTool(tool: AndroidTool): string {
   return resolved === tool ? tool : `"${resolved}"`;
 }
 
-function listInstalledSystemImages(): SystemImage[] {
+export function listInstalledSystemImages(): SystemImage[] {
   const root = join(androidHome(), 'system-images');
   const images: SystemImage[] = [];
   if (!existsSync(root)) return images;
-  for (const apiDir of readdirSync(root)) {
+  for (const apiDir of safeList(root)) {
     const m = apiDir.match(/^android-(\d+)$/);
     if (!m) continue;
     const apiPath = join(root, apiDir);
@@ -190,7 +190,10 @@ export function pickDefaultSystemImage(
   );
 }
 
-export function createOwnedAvd(label: string, { systemImage }: { systemImage?: string } = {}): { avdName: string } {
+export function createOwnedAvd(
+  label: string,
+  { systemImage }: { systemImage?: string } = {},
+): { avdName: string; systemImage: string } {
   const pick = pickDefaultSystemImage(listInstalledSystemImages(), { systemImage });
   if (!pick) {
     const arch = hostSystemImageArch();
@@ -200,7 +203,38 @@ export function createOwnedAvd(label: string, { systemImage }: { systemImage?: s
   }
   const avdName = ownedAvdName(label);
   getExecutor().run(`echo no | ${androidTool('avdmanager')} create avd -n "${avdName}" -k "${pick.pkg}"`);
-  return { avdName };
+  return { avdName, systemImage: pick.pkg };
+}
+
+export function parseAvdSystemImage(configIni: string): string | null {
+  for (const line of String(configIni).split(/\r?\n/)) {
+    const separator = line.indexOf('=');
+    if (separator < 0) continue;
+    if (line.slice(0, separator).trim() !== 'image.sysdir.1') continue;
+    const dir = line
+      .slice(separator + 1)
+      .trim()
+      .replace(/\/+$/, '');
+    if (!dir) return null;
+    return dir.split('/').join(';');
+  }
+  return null;
+}
+
+export function ownedAvdSystemImage(
+  avdName: string,
+  {
+    avdDirectory = ownedAvdDirectory,
+    readFile = (path: string) => readFileSync(path, 'utf8'),
+  }: { avdDirectory?: typeof ownedAvdDirectory; readFile?: (path: string) => string } = {},
+): string | null {
+  const directory = avdDirectory(avdName);
+  if (!directory) return null;
+  try {
+    return parseAvdSystemImage(readFile(join(directory, 'config.ini')));
+  } catch {
+    return null;
+  }
 }
 
 function sanitizeAvdLabel(label: string): string {

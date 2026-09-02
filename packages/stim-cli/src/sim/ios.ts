@@ -169,6 +169,10 @@ function rankIphone(name: string): { gen: number; variant: number } {
   };
 }
 
+export function iosRuntimeMatches(runtime: IosRuntime, requested: string): boolean {
+  return runtime.version === requested || runtime.name === requested;
+}
+
 export function pickDefaultIosCreation(
   _deviceTypes: IosDeviceType[],
   runtimes: IosRuntime[],
@@ -177,7 +181,7 @@ export function pickDefaultIosCreation(
   const rts = runtimes.toSorted((a, b) =>
     String(b.version).localeCompare(String(a.version), undefined, { numeric: true }),
   );
-  const wantedRts = runtime ? rts.filter((r) => r.version === runtime || r.name.endsWith(runtime)) : rts;
+  const wantedRts = runtime ? rts.filter((r) => iosRuntimeMatches(r, runtime)) : rts;
   for (const rt of wantedRts) {
     const supported = (rt.supportedDeviceTypes || []).filter((d) =>
       deviceType ? d.name === deviceType : /^iPhone/i.test(d.name),
@@ -208,8 +212,10 @@ export function ownedSimName(label: string): string {
 export function createOwnedIosSim(
   label: string,
   { deviceType, runtime }: { deviceType?: string; runtime?: string } = {},
-): { udid: string; name: string } {
-  const pick = pickDefaultIosCreation(listIosDeviceTypes(), listIosRuntimes(), { deviceType, runtime });
+): { udid: string; name: string; deviceType: string | null; runtime: string | null } {
+  const deviceTypes = listIosDeviceTypes();
+  const runtimes = listIosRuntimes();
+  const pick = pickDefaultIosCreation(deviceTypes, runtimes, { deviceType, runtime });
   if (!pick) {
     throw new Error(
       'No matching simulator device type / runtime is installed. Install one via Xcode, or pass --device-type / --runtime.',
@@ -217,7 +223,12 @@ export function createOwnedIosSim(
   }
   const name = ownedSimName(label);
   const udid = getExecutor().run(`xcrun simctl create "${name}" "${pick.deviceTypeId}" "${pick.runtimeId}"`).trim();
-  return { udid, name };
+  return {
+    udid,
+    name,
+    deviceType: deviceTypes.find((d) => d.identifier === pick.deviceTypeId)?.name ?? null,
+    runtime: runtimes.find((r) => r.identifier === pick.runtimeId)?.version ?? null,
+  };
 }
 
 export function resolveOwnedIosSim(udid: string): ResolvedIosSim {
@@ -238,7 +249,7 @@ export function deleteIosSim(udid: string): void {
   getExecutor().run(`xcrun simctl delete ${udid}`);
 }
 
-function listIosRuntimes(): IosRuntime[] {
+export function listIosRuntimes(): IosRuntime[] {
   const out = getExecutor().run('xcrun simctl list runtimes --json');
   const data = JSON.parse(out) as {
     runtimes?: Array<{

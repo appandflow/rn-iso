@@ -110,6 +110,8 @@ export interface IosFacts {
   platform: string;
   udid: string;
   deviceName: string | null;
+  deviceType: string | null;
+  runtime: string | null;
   fingerprint?: string | null;
   configuration: string | null;
   cacheKey?: string | null;
@@ -133,6 +135,7 @@ export interface AndroidFacts {
   serial: string | null;
   avdName: string | null;
   deviceName: string | null;
+  systemImage: string | null;
   fingerprint: string | null;
   cacheKey: string | null;
   variant: string | null;

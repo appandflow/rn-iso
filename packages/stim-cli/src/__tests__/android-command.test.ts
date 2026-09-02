@@ -16,9 +16,11 @@ import {
   NO_METRO,
   androidDevClientScheme,
   androidFacts,
+  androidSystemImageSetting,
   androidVariantSetting,
   collectorLogFile,
   isReleaseVariant,
+  resolveSystemImage,
   resolveVariant,
   apkPackage,
   apkDevClientFacts,
@@ -43,6 +45,11 @@ import type { AssetManifest } from '../engine/asset-manifest.ts';
 import { PREBUILD_ERROR } from '../engine/prebuild.ts';
 import { asProcessExit, makeChildProcess, makeError, makeExecutor } from './_factories.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
+
+const IMAGES = [
+  { api: 36, tag: 'google_apis', arch: 'arm64-v8a', pkg: 'system-images;android-36;google_apis;arm64-v8a' },
+  { api: 35, tag: 'google_apis', arch: 'arm64-v8a', pkg: 'system-images;android-35;google_apis;arm64-v8a' },
+];
 import { DEBUG_VERIFY_STEP_MS, type RunLease } from '../engine/device-lease-run.ts';
 
 const FINGERPRINT = 'a3f9b1c2d3e4f5a6b7c8d9e0f1a2b3c4';
@@ -244,6 +251,7 @@ function harness(overrides = {}) {
       calls.ensureDevice.push(args);
       return { avdName: 'stim-app-412', consolePort: 5584, owned: true };
     },
+    listSystemImages: () => IMAGES,
     ensureDeviceBooted: async (args: unknown = {}) => {
       calls.booted.push(args);
       return { ok: true, serial: 'emulator-5584' };
@@ -1003,6 +1011,7 @@ describe('a cache hit', () => {
       serial: 'emulator-5584',
       avdName: 'stim-app-412',
       deviceName: 'stim-app-412',
+      systemImage: null,
       fingerprint: FINGERPRINT,
       cacheKey: CACHE_KEY,
       variant: null,
@@ -2293,6 +2302,7 @@ describe('the pure parts', () => {
       serial: null,
       avdName: null,
       deviceName: null,
+      systemImage: null,
       fingerprint: null,
       cacheKey: null,
       variant: null,
@@ -4238,5 +4248,124 @@ describe('--device with no serial: the pool', () => {
     const result = await h.run();
     expect(result.ok).toBe(false);
     expect(result.error?.message).toMatch(/is not connected\. adb reports these physical devices/);
+  });
+});
+
+describe('the emulator system-image flag', () => {
+  test('resolveSystemImage puts the flag over the setting', () => {
+    const settings = { android: { systemImage: 'system-images;android-36;google_apis;arm64-v8a' } };
+    expect(resolveSystemImage('system-images;android-35;google_apis;arm64-v8a', settings)).toBe(
+      'system-images;android-35;google_apis;arm64-v8a',
+    );
+    expect(resolveSystemImage(null, settings)).toBe('system-images;android-36;google_apis;arm64-v8a');
+    expect(resolveSystemImage('  ', settings)).toBe('system-images;android-36;google_apis;arm64-v8a');
+    expect(resolveSystemImage(null, {})).toBe(null);
+    expect(resolveSystemImage(null, null)).toBe(null);
+  });
+
+  test('androidSystemImageSetting reads android.systemImage and nothing shaped differently', () => {
+    expect(androidSystemImageSetting({ android: { systemImage: 'system-images;android-36;google_apis;x86_64' } })).toBe(
+      'system-images;android-36;google_apis;x86_64',
+    );
+    expect(androidSystemImageSetting({ android: { systemImage: '  ' } })).toBe(null);
+    expect(androidSystemImageSetting({ android: { systemImage: 7 } })).toBe(null);
+    expect(androidSystemImageSetting({ android: [] })).toBe(null);
+    expect(androidSystemImageSetting(null)).toBe(null);
+  });
+
+  test('the flag reaches the engine and overrides the setting for that invocation', async () => {
+    const settings = { android: { systemImage: 'system-images;android-36;google_apis;arm64-v8a' } };
+    const fromSetting = harness({ resolveSettingsFor: () => settings });
+    await fromSetting.run();
+    expect(fromSetting.calls.ensureDevice[0]).toMatchObject({
+      flags: { systemImage: 'system-images;android-36;google_apis;arm64-v8a' },
+    });
+
+    const fromFlag = harness({
+      resolveSettingsFor: () => settings,
+      systemImage: 'system-images;android-35;google_apis;arm64-v8a',
+    });
+    await fromFlag.run();
+    expect(fromFlag.calls.ensureDevice[0]).toMatchObject({
+      flags: { systemImage: 'system-images;android-35;google_apis;arm64-v8a' },
+    });
+
+    const neither = harness();
+    await neither.run();
+    expect(neither.calls.ensureDevice[0]).toMatchObject({ flags: { systemImage: null } });
+  });
+
+  test('an unknown system image refuses with STIM_BAD_ARG naming the installed ids, before anything is created', async () => {
+    const h = harness({ json: true, systemImage: 'system-images;android-99;google_apis;arm64-v8a' });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    const stdout0 = h.stdout[0];
+    assert(stdout0);
+    const payload = JSON.parse(stdout0);
+    expect(payload.code).toBe('STIM_BAD_ARG');
+    expect(payload.message).toMatch(/No installed Android system image is named "system-images;android-99/);
+    expect(payload.message).toMatch(
+      /system-images;android-36;google_apis;arm64-v8a, system-images;android-35;google_apis;arm64-v8a/,
+    );
+    expect(payload.remedy).toMatch(/--system-image/);
+    expect(h.calls.ensureDevice.length).toBe(0);
+  });
+
+  test('a plain run with neither flag nor setting never reads the system-image listing', async () => {
+    let listed = 0;
+    const h = harness({
+      listSystemImages: () => {
+        listed += 1;
+        return IMAGES;
+      },
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(listed).toBe(0);
+  });
+
+  test('an unreadable SDK is a structured refusal, not a stack trace', async () => {
+    const h = harness({
+      json: true,
+      systemImage: 'system-images;android-36;google_apis;arm64-v8a',
+      listSystemImages: () => {
+        throw new Error('EACCES: permission denied');
+      },
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    const stdout0 = h.stdout[0];
+    assert(stdout0);
+    const payload = JSON.parse(stdout0);
+    expect(payload.code).toBe(NO_DEVICE);
+    expect(payload.message).toMatch(/Could not read the installed Android system images: EACCES/);
+    expect(h.calls.ensureDevice.length).toBe(0);
+  });
+
+  test('a blank value is STIM_BAD_ARG on its own', async () => {
+    const h = harness({ json: true, systemImage: '   ' });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    const stdout0 = h.stdout[0];
+    assert(stdout0);
+    expect(JSON.parse(stdout0).code).toBe('STIM_BAD_ARG');
+    expect(JSON.parse(stdout0).message).toMatch(/--system-image was given an empty id/);
+    expect(h.calls.ensureDevice.length).toBe(0);
+  });
+
+  test('the --json payload reports the system image the owned AVD actually has', async () => {
+    const h = harness({
+      json: true,
+      ensureDevice: async () => ({
+        avdName: 'stim-app-412',
+        consolePort: 5584,
+        owned: true,
+        systemImage: 'system-images;android-36;google_apis;arm64-v8a',
+      }),
+    });
+    await h.run();
+    const stdout0 = h.stdout[0];
+    assert(stdout0);
+    expect(JSON.parse(stdout0).systemImage).toBe('system-images;android-36;google_apis;arm64-v8a');
   });
 });

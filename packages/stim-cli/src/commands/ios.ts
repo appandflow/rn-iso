@@ -57,7 +57,14 @@ import {
 } from '../engine/build-lock.ts';
 import { acquireBuildSlot, releaseBuildSlot, type BuildSlotHandle } from '../engine/build-slots.ts';
 import { readPodState, podsAreStale, runPodInstall } from '../engine/deps.ts';
-import { checkDeviceCapacity, ensureBooted, ensureOwnedDevice } from '../engine/device.ts';
+import {
+  checkDeviceCapacity,
+  ensureBooted,
+  ensureOwnedDevice,
+  unknownIosDeviceTypeRefusal,
+  unknownIosRuntimeRefusal,
+} from '../engine/device.ts';
+import { listIosRuntimes } from '../sim/ios.ts';
 import {
   REMOTE_SESSION_ERROR,
   binOnPath,
@@ -173,6 +180,8 @@ interface DeviceLike {
   deviceName?: string | null;
   name?: string | null;
   avdName?: string | null;
+  deviceType?: string | null;
+  runtime?: string | null;
 }
 
 interface IosBootLike {
@@ -242,6 +251,8 @@ interface IosCommandOptions {
   metroCheck?: boolean;
   buildCache?: boolean;
   configuration?: string;
+  deviceType?: string;
+  runtime?: string;
   device?: string | boolean;
   remote?: RemoteDeviceBackend;
   wait?: string | boolean;
@@ -332,6 +343,78 @@ export function resolveConfiguration(
 ): string | null {
   const fromFlag = typeof flag === 'string' && flag.trim() !== '' ? flag.trim() : null;
   return fromFlag || iosConfigurationSetting(settings);
+}
+
+function iosStringSetting(settings: SettingsObject | null | undefined, key: string): string | null {
+  const ios = settings?.['ios'];
+  if (!ios || typeof ios !== 'object' || Array.isArray(ios)) return null;
+  const raw = (ios as Record<string, unknown>)[key];
+  return typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : null;
+}
+
+export function resolveDeviceType(
+  flag: string | null | undefined,
+  settings: SettingsObject | null | undefined,
+): string | null {
+  const fromFlag = typeof flag === 'string' && flag.trim() !== '' ? flag.trim() : null;
+  return fromFlag || iosStringSetting(settings, 'deviceType');
+}
+
+export function resolveRuntime(
+  flag: string | null | undefined,
+  settings: SettingsObject | null | undefined,
+): string | null {
+  const fromFlag = typeof flag === 'string' && flag.trim() !== '' ? flag.trim() : null;
+  return fromFlag || iosStringSetting(settings, 'runtime');
+}
+
+function deviceModelRefusal({
+  deviceTypeFlag,
+  runtimeFlag,
+  deviceType,
+  runtime,
+  physical,
+  remoteBackend,
+  listRuntimes,
+}: {
+  deviceTypeFlag: string | undefined;
+  runtimeFlag: string | undefined;
+  deviceType: string | null;
+  runtime: string | null;
+  physical: boolean;
+  remoteBackend: RemoteDeviceBackend | null;
+  listRuntimes: typeof listIosRuntimes;
+}): { code: string; message: string; remedy: string } | null {
+  if (typeof deviceTypeFlag === 'string' && deviceTypeFlag.trim() === '') {
+    return {
+      code: 'STIM_BAD_ARG',
+      message: '--device-type was given an empty name.',
+      remedy:
+        'Pass `--device-type <name>` with a model `xcrun simctl list devicetypes` names, e.g. "iPad Pro 13-inch (M4)".',
+    };
+  }
+  if (typeof runtimeFlag === 'string' && runtimeFlag.trim() === '') {
+    return {
+      code: 'STIM_BAD_ARG',
+      message: '--runtime was given an empty version.',
+      remedy: 'Pass `--runtime <version>` with a runtime `xcrun simctl list runtimes` reports, e.g. "18.5".',
+    };
+  }
+  if (physical || remoteBackend) return null;
+  if (!deviceType && !runtime) return null;
+  let runtimes;
+  try {
+    runtimes = listRuntimes();
+  } catch (error) {
+    return {
+      code: 'STIM_NO_DEVICE',
+      message: `Could not read the installed simulator runtimes: ${(error as Error)?.message || error}`,
+      remedy: 'Run `stim doctor` to check the simulator toolchain, then try again.',
+    };
+  }
+  const refusal =
+    unknownIosRuntimeRefusal(runtime, runtimes) ?? unknownIosDeviceTypeRefusal(deviceType, runtimes, runtime);
+  return refusal ? { code: 'STIM_BAD_ARG', message: refusal.message, remedy: refusal.remedy } : null;
 }
 
 export function isReleaseConfiguration(configuration: string | null | undefined): boolean {
@@ -553,6 +636,8 @@ export function lastBuildRecord({
 export function iosFacts({
   udid,
   deviceName,
+  deviceType = null,
+  runtime = null,
   fingerprint,
   configuration = null,
   cacheKey,
@@ -572,6 +657,8 @@ export function iosFacts({
 }: {
   udid: string;
   deviceName?: string | null;
+  deviceType?: string | null;
+  runtime?: string | null;
   fingerprint?: string | null;
   configuration?: string | null;
   cacheKey?: string | null;
@@ -593,6 +680,8 @@ export function iosFacts({
     platform: PLATFORM,
     udid,
     deviceName: deviceName ?? null,
+    deviceType: deviceType ?? null,
+    runtime: runtime ?? null,
     fingerprint,
     configuration: configuration ?? null,
     cacheKey,
@@ -758,6 +847,7 @@ interface IosDeps {
   projectShortcut: typeof projectShortcut;
   checkDeviceCapacity: typeof checkDeviceCapacity;
   ensureOwnedDevice: typeof ensureOwnedDevice;
+  listIosRuntimes: typeof listIosRuntimes;
   ensureBooted: typeof ensureBooted;
   resolveProjectMetro: typeof resolveProjectMetro;
   resolveMetroWithRetry: typeof resolveMetroWithRetry;
@@ -825,6 +915,7 @@ const DEFAULT_DEPS: IosDeps = {
   projectShortcut,
   checkDeviceCapacity,
   ensureOwnedDevice,
+  listIosRuntimes,
   ensureBooted,
   resolveRemoteContext,
   remoteIosDeps,
@@ -905,6 +996,18 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     .option(
       '--configuration <name>',
       'Xcode configuration to build (e.g. Release). A non-Debug configuration embeds the JS bundle and skips Metro entirely. Overrides the ios.configuration setting. Default: Debug',
+    )
+    .option(
+      '--device-type <name>',
+      "Simulator model to create this workspace's owned sim as, exactly as `xcrun simctl list devicetypes` names it " +
+        '(e.g. "iPad Pro 13-inch (M4)"). Overrides the ios.deviceType setting for this invocation. A model no installed ' +
+        'runtime can create refuses with STIM_BAD_ARG and prints the models they do offer.',
+    )
+    .option(
+      '--runtime <version>',
+      'Simulator runtime to create this workspace\'s owned sim on, as a version ("18.5") or a runtime\'s full name ' +
+        '("iOS 18.5"); nothing else matches. Overrides the ios.runtime setting for this invocation. An unknown version ' +
+        'refuses with STIM_BAD_ARG and prints the installed runtimes.',
     )
     .option(
       '--device [udid]',
@@ -1208,6 +1311,8 @@ function reportIosResult({
   const facts = iosFacts({
     udid,
     deviceName: device?.deviceName ?? null,
+    deviceType: device?.deviceType,
+    runtime: device?.runtime,
     fingerprint: storeHash,
     configuration,
     cacheKey: storeKey,
@@ -1768,6 +1873,9 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   const configuration = resolveConfiguration(opts.configuration, settings);
   const release = isReleaseConfiguration(configuration);
 
+  const deviceType = resolveDeviceType(opts.deviceType, settings);
+  const runtime = resolveRuntime(opts.runtime, settings);
+
   const deviceFlag = opts.device;
   const physical = deviceFlag !== null && deviceFlag !== undefined && deviceFlag !== false;
   if (physical && deviceFlag === '') {
@@ -1815,6 +1923,16 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
 
   const isExpo = d.detectIsExpo(root);
   const remoteBackend = physical ? null : (opts.remote ?? remoteIosSetting(settings));
+  const modelRefusal = deviceModelRefusal({
+    deviceTypeFlag: opts.deviceType,
+    runtimeFlag: opts.runtime,
+    deviceType,
+    runtime,
+    physical,
+    remoteBackend,
+    listRuntimes: d.listIosRuntimes,
+  });
+  if (modelRefusal) return fail(modelRefusal);
   const registerProject = () => d.upsertProject(root, { bundleId: d.detectBundleId(root) ?? undefined, isExpo });
   if (remoteBackend !== 'eas') registerProject();
   const proj = d.getProject(root);
@@ -1905,7 +2023,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
         settingsRoot: settingsRepoRoot ?? root,
         label,
         settings,
-        flags: {},
+        flags: { deviceType, runtime },
         note,
         out: note,
       });

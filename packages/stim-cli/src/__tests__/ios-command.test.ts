@@ -23,6 +23,8 @@ import {
   isReleaseConfiguration,
   lastBuildRecord,
   resolveConfiguration,
+  resolveDeviceType,
+  resolveRuntime,
   phaseLine,
   podAction,
   ensureWorkspaceStorageSafely,
@@ -41,6 +43,26 @@ import { asProcessExit, makeChildProcess, makeError, makeExecutor, makeMetroReso
 import { RELEASE_VERIFY_WAIT_MS } from '../engine/app-install.ts';
 import { DEVICECTL_INSTALL_TIMEOUT_MS, LAUNCH_PROBE_TIMEOUT_MS } from '../engine/ios-device.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
+
+const RUNTIMES = [
+  {
+    identifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
+    name: 'iOS 26.5',
+    version: '26.5',
+    supportedDeviceTypes: [
+      { identifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro', name: 'iPhone 17 Pro' },
+      { identifier: 'com.apple.CoreSimulator.SimDeviceType.iPad-Pro-13-M4', name: 'iPad Pro 13-inch (M4)' },
+    ],
+  },
+  {
+    identifier: 'com.apple.CoreSimulator.SimRuntime.iOS-18-5',
+    name: 'iOS 18.5',
+    version: '18.5',
+    supportedDeviceTypes: [
+      { identifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro', name: 'iPhone 17 Pro' },
+    ],
+  },
+];
 import { DEBUG_VERIFY_STEP_MS, type RunLease } from '../engine/device-lease-run.ts';
 
 const UDID = 'BF2A1C3D-4E5F-6071-8293-A4B5C6D7E8F9';
@@ -169,6 +191,7 @@ function harness(overrides: LooseDeps = {}) {
       record('ensureOwnedDevice', args);
       return { deviceUdid: UDID, deviceName: 'stim-fixture', owned: true };
     },
+    listIosRuntimes: () => RUNTIMES,
     ensureBooted: async (args) => {
       record('ensureBooted', args);
       return { ok: true, udid: UDID };
@@ -2095,6 +2118,8 @@ describe('iosFacts', () => {
       platform: 'ios',
       udid: UDID,
       deviceName: 'stim-x',
+      deviceType: null,
+      runtime: null,
       fingerprint: 'abc',
       configuration: null,
       cacheKey: 'abc-debug-sim',
@@ -4349,5 +4374,171 @@ describe('ios --device: the lease on the phone', () => {
     } finally {
       process.argv = argv;
     }
+  });
+});
+
+describe('the simulator model and runtime flags', () => {
+  test('resolveDeviceType and resolveRuntime put the flag over the setting', () => {
+    const settings = { ios: { deviceType: 'iPhone 17 Pro', runtime: '26.2' } };
+    expect(resolveDeviceType('iPad Pro 13-inch (M4)', settings)).toBe('iPad Pro 13-inch (M4)');
+    expect(resolveRuntime('18.5', settings)).toBe('18.5');
+    expect(resolveDeviceType(null, settings)).toBe('iPhone 17 Pro');
+    expect(resolveRuntime(null, settings)).toBe('26.2');
+    expect(resolveDeviceType('  ', settings)).toBe('iPhone 17 Pro');
+    expect(resolveRuntime('  ', settings)).toBe('26.2');
+    expect(resolveDeviceType(null, {})).toBe(null);
+    expect(resolveRuntime(null, null)).toBe(null);
+  });
+
+  test('the flags reach the engine and override the settings for that invocation', async () => {
+    reserve();
+    const settings = { ios: { deviceType: 'iPhone 17 Pro', runtime: '18.5' } };
+    const fromSetting = await run({}, { resolveSettings: () => settings });
+    expect(fromSetting.calls.args['ensureOwnedDevice']).toMatchObject({
+      flags: { deviceType: 'iPhone 17 Pro', runtime: '18.5' },
+    });
+    const fromFlag = await run(
+      { deviceType: 'iPad Pro 13-inch (M4)', runtime: '26.5' },
+      { resolveSettings: () => settings },
+    );
+    expect(fromFlag.calls.args['ensureOwnedDevice']).toMatchObject({
+      flags: { deviceType: 'iPad Pro 13-inch (M4)', runtime: '26.5' },
+    });
+    const neither = await run({});
+    expect(neither.calls.args['ensureOwnedDevice']).toMatchObject({ flags: { deviceType: null, runtime: null } });
+  });
+
+  test('a device type no installed runtime can create refuses with STIM_BAD_ARG, before anything is created', async () => {
+    reserve();
+    const { exitCode, logs, errs, calls } = await run({ deviceType: 'iPad Pro 99-inch', json: true });
+    expect(exitCode).toBe(1);
+    const payload = parseFirst(logs);
+    expect(payload.code).toBe('STIM_BAD_ARG');
+    expect(payload.message).toMatch(
+      /No device type named "iPad Pro 99-inch" can be created on any installed simulator runtime/,
+    );
+    expect(payload.message).toMatch(/iPhone 17 Pro, iPad Pro 13-inch \(M4\)/);
+    expect(payload.remedy).toMatch(/--device-type/);
+    expect(calls.order.includes('ensureOwnedDevice')).toBeFalsy();
+    expect(calls.order.includes('buildIos')).toBeFalsy();
+    expect(errs.join('\n')).toMatch(/STIM_BAD_ARG/);
+  });
+
+  test('a name simctl lists but no runtime supports is refused here, not left to fail at creation', async () => {
+    reserve();
+    const { exitCode, logs, calls } = await run({ deviceType: 'Apple Vision Pro', json: true });
+    expect(exitCode).toBe(1);
+    expect(parseFirst(logs).code).toBe('STIM_BAD_ARG');
+    expect(parseFirst(logs).message).not.toMatch(/Apple Vision Pro\./);
+    expect(calls.order.includes('ensureOwnedDevice')).toBeFalsy();
+  });
+
+  test('a device-type and runtime pair no runtime offers is refused against that runtime alone', async () => {
+    reserve();
+    const { exitCode, logs, calls } = await run({
+      deviceType: 'iPad Pro 13-inch (M4)',
+      runtime: '18.5',
+      json: true,
+    });
+    expect(exitCode).toBe(1);
+    const payload = parseFirst(logs);
+    expect(payload.code).toBe('STIM_BAD_ARG');
+    expect(payload.message).toMatch(
+      /No device type named "iPad Pro 13-inch \(M4\)" can be created on runtime 18\.5\. Device types runtime 18\.5 supports: iPhone 17 Pro\./,
+    );
+    expect(calls.order.includes('ensureOwnedDevice')).toBeFalsy();
+
+    const ok = await run({ deviceType: 'iPad Pro 13-inch (M4)', runtime: '26.5', json: true });
+    expect(ok.calls.order.includes('ensureOwnedDevice')).toBeTruthy();
+  });
+
+  test('an unknown runtime refuses first, naming the installed versions', async () => {
+    reserve();
+    const { exitCode, logs, calls } = await run({ runtime: '99.9', json: true });
+    expect(exitCode).toBe(1);
+    const payload = parseFirst(logs);
+    expect(payload.code).toBe('STIM_BAD_ARG');
+    expect(payload.message).toMatch(
+      /No installed simulator runtime matches "99\.9"\. Installed runtimes: 26\.5, 18\.5\./,
+    );
+    expect(calls.order.includes('ensureOwnedDevice')).toBeFalsy();
+
+    const suffix = await run({ runtime: '5', json: true });
+    expect(suffix.exitCode).toBe(1);
+    expect(parseFirst(suffix.logs).message).toMatch(/No installed simulator runtime matches "5"/);
+  });
+
+  test('a plain run with neither flag nor setting never spawns the runtime listing', async () => {
+    reserve();
+    let listed = 0;
+    const { exitCode } = await run(
+      {},
+      {
+        listIosRuntimes: () => {
+          listed += 1;
+          return RUNTIMES;
+        },
+      },
+    );
+    expect(exitCode).toBe(null);
+    expect(listed).toBe(0);
+  });
+
+  test('an xcrun failure while listing is a structured refusal, not a stack trace', async () => {
+    reserve();
+    const { exitCode, logs, errs, calls } = await run(
+      { deviceType: 'iPhone 17 Pro', json: true },
+      {
+        listIosRuntimes: () => {
+          throw new Error('xcrun: error: unable to find utility "simctl"');
+        },
+      },
+    );
+    expect(exitCode).toBe(1);
+    expect(logs.length).toBe(1);
+    const payload = parseFirst(logs);
+    expect(payload.code).toBe('STIM_NO_DEVICE');
+    expect(payload.message).toMatch(/Could not read the installed simulator runtimes: xcrun: error/);
+    expect(payload.remedy).toMatch(/stim doctor/);
+    expect(calls.order.includes('ensureOwnedDevice')).toBeFalsy();
+    expect(errs.join('\n')).not.toMatch(/at .*\(/);
+  });
+
+  test('a blank value is STIM_BAD_ARG on its own', async () => {
+    reserve();
+    const blankType = await run({ deviceType: '   ', json: true });
+    expect(blankType.exitCode).toBe(1);
+    expect(parseFirst(blankType.logs).code).toBe('STIM_BAD_ARG');
+    expect(parseFirst(blankType.logs).message).toMatch(/--device-type was given an empty name/);
+    const blankRuntime = await run({ runtime: '', json: true });
+    expect(blankRuntime.exitCode).toBe(1);
+    expect(parseFirst(blankRuntime.logs).message).toMatch(/--runtime was given an empty version/);
+  });
+
+  test('the --json payload reports the model and runtime the owned simulator actually has', async () => {
+    reserve();
+    const { logs } = await run(
+      { json: true },
+      {
+        ensureOwnedDevice: async () => ({
+          deviceUdid: UDID,
+          deviceName: 'stim-fixture',
+          owned: true,
+          deviceType: 'iPad Pro 13-inch (M4)',
+          runtime: '18.5',
+        }),
+      },
+    );
+    const payload = parseFirst(logs);
+    expect(payload.deviceType).toBe('iPad Pro 13-inch (M4)');
+    expect(payload.runtime).toBe('18.5');
+  });
+
+  test('a device Stim does not own reports both as null', async () => {
+    reserve();
+    const { logs } = await run({ json: true });
+    const payload = parseFirst(logs);
+    expect(payload.deviceType).toBe(null);
+    expect(payload.runtime).toBe(null);
   });
 });
