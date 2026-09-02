@@ -20,6 +20,7 @@ import {
   amStartError,
   androidAppProcess,
   androidDevClientUrl,
+  devClientDeepLink,
   debugHttpHostScript,
   deviceShellArg,
   ADB_INSTALL_TIMEOUT_MS,
@@ -101,8 +102,34 @@ describe('the two pure port-wiring shapes', () => {
   });
 
   test('devClientUrl matches the shape expo-dev-launcher asserts on', () => {
-    expect(devClientUrl('myapp', 8082)).toBe('myapp://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8082');
-    expect(devClientUrl('scheme', 8081)).toBe('scheme://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8081');
+    expect(devClientUrl('myapp', 8082)).toBe(
+      'myapp://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8082%2F%3FdisableOnboarding%3D1',
+    );
+    expect(devClientUrl('scheme', 8081)).toBe(
+      'scheme://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8081%2F%3FdisableOnboarding%3D1',
+    );
+  });
+
+  test('disableOnboarding=1 sits INSIDE the project url, never on the deep link', () => {
+    const urls = [
+      devClientUrl('myapp', 8082),
+      devClientUrl('myapp', 8082, '10.0.0.188'),
+      androidDevClientUrl('myapp', 8082, false),
+      androidDevClientUrl('myapp', 8082, true),
+      devClientDeepLink('myapp', 'https://abc.trycloudflare.com'),
+    ];
+    for (const url of urls) {
+      const link = new URL(url);
+      expect(link.searchParams.get('disableOnboarding')).toBe(null);
+      const projectUrl = new URL(link.searchParams.get('url') as string);
+      expect(projectUrl.searchParams.get('disableOnboarding')).toBe('1');
+    }
+    expect(devClientUrl('myapp', 8082, '10.0.0.188')).toBe(
+      'myapp://expo-development-client/?url=http%3A%2F%2F10.0.0.188%3A8082%2F%3FdisableOnboarding%3D1',
+    );
+    expect(devClientDeepLink('myapp', 'https://abc.trycloudflare.com')).toBe(
+      'myapp://expo-development-client/?url=https%3A%2F%2Fabc.trycloudflare.com%2F%3FdisableOnboarding%3D1',
+    );
   });
 
   test('iOS scheme approvals cover the bundle id and dev-client scheme without duplicates', () => {
@@ -156,18 +183,6 @@ describe('ios', () => {
         'defaults',
         'write',
         'com.example.app',
-        'EXDevMenuIsOnboardingFinished',
-        '-bool',
-        'true',
-      ],
-      [
-        'xcrun',
-        'simctl',
-        'spawn',
-        'U1',
-        'defaults',
-        'write',
-        'com.example.app',
         'EXDevMenuShowsAtLaunch',
         '-bool',
         'false',
@@ -200,7 +215,7 @@ describe('ios', () => {
   });
 
   test('a failed dev-client preference write reports a failed install result', () => {
-    const exec = recordingExec({ fail: 'EXDevMenuIsOnboardingFinished' });
+    const exec = recordingExec({ fail: 'EXDevMenuShowsAtLaunch' });
     const result = installIosApp(
       {
         udid: 'U1',
@@ -249,7 +264,13 @@ describe('ios', () => {
     expect(result.mode).toBe('openurl');
     expect(exec.calls).toEqual([
       ['xcrun', 'simctl', 'spawn', 'U1', 'defaults', 'write', 'com.example.app', 'RCT_jsLocation', 'localhost:8082'],
-      ['xcrun', 'simctl', 'openurl', 'U1', 'myapp://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8082'],
+      [
+        'xcrun',
+        'simctl',
+        'openurl',
+        'U1',
+        'myapp://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8082%2F%3FdisableOnboarding%3D1',
+      ],
     ]);
   });
 
@@ -708,6 +729,47 @@ describe('unverifiedLaunchLines', () => {
     expect(text).toMatch(/adb -s emulator-5584 shell monkey -p com\.x 1/);
     expect(text).toMatch(/DEVELOPMENT SERVERS/);
   });
+
+  test('every printed retry command carries disableOnboarding inside the project url', () => {
+    const simulator = unverifiedLaunchLines({
+      platform: 'ios',
+      metroPort: 8082,
+      bundleId: 'io.tlon.groups',
+      udid: 'BF2A1C3D',
+      devClientUrl: devClientUrl('io.tlon.groups', 8082),
+    }).join('\n');
+    expect(simulator).toContain(
+      "xcrun simctl openurl BF2A1C3D 'io.tlon.groups://expo-development-client/" +
+        "?url=http%3A%2F%2Flocalhost%3A8082%2F%3FdisableOnboarding%3D1'",
+    );
+
+    const phone = unverifiedLaunchLines({
+      platform: 'ios',
+      metroPort: 8082,
+      bundleId: 'io.tlon.groups',
+      udid: 'BF2A1C3D',
+      physical: true,
+      devClient: true,
+      lanOrigin: 'http://10.0.0.132:8082',
+      devClientUrl: devClientUrl('io.tlon.groups', 8082, '10.0.0.132'),
+    }).join('\n');
+    expect(phone).toContain(
+      "--payload-url 'io.tlon.groups://expo-development-client/" +
+        "?url=http%3A%2F%2F10.0.0.132%3A8082%2F%3FdisableOnboarding%3D1' io.tlon.groups",
+    );
+
+    const android = unverifiedLaunchLines({
+      platform: 'android',
+      metroPort: 8082,
+      bundleId: 'com.x',
+      serial: 'emulator-5584',
+      devClientUrl: androidDevClientUrl('exp+app', 8082),
+    }).join('\n');
+    expect(android).toContain(
+      "-d 'exp+app://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8082%2F%3FdisableOnboarding%3D1'" +
+        ' --ez EXDevMenuDisableAutoLaunch true',
+    );
+  });
 });
 
 describe('unverifiedLaunchLines: the action comes first', () => {
@@ -831,6 +893,14 @@ describe('unverifiedLaunchLines: the routed Local Network remedy', () => {
     expect(text).not.toMatch(/cannot be granted from this machine/);
     expect(text).toMatch(/socketfilterfw/);
     expect(text).not.toMatch(/LOCAL NETWORK PERMISSION IS NOT GRANTED/);
+  });
+
+  test('the Close press stays, because the deep link finishes onboarding only', () => {
+    const text = devClientLines().join('\n');
+    expect(text).toMatch(/On a fresh install the Expo dev menu can be over the app first/);
+    expect(text).toMatch(/finishes the launcher's onboarding, not EXDevMenuShowsAtLaunch/);
+    expect(text).toMatch(/defaults true on iOS/);
+    expect(text).toContain(`agent-device press 'label="Close"'`);
   });
 
   test('a simulator never takes the routed remedy, whatever the flag says', () => {
@@ -969,9 +1039,11 @@ describe('the debug_http_host script, run for real under sh', () => {
 describe('the Android dev-client deep link', () => {
   test('the url is the iOS shape pointed at the emulator loopback', () => {
     expect(androidDevClientUrl('exp+app', 8085)).toBe(
-      'exp+app://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8085',
+      'exp+app://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8085%2F%3FdisableOnboarding%3D1',
     );
-    expect(devClientUrl('exp+app', 8085)).toBe('exp+app://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8085');
+    expect(devClientUrl('exp+app', 8085)).toBe(
+      'exp+app://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8085%2F%3FdisableOnboarding%3D1',
+    );
   });
 
   test('launchAndroidApp sends it, quoted for the device shell, and skips resolve-activity', () => {
@@ -981,7 +1053,9 @@ describe('the Android dev-client deep link', () => {
       { exec },
     );
     expect(result.mode).toBe('deep-link');
-    expect(result.devClientUrl).toBe('exp+app://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8082');
+    expect(result.devClientUrl).toBe(
+      'exp+app://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8082%2F%3FdisableOnboarding%3D1',
+    );
     expect(exec.calls.at(-1)).toEqual([
       'adb',
       '-s',
@@ -992,7 +1066,10 @@ describe('the Android dev-client deep link', () => {
       '-a',
       'android.intent.action.VIEW',
       '-d',
-      `'exp+app://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8082'`,
+      `'exp+app://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8082%2F%3FdisableOnboarding%3D1'`,
+      '--ez',
+      'EXDevMenuDisableAutoLaunch',
+      'true',
     ]);
     expect(!exec.calls.some((c: string[]) => c.includes('resolve-activity'))).toBeTruthy();
     expect(result.debugHttpHost).toBe('10.0.2.2:8082');
@@ -1798,10 +1875,10 @@ describe('the Metro host for a physical device', () => {
 
   test('the dev-client url targets localhost on a physical device', () => {
     expect(androidDevClientUrl('exp+app', 8085, true)).toBe(
-      'exp+app://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8085',
+      'exp+app://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8085%2F%3FdisableOnboarding%3D1',
     );
     expect(androidDevClientUrl('exp+app', 8085, false)).toBe(
-      'exp+app://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8085',
+      'exp+app://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8085%2F%3FdisableOnboarding%3D1',
     );
   });
 
@@ -1818,7 +1895,9 @@ describe('the Metro host for a physical device', () => {
       { exec },
     );
     expect(result.ok).toBe(true);
-    expect(result.devClientUrl).toBe('exp+app://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8082');
+    expect(result.devClientUrl).toBe(
+      'exp+app://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8082%2F%3FdisableOnboarding%3D1',
+    );
   });
 });
 
@@ -1952,7 +2031,7 @@ describe('skipping an install the device already holds', () => {
     );
     expect(result).toEqual({ ok: true, appPath, skipped: true });
     expect(exec.calls.some((c) => c.includes('install'))).toBe(false);
-    expect(exec.calls.some((c) => c.includes('EXDevMenuIsOnboardingFinished'))).toBe(true);
+    expect(exec.calls.some((c) => c.includes('EXDevMenuShowsAtLaunch'))).toBe(true);
     expect(exec.calls.some((c) => c.includes('com.apple.CoreSimulator.CoreSimulatorBridge-->myapp'))).toBe(true);
   });
 

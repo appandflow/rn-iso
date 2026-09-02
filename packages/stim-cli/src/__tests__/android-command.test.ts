@@ -2531,7 +2531,7 @@ describe('the dev-client deep link', () => {
   });
 
   test('the deep-link launch says so, and the url is in the facts', async () => {
-    const url = 'exp+app://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8082';
+    const url = 'exp+app://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8082%2F%3FdisableOnboarding%3D1';
     const h = harness({
       resolveDevClientScheme: () => 'exp+app',
       launch: () => ({ ok: true, mode: 'deep-link', devClientUrl: url, reversed: [], debugHttpHost: '10.0.2.2:8082' }),
@@ -2574,7 +2574,7 @@ describe('the dev-client deep link', () => {
     expect(link > 0).toBeTruthy();
     expect(link < picker).toBeTruthy();
     expect(text).toMatch(
-      /adb -s emulator-5584 shell am start -a android\.intent\.action\.VIEW -d 'exp\+app:\/\/expo-development-client\/\?url=http%3A%2F%2F10\.0\.2\.2%3A8082'/,
+      /adb -s emulator-5584 shell am start -a android\.intent\.action\.VIEW -d 'exp\+app:\/\/expo-development-client\/\?url=http%3A%2F%2F10\.0\.2\.2%3A8082%2F%3FdisableOnboarding%3D1' --ez EXDevMenuDisableAutoLaunch true/,
     );
     expect(steps.length >= 2).toBeTruthy();
   });

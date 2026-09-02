@@ -19,7 +19,7 @@ import {
   remoteProfilePath,
 } from './agent-device.ts';
 import { planMetroReach, PUBLIC_METRO_ENV, type ManagedProvider, type TunnelMode } from './metro-reach.ts';
-import { INSTALL_ERROR, isBundleProof, LAUNCH_ERROR, readMetroRecords } from './app-install.ts';
+import { devClientDeepLink, INSTALL_ERROR, isBundleProof, LAUNCH_ERROR, readMetroRecords } from './app-install.ts';
 import {
   createSessionArgs,
   getSessionArgs,
@@ -344,9 +344,7 @@ function remoteDeviceDeps(ctx: RemoteContext) {
         return { failed: true, code: REMOTE_METRO_ERROR, reason: `${origin.failed} ${origin.remedy}` };
       }
 
-      const url = devClientScheme
-        ? `${devClientScheme}://expo-development-client/?url=${encodeURIComponent(origin.origin)}`
-        : null;
+      const url = devClientScheme ? devClientDeepLink(devClientScheme, origin.origin) : null;
       try {
         exec().runFile(ctx.agentDeviceBin, openArgs(session.profilePath, appId, url, metroHintFrom(origin.origin)), {
           cwd: ctx.root,
