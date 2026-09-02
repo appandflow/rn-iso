@@ -122,6 +122,22 @@ Ask the user before these actions:
   delete it. An explicit `stop` shuts down a Stim-owned simulator even when
   another process uses it. It never shuts down an unowned simulator.
 
+## Under a sandbox
+
+An agent harness that sandboxes shell commands usually permits writes inside
+the project and little else. Three things Stim needs sit outside that
+boundary, and none of the failures names the sandbox: writes to `STIM_HOME`
+(`~/.stim` unless set) fail with `EPERM` on a directory the user can write, the
+iOS simulator service looks dead, and the adb server looks unreachable. They
+are not a broken machine. Compare that path against the harness's own
+allowlist, and the conflict is visible before anything runs.
+
+Decide at the start of a session, not after the third failure: either run Stim
+with the harness's sandbox disabled, or ask the user to allow those three.
+`stim guide errors` lists what to allow. The same boundary catches other
+commands: a git credential helper prints `failed to store` on a fetch that
+worked.
+
 ## Load advanced guidance only when needed
 
 The installed CLI is the source of truth for flags, payloads, settings, error

@@ -492,9 +492,11 @@ code, never on the message.
 STIM_WORKSPACE_STATE / STIM_WORKSPACE_COLLISION
   Stim could not prepare this project's global workspace directory under
   $STIM_HOME/workspaces. Check that STIM_HOME is writable and has free
-  space. COLLISION means the readable-name-plus-digest directory already has a
-  workspace.json for a different canonical project path; do not overwrite it
-  until you identify which workspace owns it.
+  space. An EPERM on a directory the user CAN write is a sandbox, not a
+  permission bit -- see RUNNING UNDER A SANDBOX below. COLLISION means the
+  readable-name-plus-digest directory already has a workspace.json for a
+  different canonical project path; do not overwrite it until you identify
+  which workspace owns it.
 
 STIM_NO_METRO
   Nothing that could be proven to be THIS workspace's dev server holds the
@@ -1069,6 +1071,41 @@ too; commit deliberately."  (worktree create --carry-ignored)
 "Could not reserve a Metro port after 5 attempts"
   Several commands raced for the same ports and each one lost. Nothing is
   wrong; retry.
+
+RUNNING UNDER A SANDBOX
+
+  An agent harness that sandboxes shell commands typically permits writes
+  inside the project and blocks the rest. Three things Stim needs sit outside
+  that boundary, and none of the failures names the sandbox:
+
+    EPERM: operation not permitted, mkdir '<STIM_HOME>/workspaces/...'
+      writes to STIM_HOME (~/.stim unless set)
+
+    CoreSimulatorService connection became invalid   (macOS)
+    Unable to locate device set: ... Code=61 "Connection refused"
+      the simulator service simctl talks to over XPC
+
+    ADB server didn't ACK
+    could not install *smartsocket* listener: Operation not permitted
+      the adb server socket on tcp:5037
+
+  Measured on Claude Code and on Codex: the three fail the same way in both,
+  so this is the shape of the problem, not one harness's quirk. Codex also
+  blocks network egress by default, which breaks a cache lookup and a fetch.
+
+  Two ways out, and choosing at the start of a session beats discovering it
+  three failures in. Either run Stim with the harness's sandbox disabled, or
+  allow the three. In Claude Code that is settings.json:
+
+    sandbox.filesystem.allowWrite     ["~/.stim"]
+    sandbox.network.allowMachLookup   ["com.apple.coresimulator.*"]
+    sandbox.network.allowLocalBinding true
+
+  In Codex the sandbox is one flag, \`codex -s\`, with no per-path allowance:
+  workspace-write still refuses STIM_HOME.
+
+  A git credential helper is often blocked too. It prints \`failed to store\`
+  on a fetch that otherwise succeeded, and is safe to ignore.
 
 STIM_CONFIG_CORRUPT  ("Stim config at <path> is not valid JSON")
   Any command can raise it: every command reads ~/.stim/config.json first.

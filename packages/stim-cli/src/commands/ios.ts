@@ -1541,7 +1541,11 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     const code = (error as Error & { code?: string })?.code || 'STIM_WORKSPACE_STATE';
     const message = `Could not prepare this workspace's Stim state: ${(error as Error)?.message || error}`;
     note(chalk.red(`${code}: ${message}`));
-    note(chalk.dim('Check that STIM_HOME is writable and has free space.'));
+    note(
+      chalk.dim(
+        'Check that STIM_HOME is writable and has free space. An EPERM on a directory you can write is a sandbox: allow writes to STIM_HOME, or run Stim with the sandbox disabled (`stim guide errors`).',
+      ),
+    );
     if (json)
       console.log(JSON.stringify({ code, message, remedy: 'Check that STIM_HOME is writable and has free space.' }));
     process.exitCode = 1;

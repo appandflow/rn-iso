@@ -613,6 +613,34 @@ test('the guide names every path Stim ignores by default', () => {
   }
 });
 
+test('the sandbox failures are named in the guide, and the skill points at them', () => {
+  const errors = renderTopic('errors') ?? '';
+  const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
+
+  // The three failures an agent actually sees.
+  for (const detail of [
+    'RUNNING UNDER A SANDBOX',
+    'CoreSimulatorService connection became invalid',
+    "ADB server didn't ACK",
+  ]) {
+    expect(errors).toContain(detail);
+  }
+
+  // The allowlist keys are advanced detail: the guide carries them, not the skill.
+  for (const key of [
+    'sandbox.filesystem.allowWrite',
+    'sandbox.network.allowMachLookup',
+    'sandbox.network.allowLocalBinding',
+  ]) {
+    expect(errors).toContain(key);
+    expect(skill).not.toContain(key);
+  }
+
+  // The skill says a sandbox exists and sends the reader to the topic.
+  expect(skill).toMatch(/sandbox/i);
+  expect(skill).toContain('stim guide errors');
+});
+
 test('advanced contracts stay in guide topics instead of the skill', () => {
   const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
   const advanced = [
