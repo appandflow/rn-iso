@@ -1007,13 +1007,20 @@ but --base <ref> resolves to <sha>"  (worktree create)
   \`gc --delete --cache "compilation cache"\`, then build again. The next
   build is a cold one.
 
-"Carried <dir>/Pods does not match <dir>/Podfile.lock"  (worktree create)
+"Carried <dir>/Pods does not match the <dir>/Podfile.lock on disk here"
+(worktree create)
   \`ios/Pods\` is gitignored, so --carry-ignored clones it; \`ios/Podfile.lock\`
-  is tracked, so it comes from the branch. When the source worktree's two
-  disagree, the new worktree inherits the contradiction. \`stim ios\` detects
-  this and runs \`pod install\` for you; the note is there so a build you run
-  yourself does not fail in its LAST phase with
+  is tracked. The check compares the cloned
+  \`Pods/Manifest.lock\` with the \`Podfile.lock\` that is on disk in the new
+  worktree AFTER the uncommitted changes are carried -- the same file
+  \`pod install\` and \`xcodebuild\` read -- so an uncommitted lockfile the
+  clone was installed against does not trigger it. \`stim ios\` detects a real
+  mismatch and runs \`pod install\` for you; the note is there so a build you
+  run yourself does not fail in its LAST phase with
     error: The sandbox is not in sync with the Podfile.lock
+  A patch that does not apply reports itself first ("Could not carry the
+  source's uncommitted changes"); the branch lockfile then stands, and this
+  note is about that lockfile.
 
 "Warm source not carried: ... For the next worktree, use: stim worktree create
 <name> --carry-ignored"  (worktree create)

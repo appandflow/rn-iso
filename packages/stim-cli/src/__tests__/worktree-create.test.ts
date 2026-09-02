@@ -676,6 +676,61 @@ test('create action: a plain create reports the exact warm-worktree command when
   }
 });
 
+function podsRepo(repo: string, { branchLock, workingLock }: { branchLock: string; workingLock: string }) {
+  const git = initScratchRepo(repo);
+  writeFileSync(join(repo, '.gitignore'), 'ios/Pods/\n');
+  mkdirSync(join(repo, 'ios'), { recursive: true });
+  writeFileSync(join(repo, 'ios', 'Podfile'), "platform :ios, '15.1'\n");
+  writeFileSync(join(repo, 'ios', 'Podfile.lock'), branchLock);
+  git('git add .gitignore ios/Podfile ios/Podfile.lock');
+  git('git commit -q -m pods');
+  writeFileSync(join(repo, 'ios', 'Podfile.lock'), workingLock);
+  mkdirSync(join(repo, 'ios', 'Pods'), { recursive: true });
+  writeFileSync(join(repo, 'ios', 'Pods', 'Manifest.lock'), workingLock);
+}
+
+test('create action: pods installed against an uncommitted Podfile.lock carried along are not called stale', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-pods-carried-')));
+  const repo = join(base, 'repo');
+  const branchLock = 'PODS:\n  - fmt (11.0.2)\n';
+  const workingLock = 'PODS:\n  - fmt (11.0.2)\n  - RNScreens (4.0.0)\n';
+  try {
+    podsRepo(repo, { branchLock, workingLock });
+
+    const { errs } = await runCreateInRepo(repo, 'feat-pods-carried', { base: 'head', carryIgnored: true });
+
+    const wt = join(defaultWorktreeDir(repo), 'feat-pods-carried');
+    expect(readFileSync(join(wt, 'ios', 'Podfile.lock'), 'utf-8')).toBe(
+      readFileSync(join(wt, 'ios', 'Pods', 'Manifest.lock'), 'utf-8'),
+    );
+    expect(errs.some((e) => /Carried ios\/Pods does not match/.test(e))).toBe(false);
+    expect(errs.some((e) => /Carried 1 uncommitted change\(s\)/.test(e))).toBe(true);
+  } finally {
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('create action: pods that disagree with the Podfile.lock on disk still get the pod install warning', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-pods-stale-')));
+  const repo = join(base, 'repo');
+  try {
+    podsRepo(repo, { branchLock: 'PODS:\n  - fmt (11.0.2)\n', workingLock: 'PODS:\n  - fmt (11.0.2)\n' });
+    writeFileSync(join(repo, 'ios', 'Pods', 'Manifest.lock'), 'PODS:\n  - fmt (10.0.0)\n');
+
+    const { errs } = await runCreateInRepo(repo, 'feat-pods-stale', { base: 'head', carryIgnored: true });
+
+    const warning = errs.find((e) => /Carried ios\/Pods does not match/.test(e));
+    expect(warning).toContain('the ios/Podfile.lock on disk here');
+    expect(warning).toContain('pod install');
+  } finally {
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test('create action: --carry-ignored reports warm categories and the copy mode', async () => {
   resetExecutor();
   const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-warm-summary-')));

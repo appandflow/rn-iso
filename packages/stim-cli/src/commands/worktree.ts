@@ -281,6 +281,12 @@ export function registerCreate(worktree: Command): void {
         for (const f of res.failed) {
           console.error(chalk.yellow(`Failed to clone ${f.file}: ${f.error}`));
         }
+        const changes = carryUncommittedChanges({ root, target });
+        if (changes?.applied) {
+          console.error(chalk.dim(carriedChangesLine(changes.files)));
+        } else if (changes?.conflicted) {
+          console.error(chalk.yellow(carryConflictWarning(changes.files)));
+        }
         const staleDeps = depsOutOfSync(root, target, res.copied);
         if (staleDeps.length) {
           const manifests = staleDeps.map((d) => (d.dir === '.' ? d.lockfile : `${d.dir}/${d.lockfile}`)).join(', ');
@@ -300,15 +306,9 @@ export function registerCreate(worktree: Command): void {
             chalk.yellow(
               p.reason === 'missing'
                 ? `Carried ${p.dir === '.' ? 'Pods' : `${p.dir}/Pods`} but there is no ${where}. Run \`${pod}\` before building.`
-                : `Carried ${p.dir === '.' ? 'Pods' : `${p.dir}/Pods`} does not match ${where}. Pods are gitignored and cloned; Podfile.lock is tracked and comes from the branch, so the two can disagree. Run \`${pod}\` before building, or xcodebuild fails with "sandbox is not in sync" only after every pod has compiled.`,
+                : `Carried ${p.dir === '.' ? 'Pods' : `${p.dir}/Pods`} does not match the ${where} on disk here. Pods are gitignored and cloned; Podfile.lock is tracked, so the two can disagree. Run \`${pod}\` before building, or xcodebuild fails with "sandbox is not in sync" only after every pod has compiled.`,
             ),
           );
-        }
-        const changes = carryUncommittedChanges({ root, target });
-        if (changes?.applied) {
-          console.error(chalk.dim(carriedChangesLine(changes.files)));
-        } else if (changes?.conflicted) {
-          console.error(chalk.yellow(carryConflictWarning(changes.files)));
         }
       } else {
         const excluded = readWorktreeExclude(root);
