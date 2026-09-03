@@ -1555,7 +1555,7 @@ PROGRESS ON A LONG RUN
     swap        ip.txt      install     launch      verify
     logs        branch      carry       ready       stop
     port        setting     state       stats       error
-    remedy      log         failed
+    remedy      log         failed      removed     workspace
 
   \`app\` and \`compilation cache\` join them in the stdout block a successful
   run ends with, and nowhere else. A line states a fact; the reason a fact
@@ -1600,6 +1600,26 @@ PROGRESS ON A LONG RUN
     stop        collector ios pid 45268
     device      shut down stim-e2e-2
     port        released 8084
+
+  \`worktree remove\` reports itself the same way: the branch decision, the
+  owned device, any released device lease, and this workspace's own state
+  directory, each on its own line. Nothing prints on stdout; even the removed
+  path is on stderr. \`worktree create\` prints its path on stdout because a
+  caller needs it to \`cd\` into; a removed path has no such use:
+
+    branch      deleted worktree-e2e-1
+    device      deleted stim-e2e-1
+    lease       released the ios lease on 00008101-000A10913C89001E (it ran until 14:32:10)
+    workspace   removed /w/.stim/workspaces/3f9c2a
+    removed     /w/worktree-e2e-1
+
+  A branch \`worktree remove\` did not create, or one with unique commits, is
+  kept and named instead: \`branch      kept worktree-e2e-1 (it has 2 unique
+  commits)\`. On the main checkout, \`worktree remove\` reclaims only the
+  environment -- the same \`device\`, \`lease\` and \`workspace\` lines, ending
+  with a sentence instead of a \`removed\` line, because the checkout itself
+  is never touched: \`Reclaimed the environment; the working tree stays (it
+  is the main checkout).\`
 
   A GAP BETWEEN HEARTBEATS IS NOT A HANG. Stim runs device tools
   synchronously, so a long \`simctl\`, \`adb\` or copy call holds the timer

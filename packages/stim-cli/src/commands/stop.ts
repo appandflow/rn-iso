@@ -1,7 +1,7 @@
 import chalk from 'chalk';
 import { rmSync } from 'fs';
 import type { Command } from 'commander';
-import { clockTime, phaseLine, plural } from '../command-output.ts';
+import { phaseLine, plural, releasedLeaseFact } from '../command-output.ts';
 import { clearSupervisor, getProject, upsertProject } from '../config.ts';
 import type { ProjectRecord, SupervisorRecord } from '../config.ts';
 import { findProjectRoot } from '../project.ts';
@@ -476,14 +476,7 @@ export async function runStop({
 
   outcomes.releasedLeases = releaseLeases(root);
   for (const lease of outcomes.releasedLeases) {
-    report(
-      chalk.dim(
-        phaseLine(
-          'lease',
-          `released the ${lease.platform} lease on ${lease.id} (it ran until ${clockTime(lease.expiresAt)})`,
-        ),
-      ),
-    );
+    report(chalk.dim(phaseLine('lease', releasedLeaseFact(lease))));
   }
 
   if (stillHolding) {
