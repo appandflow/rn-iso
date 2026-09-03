@@ -42,6 +42,7 @@ import {
   verifyReleaseLaunch,
   reverseMetroPorts,
   writeDebugHttpHost,
+  clearOtherUserApps,
 } from '../engine/app-install.ts';
 import { hashFile } from '../engine/installed-artifact.ts';
 
@@ -145,6 +146,52 @@ describe('the two pure port-wiring shapes', () => {
 });
 
 describe('ios', () => {
+  test('clearOtherUserApps removes every user app except the adopting workspace app', () => {
+    const removed: string[] = [];
+    expect(
+      clearOtherUserApps(
+        { udid: 'U1', keep: 'com.example.keep' },
+        {
+          list: () => ['com.example.old', 'com.example.keep', 'com.example.other'],
+          uninstall: (_udid, bundleId) => removed.push(bundleId),
+        },
+      ),
+    ).toEqual({ listed: true, removed: ['com.example.old', 'com.example.other'], failed: [] });
+    expect(removed).toEqual(['com.example.old', 'com.example.other']);
+  });
+
+  test('clearOtherUserApps distinguishes a failed listing from an empty simulator', () => {
+    expect(clearOtherUserApps({ udid: 'U1' }, { list: () => [] })).toEqual({
+      listed: true,
+      removed: [],
+      failed: [],
+    });
+    expect(
+      clearOtherUserApps(
+        { udid: 'U1' },
+        {
+          list: () => {
+            throw new Error('simctl unavailable');
+          },
+        },
+      ),
+    ).toEqual({ listed: false, removed: [], failed: [] });
+  });
+
+  test('clearOtherUserApps reports each uninstall that must be retried', () => {
+    expect(
+      clearOtherUserApps(
+        { udid: 'U1' },
+        {
+          list: () => ['com.example.one', 'com.example.two'],
+          uninstall: (_udid, bundleId) => {
+            if (bundleId === 'com.example.two') throw new Error('busy');
+          },
+        },
+      ),
+    ).toEqual({ listed: true, removed: ['com.example.one'], failed: ['com.example.two'] });
+  });
+
   test('installIosApp passes the .app path as one literal argv element', () => {
     const exec = recordingExec();
     const appPath = '/tmp/Build Products/My App.app';

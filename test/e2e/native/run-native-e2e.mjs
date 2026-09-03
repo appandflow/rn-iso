@@ -34,7 +34,13 @@ const COMPILE_SIGNS =
 
 const HOME_DIR = args.dryRun ? '<dry-run>' : args.home || mkdtempSync(join(tmpdir(), `stim-native-${VARIANT}-home-`));
 const WORK_DIR = args.dryRun ? '<dry-run>' : mkdtempSync(join(tmpdir(), `stim-native-${VARIANT}-`));
-const ENV = { ...process.env, STIM_HOME: HOME_DIR, CI: '1' };
+const ENV = {
+  ...process.env,
+  STIM_HOME: HOME_DIR,
+  CI: '1',
+  STIM_POOL_IOS_PARKED_MAX: '0',
+  STIM_POOL_ANDROID_PARKED_MAX: '0',
+};
 process.env.STIM_HOME = HOME_DIR;
 const WARM_CACHE = process.env.STIM_E2E_WARM_CACHE === '1';
 

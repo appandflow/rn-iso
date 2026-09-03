@@ -16,7 +16,7 @@ import { dirname, join } from 'node:path';
 import { METRO_NAMED_CACHE_LAYOUT } from '@stim-cli/core';
 import { Command } from 'commander';
 import { setExecutor, resetExecutor } from '../exec.ts';
-import { saveConfig, loadConfig } from '../config.ts';
+import { getProject, saveConfig, loadConfig, upsertProject } from '../config.ts';
 import { register } from '../cache-manifest.ts';
 import { ensureRemoteBootOwned, withRemoteSessionLock } from '../engine/device-remote.ts';
 import { deviceLeasePath, deviceLocksDir } from '../engine/device-lease.ts';
@@ -24,6 +24,8 @@ import { withEasProjectLock } from '../engine/eas-project-lock.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../paths.ts';
 import gcCommand, {
   collectGcReport,
+  deleteParkedSims,
+  describeParkedSims,
   describeUnverifiableDevices,
   findOrphanedDevices,
   findStaleDeviceRecords,
@@ -32,6 +34,7 @@ import gcCommand, {
   runGc,
   selectCaches,
 } from '../commands/gc.ts';
+import { adoptParked, parkSim, readParked } from '../sim-pool.ts';
 import { makeConfig, makeIosSim, makeCacheDescriptor, makeBuildLock, makeBuildSlot } from './_factories.ts';
 
 describe('selectCaches', () => {
@@ -147,6 +150,127 @@ test('lists dead project entries', () => {
   expect(lines).toMatch(/Dead project entries/);
 });
 
+test('reports parked simulators with model, runtime, age, size, and delete effect', () => {
+  const parked = describeParkedSims(
+    [
+      {
+        udid: 'A1F3-0000',
+        name: 'stim-parked (iPhone 17 26.5) a1f3',
+        deviceTypeIdentifier: 'iphone-17',
+        runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
+        parkedAt: '2026-09-01T00:00:00.000Z',
+        simslimManaged: false,
+      },
+    ],
+    [
+      makeIosSim({
+        udid: 'A1F3-0000',
+        name: 'stim-parked (iPhone 17 26.5) a1f3',
+        runtime: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
+        deviceTypeIdentifier: 'iphone-17',
+        dataPathSize: 2 * 1024 * 1024,
+      }),
+    ],
+    [{ identifier: 'iphone-17', name: 'iPhone 17' }],
+  );
+  const lines = formatGcReport({ parkedSims: parked }, { now: Date.parse('2026-09-03T00:00:00.000Z') }).join('\n');
+  expect(lines).toMatch(/Parked simulators \(1, 2M\)/);
+  expect(lines).toMatch(/A1F3\.\.\).*iPhone 17 26\.5.*parked 48h ago.*2M/);
+  expect(lines).toMatch(/--delete attempts verified deletions and keeps failures/);
+  expect(lines).not.toMatch(/Nothing to reclaim/);
+});
+
+test('parked deletion skips a simulator adopted after report collection', async () => {
+  upsertProject('/tmp/source', { platforms: { ios: { deviceUdid: 'P1', deviceName: 'stim-source', owned: true } } });
+  upsertProject('/tmp/adopter', { platforms: {} });
+  const record = {
+    udid: 'P1',
+    name: 'stim-parked (iPhone 17 26.5) p1',
+    deviceTypeIdentifier: 'iphone-17',
+    runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
+    parkedAt: '2026-09-01T00:00:00.000Z',
+    simslimManaged: false,
+  };
+  parkSim({ platform: 'ios', projectPath: '/tmp/source', record, max: 3 });
+  const report = describeParkedSims([record], [makeIosSim({ udid: 'P1', name: record.name })], []);
+  const device = { deviceUdid: 'P1', deviceName: 'stim-adopter', owned: true };
+  adoptParked({ platform: 'ios', projectPath: '/tmp/adopter', udid: 'P1', device });
+  let deleted = false;
+
+  const output = await captureLog(() =>
+    deleteParkedSims(report, {
+      deleteParkedIosSim: () => {
+        deleted = true;
+      },
+    }),
+  );
+
+  expect(deleted).toBe(false);
+  expect(output).toMatch(/no longer parked/);
+  expect(getProject('/tmp/adopter')?.platforms?.ios).toEqual(device);
+});
+
+test('parked deletion keeps ownership records when simulator listing was unavailable', async () => {
+  upsertProject('/tmp/source', { platforms: { ios: { deviceUdid: 'P1', deviceName: 'stim-source', owned: true } } });
+  const record = {
+    udid: 'P1',
+    name: 'stim-parked (iPhone 17 26.5) p1',
+    deviceTypeIdentifier: 'iphone-17',
+    runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
+    parkedAt: '2026-09-01T00:00:00.000Z',
+    simslimManaged: false,
+  };
+  parkSim({ platform: 'ios', projectPath: '/tmp/source', record, max: 3 });
+  const report = await collectGcReport(
+    { unsafeAllowScopedDeviceSweep: true },
+    {
+      listAllIosSims: () => {
+        throw new Error('simctl unavailable');
+      },
+    },
+  );
+
+  let failures = 0;
+  const output = await captureLog(() => {
+    failures = deleteParkedSims(report.parkedSims);
+  });
+
+  expect(failures).toBe(1);
+  expect(output).toMatch(/Could not verify.*record was kept/);
+  expect(readParked('ios')).toEqual([record]);
+  expect(formatGcReport({ parkedSims: report.parkedSims }).join('\n')).toMatch(
+    /attempts verified deletions and keeps failures/,
+  );
+});
+
+test('parked deletion keeps ownership records after malformed simctl list output', async () => {
+  upsertProject('/tmp/source', { platforms: { ios: { deviceUdid: 'P1', deviceName: 'stim-source', owned: true } } });
+  const record = {
+    udid: 'P1',
+    name: 'stim-parked (iPhone 17 26.5) p1',
+    deviceTypeIdentifier: 'iphone-17',
+    runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
+    parkedAt: '2026-09-01T00:00:00.000Z',
+    simslimManaged: false,
+  };
+  parkSim({ platform: 'ios', projectPath: '/tmp/source', record, max: 3 });
+  setExecutor({
+    run(cmd) {
+      if (cmd.includes('simctl list devices')) return '[]';
+      throw new Error(`unexpected run: ${cmd}`);
+    },
+    runQuiet: () => null,
+    spawn: () => null,
+  });
+
+  const report = await collectGcReport();
+  const output = await captureLog(() => deleteParkedSims(report.parkedSims));
+
+  expect(report.parkedSims[0]?.listed).toBe(null);
+  expect(output).toMatch(/Could not verify.*record was kept/);
+  expect(readParked('ios')).toEqual([record]);
+});
+
 test('headline does not claim "nothing to reclaim" without flagging unchecked entries', () => {
   const lines = formatGcReport({
     skipped: [{ dir: '/Volumes/ExternalSSD/proj', reason: 'volume /Volumes/ExternalSSD is not mounted' }],
@@ -203,6 +327,30 @@ test('findOrphanedDevices proposes only Stim devices absent from config', () => 
     isMounted: () => true,
   });
   expect(result.orphaned.map((o) => o.id).toSorted()).toEqual(['U1', 'stim-old']);
+});
+
+test('a simulator in the parked pool is referenced rather than orphaned', () => {
+  const result = findOrphanedDevices({
+    sims: [makeIosSim({ udid: 'P1', name: 'stim-parked (iPhone 17 26.5) p1' })],
+    config: makeConfig({
+      parked: {
+        ios: [
+          {
+            udid: 'P1',
+            name: 'stim-parked (iPhone 17 26.5) p1',
+            deviceTypeIdentifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-17',
+            runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
+            parkedAt: '2026-09-03T00:00:00.000Z',
+            simslimManaged: false,
+          },
+        ],
+        android: [],
+      },
+    }),
+  });
+
+  expect(result.orphaned).toEqual([]);
+  expect(result.kept[0]?.reason).toBe('referenced by the simulator pool');
 });
 
 test('gc sizes only listed owned Android AVDs after ownership classification', async () => {
@@ -1747,6 +1895,7 @@ function iosListJson(devices: DeviceSpec[]) {
         name: d.name,
         state: d.state || 'Shutdown',
         isAvailable: true,
+        deviceTypeIdentifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-15',
       })),
     },
   });

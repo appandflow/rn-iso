@@ -4,7 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import { upsertProject, setDevice, getProject } from '../config.ts';
-import { describeDereferenced, reclaimProject } from '../reclaim.ts';
+import { describeDereferenced, parkedIosCacheKey, reclaimProject } from '../reclaim.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { ensureWorkspaceStorage, workspaceStateFile } from '../paths.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
@@ -36,6 +36,12 @@ test('describeDereferenced reports a physical android device when there is no av
 test('describeDereferenced returns an empty list when nothing is claimed', () => {
   expect(describeDereferenced({ platforms: {} })).toEqual([]);
   expect(describeDereferenced({})).toEqual([]);
+});
+
+test('only an iOS last build becomes a parked install hint', () => {
+  expect(parkedIosCacheKey({ platform: 'ios', cacheKey: 'ios-key' })).toBe('ios-key');
+  expect(parkedIosCacheKey({ platform: 'android', cacheKey: 'android-key' })).toBe(null);
+  expect(parkedIosCacheKey({ platform: 'ios', cacheKey: 42 })).toBe(null);
 });
 
 test('reclaimProject removes the config entry', async () => {
@@ -73,7 +79,13 @@ test('reclaimProject keeps the config entry when an owned device delete fails', 
   const listJson = JSON.stringify({
     devices: {
       'com.apple.CoreSimulator.SimRuntime.iOS-17-4': [
-        { udid: 'U1', name: 'stim-proj', state: 'Shutdown', isAvailable: true },
+        {
+          udid: 'U1',
+          name: 'stim-proj',
+          state: 'Shutdown',
+          isAvailable: true,
+          deviceTypeIdentifier: 'iphone-15',
+        },
       ],
     },
   });
@@ -100,7 +112,13 @@ test('reclaimProject removes the entry when the owned device really is deleted',
   const listJson = JSON.stringify({
     devices: {
       'com.apple.CoreSimulator.SimRuntime.iOS-17-4': [
-        { udid: 'U1', name: 'stim-proj', state: 'Shutdown', isAvailable: true },
+        {
+          udid: 'U1',
+          name: 'stim-proj',
+          state: 'Shutdown',
+          isAvailable: true,
+          deviceTypeIdentifier: 'iphone-15',
+        },
       ],
     },
   });

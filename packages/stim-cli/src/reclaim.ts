@@ -1,7 +1,8 @@
 import { type ProjectRecord, getProject, removeProject } from './config.ts';
 import { existsSync, rmSync } from 'node:fs';
 import { resolveProjectMetro, killMetroTree, isPidAlive } from './metro.ts';
-import { teardownOwnedIosSim, teardownOwnedAvd } from './teardown.ts';
+import { teardownOwnedIosSim, teardownOwnedAvd, type ParkedDevice, type ParkRequest } from './teardown.ts';
+import { parkedMaxSetting } from './sim-pool.ts';
 import { readCollectors } from './collector/state.ts';
 import { verifyCollectorOwnership } from './collector/ownership.ts';
 import { readProcessStartTime } from './process-args.ts';
@@ -10,6 +11,7 @@ import {
   clearRemoteSession,
   readMetroTunnel,
   readRemoteSessionId,
+  readWorkspaceState,
   type ManagedTunnelRecord,
 } from './supervisor/state.ts';
 import { endRecordedSession } from './engine/device-remote.ts';
@@ -212,12 +214,41 @@ export function describeDereferenced(project: ProjectRecord | null): string[] {
   return devices;
 }
 
-function reclaimOwnedDevices(project: ProjectRecord | null): {
+export function parkedIosCacheKey(lastBuild: unknown): string | null {
+  if (lastBuild === null || typeof lastBuild !== 'object' || Array.isArray(lastBuild)) return null;
+  const build = lastBuild as Record<string, unknown>;
+  return build.platform === 'ios' && typeof build.cacheKey === 'string' ? build.cacheKey : null;
+}
+
+function parkRequest(project: ProjectRecord | null, projectPath: string): ParkRequest | undefined {
+  const { max, error } = parkedMaxSetting('ios');
+  if (error || max <= 0) return undefined;
+  const cacheKey = parkedIosCacheKey(readWorkspaceState(projectPath)?.lastBuild);
+  return {
+    projectPath,
+    max,
+    bundleId: typeof project?.bundleId === 'string' ? project.bundleId : null,
+    cacheKey,
+    simslimManaged: Boolean(project?.platforms?.ios?.simslimManaged),
+  };
+}
+
+function reclaimOwnedDevices(
+  project: ProjectRecord | null,
+  projectPath: string,
+  { park = false }: { park?: boolean } = {},
+): {
   deletedDevices: string[];
+  parkedDevices: ParkedDevice[];
+  evictedDevices: ParkedDevice[];
+  poolNotes: string[];
   skippedDevices: SkippedDevice[];
   failedDevices: SkippedDevice[];
 } {
   const deletedDevices: string[] = [];
+  const parkedDevices: ParkedDevice[] = [];
+  const evictedDevices: ParkedDevice[] = [];
+  const poolNotes: string[] = [];
   const skippedDevices: SkippedDevice[] = [];
   const failedDevices: SkippedDevice[] = [];
 
@@ -225,9 +256,18 @@ function reclaimOwnedDevices(project: ProjectRecord | null): {
   if (ios?.owned && ios.deviceUdid) {
     const udid = ios.deviceUdid as string;
     const label = (ios.deviceName as string | undefined) || udid;
-    const r = teardownOwnedIosSim(udid, { del: true, label });
-    if (r.status === 'torn-down') deletedDevices.push(r.label as string);
-    else if (r.status === 'skipped') {
+    const r = teardownOwnedIosSim(udid, {
+      del: true,
+      label,
+      ...(park ? { park: parkRequest(project, projectPath) } : {}),
+    });
+    if (r.parkFallback) poolNotes.push(`could not park ${label}: ${r.parkFallback} -- deleted it instead`);
+    for (const failure of r.evictionFailures ?? []) poolNotes.push(failure);
+    if (r.parked) {
+      parkedDevices.push(r.parked);
+      evictedDevices.push(...(r.evicted ?? []));
+    } else if (r.status === 'torn-down') deletedDevices.push(r.label as string);
+    if (r.status === 'skipped') {
       skippedDevices.push({ platform: 'ios', name: label, udid, reason: `${r.reason} -- not touched` });
     } else if (r.status === 'failed') {
       const entry: SkippedDevice = { platform: 'ios', name: label, udid, reason: `teardown failed: ${r.reason}` };
@@ -253,7 +293,7 @@ function reclaimOwnedDevices(project: ProjectRecord | null): {
     }
   }
 
-  return { deletedDevices, skippedDevices, failedDevices };
+  return { deletedDevices, parkedDevices, evictedDevices, poolNotes, skippedDevices, failedDevices };
 }
 
 export interface ReclaimResult {
@@ -263,6 +303,9 @@ export interface ReclaimResult {
   skippedMetro: string | null;
   metroPort: number | null;
   deletedDevices: string[];
+  parkedDevices: ParkedDevice[];
+  evictedDevices: ParkedDevice[];
+  poolNotes: string[];
   skippedDevices: SkippedDevice[];
   failedDevices: SkippedDevice[];
   keptEntry: boolean;
@@ -277,6 +320,7 @@ export async function reclaimProject(
   path: string,
   {
     deleteOwnedDevices = false,
+    parkOwnedDevices = false,
     preserveProjectRecord = false,
     stopSession = defaultStopSession,
     stopMetroTunnel = defaultStopMetroTunnel,
@@ -285,6 +329,7 @@ export async function reclaimProject(
     readCollectorStartTime = readProcessStartTime,
   }: {
     deleteOwnedDevices?: boolean;
+    parkOwnedDevices?: boolean;
     preserveProjectRecord?: boolean;
     stopSession?: StopSession;
     stopMetroTunnel?: StopMetroTunnelFn;
@@ -301,15 +346,16 @@ export async function reclaimProject(
     readStartTime: readCollectorStartTime,
   });
 
-  const {
-    deletedDevices,
-    skippedDevices,
-    failedDevices,
-  }: {
-    deletedDevices: string[];
-    skippedDevices: SkippedDevice[];
-    failedDevices: SkippedDevice[];
-  } = deleteOwnedDevices ? reclaimOwnedDevices(project) : { deletedDevices: [], skippedDevices: [], failedDevices: [] };
+  const { deletedDevices, parkedDevices, evictedDevices, poolNotes, skippedDevices, failedDevices } = deleteOwnedDevices
+    ? reclaimOwnedDevices(project, path, { park: parkOwnedDevices })
+    : {
+        deletedDevices: [] as string[],
+        parkedDevices: [] as ParkedDevice[],
+        evictedDevices: [] as ParkedDevice[],
+        poolNotes: [] as string[],
+        skippedDevices: [] as SkippedDevice[],
+        failedDevices: [] as SkippedDevice[],
+      };
   skippedDevices.push(...skippedCollectors);
   failedDevices.push(...failedCollectors);
 
@@ -368,6 +414,9 @@ export async function reclaimProject(
     skippedMetro,
     metroPort: project?.metroPort ?? null,
     deletedDevices,
+    parkedDevices,
+    evictedDevices,
+    poolNotes,
     skippedDevices,
     failedDevices,
     keptEntry,

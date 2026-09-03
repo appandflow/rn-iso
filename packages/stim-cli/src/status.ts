@@ -1,4 +1,4 @@
-import { clockTime, formatElapsed } from './command-output.ts';
+import { clockTime, formatElapsed, plural } from './command-output.ts';
 import type { ProjectRecord } from './config.ts';
 import type { LeaseFileEntry } from './engine/device-lease.ts';
 
@@ -59,6 +59,18 @@ export interface DiskInfo {
 export interface VolumeInfo {
   volume: string;
   disk: DiskInfo | null;
+}
+
+export interface PoolFacts {
+  platform: 'ios' | 'android';
+  parked: number;
+  max: number;
+}
+
+export function poolLine({ platform, parked, max }: PoolFacts): string | null {
+  if (parked <= 0) return null;
+  const what = plural(parked, `parked ${platform === 'ios' ? 'iOS simulator' : 'Android emulator'}`);
+  return max > 0 ? `pool: ${what} (max ${max})` : `pool: ${what} (parking off; gc --delete removes them)`;
 }
 
 export function environmentState(

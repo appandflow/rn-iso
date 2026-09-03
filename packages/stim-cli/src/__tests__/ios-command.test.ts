@@ -157,7 +157,7 @@ function parseFirst(lines: string[]) {
 
 interface RecordedArgs {
   [key: string]: unknown;
-  installIosApp: { appPath?: unknown };
+  installIosApp: { appPath?: unknown; proveInstalled?: unknown };
   launchIosApp: { devClientScheme?: unknown; metroPort?: unknown; bundleId?: unknown };
   buildIos: { configuration?: unknown; root?: unknown };
   swapJsBundle: { cachedAppPath?: unknown; isExpo?: unknown; root?: unknown };
@@ -522,6 +522,103 @@ describe('the simulator boot gate', () => {
   });
 });
 
+describe('parked simulator adoption', () => {
+  test('sweeps old apps before install, uses the parked cache key, and reports adopted', async () => {
+    reserve();
+    const events: string[] = [];
+    let installArgs: Record<string, unknown> = {};
+    const { exitCode, errs } = await run(
+      { metroCheck: false },
+      {
+        ensureOwnedDevice: async () => ({
+          deviceUdid: UDID,
+          deviceName: 'stim-fixture (iPhone 17 Pro 26.5)',
+          owned: true,
+          adopted: true,
+          adoptionPending: true,
+          parkedCacheKey: `${FINGERPRINT}-debug-sim`,
+        }),
+        clearOtherUserApps: () => {
+          events.push('sweep');
+          return { listed: true, removed: ['com.example.old'], failed: [] };
+        },
+        clearIosAdoptionPending: () => events.push('clear'),
+        installIosApp: (args) => {
+          events.push('install');
+          installArgs = args;
+          return { ok: true, skipped: true };
+        },
+      },
+    );
+    expect(exitCode).toBe(null);
+    expect(events).toEqual(['sweep', 'clear', 'install']);
+    expect(installArgs.proveInstalled).toBe(true);
+    expect(errs.join('\n')).toMatch(/device\s+stim-fixture .* adopted/);
+    expect(errs.join('\n')).toMatch(/removed com\.example\.old/);
+  });
+
+  test('a failed app listing refuses before install and leaves adoption pending', async () => {
+    reserve();
+    let cleared = false;
+    let proveInstalled: unknown;
+    const { exitCode, errs } = await run(
+      { metroCheck: false },
+      {
+        ensureOwnedDevice: async () => ({
+          deviceUdid: UDID,
+          deviceName: 'stim-fixture (iPhone 17 Pro 26.5)',
+          owned: true,
+          adopted: true,
+          adoptionPending: true,
+          parkedCacheKey: 'different-build',
+        }),
+        clearOtherUserApps: () => ({ listed: false, removed: [], failed: [] }),
+        clearIosAdoptionPending: () => {
+          cleared = true;
+        },
+        installIosApp: (args) => {
+          proveInstalled = args.proveInstalled;
+          return { ok: true };
+        },
+      },
+    );
+    expect(exitCode).toBe(1);
+    expect(cleared).toBe(false);
+    expect(errs.join('\n')).toMatch(/Could not list apps .* did not install or launch/);
+    expect(proveInstalled).toBe(undefined);
+  });
+
+  test('a failed old-app uninstall refuses before install and leaves adoption pending', async () => {
+    reserve();
+    let cleared = false;
+    let installed = false;
+    const { exitCode, errs } = await run(
+      { metroCheck: false },
+      {
+        ensureOwnedDevice: async () => ({
+          deviceUdid: UDID,
+          deviceName: 'stim-fixture (iPhone 17 Pro 26.5)',
+          owned: true,
+          adopted: true,
+          adoptionPending: true,
+        }),
+        clearOtherUserApps: () => ({ listed: true, removed: [], failed: ['com.example.old'] }),
+        clearIosAdoptionPending: () => {
+          cleared = true;
+        },
+        installIosApp: () => {
+          installed = true;
+          return { ok: true };
+        },
+      },
+    );
+    expect(exitCode).toBe(1);
+    expect(cleared).toBe(false);
+    expect(installed).toBe(false);
+    expect(errs.join('\n')).toMatch(/Could not remove com\.example\.old.*did not install or launch/);
+  });
+});
+
 function simctlClock(step: number) {
   const state = { now: 1_000_000 };
   setExecutor(
@@ -532,7 +629,13 @@ function simctlClock(step: number) {
         return JSON.stringify({
           devices: {
             'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
-              { udid: UDID, name: 'stim-fixture', state: 'Booted', isAvailable: true },
+              {
+                udid: UDID,
+                name: 'stim-fixture',
+                state: 'Booted',
+                isAvailable: true,
+                deviceTypeIdentifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-17',
+              },
             ],
           },
         });

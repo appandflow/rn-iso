@@ -4,6 +4,7 @@ import { getExecutor, type Executor } from '../exec.ts';
 import { parseNdjsonText, type NdjsonRecord } from '../ndjson.ts';
 import { deviceHoldsApk, deviceHoldsBundle } from './installed-artifact.ts';
 import { DEV_MENU_LAUNCH_ARGS } from '../collector/ios-device.ts';
+import { listUserApps, uninstallIosApp } from '../sim/ios.ts';
 
 export const INSTALL_ERROR = 'STIM_INSTALL_FAILED';
 export const LAUNCH_ERROR = 'STIM_LAUNCH_FAILED';
@@ -75,12 +76,19 @@ export function installIosApp(
     appPath,
     bundleId = null,
     devClientScheme = null,
-  }: { udid: string; appPath: string; bundleId?: string | null; devClientScheme?: string | null },
+    proveInstalled = true,
+  }: {
+    udid: string;
+    appPath: string;
+    bundleId?: string | null;
+    devClientScheme?: string | null;
+    proveInstalled?: boolean;
+  },
   { exec = null, now = null }: ExecOpt = {},
 ): IosInstallResult {
   const e = exec || getExecutor();
   const artifactStartedAt = now?.();
-  const skipped = bundleId ? deviceHoldsBundle({ udid, bundleId, appPath }, { exec: e }) : false;
+  const skipped = bundleId && proveInstalled ? deviceHoldsBundle({ udid, bundleId, appPath }, { exec: e }) : false;
   if (!skipped) {
     try {
       e.runFile('xcrun', ['simctl', 'install', udid, appPath]);
@@ -127,6 +135,33 @@ export function installIosApp(
     ...(devClientPreparationDurationMs === undefined ? {} : { devClientPreparationDurationMs }),
   };
   return skipped ? { ok: true, appPath, skipped: true, ...timing } : { ok: true, appPath, ...timing };
+}
+
+export function clearOtherUserApps(
+  { udid, keep }: { udid: string; keep?: string | null },
+  {
+    list = listUserApps,
+    uninstall = uninstallIosApp,
+  }: { list?: typeof listUserApps; uninstall?: typeof uninstallIosApp } = {},
+): { listed: boolean; removed: string[]; failed: string[] } {
+  const removed: string[] = [];
+  const failed: string[] = [];
+  let installed: string[];
+  try {
+    installed = list(udid);
+  } catch {
+    return { listed: false, removed, failed };
+  }
+  for (const bundleId of installed) {
+    if (bundleId === keep) continue;
+    try {
+      uninstall(udid, bundleId);
+      removed.push(bundleId);
+    } catch {
+      failed.push(bundleId);
+    }
+  }
+  return { listed: true, removed, failed };
 }
 
 export function jsLocationValue(metroPort: number | string): string {

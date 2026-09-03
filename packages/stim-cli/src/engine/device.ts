@@ -5,6 +5,7 @@ import {
   clearDevice,
   loadConfig,
   releaseAndroidConsolePort,
+  saveConfig,
   setDevice,
   withConfigLock,
   type Config,
@@ -18,10 +19,18 @@ import {
   listAllIosSims,
   iosRuntimeMatches,
   listIosDeviceTypes,
+  ownedSimName,
   parseRuntimeVersion,
+  renameIosSim,
+  resetIosKeychain,
+  resetIosPrivacy,
+  resolveIosCreation,
   resolveOwnedIosSim,
+  type IosCreationChoice,
   type IosRuntime,
+  type SimModel,
 } from '../sim/ios.ts';
+import { adoptParked, dropParked, parkedMaxSetting, readParked, selectParked } from '../sim-pool.ts';
 import {
   bootAndroidEmulator,
   configureNewOwnedAvd,
@@ -37,7 +46,7 @@ import {
   type SystemImage,
 } from '../sim/android.ts';
 import { androidAvdConfigSetting, androidDataPartitionSizeGbSetting, iosSimSlimProfileSetting } from '../settings.ts';
-import { teardownOwnedAvd } from '../teardown.ts';
+import { teardownOwnedAvd, teardownParkedIosSim } from '../teardown.ts';
 import { reconcileSimSlim } from './simslim.ts';
 
 export interface OwnedDeviceRecord {
@@ -53,6 +62,9 @@ export interface OwnedDeviceRecord {
   deviceType?: string | null;
   runtime?: string | null;
   systemImage?: string | null;
+  adopted?: boolean;
+  adoptionPending?: boolean;
+  parkedCacheKey?: string;
   /**
    * The boot this call started, and the promise that finishes it: the wait on
    * `simctl bootstatus -b` and the SimSlim reconcile that follows it.
@@ -216,29 +228,39 @@ async function ensureOwnedIosDevice({
               'Run `stim worktree remove` (or `stim gc --delete`) to reap the current sim, then `stim ios` again to create the requested one.',
           );
         }
+        const model: SimModel = {
+          model: deviceTypes.find((d) => d.identifier === sim.deviceTypeIdentifier)?.name ?? null,
+          runtime: parseRuntimeVersion(sim.runtime),
+        };
+        const name = renameToOwnedName(sim, label, model);
         const updated = {
           deviceUdid: sim.udid,
           owned: true,
-          deviceName: record.deviceName ?? sim.name,
+          deviceName: name,
           ...(record.simslimManaged ? { simslimManaged: true } : {}),
+          ...(record.adopted ? { adopted: true } : {}),
+          ...(record.adoptionPending ? { adoptionPending: true } : {}),
+          ...(record.parkedCacheKey ? { parkedCacheKey: record.parkedCacheKey } : {}),
         };
-        const configure = () =>
-          configureOwnedIosSim({
+        const configure = async () => {
+          if (record.adoptionPending) resetAdoptedSim(sim.udid, out);
+          return configureOwnedIosSim({
             record: updated,
             projectPath,
             profile: simslimProfile,
             out,
             reconcileIosSimulator,
           });
-        const model = {
-          deviceType: deviceTypes.find((d) => d.identifier === sim.deviceTypeIdentifier)?.name ?? null,
-          runtime: parseRuntimeVersion(sim.runtime),
+        };
+        const facts = {
+          deviceType: model.model,
+          runtime: model.runtime,
         };
         if (sim.state !== 'Booted') {
-          out(chalk.dim(phaseLine('device', `booting ${sim.name} (${sim.udid})`)));
-          return { ...updated, booting: startIosBoot(sim.udid, configure), ...model };
+          out(chalk.dim(phaseLine('device', `booting ${name} (${sim.udid})`)));
+          return { ...updated, booting: startIosBoot(sim.udid, configure), ...facts };
         }
-        return { ...(await configure()), ...model };
+        return { ...(await configure()), ...facts };
       }
     } else {
       const sim = listAllIosSims().find((s) => s.udid === record.deviceUdid);
@@ -260,10 +282,32 @@ async function ensureOwnedIosDevice({
     }
   }
 
-  const created = createOwnedIosSim(label, {
+  const choice = resolveIosCreation({
     deviceType: flags.deviceType || settings.ios?.deviceType,
     runtime: flags.runtime || settings.ios?.runtime,
   });
+
+  const adopted = parkedMaxSetting('ios').max > 0 ? takeParkedIosSim({ projectPath, label, choice, out }) : null;
+  if (adopted) {
+    out(chalk.dim(phaseLine('device', `booting ${adopted.deviceName} (${adopted.deviceUdid})`)));
+    const booting = startIosBoot(adopted.deviceUdid, async () => {
+      resetAdoptedSim(adopted.deviceUdid, out);
+      await configureOwnedIosSim({
+        record: adopted,
+        projectPath,
+        profile: simslimProfile,
+        out,
+        reconcileIosSimulator,
+      });
+    });
+    return { ...adopted, booting, deviceType: choice.deviceType, runtime: choice.runtime };
+  }
+
+  const created = createOwnedIosSim(
+    label,
+    { deviceType: flags.deviceType || settings.ios?.deviceType, runtime: flags.runtime || settings.ios?.runtime },
+    choice,
+  );
   const newRecord = { deviceUdid: created.udid, owned: true, deviceName: created.name };
   setDevice(projectPath, 'ios', newRecord);
   const booting = startIosBoot(created.udid, () =>
@@ -282,6 +326,107 @@ async function ensureOwnedIosDevice({
     deviceType: created.deviceType,
     runtime: created.runtime,
   };
+}
+
+function renameToOwnedName(sim: SimRecord, label: string, model: SimModel): string {
+  const wanted = ownedSimName(label, model);
+  if (sim.name === wanted) return wanted;
+  try {
+    renameIosSim(sim.udid, wanted);
+    return wanted;
+  } catch {
+    return sim.name;
+  }
+}
+
+function resetAdoptedSim(udid: string, out: Notify): void {
+  out(chalk.dim(phaseLine('device', `resetting privacy grants and the keychain on ${udid}`)));
+  resetIosPrivacy(udid);
+  resetIosKeychain(udid);
+}
+
+type AdoptedRecord = OwnedDeviceRecord & { deviceUdid: string; deviceName: string };
+
+function takeParkedIosSim({
+  projectPath,
+  label,
+  choice,
+  out,
+}: {
+  projectPath: string;
+  label: string;
+  choice: IosCreationChoice;
+  out: Notify;
+}): AdoptedRecord | null {
+  const candidates = selectParked(readParked('ios'), {
+    deviceTypeIdentifier: choice.deviceTypeId,
+    runtimeIdentifier: choice.runtimeId,
+  });
+  if (candidates.length === 0) return null;
+  const listed = new Map(listAllIosSims({ includeUnavailable: true }).map((sim) => [sim.udid, sim]));
+  const name = ownedSimName(label, { model: choice.deviceType, runtime: choice.runtime });
+  for (const parked of candidates) {
+    const sim = listed.get(parked.udid);
+    if (!sim || !sim.available) {
+      const result = sim ? teardownParkedIosSim(parked.udid, { label: parked.name }) : null;
+      const removed = sim ? result?.status === 'torn-down' : dropParked('ios', parked.udid);
+      if (removed) {
+        out(
+          chalk.dim(
+            phaseLine('device', `deleted parked ${parked.name} (${parked.udid}): ${sim ? 'unavailable' : 'gone'}`),
+          ),
+        );
+      } else if (result?.status === 'failed') {
+        out(
+          chalk.yellow(
+            phaseLine(
+              'device',
+              `could not delete unavailable parked ${parked.name} (${parked.udid}): ${result.reason}`,
+            ),
+          ),
+        );
+      }
+      continue;
+    }
+    if (!sim.name.startsWith('stim-')) {
+      out(
+        chalk.yellow(
+          phaseLine(
+            'device',
+            `kept parked record for ${parked.udid}: simulator is now named ${JSON.stringify(sim.name)} and is not Stim-owned`,
+          ),
+        ),
+      );
+      continue;
+    }
+    const device = {
+      deviceUdid: parked.udid,
+      owned: true,
+      deviceName: name,
+      adopted: true,
+      adoptionPending: true,
+      ...(parked.simslimManaged ? { simslimManaged: true } : {}),
+      ...(parked.cacheKey ? { parkedCacheKey: parked.cacheKey } : {}),
+    };
+    if (!adoptParked({ platform: 'ios', projectPath, udid: parked.udid, device })) continue;
+    try {
+      renameIosSim(parked.udid, name);
+    } catch {}
+    return device;
+  }
+  return null;
+}
+
+export function clearIosAdoptionPending(projectPath: string): void {
+  withConfigLock(() => {
+    const cfg = loadConfig();
+    const ios = cfg?.projects?.[projectPath]?.platforms?.ios;
+    if (!cfg || !ios?.adoptionPending) return;
+    delete ios.adopted;
+    delete ios.adoptionPending;
+    delete ios.parkedCacheKey;
+    saveConfig(cfg);
+  });
 }
 
 async function configureOwnedIosSim({

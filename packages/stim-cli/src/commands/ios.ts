@@ -29,7 +29,14 @@ import {
   untrackedNativeFiles,
 } from '../build-cache.ts';
 import type { FingerprintSource } from '@expo/fingerprint';
-import { formatDuration, launchErrorReport, phaseLine, shortHash, type LaunchErrorRecord } from '../command-output.ts';
+import {
+  formatDuration,
+  launchErrorReport,
+  phaseLine,
+  shortHash,
+  shortUdid,
+  type LaunchErrorRecord,
+} from '../command-output.ts';
 import { verifyCollectorOwnership } from '../collector/ownership.ts';
 import { getConcurrencyLimits, getProject, upsertProject } from '../config.ts';
 import {
@@ -38,6 +45,7 @@ import {
   LAUNCH_FATAL,
   LAUNCH_UNVERIFIED,
   RELEASE_VERIFY_WAIT_MS,
+  clearOtherUserApps,
   devClientUrl,
   installIosApp,
   iosAppProcess,
@@ -59,12 +67,14 @@ import { acquireBuildSlot, releaseBuildSlot, type BuildSlotHandle } from '../eng
 import { readPodState, podsAreStale, runPodInstall } from '../engine/deps.ts';
 import {
   checkDeviceCapacity,
+  clearIosAdoptionPending,
   ensureBooted,
   ensureOwnedDevice,
   unknownIosDeviceTypeRefusal,
   unknownIosRuntimeRefusal,
 } from '../engine/device.ts';
 import { listIosRuntimes } from '../sim/ios.ts';
+import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../sim-pool.ts';
 import {
   REMOTE_SESSION_ERROR,
   binOnPath,
@@ -167,7 +177,7 @@ import {
 import { MODE_BARE, MODE_EXPO, readWorkspaceState, writeWorkspaceState } from '../supervisor/state.ts';
 import { gitCommonDir, repoRoot } from '../worktree.ts';
 
-export { formatDuration, phaseLine, shortHash } from '../command-output.ts';
+export { formatDuration, phaseLine, shortHash, shortUdid } from '../command-output.ts';
 
 function writeNote(line: string): void {
   console.error(line);
@@ -192,6 +202,9 @@ interface DeviceLike {
   avdName?: string | null;
   deviceType?: string | null;
   runtime?: string | null;
+  adopted?: boolean;
+  adoptionPending?: boolean;
+  parkedCacheKey?: string;
 }
 
 interface IosBootLike {
@@ -322,11 +335,6 @@ export function stepClock(now: () => number = Date.now): () => number {
 export function stepTimer(now: () => number = Date.now): () => string {
   const elapsed = stepClock(now);
   return () => `(${formatDuration(elapsed())})`;
-}
-
-export function shortUdid(udid: unknown): string {
-  const text = String(udid ?? '');
-  return text.length > 4 ? `${text.slice(0, 4)}..` : text;
 }
 
 export function deviceLabel(device: DeviceLike | null | undefined, udid: unknown): string {
@@ -909,6 +917,8 @@ interface IosDeps {
   readBundleExecutable: typeof readBundleExecutable;
   swapJsBundle: typeof swapJsBundle;
   installIosApp: typeof installIosApp;
+  clearOtherUserApps: typeof clearOtherUserApps;
+  clearIosAdoptionPending: typeof clearIosAdoptionPending;
   launchIosApp: typeof launchIosApp;
   verifyLaunch: typeof verifyLaunch;
   verifyReleaseLaunch: typeof verifyReleaseLaunch;
@@ -986,6 +996,8 @@ const DEFAULT_DEPS: IosDeps = {
   readBundleExecutable,
   swapJsBundle,
   installIosApp,
+  clearOtherUserApps,
+  clearIosAdoptionPending,
   launchIosApp,
   verifyLaunch,
   verifyReleaseLaunch,
@@ -1444,6 +1456,60 @@ interface FinishIosRunArgs {
   recordRun: ReportIosResultArgs['recordRun'];
 }
 
+function cleanAdoptedIosApps({
+  d,
+  root,
+  udid,
+  bundleId,
+  phase,
+  note,
+}: {
+  d: IosDeps;
+  root: string;
+  udid: string;
+  bundleId: string | null;
+  phase: (name: unknown, text: string) => void;
+  note: (line: string) => void;
+}): string | null {
+  const swept = d.clearOtherUserApps({ udid, keep: bundleId });
+  if (swept.removed.length) {
+    phase('install', `removed ${swept.removed.join(', ')}, left by the previous workspace`);
+  }
+  if (swept.listed && swept.failed.length === 0) {
+    d.clearIosAdoptionPending(root);
+    return null;
+  }
+  if (!swept.listed) return 'Could not list apps left by the previous workspace.';
+  for (const failure of swept.failed) {
+    note(chalk.yellow(phaseLine('install', `could not remove ${failure}, left by the previous workspace`)));
+  }
+  return `Could not remove ${swept.failed.join(', ')}, left by the previous workspace.`;
+}
+
+function resolveRunBundleId(d: IosDeps, root: string, appPath: string | null, bundleId: string | null): string | null {
+  if (!appPath || bundleId) return bundleId;
+  return d.readBundleId(appPath) || d.detectBundleId(root);
+}
+
+function removeSwapDirectory(swapDir: string | null): void {
+  if (!swapDir) return;
+  try {
+    rmSync(swapDir, { recursive: true, force: true });
+  } catch {}
+}
+
+function readRunExecutable(d: IosDeps, appPath: string | null, note: (line: string) => void): string | null {
+  const executable = appPath ? d.readBundleExecutable(appPath) : null;
+  if (appPath && !executable) {
+    note(
+      chalk.dim(
+        `Could not read CFBundleExecutable from ${appPath}; the device log predicate falls back to the .app basename.`,
+      ),
+    );
+  }
+  return executable;
+}
+
 async function finishIosRun({
   d,
   root,
@@ -1505,16 +1571,14 @@ async function finishIosRun({
     return null;
   };
 
+  bundleId = resolveRunBundleId(d, root, appPath, bundleId);
   if (appPath && !bundleId) {
-    bundleId = d.readBundleId(appPath) || d.detectBundleId(root);
-    if (!bundleId) {
-      return fail({
-        code: 'STIM_INSTALL_FAILED',
-        message: `Could not read a bundle identifier from the cached app at ${appPath}.`,
-        remedy: 'Remove the cache entry (`stim gc`) and run again to rebuild it.',
-        build: { ...buildFailure, appPath },
-      });
-    }
+    return fail({
+      code: 'STIM_INSTALL_FAILED',
+      message: `Could not read a bundle identifier from the cached app at ${appPath}.`,
+      remedy: 'Remove the cache entry (`stim gc`) and run again to rebuild it.',
+      build: { ...buildFailure, appPath },
+    });
   }
 
   if (bundleId) d.upsertProject(root, { bundleId });
@@ -1527,24 +1591,13 @@ async function finishIosRun({
       remedy: booted?.remedy || 'Run `stim ios` again to re-establish an owned simulator for this workspace.',
     });
   }
-  phase('device', `${deviceLabel(device, udid)} ${physical ? 'connected' : `booted ${bootDuration()}`}`);
+  const deviceOutcome = physical ? 'connected' : `${device?.adopted ? 'adopted' : 'booted'} ${bootDuration()}`;
+  phase('device', `${deviceLabel(device, udid)} ${deviceOutcome}`);
 
   const scheme = release ? undefined : d.devClientScheme(root, appPath);
   const appName = appNameFromPath(appPath);
-  const appExecutable = appPath ? d.readBundleExecutable(appPath) : null;
-  if (appPath && !appExecutable) {
-    note(
-      chalk.dim(
-        `Could not read CFBundleExecutable from ${appPath}; the device log predicate falls back to the .app basename.`,
-      ),
-    );
-  }
-  const dropSwapDir = () => {
-    if (!swapDir) return;
-    try {
-      rmSync(swapDir, { recursive: true, force: true });
-    } catch {}
-  };
+  const appExecutable = readRunExecutable(d, appPath, note);
+  const dropSwapDir = () => removeSwapDirectory(swapDir);
   let installSkipped = false;
   let launched: ReturnType<IosDeps['launchIosApp']> | null = null;
   let launchedAt = d.now();
@@ -1618,8 +1671,29 @@ async function finishIosRun({
     };
     phase('launch', `${bundleId!} pid ${started.pid} ${launchTimer()}`);
   } else {
+    const adopting = Boolean(device?.adoptionPending);
+    if (adopting) {
+      const cleanupFailure = cleanAdoptedIosApps({ d, root, udid, bundleId, phase, note });
+      if (cleanupFailure) {
+        return fail({
+          code: 'STIM_INSTALL_FAILED',
+          message: `${cleanupFailure} Stim kept the adoption cleanup pending and did not install or launch the app.`,
+          remedy: 'Run `stim ios` again after simulator tooling is responsive.',
+          build: { ...buildFailure, appPath, bundleId },
+        });
+      }
+    }
     const installTimer = stepTimer(d.now);
-    const installed = d.installIosApp({ udid, appPath: appPath!, bundleId, devClientScheme: scheme }, { now: d.now });
+    const installed = d.installIosApp(
+      {
+        udid,
+        appPath: appPath!,
+        bundleId,
+        devClientScheme: scheme,
+        proveInstalled: !adopting || device?.parkedCacheKey === storeKey,
+      },
+      { now: d.now },
+    );
     if (installed?.failed) {
       return fail({
         code: installed.code || 'STIM_INSTALL_FAILED',
@@ -1904,6 +1978,9 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
       remedy: `Set ios.remote and android.remote to one of: ${REMOTE_DEVICE_BACKENDS.join(', ')}.`,
     });
   }
+
+  const poolError = parkedMaxSetting('ios').error;
+  if (poolError) return fail({ code: 'STIM_BAD_ARG', message: poolError, remedy: POOL_SETTING_REMEDY });
 
   for (const settingError of [
     iosSigningIdentitySettingError(settings),

@@ -4,6 +4,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'path';
 import chalk from 'chalk';
 import { InvalidArgumentError, type Command } from 'commander';
 import { clearDevice, getConfigDir, loadConfig } from '../config.ts';
+import { formatLongDuration, plural, shortUdid } from '../command-output.ts';
 import { directorySize, formatBytes, isOnMountedVolume, listMountedVolumes, volumeRootFor } from '../fs-util.ts';
 import { listBuildLocks, readBuildLock } from '../engine/build-lock.ts';
 import { listBuildSlots, readBuildSlot } from '../engine/build-slots.ts';
@@ -25,8 +26,9 @@ import { isPidAlive } from '../metro.ts';
 import { detectIsExpo, findProjectRoot } from '../project.ts';
 import { reclaimProject } from '../reclaim.ts';
 import { SETTING_SHAPE_REMEDY } from '../settings.ts';
-import { listAllIosSims, type IosSimRecord } from '../sim/ios.ts';
-import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.ts';
+import { listAllIosSims, listIosDeviceTypes, parseRuntimeVersion, type IosSimRecord } from '../sim/ios.ts';
+import { dropParked, parkedMaxSetting, POOL_SETTING_REMEDY, readParked, type ParkedSim } from '../sim-pool.ts';
+import { teardownOwnedIosSim, teardownOwnedAvd, teardownParkedIosSim } from '../teardown.ts';
 import { listAvds, ownedAvdDirectory } from '../sim/android.ts';
 import {
   declaredCachePaths,
@@ -94,9 +96,20 @@ interface DeviceLeaseGarbage {
   kept: KeptLeaseFile[];
 }
 
+export interface ParkedSimReport {
+  udid: string;
+  name: string;
+  model: string | null;
+  runtime: string | null;
+  parkedAt: string;
+  bytes: number | null;
+  listed: boolean | null;
+}
+
 interface GcReport {
   skipped: GcSkip[];
   deadProjects: string[];
+  parkedSims: ParkedSimReport[];
   orphanedDevices: OrphanedDevice[];
   staleDevices: StaleProjectDevice[];
   staleDeviceRecords: StaleDeviceRecord[];
@@ -150,6 +163,9 @@ interface GcDependencies {
   avdDirectory?: typeof ownedAvdDirectory;
   directorySize?: typeof directorySize;
   settingShapeErrors?: () => string[];
+  listAllIosSims?: typeof listAllIosSims;
+  listIosDeviceTypes?: typeof listIosDeviceTypes;
+  deleteParkedIosSim?: (udid: string) => void;
 }
 
 // simctl and emulator listings can exceed 10 seconds on loaded hosts; 30 seconds still bounds hangs.
@@ -197,6 +213,9 @@ export function findOrphanedDevices({
     if (android?.avdName) {
       referenced.set(android.avdName, { path, mounted });
     }
+  }
+  for (const sim of readParked('ios', { config })) {
+    referenced.set(sim.udid, { path: 'the simulator pool', mounted: true });
   }
 
   const orphaned: OrphanedDevice[] = [];
@@ -616,21 +635,49 @@ function shortKey(key: unknown) {
   return text.length > 6 ? `${text.slice(0, 6)}..` : text;
 }
 
-export function formatGcReport({
-  skipped = [],
-  deadProjects = [],
-  orphanedDevices = [],
-  staleDevices = [],
-  staleDeviceRecords = [],
-  buildLocks = { stale: [], live: [] },
-  buildSlots = { stale: [], live: [] },
-  deviceLeases = { expired: [], kept: [] },
-  deviceSweepNotices = [],
-  easSessionSweep = { projectScope: null, orphaned: [], notices: [], deletionSafe: true },
-  caches = [],
-  cacheScope = null,
-  olderThan = null,
-}: Partial<GcReport>): string[] {
+function parkedAge(parkedAt: string, now: number): string {
+  const at = Date.parse(parkedAt);
+  if (!Number.isFinite(at)) return 'parked at an unknown time';
+  return `parked ${formatLongDuration(Math.max(0, now - at))} ago`;
+}
+
+function formatParkedSimReport(parkedSims: readonly ParkedSimReport[], now: number): string[] {
+  if (parkedSims.length === 0) return [];
+  const known = parkedSims.filter((sim) => sim.bytes !== null);
+  const total = known.reduce((sum, sim) => sum + (sim.bytes ?? 0), 0);
+  const size = known.length === parkedSims.length ? `, ${formatBytes(total)}` : '';
+  const lines = [`Parked simulators (${parkedSims.length}${size}):`];
+  for (const sim of parkedSims) {
+    const model = [sim.model, sim.runtime].filter(Boolean).join(' ');
+    const age = parkedAge(sim.parkedAt, now);
+    const bytes = sim.bytes === null ? '' : ` ${formatBytes(sim.bytes)}`;
+    const gone =
+      sim.listed === false ? ' - not on this machine' : sim.listed === null ? ' - listing unavailable; kept' : '';
+    lines.push(`  ios ${sim.name} (${shortUdid(sim.udid)})${model ? ` ${model}` : ''} ${age}${bytes}${gone}`);
+  }
+  lines.push('              --delete attempts verified deletions and keeps failures.');
+  return lines;
+}
+
+export function formatGcReport(
+  {
+    skipped = [],
+    deadProjects = [],
+    parkedSims = [],
+    orphanedDevices = [],
+    staleDevices = [],
+    staleDeviceRecords = [],
+    buildLocks = { stale: [], live: [] },
+    buildSlots = { stale: [], live: [] },
+    deviceLeases = { expired: [], kept: [] },
+    deviceSweepNotices = [],
+    easSessionSweep = { projectScope: null, orphaned: [], notices: [], deletionSafe: true },
+    caches = [],
+    cacheScope = null,
+    olderThan = null,
+  }: Partial<GcReport>,
+  { now = Date.now() }: { now?: number } = {},
+): string[] {
   const lines: string[] = [];
   const staleLocks = buildLocks?.stale ?? [];
   const liveLocks = buildLocks?.live ?? [];
@@ -641,6 +688,7 @@ export function formatGcReport({
     lines.push(`Cache scope: "${cacheScope}". Devices, project entries and locks were not inspected.`);
   } else if (
     deadProjects.length === 0 &&
+    parkedSims.length === 0 &&
     orphanedDevices.length === 0 &&
     staleDevices.length === 0 &&
     staleDeviceRecords.length === 0 &&
@@ -670,6 +718,8 @@ export function formatGcReport({
     lines.push(`Dead project entries (${deadProjects.length}):`);
     for (const path of deadProjects) lines.push(`  ${path}`);
   }
+
+  lines.push(...formatParkedSimReport(parkedSims, now));
 
   if (orphanedDevices.length) {
     lines.push(`Orphaned devices (${orphanedDevices.length}):`);
@@ -808,6 +858,83 @@ function withAndroidAvdSizes<T extends { kind: 'ios' | 'android'; id: string; by
       return device;
     }
   });
+}
+
+export function describeParkedSims(
+  records: readonly ParkedSim[],
+  sims: readonly IosSimRecord[],
+  deviceTypes: readonly { identifier: string; name: string }[],
+  { simsChecked = true }: { simsChecked?: boolean } = {},
+): ParkedSimReport[] {
+  const listed = new Map(sims.map((sim) => [sim.udid, sim]));
+  return records.map((record) => {
+    const sim = listed.get(record.udid);
+    return {
+      udid: record.udid,
+      name: sim?.name ?? record.name,
+      model: deviceTypes.find((d) => d.identifier === record.deviceTypeIdentifier)?.name ?? null,
+      runtime: sim ? parseRuntimeVersion(sim.runtime) : parseRuntimeVersion(record.runtimeIdentifier),
+      parkedAt: record.parkedAt,
+      bytes: typeof sim?.dataPathSize === 'number' ? sim.dataPathSize : null,
+      listed: simsChecked ? Boolean(sim) : null,
+    };
+  });
+}
+
+function collectParkedSims(deps: GcDependencies): ParkedSimReport[] {
+  const records = readParked('ios');
+  if (records.length === 0) return [];
+  let sims: IosSimRecord[];
+  let deviceTypes: { identifier: string; name: string }[] = [];
+  try {
+    sims = (deps.listAllIosSims ?? listAllIosSims)({ timeoutMs: DEVICE_LIST_TIMEOUT_MS, includeUnavailable: true });
+  } catch {
+    return describeParkedSims(records, [], [], { simsChecked: false });
+  }
+  try {
+    deviceTypes = (deps.listIosDeviceTypes ?? listIosDeviceTypes)();
+  } catch {}
+  return describeParkedSims(records, sims, deviceTypes);
+}
+
+export function deleteParkedSims(parkedSims: readonly ParkedSimReport[], deps: GcDependencies = {}): number {
+  let failures = 0;
+  let emptied = 0;
+  for (const sim of parkedSims) {
+    if (sim.listed === null) {
+      failures++;
+      console.log(chalk.red(`Could not verify parked ios sim ${sim.name} (${sim.udid}); its pool record was kept.`));
+      continue;
+    }
+    try {
+      const teardown = sim.listed
+        ? teardownParkedIosSim(sim.udid, { label: sim.name, deleteSim: deps.deleteParkedIosSim })
+        : null;
+      const removed = sim.listed ? teardown?.status === 'torn-down' : dropParked('ios', sim.udid);
+      if (!removed) {
+        if (teardown?.status === 'failed') {
+          failures++;
+          console.log(chalk.red(`Failed to delete parked ios sim ${sim.name}: ${teardown.reason}`));
+        } else {
+          console.log(chalk.dim(`Skipped ${sim.name} (${sim.udid}); it is no longer parked.`));
+        }
+        continue;
+      }
+      emptied++;
+      console.log(
+        chalk.green(
+          sim.listed
+            ? `Deleted parked ios sim ${sim.name} (${sim.udid})`
+            : `Dropped the parked record for ${sim.name} (${sim.udid}); it is not on this machine.`,
+        ),
+      );
+    } catch (err) {
+      failures++;
+      console.log(chalk.red(`Failed to delete parked ios sim ${sim.name}: ${(err as Error)?.message || err}`));
+    }
+  }
+  if (emptied) console.log(chalk.dim(`  emptied ${plural(emptied, 'parked simulator')} from the pool`));
+  return failures;
 }
 
 function projectLastTouched(path: string): number {
@@ -979,6 +1106,7 @@ export async function collectGcReport(
       deviceLeases: { expired: [], kept: [] },
       deviceSweepNotices: [],
       easSessionSweep: { projectScope: null, orphaned: [], notices: [], deletionSafe: true },
+      parkedSims: [],
       caches,
       cacheScope: scope,
       olderThan,
@@ -1001,6 +1129,7 @@ export async function collectGcReport(
       };
     }
   }
+  const parkedSims = collectParkedSims(deps);
   const deadProjects: string[] = [];
   const skipped: GcSkip[] = [];
   for (const path of Object.keys(cfg?.projects || {})) {
@@ -1099,6 +1228,7 @@ export async function collectGcReport(
   return {
     skipped,
     deadProjects,
+    parkedSims,
     orphanedDevices,
     staleDevices,
     staleDeviceRecords,
@@ -1121,6 +1251,10 @@ export async function collectGcReport(
 }
 
 export async function runGc(opts: RunGcOptions = {}, deps: GcDependencies = {}): Promise<void> {
+  const poolError = parkedMaxSetting('ios').error;
+  if (poolError) {
+    console.error(chalk.yellow(`${poolError} ${POOL_SETTING_REMEDY}`));
+  }
   const shapeErrors = (deps.settingShapeErrors ?? projectSettingShapeErrors)();
   if (shapeErrors.length) {
     for (const message of shapeErrors) console.error(chalk.red(message));
@@ -1233,6 +1367,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
   } = report;
   const actionable =
     deadProjects.length > 0 ||
+    report.parkedSims.length > 0 ||
     orphanedDevices.length > 0 ||
     staleDevices.length > 0 ||
     staleDeviceRecords.length > 0 ||
@@ -1255,7 +1390,8 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
     return;
   }
 
-  let deleteFailures = 0;
+  let deleteFailures = deleteParkedSims(report.parkedSims, deps);
+
   for (const path of deadProjects) {
     const result = await reclaimProject(path);
     if (result.keptEntry) console.log(chalk.yellow(`Could not fully prune ${path}; its registry entry was kept.`));
@@ -1361,7 +1497,6 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
       console.log(chalk.red(`Failed to clear the device lease at ${entry.path}: ${(err as Error)?.message || err}`));
     }
   }
-
   if (easSessionSweep.orphaned.length && easSessionSweep.deletionSafe && easSessionSweep.projectScope) {
     const projectScope = easSessionSweep.projectScope;
     const withProjectLock = deps.withEasProjectLock ?? withEasProjectLock;

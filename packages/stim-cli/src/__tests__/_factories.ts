@@ -40,6 +40,7 @@ export function makeIosSim(overrides: Partial<IosSimRecord> = {}): IosSimRecord 
     state: 'Booted',
     runtime: 'com.apple.CoreSimulator.SimRuntime.iOS-18-0',
     deviceTypeIdentifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-16',
+    available: true,
     ...overrides,
   };
 }
