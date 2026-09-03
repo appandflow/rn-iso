@@ -19,10 +19,12 @@ import sonnetBenchmarkJson from '@site/src/data/benchmarks/sonnet-rc12.json';
 import solBenchmarkJson from '@site/src/data/benchmarks/sol-rc12.json';
 import styles from './benchmarks.module.css';
 
-const benchmarks = [benchmarkJson, solBenchmarkJson, sonnetBenchmarkJson, opusBenchmarkJson] as BenchmarkData[];
+const benchmarks = (
+  [benchmarkJson, solBenchmarkJson, sonnetBenchmarkJson, opusBenchmarkJson] as BenchmarkData[]
+).filter((benchmark) => benchmark.runs.some((run) => run.valid));
 
-function defaultRun(benchmark: BenchmarkData): BenchmarkRun {
-  return comparableRuns(benchmark.runs)[0] ?? benchmark.runs[0];
+function defaultRun(benchmark: BenchmarkData | undefined): BenchmarkRun | undefined {
+  return benchmark?.runs[0];
 }
 
 function displayVariant(variant: BenchmarkRun['variant']): string {
@@ -73,19 +75,33 @@ function ComparisonCard({
 }
 
 export default function Benchmarks(): ReactNode {
-  const [stage, setStage] = useState(benchmarks[0].stage);
+  const [stage, setStage] = useState(benchmarks[0]?.stage ?? '');
   const benchmark = benchmarks.find((candidate) => candidate.stage === stage) ?? benchmarks[0];
-  const [activeId, setActiveId] = useState(defaultRun(benchmark).id);
-  const activeRun = benchmark.runs.find((run) => run.id === activeId) ?? defaultRun(benchmark);
+  const publishedRuns = useMemo(() => benchmark?.runs.filter((run) => run.valid) ?? [], [benchmark]);
+  const [activeId, setActiveId] = useState(defaultRun(benchmark)?.id ?? '');
+  const activeRun = publishedRuns.find((run) => run.id === activeId) ?? defaultRun(benchmark);
   const grouped = useMemo(
     () =>
       (['javascript', 'native'] as const).map((variant) => ({
         variant,
-        runs: benchmark.runs.filter((run) => run.variant === variant),
+        runs: publishedRuns.filter((run) => run.variant === variant),
       })),
-    [benchmark],
+    [publishedRuns],
   );
-  const maxSeconds = Math.max(1, ...comparableRuns(benchmark.runs).map((run) => run.settingsReadySeconds));
+  const maxSeconds = Math.max(1, ...comparableRuns(publishedRuns).map((run) => run.settingsReadySeconds));
+
+  if (!benchmark || !activeRun) {
+    return (
+      <Layout title="Agent benchmarks" description="Auditable Stim agent benchmark results.">
+        <main className={styles.page}>
+          <div className="container">
+            <Heading as="h1">Agent benchmarks unavailable</Heading>
+            <p>No valid benchmark runs have been published.</p>
+          </div>
+        </main>
+      </Layout>
+    );
+  }
 
   return (
     <Layout
@@ -112,7 +128,7 @@ export default function Benchmarks(): ReactNode {
                 aria-pressed={candidate.stage === benchmark.stage}
                 onClick={() => {
                   setStage(candidate.stage);
-                  setActiveId(defaultRun(candidate).id);
+                  setActiveId(defaultRun(candidate)?.id ?? '');
                 }}
               >
                 {candidate.title}
@@ -125,10 +141,7 @@ export default function Benchmarks(): ReactNode {
               <Heading as="h2" id="comparison-title">
                 Settings-ready comparison
               </Heading>
-              <p>
-                Recorded {benchmark.recordedOn} /{' '}
-                {benchmark.runs.every((run) => run.valid) ? 'all runs valid' : 'contains invalid runs'}
-              </p>
+              <p>Recorded {benchmark.recordedOn} / valid runs only</p>
             </div>
             <div className={styles.comparisonGrid}>
               {grouped.map(({ variant, runs }) => (
@@ -175,7 +188,7 @@ export default function Benchmarks(): ReactNode {
               </div>
             </div>
             <div className={styles.runTabs} role="group" aria-label="Benchmark runs">
-              {benchmark.runs.map((run) => (
+              {publishedRuns.map((run) => (
                 <button
                   key={run.id}
                   type="button"
@@ -183,7 +196,6 @@ export default function Benchmarks(): ReactNode {
                   onClick={() => setActiveId(run.id)}
                 >
                   {run.variant} / {run.arm}
-                  {run.valid ? '' : ' / invalid attempt'}
                 </button>
               ))}
             </div>
