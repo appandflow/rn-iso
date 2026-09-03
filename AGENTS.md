@@ -149,10 +149,11 @@ checks, and registry remedies, which cannot assume a global install.
 
 ### 2. Create, boot, and delete only owned devices
 
-Stim can create, boot, shut down, or delete only devices it created, named
-`stim-<label> (<model> <runtime>)` and recorded with `owned: true`. Never do any
-of those to a user-created emulator or simulator. Keep a device record when
-teardown fails so `gc` can find the device later.
+Stim can create, boot, shut down, or delete only devices it created. Owned iOS
+simulators are named `stim-<label> (<model> <runtime>)`; owned Android AVDs
+remain `stim-<label>`. Both are recorded with `owned: true`. Never do any of
+those actions to a user-created emulator or simulator. Keep a device record
+when teardown fails so `gc` can find the device later.
 
 Stim parks an owned simulator it no longer needs instead of deleting it, up to a
 configured maximum, and adopts a parked one before creating. Parked simulators

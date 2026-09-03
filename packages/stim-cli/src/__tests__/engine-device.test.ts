@@ -676,6 +676,56 @@ describe('ensureOwnedDevice: ios', () => {
     }
   });
 
+  test('keeps a parked record renamed away from Stim ownership and creates a fresh simulator', async () => {
+    const root = projectDir();
+    process.env.STIM_POOL_IOS_PARKED_MAX = '3';
+    const output: string[] = [];
+    try {
+      parkSim({
+        platform: 'ios',
+        projectPath: root,
+        max: 3,
+        record: {
+          udid: 'U1',
+          name: 'stim-parked (iPhone 17 Pro 26.2) u1',
+          deviceTypeIdentifier: TYPE_17_PRO.identifier,
+          runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-2',
+          parkedAt: '2026-09-01T10:00:00.000Z',
+          simslimManaged: false,
+        },
+      });
+      const { files, exec } = iosExecutor([
+        {
+          udid: 'U1',
+          name: 'My iPhone',
+          state: 'Shutdown',
+          isAvailable: true,
+          deviceTypeIdentifier: TYPE_17_PRO.identifier,
+        },
+      ]);
+      setExecutor(exec);
+
+      const device = await ensureOwnedDevice({
+        platform: 'ios',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: {},
+        out: (line) => {
+          output.push(line);
+        },
+      });
+
+      expect(device).toMatchObject({ deviceUdid: 'NEW-UDID', created: true });
+      expect(readParked('ios')).toMatchObject([{ udid: 'U1' }]);
+      expect(files.some((call) => call.includes('U1'))).toBe(false);
+      expect(output.join('\n')).toMatch(/not Stim-owned/);
+    } finally {
+      delete process.env.STIM_POOL_IOS_PARKED_MAX;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('drops a gone parked record and creates a fresh simulator', async () => {
     const root = projectDir();
     process.env.STIM_POOL_IOS_PARKED_MAX = '3';

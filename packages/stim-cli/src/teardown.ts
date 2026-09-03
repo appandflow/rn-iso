@@ -61,7 +61,8 @@ function parkOwnedIosSim(udid: string, park: ParkRequest): { record: ParkedSim; 
   if (sim.state !== 'Shutdown') throw new Error(`simulator ${udid} is still ${sim.state} after shutdown`);
   const model = listIosDeviceTypes().find((d) => d.identifier === sim.deviceTypeIdentifier)?.name ?? null;
   const runtime = parseRuntimeVersion(sim.runtime);
-  if (park.bundleId && sim.dataPath) {
+  if (park.bundleId) {
+    if (!sim.dataPath) throw new Error(`simulator ${udid} did not report a data path for app cleanup`);
     const container = findAppDataContainer(sim.dataPath, park.bundleId);
     if (container) clearAppDataContainer(container);
   }

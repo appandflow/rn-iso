@@ -100,6 +100,7 @@ test('parseSimctlList rejects incomplete or mistyped iOS device records', () => 
     { ...valid, name: 42 },
     { ...valid, state: '' },
     { ...valid, deviceTypeIdentifier: null },
+    { ...valid, isAvailable: undefined },
     { ...valid, isAvailable: 'yes' },
     { ...valid, dataPath: 42 },
     { ...valid, dataPathSize: Number.NaN },

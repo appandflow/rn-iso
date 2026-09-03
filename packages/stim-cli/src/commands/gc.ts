@@ -655,11 +655,7 @@ function formatParkedSimReport(parkedSims: readonly ParkedSimReport[], now: numb
       sim.listed === false ? ' - not on this machine' : sim.listed === null ? ' - listing unavailable; kept' : '';
     lines.push(`  ios ${sim.name} (${shortUdid(sim.udid)})${model ? ` ${model}` : ''} ${age}${bytes}${gone}`);
   }
-  lines.push(
-    parkedSims.some((sim) => sim.listed === null)
-      ? '              --delete keeps entries it cannot verify and deletes the rest.'
-      : '              --delete deletes every parked simulator and empties the pool.',
-  );
+  lines.push('              --delete attempts verified deletions and keeps failures.');
   return lines;
 }
 

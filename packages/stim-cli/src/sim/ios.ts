@@ -64,7 +64,7 @@ export function parseSimctlList(
           throw new Error(`Expected simctl device field ${field} for ${runtime} to be a non-empty string.`);
         }
       }
-      if (record.isAvailable !== undefined && typeof record.isAvailable !== 'boolean') {
+      if (typeof record.isAvailable !== 'boolean') {
         throw new Error(`Expected simctl device field isAvailable for ${runtime} to be a boolean.`);
       }
       if (record.dataPath !== undefined && typeof record.dataPath !== 'string') {
@@ -81,7 +81,7 @@ export function parseSimctlList(
         name: string;
         state: string;
         deviceTypeIdentifier: string;
-        isAvailable?: boolean;
+        isAvailable: boolean;
         dataPath?: string;
         dataPathSize?: number;
       };

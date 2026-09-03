@@ -176,7 +176,7 @@ test('reports parked simulators with model, runtime, age, size, and delete effec
   const lines = formatGcReport({ parkedSims: parked }, { now: Date.parse('2026-09-03T00:00:00.000Z') }).join('\n');
   expect(lines).toMatch(/Parked simulators \(1, 2M\)/);
   expect(lines).toMatch(/A1F3\.\.\).*iPhone 17 26\.5.*parked 48h ago.*2M/);
-  expect(lines).toMatch(/--delete deletes every parked simulator and empties the pool/);
+  expect(lines).toMatch(/--delete attempts verified deletions and keeps failures/);
   expect(lines).not.toMatch(/Nothing to reclaim/);
 });
 
@@ -238,7 +238,9 @@ test('parked deletion keeps ownership records when simulator listing was unavail
   expect(failures).toBe(1);
   expect(output).toMatch(/Could not verify.*record was kept/);
   expect(readParked('ios')).toEqual([record]);
-  expect(formatGcReport({ parkedSims: report.parkedSims }).join('\n')).toMatch(/keeps entries it cannot verify/);
+  expect(formatGcReport({ parkedSims: report.parkedSims }).join('\n')).toMatch(
+    /attempts verified deletions and keeps failures/,
+  );
 });
 
 test('parked deletion keeps ownership records after malformed simctl list output', async () => {

@@ -388,6 +388,17 @@ function takeParkedIosSim({
       }
       continue;
     }
+    if (!sim.name.startsWith('stim-')) {
+      out(
+        chalk.yellow(
+          phaseLine(
+            'device',
+            `kept parked record for ${parked.udid}: simulator is now named ${JSON.stringify(sim.name)} and is not Stim-owned`,
+          ),
+        ),
+      );
+      continue;
+    }
     const device = {
       deviceUdid: parked.udid,
       owned: true,

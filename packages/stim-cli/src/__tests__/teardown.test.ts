@@ -44,6 +44,9 @@ function iosExecutor({ sims = [], occupied = '', throwOn = null }: IosExecutorOp
     calls.push(cmd);
     if (throwOn && cmd.includes(throwOn)) throw new Error('boom');
     if (cmd.includes('simctl list devices --json')) return listJson;
+    if (cmd.includes('simctl list devicetypes --json')) {
+      return JSON.stringify({ devicetypes: [{ identifier: 'iphone-17', name: 'iPhone 17' }] });
+    }
     if (/simctl spawn .* launchctl list/.test(cmd)) return occupied;
     return '';
   };
@@ -170,6 +173,7 @@ test('teardownOwnedIosSim parks an owned simulator and clears its project claim'
                   state: 'Shutdown',
                   isAvailable: true,
                   deviceTypeIdentifier: 'iphone-17',
+                  dataPath: join(home, 'device-data'),
                 },
               ],
             },
@@ -376,6 +380,32 @@ test('teardownOwnedIosSim deletes instead of parking when app data cannot be pro
     expect(result.status).toBe('torn-down');
     expect(result.parkFallback).toMatch(/container metadata unreadable/);
     expect(calls).toContain('xcrun simctl delete U1');
+    expect(readParked('ios')).toEqual([]);
+  } finally {
+    delete process.env.STIM_HOME;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('teardownOwnedIosSim deletes instead of parking when app cleanup has no simulator data path', () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-pool-teardown-'));
+  process.env.STIM_HOME = home;
+  try {
+    const projectPath = '/tmp/pool-project';
+    upsertProject(projectPath, {
+      platforms: { ios: { deviceUdid: 'U1', deviceName: 'stim-app', owned: true } },
+    });
+    const exec = iosExecutor({ sims: [{ ...OWNED, state: 'Shutdown' }] });
+    setExecutor(exec);
+
+    const result = teardownOwnedIosSim('U1', {
+      del: true,
+      park: { projectPath, max: 1, bundleId: 'com.example.app', cacheKey: 'hash-debug-sim' },
+    });
+
+    expect(result.status).toBe('torn-down');
+    expect(result.parkFallback).toMatch(/did not report a data path/);
+    expect(exec.calls).toContain('xcrun simctl delete U1');
     expect(readParked('ios')).toEqual([]);
   } finally {
     delete process.env.STIM_HOME;
