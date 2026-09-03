@@ -44,6 +44,8 @@ export interface Finding {
   fix: string | null;
 }
 
+export type DoctorPlatform = 'ios' | 'android';
+
 function finding(level: 'cost' | 'note', title: string, detail: string, fix: string | null): Finding {
   return { level, title, detail, fix };
 }
@@ -156,10 +158,12 @@ export function checkMainCheckout(
     npmTreeValid,
     brokenPods = undefined,
     upstream = undefined,
+    platform,
   }: {
     npmTreeValid?: boolean | null;
     brokenPods?: string[];
     upstream?: UpstreamState | null;
+    platform?: DoctorPlatform;
   } = {},
 ): Finding[] {
   const mainRoot = mainCheckoutProjectRoot(projectRoot);
@@ -196,7 +200,7 @@ export function checkMainCheckout(
   const podfileLock = join(mainRoot, 'ios', 'Podfile.lock');
   const podManifest = join(mainRoot, 'ios', 'Pods', 'Manifest.lock');
   const podsRoot = join(mainRoot, 'ios', 'Pods');
-  if (existsSync(podfileLock)) {
+  if (platform !== 'android' && existsSync(podfileLock)) {
     let podsState: 'missing' | 'stale' | null = null;
     if (!existsSync(podManifest)) podsState = 'missing';
     else {
@@ -235,17 +239,19 @@ export function checkMainCheckout(
   }
 
   const coldPlatforms = [
+    platform !== 'android' &&
     existsSync(join(mainRoot, 'ios')) &&
     !existsSync(join(mainRoot, 'ios', 'build')) &&
     !existsSync(join(workspaceDerivedData(mainRoot), 'Build', 'Products'))
       ? 'iOS'
       : null,
+    platform !== 'ios' &&
     existsSync(join(mainRoot, 'android')) &&
     !existsSync(join(mainRoot, 'android', 'build')) &&
     !existsSync(join(mainRoot, 'android', 'app', 'build'))
       ? 'Android'
       : null,
-  ].filter((platform): platform is string => platform !== null);
+  ].filter((coldPlatform): coldPlatform is string => coldPlatform !== null);
   if (coldPlatforms.length) {
     findings.push(
       finding(
@@ -558,6 +564,7 @@ export function runDoctor(
     lookupAgentDevice = null,
     lookupEasCli = null,
     lookupSimSlim = null,
+    platform,
   }: {
     readFile?: typeof readFileSync;
     xcodeMajor?: number | null;
@@ -569,6 +576,7 @@ export function runDoctor(
     lookupAgentDevice?: (() => boolean) | null;
     lookupEasCli?: (() => boolean) | null;
     lookupSimSlim?: (() => boolean) | null;
+    platform?: DoctorPlatform;
   } = {},
 ): Finding[] {
   const read = (rel: string): string | null => {
@@ -625,26 +633,36 @@ export function runDoctor(
   const settingShapeFindings = settingShapeErrors(projectSettings).map((error) =>
     finding('cost', 'A setting has the wrong type', error, SETTING_SHAPE_REMEDY),
   );
-  const poolSettingError = parkedMaxSetting('ios').error;
-  if (poolSettingError) {
-    settingShapeFindings.push(
-      finding('cost', 'The simulator pool bound is not a number', poolSettingError, POOL_SETTING_REMEDY),
-    );
+  if (platform !== 'android') {
+    const poolSettingError = parkedMaxSetting('ios').error;
+    if (poolSettingError) {
+      settingShapeFindings.push(
+        finding('cost', 'The simulator pool bound is not a number', poolSettingError, POOL_SETTING_REMEDY),
+      );
+    }
   }
   let simslimProfile: string | null = null;
   let simslimProfileError: string | null = null;
-  try {
-    simslimProfile = iosSimSlimProfileSetting(projectSettings, settingsRepoRoot);
-  } catch (error) {
-    simslimProfileError = String((error as Error)?.message || error);
+  if (platform !== 'android') {
+    try {
+      simslimProfile = iosSimSlimProfileSetting(projectSettings, settingsRepoRoot);
+    } catch (error) {
+      simslimProfileError = String((error as Error)?.message || error);
+    }
   }
-  const simslimFinding = checkSimSlim({
-    configured: Boolean(simslimProfile),
-    profileError: simslimProfileError,
-    onPath: simslimProfile ? (lookupSimSlim ? lookupSimSlim() : simslimIsOnPath()) : false,
-  });
+  const simslimFinding =
+    platform === 'android'
+      ? null
+      : checkSimSlim({
+          configured: Boolean(simslimProfile),
+          profileError: simslimProfileError,
+          onPath: simslimProfile ? (lookupSimSlim ? lookupSimSlim() : simslimIsOnPath()) : false,
+        });
   const remoteBackends = [
-    ...new Set([remoteIosSetting(projectSettings), remoteAndroidSetting(projectSettings)]),
+    ...new Set([
+      ...(platform !== 'android' ? [remoteIosSetting(projectSettings)] : []),
+      ...(platform !== 'ios' ? [remoteAndroidSetting(projectSettings)] : []),
+    ]),
   ].filter((backend): backend is RemoteDeviceBackend => backend !== null);
   const daemonInEnv = Boolean(
     remoteEnv.AGENT_DEVICE_DAEMON_BASE_URL?.trim() && remoteEnv.AGENT_DEVICE_DAEMON_AUTH_TOKEN?.trim(),
@@ -671,11 +689,11 @@ export function runDoctor(
     .filter((remoteFinding): remoteFinding is Finding => remoteFinding !== null);
 
   return [
-    ...checkMainCheckout(projectRoot),
+    ...checkMainCheckout(projectRoot, { platform }),
     checkDevClient(pkg, isExpo),
     checkMetroCache(metroConfig),
-    checkCompilationCache(podfile, xcodeMajor),
-    checkCcacheConflict(podfile, podfileProperties),
+    platform === 'android' ? null : checkCompilationCache(podfile, xcodeMajor),
+    platform === 'android' ? null : checkCcacheConflict(podfile, podfileProperties),
     checkBuildCacheProvider(appConfig, sdkMajor, isExpo, dynamicConfig),
     easFinding,
     concurrencyFinding,
@@ -750,10 +768,12 @@ export async function detectFingerprintParity(
     createFingerprint = expoFingerprint.createFingerprintAsync,
     differ = expoFingerprint.diffFingerprints,
     dirtyFiles = dirtyFingerprintFiles,
+    platform: selectedPlatform,
   }: {
     createFingerprint?: typeof expoFingerprint.createFingerprintAsync;
     differ?: typeof expoFingerprint.diffFingerprints | null;
     dirtyFiles?: (root: string) => string[];
+    platform?: DoctorPlatform;
   } = {},
 ): Promise<Finding | null> {
   const exec = getExecutor();
@@ -764,11 +784,9 @@ export async function detectFingerprintParity(
   // that is only the missing install. The question has an answer only on a cold checkout.
   if (hasInstalledDependencies(projectRoot)) return null;
 
-  const platform = existsSync(join(projectRoot, 'ios'))
-    ? 'ios'
-    : existsSync(join(projectRoot, 'android'))
-      ? 'android'
-      : undefined;
+  const platform =
+    selectedPlatform ??
+    (existsSync(join(projectRoot, 'ios')) ? 'ios' : existsSync(join(projectRoot, 'android')) ? 'android' : undefined);
 
   const base = mkdtempSync(join(tmpdir(), 'stim-parity-'));
   const worktree = join(base, 'head');

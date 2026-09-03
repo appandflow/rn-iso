@@ -36,12 +36,12 @@ needs. Use `--json` only when a script must parse a stable payload.
 Work in the current checkout by default. When the agent creates an app worktree
 for isolation or parallel work, carry its dependencies and native outputs.
 
-Before a native worktree task, run `stim doctor`: it checks the main checkout
-even from a linked worktree. Fix its dependency and CocoaPods findings, and
-inspect any locally known upstream gap.
+Before a native worktree task, run `stim doctor --platform ios` (or `android`).
+It checks the main checkout from a linked worktree. Fix relevant findings and
+inspect the upstream gap.
 
 ```bash
-stim doctor
+stim doctor --platform ios
 
 # In the main checkout, seed the shared build caches when more native
 # worktrees are coming; skip one-off or JavaScript-only work.

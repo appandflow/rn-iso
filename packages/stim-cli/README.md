@@ -31,6 +31,9 @@ stim logs --errors
 stim stop
 ```
 
+Use `stim doctor --platform ios` or `stim doctor --platform android` when only
+one native platform is in scope; shared project checks still run.
+
 Create a warm isolated worktree with:
 
 ```bash

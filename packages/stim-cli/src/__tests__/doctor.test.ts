@@ -21,7 +21,8 @@ import {
   parseXcodeMajor,
   checkConcurrency,
 } from '../doctor.ts';
-import doctorCommand from '../commands/doctor.ts';
+import doctorCommand, { parseDoctorPlatform } from '../commands/doctor.ts';
+import type { Finding } from '../doctor.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import type { EasAuthResult } from '../engine/remote-cache.ts';
 import assert from 'node:assert';
@@ -46,6 +47,34 @@ test('checkMainCheckout reports missing dependencies, Pods, and native output', 
   } finally {
     rmSync(project, { recursive: true, force: true });
   }
+});
+
+test('checkMainCheckout filters native warm state and CocoaPods by platform', () => {
+  const project = mkdtempSync(join(tmpdir(), 'stim-doctor-platform-'));
+  try {
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
+    mkdirSync(join(project, 'node_modules'));
+    mkdirSync(join(project, 'ios'), { recursive: true });
+    mkdirSync(join(project, 'android'), { recursive: true });
+    writeFileSync(join(project, 'ios', 'Podfile.lock'), 'pods\n');
+
+    const ios = checkMainCheckout(project, { platform: 'ios', brokenPods: [], upstream: null });
+    expect(ios.map((finding) => finding.title)).toEqual([
+      'The main checkout CocoaPods state is missing',
+      'The main checkout has no iOS warm build output',
+    ]);
+
+    const android = checkMainCheckout(project, { platform: 'android', brokenPods: [], upstream: null });
+    expect(android.map((finding) => finding.title)).toEqual(['The main checkout has no Android warm build output']);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
+test('parseDoctorPlatform accepts the two native platforms and rejects other values', () => {
+  expect(parseDoctorPlatform('ios')).toBe('ios');
+  expect(parseDoctorPlatform('android')).toBe('android');
+  expect(() => parseDoctorPlatform('web')).toThrow(/ios, android/);
 });
 
 test('checkMainCheckout recognizes non-npm dependency installs', () => {
@@ -766,6 +795,30 @@ test('detectFingerprintParity against a real repo: a clean checkout is silent', 
   }
 });
 
+test('detectFingerprintParity fingerprints only the selected platform', async () => {
+  resetExecutor();
+  const base = mkdtempSync(join(tmpdir(), 'stim-parity-platform-'));
+  try {
+    execSync('git init -q', { cwd: base });
+    execSync('git config user.email test@example.com', { cwd: base });
+    execSync('git config user.name test', { cwd: base });
+    writeFileSync(join(base, 'app.json'), JSON.stringify({ expo: { name: 'app' } }));
+    mkdirSync(join(base, 'ios'));
+    mkdirSync(join(base, 'android'));
+    execSync('git add . && git commit -q -m init', { cwd: base });
+    const platforms: string[][] = [];
+    const createFingerprint = async (_root: string, options?: { platforms?: string[] }) => {
+      platforms.push(options?.platforms ?? []);
+      return { hash: 'same', sources: [] };
+    };
+
+    expect(await detectFingerprintParity(base, { createFingerprint, platform: 'android' })).toBe(null);
+    expect(platforms).toEqual([['android'], ['android']]);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test('detectFingerprintParity skips silently outside a git repo without invoking the fingerprinter', async () => {
   resetExecutor();
   const dir = mkdtempSync(join(tmpdir(), 'stim-parity-nogit-'));
@@ -877,6 +930,60 @@ test.each([
   }
 });
 
+test('runDoctor keeps shared checks and filters native checks and remote backends', () => {
+  const project = mkdtempSync(join(tmpdir(), 'stim-doc-platform-'));
+  const home = mkdtempSync(join(tmpdir(), 'stim-doc-platform-home-'));
+  process.env.STIM_HOME = home;
+  try {
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
+    mkdirSync(join(project, 'ios'));
+    mkdirSync(join(project, 'android'));
+    writeFileSync(join(project, 'ios', 'Podfile'), 'COMPILATION_CACHE_ENABLE_CACHING = YES\n');
+    writeFileSync(join(project, 'ios', 'Podfile.properties.json'), JSON.stringify({ 'apple.ccacheEnabled': 'true' }));
+    writeFileSync(join(project, 'simslim.json'), '{}\n');
+    writeFileSync(join(project, 'metro.config.js'), 'if (process.env.CACHE) config.cacheStores = [];\n');
+    writeFileSync(
+      join(project, '.stim.json'),
+      JSON.stringify({
+        ios: { remote: 'proxy', simslimProfile: 'simslim.json' },
+        android: { remote: 'eas' },
+      }),
+    );
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ pool: { iosParkedMax: 'bad' } }));
+    const options = {
+      concurrency: { maxBuilds: 0, maxDevices: 0 },
+      remoteEnv: {
+        AGENT_DEVICE_DAEMON_BASE_URL: 'https://proxy.example/agent-device',
+        AGENT_DEVICE_DAEMON_AUTH_TOKEN: 'tok_proxy',
+      },
+      lookupAgentDevice: () => true,
+      lookupEasCli: () => false,
+      lookupSimSlim: () => false,
+    };
+
+    const ios = runDoctor(project, { ...options, platform: 'ios', xcodeMajor: 26 });
+    const android = runDoctor(project, { ...options, platform: 'android', xcodeMajor: null });
+
+    for (const findings of [ios, android]) {
+      expect(findings.some((finding) => finding.title.includes('metro.config.js'))).toBe(true);
+    }
+    expect(ios.some((finding) => finding.title.includes('ccache'))).toBe(true);
+    expect(ios.some((finding) => finding.title.includes('SimSlim'))).toBe(true);
+    expect(ios.some((finding) => finding.title === 'This project uses a remote proxy')).toBe(true);
+    expect(ios.some((finding) => finding.title.includes('simulator pool bound'))).toBe(true);
+    expect(ios.some((finding) => finding.title.includes('no eas-cli'))).toBe(false);
+    expect(android.some((finding) => finding.title.includes('ccache'))).toBe(false);
+    expect(android.some((finding) => finding.title.includes('SimSlim'))).toBe(false);
+    expect(android.some((finding) => finding.title === 'This project uses a remote proxy')).toBe(false);
+    expect(android.some((finding) => finding.title.includes('simulator pool bound'))).toBe(false);
+    expect(android.some((finding) => finding.title.includes('no eas-cli'))).toBe(true);
+  } finally {
+    delete process.env.STIM_HOME;
+    rmSync(home, { recursive: true, force: true });
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
 test('runDoctor checks one shared backend once', () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doc-remote-'));
   try {
@@ -975,4 +1082,82 @@ test('doctor --json prints exactly one line of JSON on stdout', async () => {
   const payload = JSON.parse(line);
   expect(Array.isArray(payload.findings)).toBe(true);
   expect(typeof payload.project).toBe('string');
+  expect(payload.platform).toBe(null);
+});
+
+test('doctor --platform includes the selection in JSON and suppresses the other warm-state finding', async () => {
+  const project = mkdtempSync(join(tmpdir(), 'stim-doctor-cli-platform-'));
+  const home = mkdtempSync(join(tmpdir(), 'stim-doctor-cli-platform-home-'));
+  process.env.STIM_HOME = home;
+  const cwd = process.cwd();
+  const logs: string[] = [];
+  const originalLog = console.log;
+  writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
+  mkdirSync(join(project, 'node_modules'));
+  mkdirSync(join(project, 'ios'));
+  mkdirSync(join(project, 'android'));
+  const program = new Command();
+  doctorCommand(program);
+  console.log = (msg) => logs.push(String(msg));
+  process.chdir(project);
+  try {
+    await program.parseAsync(['node', 'stim', 'doctor', '--json', '--platform', 'ios']);
+  } finally {
+    process.chdir(cwd);
+    console.log = originalLog;
+    delete process.env.STIM_HOME;
+    rmSync(home, { recursive: true, force: true });
+    rmSync(project, { recursive: true, force: true });
+  }
+  expect(logs).toHaveLength(1);
+  const payload = JSON.parse(logs[0] as string);
+  expect(payload.platform).toBe('ios');
+  expect(payload.findings.some((finding: Finding) => finding.title.includes('Android warm'))).toBe(false);
+  expect(payload.findings.some((finding: Finding) => finding.title.includes('iOS warm'))).toBe(true);
+});
+
+test('doctor --platform android does not invoke Xcode tooling', async () => {
+  const project = mkdtempSync(join(tmpdir(), 'stim-doctor-cli-android-'));
+  const home = mkdtempSync(join(tmpdir(), 'stim-doctor-cli-android-home-'));
+  process.env.STIM_HOME = home;
+  const cwd = process.cwd();
+  const logs: string[] = [];
+  const calls: string[] = [];
+  const originalLog = console.log;
+  writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
+  mkdirSync(join(project, 'node_modules'));
+  mkdirSync(join(project, 'android'));
+  setExecutor({
+    run: (command: string) => {
+      calls.push(command);
+      return '';
+    },
+    runQuiet: (command: string) => {
+      calls.push(command);
+      return null;
+    },
+    runFile: (file: string, args: string[]) => {
+      calls.push([file, ...args].join(' '));
+      return '';
+    },
+    spawn: () => {
+      throw new Error('unexpected spawn');
+    },
+  });
+  const program = new Command();
+  doctorCommand(program);
+  console.log = (msg) => logs.push(String(msg));
+  process.chdir(project);
+  try {
+    await program.parseAsync(['node', 'stim', 'doctor', '--json', '--platform', 'android']);
+  } finally {
+    process.chdir(cwd);
+    console.log = originalLog;
+    resetExecutor();
+    delete process.env.STIM_HOME;
+    rmSync(home, { recursive: true, force: true });
+    rmSync(project, { recursive: true, force: true });
+  }
+  expect(logs).toHaveLength(1);
+  expect(calls.some((call) => call.includes('xcodebuild'))).toBe(false);
 });

@@ -1920,7 +1920,8 @@ THE OPTION SURFACE, IN FULL
   stop            --json --force
   status          --json          (already machine-wide)
   stats           --json          (this project and machine-wide)
-  doctor          --json --fix    (--fix applies the findings Stim can repair)
+  doctor          --json --fix --platform <ios|android>
+                                  (--platform keeps shared checks and filters native findings)
   gc              --delete --older-than <days> --cache <name|all>
   worktree create <name> --carry-ignored --base <ref> --dir <path> --label <label>; remove [path] --force
 
