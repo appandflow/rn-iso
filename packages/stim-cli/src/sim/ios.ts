@@ -1,4 +1,5 @@
 import { getExecutor } from '../exec.ts';
+import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts';
 
 export interface IosSimRecord {
   udid: string;
@@ -106,7 +107,49 @@ const BOOTSTATUS_ATTEMPT_MS = 240000;
 const BOOTSTATUS_ATTEMPT_FLOOR_MS = 1000;
 const BOOT_STATE_LIST_TIMEOUT_MS = 30000;
 
-export function bootIosSim(udid: string, { timeoutMs = IOS_BOOT_TIMEOUT_MS }: { timeoutMs?: number } = {}): void {
+function bootstatusTimeout(udid: string): NodeJS.ErrnoException {
+  const e = new Error(`xcrun simctl bootstatus ${udid} -b timed out`) as NodeJS.ErrnoException;
+  e.code = 'ETIMEDOUT';
+  return e;
+}
+
+async function awaitBootstatus(udid: string, attemptMs: number): Promise<void> {
+  const lines: string[] = [];
+  const reader = createLineReader((raw) => {
+    const line = stripAnsi(raw).trim();
+    if (!line) return;
+    lines.push(line);
+    if (lines.length > 10) lines.shift();
+  });
+  const child = getExecutor().spawn('xcrun', ['simctl', 'bootstatus', udid, '-b'], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  child.stdout?.on('data', (chunk) => reader.push(chunk));
+  child.stderr?.on('data', (chunk) => reader.push(chunk));
+  let timer: NodeJS.Timeout | undefined;
+  const attempt = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), attemptMs);
+  });
+  const result = await Promise.race([waitForChild(child), attempt]);
+  clearTimeout(timer);
+  reader.flush();
+  if (result === 'timeout') {
+    child.kill('SIGKILL');
+    throw bootstatusTimeout(udid);
+  }
+  if (result.error) throw result.error;
+  if (result.code === 0) return;
+  const detail = lines.length ? `: ${lines.join(' | ')}` : '';
+  throw new Error(`xcrun simctl bootstatus ${udid} -b failed with exit code ${result.code ?? 'unknown'}${detail}`);
+}
+
+export async function bootIosSim(
+  udid: string,
+  {
+    timeoutMs = IOS_BOOT_TIMEOUT_MS,
+    attemptMs = BOOTSTATUS_ATTEMPT_MS,
+  }: { timeoutMs?: number; attemptMs?: number } = {},
+): Promise<void> {
   const exec = getExecutor();
   try {
     exec.run(`xcrun simctl boot ${udid}`);
@@ -121,9 +164,7 @@ export function bootIosSim(udid: string, { timeoutMs = IOS_BOOT_TIMEOUT_MS }: { 
     const remaining = deadline - Date.now();
     if (remaining > 0) {
       try {
-        exec.run(`xcrun simctl bootstatus ${udid} -b`, {
-          timeoutMs: Math.min(Math.max(remaining, BOOTSTATUS_ATTEMPT_FLOOR_MS), BOOTSTATUS_ATTEMPT_MS),
-        });
+        await awaitBootstatus(udid, Math.min(Math.max(remaining, BOOTSTATUS_ATTEMPT_FLOOR_MS), attemptMs));
         break;
       } catch (e) {
         if ((e as NodeJS.ErrnoException)?.code !== 'ETIMEDOUT') throw e;

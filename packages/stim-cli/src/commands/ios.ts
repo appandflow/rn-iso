@@ -2260,12 +2260,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
       bootDuration = bootTimer();
       return result;
     });
-    if (!remoteDevice && device.created) {
-      const booted = await bootPromise;
-      udid = (device.deviceUdid as string | undefined) ?? booted?.udid ?? '';
-    } else {
-      udid = (device.deviceUdid as string | undefined) ?? (await bootPromise)?.udid ?? '';
-    }
+    udid = (device.deviceUdid as string | undefined) ?? (await bootPromise)?.udid ?? '';
 
     const fingerprintTimer = stepTimer(d.now);
     let computedFingerprint: string | null;

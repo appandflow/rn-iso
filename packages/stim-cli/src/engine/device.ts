@@ -54,10 +54,28 @@ export interface OwnedDeviceRecord {
   runtime?: string | null;
   systemImage?: string | null;
   /**
-   * The simulator this call booted during this run. `ensureBooted` trusts it
-   * instead of listing simulators again; it is never persisted.
+   * The boot this call started, and the promise that finishes it: the wait on
+   * `simctl bootstatus -b` and the SimSlim reconcile that follows it.
+   * `ensureBooted` joins it instead of listing simulators again. It is never
+   * persisted.
    */
-  bootedUdid?: string;
+  booting?: IosBoot;
+}
+
+interface IosBoot {
+  udid: string;
+  done: Promise<void>;
+}
+
+function startIosBoot(udid: string, configure: () => Promise<unknown>): IosBoot {
+  const done = (async () => {
+    await bootIosSim(udid);
+    await configure();
+  })();
+  // Node ends the process on an unhandled rejection, and `ensureBooted` -- the
+  // real handler -- does not run when an earlier step of the run refuses first.
+  done.catch(() => {});
+  return { udid, done };
 }
 
 interface DeviceSettings {
@@ -198,29 +216,29 @@ async function ensureOwnedIosDevice({
               'Run `stim worktree remove` (or `stim gc --delete`) to reap the current sim, then `stim ios` again to create the requested one.',
           );
         }
-        const bootedHere = sim.state !== 'Booted';
-        if (bootedHere) {
-          out(chalk.dim(phaseLine('device', `booting ${sim.name} (${sim.udid})`)));
-          bootIosSim(sim.udid);
-        }
         const updated = {
           deviceUdid: sim.udid,
           owned: true,
           deviceName: record.deviceName ?? sim.name,
           ...(record.simslimManaged ? { simslimManaged: true } : {}),
         };
-        return {
-          ...(await configureOwnedIosSim({
+        const configure = () =>
+          configureOwnedIosSim({
             record: updated,
             projectPath,
             profile: simslimProfile,
             out,
             reconcileIosSimulator,
-          })),
-          ...(bootedHere ? { bootedUdid: sim.udid } : {}),
+          });
+        const model = {
           deviceType: deviceTypes.find((d) => d.identifier === sim.deviceTypeIdentifier)?.name ?? null,
           runtime: parseRuntimeVersion(sim.runtime),
         };
+        if (sim.state !== 'Booted') {
+          out(chalk.dim(phaseLine('device', `booting ${sim.name} (${sim.udid})`)));
+          return { ...updated, booting: startIosBoot(sim.udid, configure), ...model };
+        }
+        return { ...(await configure()), ...model };
       }
     } else {
       const sim = listAllIosSims().find((s) => s.udid === record.deviceUdid);
@@ -248,18 +266,19 @@ async function ensureOwnedIosDevice({
   });
   const newRecord = { deviceUdid: created.udid, owned: true, deviceName: created.name };
   setDevice(projectPath, 'ios', newRecord);
-  bootIosSim(created.udid);
-  const configured = await configureOwnedIosSim({
-    record: newRecord,
-    projectPath,
-    profile: simslimProfile,
-    out,
-    reconcileIosSimulator,
-  });
+  const booting = startIosBoot(created.udid, () =>
+    configureOwnedIosSim({
+      record: newRecord,
+      projectPath,
+      profile: simslimProfile,
+      out,
+      reconcileIosSimulator,
+    }),
+  );
   return {
-    ...configured,
+    ...newRecord,
     created: true,
-    bootedUdid: created.udid,
+    booting,
     deviceType: created.deviceType,
     runtime: created.runtime,
   };
@@ -799,7 +818,15 @@ async function ensureIosBooted({
 }): Promise<BootResult> {
   const udid = device?.deviceUdid;
   if (!udid) return { failed: true, reason: 'No iOS simulator is recorded for this project.' };
-  if (device?.bootedUdid === udid) return { ok: true, udid };
+  const booting = device?.booting;
+  if (booting?.udid === udid) {
+    try {
+      await booting.done;
+    } catch (e) {
+      return { failed: true, reason: `Could not boot simulator ${udid}: ${(e as Error)?.message || e}` };
+    }
+    return { ok: true, udid };
+  }
 
   let resolved;
   try {
@@ -825,7 +852,7 @@ async function ensureIosBooted({
   out(chalk.dim(phaseLine('device', `booting ${sim.name} (${udid})`)));
   const bootDeadline = Date.now() + timeoutMs;
   try {
-    bootIosSim(udid, { timeoutMs });
+    await bootIosSim(udid, { timeoutMs });
   } catch (e) {
     return { failed: true, reason: `Could not boot simulator ${udid}: ${(e as Error)?.message || e}` };
   }

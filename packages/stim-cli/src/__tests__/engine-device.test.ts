@@ -15,7 +15,7 @@ import {
 import { allConsolePortsAndSerials, getProject, setDevice, upsertProject } from '../config.ts';
 import type { DeviceRecord } from '../types.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
-import { makeAdbDevices, makeConfig, makeIosSim } from './_factories.ts';
+import { makeAdbDevices, makeChildProcess, makeConfig, makeExitingChild, makeIosSim } from './_factories.ts';
 
 type SimEntry = {
   udid: string;
@@ -70,7 +70,10 @@ describe('ensureBooted: ios', () => {
         return '';
       },
       runFile: () => '',
-      spawn: () => null,
+      spawn: (cmd: string, args: readonly string[] = []) => {
+        commands.push([cmd, ...args].join(' '));
+        return makeExitingChild();
+      },
     });
     expect(await ensureBooted({ platform: 'ios', device: { deviceUdid: 'U1', owned: true } })).toEqual({
       ok: true,
@@ -95,7 +98,10 @@ describe('ensureBooted: ios', () => {
       },
       runQuiet: () => '',
       runFile: () => '',
-      spawn: () => null,
+      spawn: (cmd: string, args: readonly string[] = []) => {
+        commands.push([cmd, ...args].join(' '));
+        return makeExitingChild();
+      },
     });
     const result = await ensureBooted({
       platform: 'ios',
@@ -114,17 +120,11 @@ describe('ensureBooted: ios', () => {
         if (cmd.includes('list devices')) {
           return simList([{ udid: 'U1', name: 'stim-app', state: 'Booting', isAvailable: true }]);
         }
-        if (cmd.includes('bootstatus')) {
-          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
-          const e = new Error('spawnSync /bin/sh ETIMEDOUT') as Error & { code?: string };
-          e.code = 'ETIMEDOUT';
-          throw e;
-        }
         return '';
       },
       runQuiet: () => '',
       runFile: () => '',
-      spawn: () => null,
+      spawn: () => makeChildProcess(),
     });
 
     const result = await ensureBooted({
@@ -144,12 +144,11 @@ describe('ensureBooted: ios', () => {
         if (cmd.includes('list devices')) {
           return simList([{ udid: 'U1', name: 'stim-app', state: 'Shutdown', isAvailable: true }]);
         }
-        if (cmd.includes('bootstatus')) throw new Error('CoreLocationMigrator failed');
         return '';
       },
       runQuiet: () => '',
       runFile: () => '',
-      spawn: () => null,
+      spawn: () => makeExitingChild(1, 'CoreLocationMigrator failed'),
     });
 
     const result = await ensureBooted({ platform: 'ios', device: { deviceUdid: 'U1', owned: true } });
@@ -188,7 +187,7 @@ describe('ensureBooted: ios', () => {
           : '',
       runQuiet: () => '',
       runFile: () => '',
-      spawn: () => null,
+      spawn: () => makeExitingChild(),
     });
     const result = await ensureBooted({ platform: 'ios', device: { deviceUdid: 'U1' }, timeoutMs: 60, pollMs: 5 });
     expect(result.reason).toMatch(/did not reach the Booted state/);
@@ -199,7 +198,7 @@ describe('ensureBooted: ios', () => {
     expect((await ensureBooted({ platform: 'ios', device: {} })).reason).toMatch(/No iOS simulator is recorded/);
   });
 
-  test('does not list simulators again when this run already booted the sim', async () => {
+  test('joins the boot this run started instead of listing simulators again', async () => {
     const commands: string[] = [];
     setExecutor({
       run: (cmd: string) => {
@@ -213,12 +212,37 @@ describe('ensureBooted: ios', () => {
       runFile: () => '',
       spawn: () => null,
     });
+    let finished = false;
+    const done = new Promise<void>((resolve) =>
+      setTimeout(() => {
+        finished = true;
+        resolve();
+      }, 5),
+    );
     const result = await ensureBooted({
       platform: 'ios',
-      device: { deviceUdid: 'U1', owned: true, bootedUdid: 'U1' },
+      device: { deviceUdid: 'U1', owned: true, booting: { udid: 'U1', done } },
     });
     expect(result).toEqual({ ok: true, udid: 'U1' });
+    expect(finished).toBe(true);
     expect(commands).toEqual([]);
+  });
+
+  test('reports the failure of the boot this run started, before anything is installed', async () => {
+    setExecutor({
+      run: () => simList([{ udid: 'U1', name: 'stim-app', state: 'Shutdown', isAvailable: true }]),
+      runQuiet: () => '',
+      runFile: () => '',
+      spawn: () => null,
+    });
+    const done = Promise.reject(new Error('CoreLocationMigrator failed'));
+    const result = await ensureBooted({
+      platform: 'ios',
+      device: { deviceUdid: 'U1', owned: true, booting: { udid: 'U1', done } },
+    });
+    expect(result.ok).toBeUndefined();
+    expect(result.reason).toMatch(/Could not boot simulator U1/);
+    expect(result.reason).toMatch(/CoreLocationMigrator failed/);
   });
 
   test('still lists a reused sim, which can have been shut down since it was resolved', async () => {
@@ -250,7 +274,7 @@ describe('ensureBooted: ios', () => {
     });
     const result = await ensureBooted({
       platform: 'ios',
-      device: { deviceUdid: 'U1', owned: true, bootedUdid: 'U2' },
+      device: { deviceUdid: 'U1', owned: true, booting: { udid: 'U2', done: Promise.resolve() } },
     });
     expect(result).toEqual({ ok: true, udid: 'U1' });
     expect(commands.filter((c) => c.includes('list devices')).length).toBe(1);
@@ -552,8 +576,10 @@ function projectDir() {
 
 function iosExecutor(devices: SimEntry[]) {
   const run: string[] = [];
+  const spawned: string[] = [];
   return {
     run,
+    spawned,
     exec: {
       run(cmd: string) {
         run.push(cmd);
@@ -574,8 +600,9 @@ function iosExecutor(devices: SimEntry[]) {
       runFile() {
         return '';
       },
-      spawn() {
-        return { pid: 1, unref() {} };
+      spawn(cmd: string, args: readonly string[] = []) {
+        spawned.push([cmd, ...args].join(' '));
+        return makeExitingChild();
       },
     },
   };
@@ -725,10 +752,10 @@ describe('ensureOwnedDevice: ios', () => {
     }
   });
 
-  test('a created sim reports the boot it just performed', async () => {
+  test('a created sim is registered and its boot handed back, not waited out', async () => {
     const root = projectDir();
     try {
-      const { run, exec } = iosExecutor([]);
+      const { run, spawned, exec } = iosExecutor([]);
       setExecutor(exec);
       const result = await ensureOwnedDevice({
         platform: 'ios',
@@ -738,15 +765,46 @@ describe('ensureOwnedDevice: ios', () => {
         settings: {},
       });
       expect(result.created).toBe(true);
-      expect(result.bootedUdid).toBe('NEW-UDID');
-      expect(run.filter((c) => c === 'xcrun simctl bootstatus NEW-UDID -b').length).toBe(1);
+      expect(result.booting?.udid).toBe('NEW-UDID');
+      expect(run).toContain('xcrun simctl boot NEW-UDID');
       expect(getProject(root)?.platforms?.ios).toEqual({ deviceUdid: 'NEW-UDID', owned: true, deviceName: 'stim-app' });
+      await result.booting?.done;
+      expect(spawned).toEqual(['xcrun simctl bootstatus NEW-UDID -b']);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  test('a reused sim reports a boot only when it had to perform one', async () => {
+  test('the SimSlim reconcile rides on the deferred boot, so nothing installs before it', async () => {
+    const root = projectDir();
+    try {
+      const profilePath = join(root, 'simslim.json');
+      writeFileSync(profilePath, '{}\n');
+      const profile = realpathSync(profilePath);
+      const { exec } = iosExecutor([]);
+      setExecutor(exec);
+      const calls: unknown[] = [];
+      const result = await ensureOwnedDevice({
+        platform: 'ios',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: { ios: { simslimProfile: 'simslim.json' } },
+        reconcileIosSimulator: async (args) => {
+          calls.push(args);
+          return { managed: true, profile };
+        },
+      });
+      expect(calls).toEqual([]);
+      await result.booting?.done;
+      expect(calls).toMatchObject([{ udid: 'NEW-UDID', profile, previouslyManaged: false }]);
+      expect(getProject(root)?.platforms?.ios?.simslimManaged).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a reused sim hands back a boot only when it had to start one', async () => {
     const shutdown = projectDir();
     const booted = projectDir();
     try {
@@ -759,7 +817,8 @@ describe('ensureOwnedDevice: ios', () => {
         label: 'app',
         settings: {},
       });
-      expect(afterBoot.bootedUdid).toBe('U1');
+      expect(afterBoot.booting?.udid).toBe('U1');
+      await afterBoot.booting?.done;
 
       setDevice(booted, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app' });
       setExecutor(iosExecutor([{ udid: 'U1', name: 'stim-app', state: 'Booted', isAvailable: true }]).exec);
@@ -770,7 +829,7 @@ describe('ensureOwnedDevice: ios', () => {
         label: 'app',
         settings: {},
       });
-      expect(alreadyBooted.bootedUdid).toBeUndefined();
+      expect(alreadyBooted.booting).toBeUndefined();
     } finally {
       rmSync(shutdown, { recursive: true, force: true });
       rmSync(booted, { recursive: true, force: true });
