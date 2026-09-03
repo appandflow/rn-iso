@@ -72,9 +72,9 @@ export function sanitizeBenchmarkText(value, replacements = []) {
   for (const [absolute, portable] of replacements.toSorted((a, b) => b[0].length - a[0].length)) {
     text = text.replaceAll(absolute, portable);
   }
+  text = text.replace(agentDeviceBundlePattern, '<agent-device-helper>');
   text = text.replaceAll(userInfo().username, '<local-user>');
   return text
-    .replace(agentDeviceBundlePattern, '<agent-device-helper>')
     .replace(simulatorIdPattern, '<simulator-udid>')
     .replace(ipAddressPattern, '<local-ip>')
     .replace(ipv6LoopbackPattern, '<local-ip>')

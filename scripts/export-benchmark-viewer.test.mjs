@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { userInfo } from 'node:os';
 import { estimateTokenCost, sanitizeBenchmarkText, sanitizeCommandOutput } from './export-benchmark-viewer.mjs';
 
 describe('benchmark viewer export', () => {
@@ -24,6 +25,13 @@ describe('benchmark viewer export', () => {
     );
 
     expect(output).toBe('<process output omitted from public artifact>');
+  });
+
+  it('redacts a helper identifier before replacing an OS username inside it', () => {
+    const username = userInfo().username;
+    const output = sanitizeBenchmarkText(`com.owner.agentdevice.${username}.uitests.xct${username}`);
+
+    expect(output).toBe('<agent-device-helper>');
   });
 
   it('prices cached input separately without double-counting reasoning tokens', () => {
