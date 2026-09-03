@@ -157,8 +157,9 @@ when teardown fails so `gc` can find the device later.
 
 Stim parks an owned simulator it no longer needs instead of deleting it, up to a
 configured maximum, and adopts a parked one before creating. Parked simulators
-are Stim-owned, listed in the pool record, and deleted only by eviction or
-`gc --delete`.
+are Stim-owned and listed in the pool record. Delete them only by eviction,
+adoption-time reconciliation of a listed unavailable simulator, or `gc
+--delete`; every route uses centralized teardown and ownership revalidation.
 
 A physical device reached through `android --device` or `ios --device` is
 used but not owned. Hardware cannot be created or booted, so those paths
