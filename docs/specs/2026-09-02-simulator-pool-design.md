@@ -180,11 +180,12 @@ without a workspace." Invariant 4: park is a teardown flow.
 
 ## Decisions
 
-| Question         | Decision                                                         | Why                                                                 |
-| ---------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------- |
-| Erase on park    | No; uninstall the app, reset its privacy grants and the keychain | Erase costs a 12 s boot penalty; the three resets remove what leaks |
-| Bound            | Configurable, default 3, oldest evicted                          | Bounded disk (about 2.5 GB per parked simulator)                    |
-| Where park lives | `teardown.ts`                                                    | Invariant 4                                                         |
-| Booted pool      | Not now                                                          | 2.6 GB RAM per booted simulator; a later setting                    |
-| Match rule       | Model and runtime identifiers, exact                             | A ticket that asks for an iPad must never get an iPhone             |
-| Suites           | Pool disabled by environment                                     | Rows stay device-free and hermetic                                  |
+| Question         | Decision                                                                              | Why                                                                                                   |
+| ---------------- | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Erase on park    | No; keep the app installed, clear its data, reset its privacy grants and the keychain | Erase costs a 12 s boot penalty; clearing is 28 ms; a kept app lets a matching build skip the install |
+| Bound            | Configurable, default 3, oldest evicted                                               | Bounded disk (about 2.5 GB per parked simulator)                                                      |
+| Where park lives | `teardown.ts`                                                                         | Invariant 4                                                                                           |
+| Booted pool      | Not now                                                                               | 2.6 GB RAM per booted simulator; a later setting                                                      |
+| Match rule       | Model and runtime identifiers, exact                                                  | A ticket that asks for an iPad must never get an iPhone                                               |
+| Suites           | Pool disabled by environment                                                          | Rows stay device-free and hermetic                                                                    |
+| Names            | `stim-<label> (<model> <runtime>)`, 60 characters, label shortened first              | Readable in simctl and the Simulator app; identity stays the udid                                     |
