@@ -19,3 +19,11 @@ minimumReleaseAgeExclude:
 allowBuilds:
   '@swc/core': false
   core-js: false
+
+# website's Docusaurus toolchain pulls these transitively at vulnerable
+# versions; the published packages under packages/ do not depend on them
+# (see issue #267).
+overrides:
+  uuid: ^11.1.1
+  serialize-javascript: '>=7.0.5'
+  qs: '>=6.16.0'
