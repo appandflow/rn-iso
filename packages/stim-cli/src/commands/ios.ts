@@ -128,6 +128,7 @@ import {
   compilationCacheActivityLine,
   COMPILATION_CACHE_NOT_RUN,
   COMPILATION_CACHE_UNAVAILABLE,
+  readBundleExecutable,
   readBundleId,
 } from '../engine/xcode.ts';
 import { getExecutor } from '../exec.ts';
@@ -723,6 +724,7 @@ interface ReplaceCollectorArgs {
   udid: string;
   bundleId: string;
   appName?: string | null;
+  appExecutable?: string | null;
   physical?: boolean;
   payloadUrl?: string | null;
   spawn?: (cmd: string, args: readonly string[], opts: Record<string, unknown>) => ChildProcess;
@@ -794,6 +796,7 @@ export async function replaceCollector({
   udid,
   bundleId,
   appName,
+  appExecutable,
   physical = false,
   payloadUrl = null,
   spawn = (cmd, args, opts) => getExecutor().spawn(cmd, args, opts),
@@ -808,6 +811,7 @@ export async function replaceCollector({
 
   const args = [collectorEntry(), '--platform', PLATFORM, '--root', root, '--udid', udid, '--bundle', bundleId];
   if (appName) args.push('--app-name', appName);
+  if (appExecutable) args.push('--app-executable', appExecutable);
   if (physical) args.push('--physical');
   if (payloadUrl) args.push('--payload-url', payloadUrl);
 
@@ -895,6 +899,7 @@ interface IosDeps {
   iosDeviceProcess: typeof iosDeviceProcess;
   verifyIosDeviceReleaseLaunch: typeof verifyIosDeviceReleaseLaunch;
   readBundleId: typeof readBundleId;
+  readBundleExecutable: typeof readBundleExecutable;
   swapJsBundle: typeof swapJsBundle;
   installIosApp: typeof installIosApp;
   launchIosApp: typeof launchIosApp;
@@ -970,6 +975,7 @@ const DEFAULT_DEPS: IosDeps = {
   iosDeviceProcess,
   verifyIosDeviceReleaseLaunch,
   readBundleId,
+  readBundleExecutable,
   swapJsBundle,
   installIosApp,
   launchIosApp,
@@ -1516,6 +1522,7 @@ async function finishIosRun({
 
   const scheme = release ? undefined : d.devClientScheme(root, appPath);
   const appName = appNameFromPath(appPath);
+  const appExecutable = appPath ? d.readBundleExecutable(appPath) : null;
   const dropSwapDir = () => {
     if (!swapDir) return;
     try {
@@ -1647,7 +1654,7 @@ async function finishIosRun({
         (launched?.mode === 'openurl' || launched?.mode === 'payload-url' ? ' (expo-dev-client)' : ''),
   });
 
-  if (!physical) await d.replaceCollector({ root, udid, bundleId: bundleId!, appName, note });
+  if (!physical) await d.replaceCollector({ root, udid, bundleId: bundleId!, appName, appExecutable, note });
 
   if (physical) raiseLeaseFor(release ? RELEASE_VERIFY_WAIT_MS : DEBUG_VERIFY_STEP_MS, false);
   const launchState = await verifyIosRun({

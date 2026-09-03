@@ -106,6 +106,7 @@ describe('parseArgs', () => {
         udid: 'U1',
         bundleId: 'com.example.MyApp',
         appName: 'MyApp',
+        appExecutable: null,
         serial: null,
         packageName: null,
         physical: false,
@@ -135,6 +136,7 @@ describe('parseArgs', () => {
       udid: 'U1',
       bundleId: 'com.example.MyApp',
       appName: 'MyApp',
+      appExecutable: null,
       serial: null,
       packageName: null,
       physical: true,
@@ -169,6 +171,25 @@ describe('parseArgs', () => {
         '--app-name',
         'MyApp',
       ]).appName,
+    ).toBe('MyApp');
+  });
+
+  test('--app-executable carries CFBundleExecutable separately from the .app basename', () => {
+    expect(
+      parseArgs([
+        '--platform',
+        'ios',
+        '--root',
+        '/abs',
+        '--udid',
+        'U1',
+        '--bundle',
+        'com.example.app',
+        '--app-name',
+        'MyAppDev',
+        '--app-executable',
+        'MyApp',
+      ]).appExecutable,
     ).toBe('MyApp');
   });
 
@@ -250,12 +271,12 @@ function iosShimLines() {
 
 describe('the ios collector, spawned for real against a fake xcrun', () => {
   test('registers its own pid, writes records, and clears the registration on SIGTERM', async () => {
-    const banner = 'Filtering the log data using "processImagePath CONTAINS[c] \\"MyApp\\""';
+    const banner = 'Filtering the log data using "processImagePath ENDSWITH \\"/MyApp.app/MyApp\\""';
     writeShim(
       'xcrun',
       [
         `case "$*" in`,
-        `  'simctl spawn UDID-1 log stream --style ndjson --predicate processImagePath CONTAINS[c] "MyApp"') ;;`,
+        `  'simctl spawn UDID-1 log stream --style ndjson --predicate processImagePath ENDSWITH "/MyApp.app/MyApp"') ;;`,
         `  *) echo "unexpected argv: $*" >&2; exit 9 ;;`,
         `esac`,
         `echo "${banner}" >&2`,

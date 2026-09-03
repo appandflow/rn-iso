@@ -18,6 +18,7 @@ import {
   discoverXcodeProject,
   findAppBundle,
   listSchemes,
+  parseBundleExecutable,
   parseBundleId,
   parseCompilationCacheActivity,
   parseSchemeList,
@@ -27,6 +28,7 @@ import {
   pickScheme,
   pickXcodeProject,
   productsDir,
+  readBundleExecutable,
   readBundleId,
   heartbeatLine,
   startBuildHeartbeat,
@@ -624,6 +626,63 @@ describe('reading the bundle id', () => {
       },
     });
     expect(readBundleId('/dd/App.app')).toBe(null);
+  });
+});
+
+describe('reading the bundle executable', () => {
+  test('parseBundleExecutable takes CFBundleExecutable out of plutil JSON', () => {
+    expect(parseBundleExecutable('{"CFBundleExecutable":"App","CFBundleIdentifier":"com.example.app"}')).toBe('App');
+  });
+
+  test('anything else is null, so the caller falls back to the .app basename', () => {
+    expect(parseBundleExecutable('{"CFBundleIdentifier":"com.example.app"}')).toBe(null);
+    expect(parseBundleExecutable('{"CFBundleExecutable":""}')).toBe(null);
+    expect(parseBundleExecutable('{"CFBundleExecutable":42}')).toBe(null);
+    expect(parseBundleExecutable('not json')).toBe(null);
+    expect(parseBundleExecutable(null)).toBe(null);
+  });
+
+  test('readBundleExecutable asks plutil first, with the .plist path', () => {
+    const calls: [string, string[] | undefined][] = [];
+    setExecutor({
+      run: () => '',
+      runQuiet: () => null,
+      spawn: () => {},
+      runFile: (file, args) => {
+        calls.push([file, args]);
+        return '{"CFBundleExecutable":"App"}';
+      },
+    });
+    expect(readBundleExecutable('/dd/App.app')).toBe('App');
+    expect(calls).toEqual([['plutil', ['-convert', 'json', '-o', '-', '/dd/App.app/Info.plist']]]);
+  });
+
+  test('falls back to `defaults read`, which takes the path WITHOUT the extension', () => {
+    const calls: string[] = [];
+    setExecutor({
+      run: () => '',
+      runQuiet: () => null,
+      spawn: () => {},
+      runFile: (file, _args) => {
+        calls.push(file);
+        if (file === 'plutil') throw new Error('plutil missing');
+        return 'App\n';
+      },
+    });
+    expect(readBundleExecutable('/dd/App.app')).toBe('App');
+    expect(calls).toEqual(['plutil', 'defaults']);
+  });
+
+  test('both failing is null rather than a throw out of a build', () => {
+    setExecutor({
+      run: () => '',
+      runQuiet: () => null,
+      spawn: () => {},
+      runFile: () => {
+        throw new Error('nope');
+      },
+    });
+    expect(readBundleExecutable('/dd/App.app')).toBe(null);
   });
 });
 

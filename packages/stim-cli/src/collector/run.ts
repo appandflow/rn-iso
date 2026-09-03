@@ -26,6 +26,7 @@ export interface ParsedCollectorArgs {
   udid?: string;
   bundleId?: string;
   appName?: string;
+  appExecutable?: string | null;
   serial?: string | null;
   packageName?: string | null;
   physical?: boolean;
@@ -39,6 +40,7 @@ export function parseArgs(argv: string[]): ParsedCollectorArgs {
   let udid: string | undefined;
   let bundleId: string | undefined;
   let appName: string | undefined;
+  let appExecutable: string | null = null;
   let serial: string | null = null;
   let packageName: string | null = null;
   let physical = false;
@@ -63,6 +65,10 @@ export function parseArgs(argv: string[]): ParsedCollectorArgs {
     }
     if (arg === '--app-name') {
       appName = argv[++i];
+      continue;
+    }
+    if (arg === '--app-executable') {
+      appExecutable = argv[++i] ?? null;
       continue;
     }
     if (arg === '--serial') {
@@ -102,7 +108,7 @@ export function parseArgs(argv: string[]): ParsedCollectorArgs {
   if (payloadUrl && !physical) {
     return { error: '--payload-url only applies to --physical, which launches the app itself.' };
   }
-  return { platform, root, udid, bundleId, appName, serial, packageName, physical, payloadUrl };
+  return { platform, root, udid, bundleId, appName, appExecutable, serial, packageName, physical, payloadUrl };
 }
 
 import { readCollectors, registerCollector, unregisterCollector } from './state.ts';
@@ -113,6 +119,7 @@ export interface RunCollectorOptions {
   root: string;
   udid?: string | null;
   appName?: string | null;
+  appExecutable?: string | null;
   bundleId?: string | null;
   serial?: string | null;
   packageName?: string | null;
@@ -123,6 +130,7 @@ export interface RunCollectorOptions {
         platform: string;
         udid?: string | null;
         appName?: string | null;
+        appExecutable?: string | null;
         bundleId?: string | null;
         serial?: string | null;
         physical?: boolean;
@@ -186,6 +194,7 @@ export async function runCollector({
   root,
   udid = null,
   appName = null,
+  appExecutable = null,
   bundleId = null,
   serial = null,
   packageName = null,
@@ -292,11 +301,11 @@ export async function runCollector({
 
   const attach = (streamPid: number | null): ChildProcess => {
     const spawned = startStream
-      ? startStream({ platform, udid, appName, bundleId, serial, physical, payloadUrl, pid: streamPid })
+      ? startStream({ platform, udid, appName, appExecutable, bundleId, serial, physical, payloadUrl, pid: streamPid })
       : platform === 'ios'
         ? physical
           ? startIosDeviceConsole({ udid: udid as string, bundleId: bundleId as string, payloadUrl })
-          : startIosLogStream({ udid: udid as string, appName: appName as string })
+          : startIosLogStream({ udid: udid as string, appName: appName as string, executableName: appExecutable })
         : startAndroidLogcat({ serial: serial as string, pid: streamPid as number });
     const outReader = createLineReader(onLine);
     // devicectl --console connects the app's stderr to its own, and the os_log
