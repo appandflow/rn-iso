@@ -610,7 +610,7 @@
           "startSeconds": 147.993,
           "endSeconds": 178.672,
           "command": "for attempt in {1..30}; do if rg -q 'Metro waiting on|Waiting on|Logs for your project' results/sol-rc12/javascript-control/metro.log; then break; fi; sleep 1; done\nps -p 16631 -o pid=,stat=,command=\ntail -n 30 results/sol-rc12/javascript-control/metro.log",
-          "output": "",
+          "output": "<process output omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -802,7 +802,7 @@
           "startSeconds": 674.516,
           "endSeconds": 674.899,
           "command": "test -s results/sol-rc12/javascript-control/proof/settings.png\nsips -g pixelWidth -g pixelHeight results/sol-rc12/javascript-control/proof/settings.png\ntmux has-session -t trailhead-solrc12\nlsof -nP -iTCP:8081 -sTCP:LISTEN\nxcrun simctl spawn <simulator-udid> ps -ax | rg '/Trailhead\\\\.app/Trailhead'\ngit diff --check\ngit status --short",
-          "output": "COMMAND   PID           USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME\nnode    19126 <local-user>   34u  IPv6 0x6bce37932240c2a2      0t0  TCP *:8081 (LISTEN)\nAn error was encountered processing the command (domain=NSPOSIXErrorDomain, code=2):\nThe operation couldn’t be completed. No such file or directory\nNo such file or directory\n M app/(tabs)/settings.tsx\n M ios/Podfile.lock\n?? ios-derived-data/\n",
+          "output": "<process output omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -851,7 +851,7 @@
       "valid": false,
       "invalidReasons": [
         "proof-failed",
-        "missing-successful-command:agent-device open com.appandflow.trailhead --foreground --platform ios --udid 3372C014-23D1-4939-ABF6-94912654C56E"
+        "missing-successful-command:agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>"
       ],
       "settingsReadySeconds": null,
       "appAliveSeconds": 166.034,
@@ -1014,7 +1014,7 @@
           "startSeconds": 208.391,
           "endSeconds": 210.759,
           "command": "agent-device devices",
-          "output": "Android16_16KB (android emulator target=mobile) booted=false\nstim-442abeba-bench-sol-rc12-gpt-5-6-sol-na (iPhone 17 26.5) (ios simulator target=mobile) booted=true\nstim-806f7ff2-repro-derived_data-plus-fix (iPhone 17 26.5) (ios simulator target=mobile) booted=false\nstim-fa326b6d-repro-derived-data-at-fix (iPhone 17 26.5) (ios simulator target=mobile) booted=false\nOld iPhone (ios device target=mobile) booted=true\nJanics-Mac-mini.local (macos device target=desktop) booted=true\n",
+          "output": "<device inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -1339,7 +1339,7 @@
           "startSeconds": 226.002,
           "endSeconds": 227.86,
           "command": "agent-device devices",
-          "output": "Android16_16KB (android emulator target=mobile) booted=false\nstim-c8b3899e-bench-sol-rc12-gpt-5-6-sol-na (iPhone 17 26.5) (ios simulator target=mobile) booted=true\nstim-806f7ff2-repro-derived_data-plus-fix (iPhone 17 26.5) (ios simulator target=mobile) booted=false\nstim-fa326b6d-repro-derived-data-at-fix (iPhone 17 26.5) (ios simulator target=mobile) booted=false\nOld iPhone (ios device target=mobile) booted=true\nJanics-Mac-mini.local (macos device target=desktop) booted=true\n",
+          "output": "<device inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -1766,7 +1766,7 @@
           "startSeconds": 444.129,
           "endSeconds": 444.331,
           "command": "git diff -- ios/Podfile.lock && xcrun simctl spawn <simulator-udid> ps -ax | rg 'Trailhead|trailhead'",
-          "output": "An error was encountered processing the command (domain=NSPOSIXErrorDomain, code=2):\nThe operation couldn’t be completed. No such file or directory\nNo such file or directory\n",
+          "output": "<process output omitted from public artifact>",
           "exitCode": 1
         },
         {
@@ -1774,7 +1774,7 @@
           "startSeconds": 463.143,
           "endSeconds": 463.644,
           "command": "git diff --check && git status --short --branch && test -s results/sol-rc12/native-control/proof/settings.png && xcrun simctl list devices | rg 'Trailhead native-control \\\\(<simulator-udid>\\\\) \\\\(Booted\\\\)' && xcrun simctl launch <simulator-udid> com.appandflow.trailhead",
-          "output": "## bench/native-control\n M ios/Trailhead/AppDelegate.swift\n    Trailhead native-control (<simulator-udid>) (Booted) \ncom.appandflow.trailhead: 15149\n",
+          "output": "<device inventory omitted from public artifact>",
           "exitCode": 0
         }
       ],

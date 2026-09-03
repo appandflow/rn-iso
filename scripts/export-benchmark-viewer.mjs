@@ -23,8 +23,12 @@ const absolutePathPattern = /(?<![A-Za-z0-9._-])\/(?:Users|Volumes|private|tmp|v
 const ipAddressPattern = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
 const ipv6LoopbackPattern = /\[::1\]|(?<![A-Za-z0-9:])::1(?![A-Za-z0-9:])/g;
 const simulatorIdPattern = /\b[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}\b/gi;
+const simulatorIdPrefixPattern = /\b(?=[0-9A-F]{8}\b)(?=[0-9A-F]*[A-F])[0-9A-F]{8}\b/g;
+const localHostnamePattern = /\b(?:[A-Za-z0-9-]+\.)+local\b/gi;
 const agentDeviceBundlePattern = /\b(?:[A-Za-z0-9-]+\.)+[A-Za-z0-9.-]*agentdevice[A-Za-z0-9.-]*\b/gi;
-const processInspectionPattern = /(?:^|[;&|]\s*)(?:ps|pgrep)(?:\s|$)/;
+const processInspectionPattern = /\b(?:ps|pgrep)(?:\s|$)/;
+const deviceInventoryPattern = /\b(?:agent-device devices|xcrun simctl list devices)\b/;
+const machineStoragePattern = /\b(?:df|diskutil)(?:\s|$)/;
 const interactiveShellPattern = /^(?:bash|sh|zsh)$/;
 
 function readJson(path) {
@@ -113,6 +117,8 @@ export function sanitizeBenchmarkText(value, replacements = []) {
   text = text.replaceAll(userInfo().username, '<local-user>');
   return text
     .replace(simulatorIdPattern, '<simulator-udid>')
+    .replace(simulatorIdPrefixPattern, '<simulator-udid-prefix>')
+    .replace(localHostnamePattern, '<local-host>')
     .replace(ipAddressPattern, '<local-ip>')
     .replace(ipv6LoopbackPattern, '<local-ip>');
 }
@@ -121,6 +127,12 @@ export function sanitizeCommandOutput(command, value, replacements = []) {
   const unwrapped = unwrapShellCommand(command);
   if (interactiveShellPattern.test(unwrapped)) {
     return '<interactive shell transcript omitted from public artifact>';
+  }
+  if (deviceInventoryPattern.test(unwrapped)) {
+    return '<device inventory omitted from public artifact>';
+  }
+  if (machineStoragePattern.test(unwrapped)) {
+    return '<machine storage inventory omitted from public artifact>';
   }
   if (processInspectionPattern.test(unwrapped)) {
     return '<process output omitted from public artifact>';
@@ -150,6 +162,15 @@ function claudeToolOutput(event, content) {
   const stdout = event.tool_use_result?.stdout ?? '';
   const stderr = event.tool_use_result?.stderr ?? '';
   return direct || [stdout, stderr].filter(Boolean).join('\n');
+}
+
+function collectPublicStrings(value, key = '') {
+  if (typeof value === 'string') return key === 'id' ? [] : [value];
+  if (Array.isArray(value)) return value.flatMap((item) => collectPublicStrings(item));
+  if (value && typeof value === 'object') {
+    return Object.entries(value).flatMap(([childKey, child]) => collectPublicStrings(child, childKey));
+  }
+  return [];
 }
 
 export function eventsFor(runDir, start, replacements) {
@@ -226,7 +247,7 @@ export function eventsFor(runDir, start, replacements) {
 }
 
 function assertPortable(payload) {
-  const serialized = JSON.stringify(payload);
+  const serialized = JSON.stringify(collectPublicStrings(payload));
   const leakedRoot = ['/Users', '/Volumes', '/private', '/var/folders', '/tmp/'].find((root) =>
     serialized.includes(root),
   );
@@ -243,12 +264,20 @@ function assertPortable(payload) {
   if (leakedIpv6) throw new Error(`benchmark export contains an IPv6 address: ${leakedIpv6}`);
   const leakedHelper = serialized.match(agentDeviceBundlePattern)?.[0];
   if (leakedHelper) throw new Error(`benchmark export contains an agent-device helper identifier: ${leakedHelper}`);
+  const leakedSimulatorId = serialized.match(simulatorIdPattern)?.[0];
+  if (leakedSimulatorId) throw new Error(`benchmark export contains a simulator identifier: ${leakedSimulatorId}`);
+  const leakedSimulatorPrefix = serialized.match(simulatorIdPrefixPattern)?.[0];
+  if (leakedSimulatorPrefix) {
+    throw new Error(`benchmark export contains a simulator identifier prefix: ${leakedSimulatorPrefix}`);
+  }
+  const leakedHostname = serialized.match(localHostnamePattern)?.[0];
+  if (leakedHostname) throw new Error(`benchmark export contains a local hostname: ${leakedHostname}`);
   if (serialized.includes('janicduplessis')) {
     throw new Error('benchmark export contains a local username');
   }
 }
 
-function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
+export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
   const absoluteStageDir = resolve(stageDir);
   const stage = basename(absoluteStageDir);
   const resultsRoot = dirname(absoluteStageDir);
@@ -307,7 +336,7 @@ function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
         variant: record.variant,
         arm: record.arm,
         valid: record.valid,
-        invalidReasons: record.invalidReasons,
+        invalidReasons: (record.invalidReasons ?? []).map((reason) => sanitizeBenchmarkText(reason, replacements)),
         settingsReadySeconds: record.dispatchToScreenReadySeconds,
         appAliveSeconds: record.dispatchToAppAliveSeconds,
         totalSeconds,

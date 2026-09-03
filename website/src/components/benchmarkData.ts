@@ -101,6 +101,11 @@ export type PlaybackCommand = {
 
 export type CommandWithLane = BenchmarkCommand & { lane: number };
 
+export type BenchmarkComparison = {
+  label: string;
+  tone: 'gain' | 'loss' | 'neutral';
+};
+
 function orderedCopy<T>(values: T[], compare: (a: T, b: T) => number): T[] {
   const result: T[] = [];
   for (const value of values) {
@@ -147,6 +152,23 @@ export function comparableRuns(runs: BenchmarkRun[]): Array<BenchmarkRun & { set
   return runs.filter(
     (run): run is BenchmarkRun & { settingsReadySeconds: number } => run.valid && run.settingsReadySeconds !== null,
   );
+}
+
+export function comparisonOutcome(
+  stimSeconds: number | null | undefined,
+  controlSeconds: number | null | undefined,
+): BenchmarkComparison {
+  if (stimSeconds == null || controlSeconds == null || controlSeconds <= 0) {
+    return { label: 'Matched run unavailable', tone: 'neutral' };
+  }
+  const signedPercent = Math.round((1 - stimSeconds / controlSeconds) * 100);
+  if (signedPercent > 0) {
+    return { label: `Stim reached Settings ${signedPercent}% sooner`, tone: 'gain' };
+  }
+  if (signedPercent < 0) {
+    return { label: `Stim reached Settings ${Math.abs(signedPercent)}% slower`, tone: 'loss' };
+  }
+  return { label: 'Stim and control reached Settings in the same time', tone: 'neutral' };
 }
 
 export function initialAuditSelection(run: BenchmarkRun): BenchmarkAuditSelection | null {
@@ -215,13 +237,16 @@ export function timeBreakdown(run: BenchmarkRun): BenchmarkTimeBreakdown {
 }
 
 export function commandAtCursor(commands: BenchmarkCommand[], cursorSeconds: number): PlaybackCommand | null {
-  const started = orderedCopy(
-    commands.filter((command) => command.startSeconds <= cursorSeconds),
+  const active = orderedCopy(
+    commands.filter((command) => command.startSeconds <= cursorSeconds && command.endSeconds > cursorSeconds),
     (a, b) => b.startSeconds - a.startSeconds || b.endSeconds - a.endSeconds,
-  );
-  const active = started.find((command) => command.endSeconds > cursorSeconds);
+  )[0];
   if (active) return { command: active, state: 'running' };
-  if (started[0]) return { command: started[0], state: 'complete' };
+  const completed = orderedCopy(
+    commands.filter((command) => command.endSeconds <= cursorSeconds),
+    (a, b) => b.endSeconds - a.endSeconds || b.startSeconds - a.startSeconds,
+  )[0];
+  if (completed) return { command: completed, state: 'complete' };
   return null;
 }
 

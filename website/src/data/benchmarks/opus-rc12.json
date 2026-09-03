@@ -273,7 +273,7 @@
         {
           "id": "9ee44684-95df-40e1-97c5-7adc6e55e0f0-0",
           "atSeconds": 414.437,
-          "text": "Done. Metro (PID 53146) and the app are still running on the booted simulator.\n\n**What was done:**\n- Created worktree for `bench/javascript-control`, carrying over `node_modules`, `ios/Pods`, `ios/build`, and `.expo` via APFS clone copies.\n- Changed the Settings offline-map subtitle in `app/(tabs)/settings.tsx:112` to `\"Keep saved trail maps available offline\"`.\n- Created a fresh simulator named exactly `Trailhead javascript-control` (iPhone 17, iOS 26.5, UDID `<simulator-udid>`).\n- Started Metro detached (`tmp/opus-rc12-metro.log`), then ran `npx expo run:ios --device 26D8029B-…` as a background process (PID 53450, log `tmp/opus-rc12-build.log`), polled to completion: **Build Succeeded**, 0 errors, installed and launched.\n- agent-device proof: opened session on the run UDID, dismissed the Expo dev-menu onboarding, tapped the Settings tab, `wait text \"Keep saved trail maps available offline\"` succeeded, captured and copied the screenshot, closed the session.\n\n**Paths:**\n- Worktree: `worktree/javascript-control`\n- Screenshot: `results/opus-rc12/javascript-control/proof/settings.png`"
+          "text": "Done. Metro (PID 53146) and the app are still running on the booted simulator.\n\n**What was done:**\n- Created worktree for `bench/javascript-control`, carrying over `node_modules`, `ios/Pods`, `ios/build`, and `.expo` via APFS clone copies.\n- Changed the Settings offline-map subtitle in `app/(tabs)/settings.tsx:112` to `\"Keep saved trail maps available offline\"`.\n- Created a fresh simulator named exactly `Trailhead javascript-control` (iPhone 17, iOS 26.5, UDID `<simulator-udid>`).\n- Started Metro detached (`tmp/opus-rc12-metro.log`), then ran `npx expo run:ios --device <simulator-udid-prefix>-…` as a background process (PID 53450, log `tmp/opus-rc12-build.log`), polled to completion: **Build Succeeded**, 0 errors, installed and launched.\n- agent-device proof: opened session on the run UDID, dismissed the Expo dev-menu onboarding, tapped the Settings tab, `wait text \"Keep saved trail maps available offline\"` succeeded, captured and copied the screenshot, closed the session.\n\n**Paths:**\n- Worktree: `worktree/javascript-control`\n- Screenshot: `results/opus-rc12/javascript-control/proof/settings.png`"
         }
       ],
       "commands": [
@@ -378,7 +378,7 @@
           "startSeconds": 84.503,
           "endSeconds": 84.632,
           "command": "xcrun simctl list devices | grep -i \"Trailhead opus-rc12\" ; echo \"---none above means clean---\"",
-          "output": "---none above means clean---",
+          "output": "<device inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -393,8 +393,8 @@
           "id": "toolu_01XY7ZuzWGG1kpSh6u65ioQV",
           "startSeconds": 90.082,
           "endSeconds": 90.951,
-          "command": "xcrun simctl boot <simulator-udid> 2>&1; open -a Simulator --args -CurrentDeviceUDID <simulator-udid>; xcrun simctl list devices | grep 26D8029B",
-          "output": "    Trailhead javascript-control (<simulator-udid>) (Booted)",
+          "command": "xcrun simctl boot <simulator-udid> 2>&1; open -a Simulator --args -CurrentDeviceUDID <simulator-udid>; xcrun simctl list devices | grep <simulator-udid-prefix>",
+          "output": "<device inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -633,8 +633,8 @@
           "id": "toolu_01ERcA5XFdr8GWP16KXz1y8r",
           "startSeconds": 406.661,
           "endSeconds": 407.224,
-          "command": "ps -p 53146 -o pid,command= | head -2; xcrun simctl list devices | grep 26D8029B; xcrun simctl spawn <simulator-udid> launchctl list 2>/dev/null | grep -i trailhead | head -2",
-          "output": "<process output omitted from public artifact>",
+          "command": "ps -p 53146 -o pid,command= | head -2; xcrun simctl list devices | grep <simulator-udid-prefix>; xcrun simctl spawn <simulator-udid> launchctl list 2>/dev/null | grep -i trailhead | head -2",
+          "output": "<device inventory omitted from public artifact>",
           "exitCode": 0
         }
       ],
@@ -888,7 +888,7 @@
         {
           "id": "5c7cb3d9-454a-4964-8b3c-0e187c2429b0-0",
           "atSeconds": 408.926,
-          "text": "Done. The full sequence completed and verified.\n\n**Worktree:** `worktree/native-control` (branch `bench/native-control`)\n\n**Screenshot:** `results/opus-rc12/native-control/proof/settings.png` (copied from `tmp/native-control-settings.png`)\n\nWhat happened:\n\n- Created the worktree and carried `node_modules`, `ios/Pods`, `ios/build`, `.expo`, and `ios/.xcode.env.local` from the main checkout using APFS clone copies.\n- Edited `ios/Trailhead/AppDelegate.swift:25` to set `window?.accessibilityIdentifier` immediately after the window assignment.\n- Created a fresh simulator named `Trailhead native-control`, UDID `<simulator-udid>`, iPhone 17 / iOS 26.5.\n- Ran `npx expo run:ios --device 506E7735-...` as background PID 72157, log `tmp/native-control-run.log`, polled with foreground `ps`/`tail`. Build succeeded (0 errors, 1 benign duplicate-`-lc++` warning), installed and launched on that simulator.\n- agent-device proof: opened the session on the explicit UDID, dismissed the Expo dev-menu onboarding (Continue, then Close), and the snapshot showed `[window] \"Trailhead native-control\"` — confirming the native edit is in the running binary. Tapped the Settings tab, `agent-device wait text \"Offline maps\"` succeeded, captured and copied the screenshot, then `agent-device close`.\n\nThe app and Metro (PID 72157) are still running on the simulator."
+          "text": "Done. The full sequence completed and verified.\n\n**Worktree:** `worktree/native-control` (branch `bench/native-control`)\n\n**Screenshot:** `results/opus-rc12/native-control/proof/settings.png` (copied from `tmp/native-control-settings.png`)\n\nWhat happened:\n\n- Created the worktree and carried `node_modules`, `ios/Pods`, `ios/build`, `.expo`, and `ios/.<local-host>` from the main checkout using APFS clone copies.\n- Edited `ios/Trailhead/AppDelegate.swift:25` to set `window?.accessibilityIdentifier` immediately after the window assignment.\n- Created a fresh simulator named `Trailhead native-control`, UDID `<simulator-udid>`, iPhone 17 / iOS 26.5.\n- Ran `npx expo run:ios --device <simulator-udid-prefix>-...` as background PID 72157, log `tmp/native-control-run.log`, polled with foreground `ps`/`tail`. Build succeeded (0 errors, 1 benign duplicate-`-lc++` warning), installed and launched on that simulator.\n- agent-device proof: opened the session on the explicit UDID, dismissed the Expo dev-menu onboarding (Continue, then Close), and the snapshot showed `[window] \"Trailhead native-control\"` — confirming the native edit is in the running binary. Tapped the Settings tab, `agent-device wait text \"Offline maps\"` succeeded, captured and copied the screenshot, then `agent-device close`.\n\nThe app and Metro (PID 72157) are still running on the simulator."
         }
       ],
       "commands": [
@@ -953,14 +953,14 @@
           "startSeconds": 70.122,
           "endSeconds": 71.485,
           "command": "git status --porcelain --ignored=no; echo \"--- untracked ignored top-level:\"; git status --porcelain --ignored | grep '^!!' | head -20",
-          "output": "--- untracked ignored top-level:\n!! .expo/\n!! ios/.xcode.env.local\n!! ios/Pods/\n!! ios/build/\n!! node_modules/",
+          "output": "--- untracked ignored top-level:\n!! .expo/\n!! ios/.<local-host>\n!! ios/Pods/\n!! ios/build/\n!! node_modules/",
           "exitCode": 0
         },
         {
           "id": "toolu_011jSqxyRYaZQdZTFKNpjEdc",
           "startSeconds": 76.236,
           "endSeconds": 76.28,
-          "command": "W=worktree/native-control\ncp ios/.xcode.env.local \"$W/ios/.xcode.env.local\" && cat \"$W/ios/.xcode.env.local\"",
+          "command": "W=worktree/native-control\ncp ios/.<local-host> \"$W/ios/.<local-host>\" && cat \"$W/ios/.<local-host>\"",
           "output": "export NODE_BINARY=/opt/homebrew/Cellar/node/26.7.0/bin/node",
           "exitCode": 0
         },
@@ -969,7 +969,7 @@
           "startSeconds": 83.019,
           "endSeconds": 83.993,
           "command": "UDID=$(xcrun simctl create \"Trailhead native-control\" com.apple.CoreSimulator.SimDeviceType.iPhone-17 com.apple.CoreSimulator.SimRuntime.iOS-26-5)\necho \"UDID=$UDID\"\necho \"$UDID\" > tmp/opus-rc12-sim-udid.txt\nxcrun simctl boot \"$UDID\" 2>&1 | tail -2\nxcrun simctl list devices | grep -i \"native-control\"",
-          "output": "UDID=<simulator-udid>\n    Trailhead native-control (<simulator-udid>) (Booted)",
+          "output": "<device inventory omitted from public artifact>",
           "exitCode": 0
         },
         {

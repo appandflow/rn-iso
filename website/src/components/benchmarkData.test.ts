@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   assignCommandLanes,
   comparableRuns,
+  comparisonOutcome,
   commandAtCursor,
   formatSeconds,
   initialAuditSelection,
@@ -55,6 +56,21 @@ describe('comparableRuns', () => {
   });
 });
 
+describe('comparisonOutcome', () => {
+  it('describes both faster and slower Stim results without negative percentages', () => {
+    expect(comparisonOutcome(80, 100)).toEqual({ label: 'Stim reached Settings 20% sooner', tone: 'gain' });
+    expect(comparisonOutcome(108, 100)).toEqual({ label: 'Stim reached Settings 8% slower', tone: 'loss' });
+  });
+
+  it('handles equal and unavailable comparisons', () => {
+    expect(comparisonOutcome(100, 100)).toEqual({
+      label: 'Stim and control reached Settings in the same time',
+      tone: 'neutral',
+    });
+    expect(comparisonOutcome(null, 100)).toEqual({ label: 'Matched run unavailable', tone: 'neutral' });
+  });
+});
+
 describe('initialAuditSelection', () => {
   it('returns an empty audit state when an invalid run has no events or proof', () => {
     const run = {
@@ -93,8 +109,12 @@ describe('commandAtCursor', () => {
     expect(commandAtCursor(commands, 6)).toEqual({ command: commands[1], state: 'running' });
   });
 
-  it('keeps the latest completed command visible between events', () => {
-    expect(commandAtCursor(commands, 11)).toEqual({ command: commands[1], state: 'complete' });
+  it('keeps the most recently completed command visible between events', () => {
+    expect(commandAtCursor(commands, 11)).toEqual({ command: commands[0], state: 'complete' });
     expect(commandAtCursor(commands, 0)).toBeNull();
+  });
+
+  it('returns to an outer command while it remains active after a nested command completes', () => {
+    expect(commandAtCursor(commands, 9)).toEqual({ command: commands[0], state: 'running' });
   });
 });

@@ -167,10 +167,10 @@ model, and simulator runtime. Never include a hostname, serial number, hardware
 UUID, username, device UDID, or path in that file.
 
 The exporter refuses data that still contains a local username or an absolute
-home, volume, temporary, or simulator path. It omits machine-global process
-listings and interactive shell transcripts whose cursor-control output cannot
-be made portable. Review the generated diff before publishing because command
-output can contain other project-specific data.
+home, volume, temporary, or simulator path. It omits machine-global process,
+device, and storage listings, plus interactive shell transcripts whose
+cursor-control output cannot be made portable. Review the generated diff before
+publishing because command output can contain other project-specific data.
 
 Invalid attempts are immutable audit records. Fix only a coordinator defect or
 environmental prerequisite, then reschedule the same cell under a new run id.

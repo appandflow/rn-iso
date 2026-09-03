@@ -1237,7 +1237,7 @@
           "startSeconds": 527.208,
           "endSeconds": 527.822,
           "command": "xcrun simctl list devices | rg -A 2 -B 1 'Trailhead Luna RC12 iPhone 17|<simulator-udid>'; xcrun simctl listapps <simulator-udid> | rg -A 8 -B 1 'com.appandflow.trailhead' || true; xcrun simctl spawn <simulator-udid> launchctl list | rg -i 'trailhead|expo' || true",
-          "output": "    stim-parked (iPhone 17 26.5) 3372 (<simulator-udid>) (Shutdown) \n    Trailhead Luna RC12 iPhone 17 (<simulator-udid>) (Booted) \n{\n    \"com.appandflow.trailhead\" =     {\n        ApplicationType = User;\n        Bundle = \"file://workspace/Trailhead.app\";\n        BundleContainer = \"file://workspace/<simulator-udid>\";\n        CFBundleDisplayName = Trailhead;\n        CFBundleExecutable = Trailhead;\n        CFBundleIdentifier = \"com.appandflow.trailhead\";\n        CFBundleName = Trailhead;\n        CFBundleVersion = 1;\n        DataContainer = \"file://workspace/<simulator-udid>\";\n        GroupContainers =         {\n        };\n        Path = \"workspace/Trailhead.app\";\n        SBAppTags =         (\n        );\n83676\t0\tUIKitApplication:com.appandflow.trailhead[a21b][rb-legacy]\n",
+          "output": "<device inventory omitted from public artifact>",
           "exitCode": 0
         },
         {

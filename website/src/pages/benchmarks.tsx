@@ -5,6 +5,7 @@ import Heading from '@theme/Heading';
 import BenchmarkTimeline from '@site/src/components/BenchmarkTimeline';
 import {
   comparableRuns,
+  comparisonOutcome,
   formatCost,
   formatSeconds,
   formatTokens,
@@ -40,14 +41,11 @@ function ComparisonCard({
   const comparable = comparableRuns(runs);
   const stim = comparable.find((run) => run.arm === 'stim');
   const control = comparable.find((run) => run.arm === 'control');
-  const improvement =
-    stim && control ? Math.round((1 - stim.settingsReadySeconds / control.settingsReadySeconds) * 100) : null;
+  const outcome = comparisonOutcome(stim?.settingsReadySeconds, control?.settingsReadySeconds);
   return (
     <article className={styles.comparisonCard}>
       <h3>{displayVariant(variant)}</h3>
-      <span className={styles.gain}>
-        {improvement == null ? 'Matched run unavailable' : `Stim reached Settings ${improvement}% sooner`}
-      </span>
+      <span className={`${styles.outcome} ${styles[outcome.tone]}`}>{outcome.label}</span>
       {comparable.map((run) => {
         const endpoint = comparable.find((candidate) => candidate.id === run.id)?.settingsReadySeconds ?? null;
         return (

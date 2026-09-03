@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { tmpdir, userInfo } from 'node:os';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   benchmarkEnvironment,
   estimateTokenCost,
   eventsFor,
+  exportBenchmark,
   sanitizeBenchmarkText,
   sanitizeCommandOutput,
 } from './export-benchmark-viewer.mjs';
@@ -55,6 +56,13 @@ describe('benchmark viewer export', () => {
     expect(sanitizeBenchmarkText(coloredPath)).toBe('workspace/stim-bench');
   });
 
+  it('redacts local hostnames and complete or abbreviated simulator identifiers', () => {
+    expect(sanitizeBenchmarkText('Janics-Mac-mini.local A35AFE7E-06D9-4E4B-A14D-0451595A13BC grep A35AFE7E')).toBe(
+      '<local-host> <simulator-udid> grep <simulator-udid-prefix>',
+    );
+    expect(sanitizeBenchmarkText('estimated cost 0.02353276')).toBe('estimated cost 0.02353276');
+  });
+
   it('omits machine-global process output', () => {
     const output = sanitizeCommandOutput(
       '/bin/zsh -lc "ps -axo command= | rg \'expo|metro\'"',
@@ -71,6 +79,21 @@ describe('benchmark viewer export', () => {
     );
 
     expect(output).toBe('<interactive shell transcript omitted from public artifact>');
+  });
+
+  it('omits machine-global device inventories', () => {
+    const output = sanitizeCommandOutput(
+      'xcrun simctl boot <simulator-udid>\nxcrun simctl list devices | grep benchmark',
+      'Old iPhone (ios device target=mobile) booted=true\nJanics-Mac-mini.local booted=true',
+    );
+
+    expect(output).toBe('<device inventory omitted from public artifact>');
+  });
+
+  it('omits machine-global storage inventories', () => {
+    expect(sanitizeCommandOutput('df -h /Volumes/ExternalSSD; diskutil info /Volumes/ExternalSSD', 'private')).toBe(
+      '<machine storage inventory omitted from public artifact>',
+    );
   });
 
   it('redacts a helper identifier before replacing an OS username inside it', () => {
@@ -160,5 +183,38 @@ describe('benchmark viewer export', () => {
         },
       ],
     });
+  });
+
+  it('sanitizes invalid reasons as part of a complete export', () => {
+    const root = mkdtempSync(join(tmpdir(), 'stim-benchmark-export-'));
+    tempDirs.push(root);
+    const stageDir = join(root, 'results', 'test-rc1');
+    const runDir = join(stageDir, 'private-run-id');
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(
+      join(runDir, 'meta.json'),
+      JSON.stringify({ dispatchAt: '2026-09-03T20:00:00.000Z', finishedAt: '2026-09-03T20:00:01.000Z' }),
+    );
+    writeFileSync(
+      join(runDir, 'run.json'),
+      JSON.stringify({
+        runId: 'private-run-id',
+        model: 'gpt-5.6-sol',
+        variant: 'native',
+        arm: 'stim',
+        valid: false,
+        invalidReasons: ['missing command for A35AFE7E-06D9-4E4B-A14D-0451595A13BC on Janics-Mac-mini.local'],
+        commandCount: 0,
+        screen: { valid: false },
+      }),
+    );
+
+    const payload = exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'proof'), {
+      model: 'Test Mac',
+      chip: 'Test chip',
+      memory: 'Test memory',
+    });
+
+    expect(payload.runs[0].invalidReasons).toEqual(['missing command for <simulator-udid> on <local-host>']);
   });
 });

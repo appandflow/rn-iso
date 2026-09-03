@@ -152,12 +152,23 @@
   margin-bottom: 0.2rem;
 }
 
-.gain {
+.outcome {
   display: block;
   margin-bottom: 1.25rem;
-  color: #16a34a;
   font-size: 0.82rem;
   font-weight: 600;
+}
+
+.gain {
+  color: #16a34a;
+}
+
+.loss {
+  color: #c2410c;
+}
+
+.neutral {
+  color: var(--ifm-color-emphasis-700);
 }
 
 .barRow + .barRow {

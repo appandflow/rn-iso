@@ -236,7 +236,7 @@
       "arm": "control",
       "valid": false,
       "invalidReasons": [
-        "missing-successful-command:agent-device open com.appandflow.trailhead --foreground --platform ios --udid A35AFE7E-06D9-4E4B-A14D-0451595A13BC"
+        "missing-successful-command:agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>"
       ],
       "settingsReadySeconds": null,
       "appAliveSeconds": 406.84,
@@ -269,12 +269,12 @@
         {
           "id": "2035608d-1746-4207-82c8-8ed186bcd307-0",
           "atSeconds": 43.959,
-          "text": "Now let's copy node_modules, ios/Pods, ios/build, and .xcode.env.local to the worktree."
+          "text": "Now let's copy node_modules, ios/Pods, ios/build, and .<local-host> to the worktree."
         },
         {
           "id": "b1c37198-868c-46e0-882f-e86a5861b652-0",
           "atSeconds": 105.887,
-          "text": "Also check for any Xcode DerivedData that might be referenced, and check ios/.xcode.env.local content to understand node path config."
+          "text": "Also check for any Xcode DerivedData that might be referenced, and check ios/.<local-host> content to understand node path config."
         },
         {
           "id": "3ddcb062-ce1e-4672-9b68-22f4a6f59894-0",
@@ -397,7 +397,7 @@
           "startSeconds": 42.26,
           "endSeconds": 42.319,
           "command": "ls -la node_modules 2>/dev/null | head -3; echo \"---ios---\"; ls -la ios 2>/dev/null; echo \"---ios/Pods---\"; ls -la ios/Pods 2>/dev/null | head -3; echo \"---ios build---\"; find ios -maxdepth 2 -iname \"*build*\" 2>/dev/null; echo \"---android---\"; ls -la android 2>/dev/null",
-          "output": "total 896\ndrwxr-xr-x@  590 <local-user>  staff   18880 Sep  2 23:36 .\ndrwxr-xr-x@   27 <local-user>  staff     864 Sep  3 01:30 ..\n---ios---\ntotal 232\ndrwxr-xr-x@ 13 <local-user>  staff    416 Sep  2 23:37 .\ndrwxr-xr-x@ 27 <local-user>  staff    864 Sep  3 01:30 ..\n-rw-r--r--@  1 <local-user>  staff    321 Sep  2 23:24 .gitignore\n-rw-r--r--@  1 <local-user>  staff    482 Sep  2 23:24 .xcode.env\n-rw-r--r--@  1 <local-user>  staff     61 Sep  2 23:37 .xcode.env.local\n-rw-r--r--@  1 <local-user>  staff   2897 Sep  2 23:24 Podfile\n-rw-r--r--@  1 <local-user>  staff  95498 Sep  3 00:04 Podfile.lock\n-rw-r--r--@  1 <local-user>  staff    261 Sep  2 23:24 Podfile.properties.json\ndrwxr-xr-x@ 22 <local-user>  staff    704 Sep  3 02:59 Pods\ndrwxr-xr-x@ 10 <local-user>  staff    320 Sep  2 23:24 Trailhead\ndrwxr-xr-x@  4 <local-user>  staff    128 Sep  2 23:37 Trailhead.xcodeproj\ndrwxr-xr-x@  3 <local-user>  staff     96 Sep  2 23:24 Trailhead.xcworkspace\ndrwxr-xr-x@  3 <local-user>  staff     96 Sep  2 23:37 build\n---ios/Pods---\ntotal 192\ndrwxr-xr-x@  22 <local-user>  staff    704 Sep  3 02:59 .\ndrwxr-xr-x@  13 <local-user>  staff    416 Sep  2 23:37 ..\n---ios build---\nios/build\n---android---\ntotal 64\ndrwxr-xr-x@ 10 <local-user>  staff   320 Sep  2 23:24 .\ndrwxr-xr-x@ 27 <local-user>  staff   864 Sep  3 01:30 ..\n-rw-r--r--@  1 <local-user>  staff   183 Sep  2 23:24 .gitignore\ndrwxr-xr-x@  6 <local-user>  staff   192 Sep  2 23:24 app\n-rw-r--r--@  1 <local-user>  staff   556 Sep  2 23:24 build.gradle\ndrwxr-xr-x@  3 <local-user>  staff    96 Sep  2 23:24 gradle\n-rw-r--r--@  1 <local-user>  staff  2569 Sep  2 23:24 gradle.properties\n-rwxr-xr-x@  1 <local-user>  staff  8618 Sep  2 23:24 gradlew\n-rw-r--r--@  1 <local-user>  staff  2995 Sep  2 23:24 gradlew.bat\n-rw-r--r--@  1 <local-user>  staff  1262 Sep  2 23:24 settings.gradle",
+          "output": "total 896\ndrwxr-xr-x@  590 <local-user>  staff   18880 Sep  2 23:36 .\ndrwxr-xr-x@   27 <local-user>  staff     864 Sep  3 01:30 ..\n---ios---\ntotal 232\ndrwxr-xr-x@ 13 <local-user>  staff    416 Sep  2 23:37 .\ndrwxr-xr-x@ 27 <local-user>  staff    864 Sep  3 01:30 ..\n-rw-r--r--@  1 <local-user>  staff    321 Sep  2 23:24 .gitignore\n-rw-r--r--@  1 <local-user>  staff    482 Sep  2 23:24 .xcode.env\n-rw-r--r--@  1 <local-user>  staff     61 Sep  2 23:37 .<local-host>\n-rw-r--r--@  1 <local-user>  staff   2897 Sep  2 23:24 Podfile\n-rw-r--r--@  1 <local-user>  staff  95498 Sep  3 00:04 Podfile.lock\n-rw-r--r--@  1 <local-user>  staff    261 Sep  2 23:24 Podfile.properties.json\ndrwxr-xr-x@ 22 <local-user>  staff    704 Sep  3 02:59 Pods\ndrwxr-xr-x@ 10 <local-user>  staff    320 Sep  2 23:24 Trailhead\ndrwxr-xr-x@  4 <local-user>  staff    128 Sep  2 23:37 Trailhead.xcodeproj\ndrwxr-xr-x@  3 <local-user>  staff     96 Sep  2 23:24 Trailhead.xcworkspace\ndrwxr-xr-x@  3 <local-user>  staff     96 Sep  2 23:37 build\n---ios/Pods---\ntotal 192\ndrwxr-xr-x@  22 <local-user>  staff    704 Sep  3 02:59 .\ndrwxr-xr-x@  13 <local-user>  staff    416 Sep  2 23:37 ..\n---ios build---\nios/build\n---android---\ntotal 64\ndrwxr-xr-x@ 10 <local-user>  staff   320 Sep  2 23:24 .\ndrwxr-xr-x@ 27 <local-user>  staff   864 Sep  3 01:30 ..\n-rw-r--r--@  1 <local-user>  staff   183 Sep  2 23:24 .gitignore\ndrwxr-xr-x@  6 <local-user>  staff   192 Sep  2 23:24 app\n-rw-r--r--@  1 <local-user>  staff   556 Sep  2 23:24 build.gradle\ndrwxr-xr-x@  3 <local-user>  staff    96 Sep  2 23:24 gradle\n-rw-r--r--@  1 <local-user>  staff  2569 Sep  2 23:24 gradle.properties\n-rwxr-xr-x@  1 <local-user>  staff  8618 Sep  2 23:24 gradlew\n-rw-r--r--@  1 <local-user>  staff  2995 Sep  2 23:24 gradlew.bat\n-rw-r--r--@  1 <local-user>  staff  1262 Sep  2 23:24 settings.gradle",
           "exitCode": 0
         },
         {
@@ -412,15 +412,15 @@
           "id": "toolu_01PJZeuohrgYPs7tmWVQskFH",
           "startSeconds": 91.563,
           "endSeconds": 103.918,
-          "command": "WT=worktree/javascript-control-invalid-1\nSRC=workspace/trailhead-v3\necho \"Copying ios/Pods...\"\ntime cp -a \"$SRC/ios/Pods\" \"$WT/ios/Pods\"\necho \"Copying ios/build...\"\ntime cp -a \"$SRC/ios/build\" \"$WT/ios/build\"\necho \"Copying ios/.xcode.env.local...\"\ncp -a \"$SRC/ios/.xcode.env.local\" \"$WT/ios/.xcode.env.local\"\necho done",
-          "output": "Copying ios/Pods...\ncp -a \"$SRC/ios/Pods\" \"$WT/ios/Pods\"  0.12s user 4.79s system 40% cpu 12.177 total\nCopying ios/build...\ncp -a \"$SRC/ios/build\" \"$WT/ios/build\"  0.00s user 0.03s system 43% cpu 0.084 total\nCopying ios/.xcode.env.local...\ndone",
+          "command": "WT=worktree/javascript-control-invalid-1\nSRC=workspace/trailhead-v3\necho \"Copying ios/Pods...\"\ntime cp -a \"$SRC/ios/Pods\" \"$WT/ios/Pods\"\necho \"Copying ios/build...\"\ntime cp -a \"$SRC/ios/build\" \"$WT/ios/build\"\necho \"Copying ios/.<local-host>...\"\ncp -a \"$SRC/ios/.<local-host>\" \"$WT/ios/.<local-host>\"\necho done",
+          "output": "Copying ios/Pods...\ncp -a \"$SRC/ios/Pods\" \"$WT/ios/Pods\"  0.12s user 4.79s system 40% cpu 12.177 total\nCopying ios/build...\ncp -a \"$SRC/ios/build\" \"$WT/ios/build\"  0.00s user 0.03s system 43% cpu 0.084 total\nCopying ios/.<local-host>...\ndone",
           "exitCode": 0
         },
         {
           "id": "toolu_01PQZ1Dki1QZuQazbReuFSeE",
           "startSeconds": 106.484,
           "endSeconds": 106.539,
-          "command": "cat workspace/.xcode.env.local\necho \"---\"\nls workspace/build",
+          "command": "cat workspace/.<local-host>\necho \"---\"\nls workspace/build",
           "output": "export NODE_BINARY=/opt/homebrew/Cellar/node/26.7.0/bin/node\n---\ngenerated",
           "exitCode": 0
         },
@@ -476,8 +476,8 @@
           "id": "toolu_01PiqC5tM78i71SwzNZEtQJ1",
           "startSeconds": 136.921,
           "endSeconds": 137.747,
-          "command": "xcrun simctl boot <simulator-udid>\nxcrun simctl list devices | grep A35AFE7E",
-          "output": "    bench-sonnet-rc12-1788464134851 (<simulator-udid>) (Booted)",
+          "command": "xcrun simctl boot <simulator-udid>\nxcrun simctl list devices | grep <simulator-udid-prefix>",
+          "output": "<device inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -493,7 +493,7 @@
           "startSeconds": 143.094,
           "endSeconds": 148.204,
           "command": "sleep 5\ncat tmp/metro.log\necho \"---\"\nps aux | grep \"expo start\" | grep -v grep",
-          "output": "Starting project at worktree/javascript-control-invalid-1\nLogs: worktree/javascript-control-invalid-1/.expo/dev/logs/start.log\nReact Compiler enabled\nStarting Metro Bundler\n\nWaiting on http://localhost:8081\n\nAn update for expo is available: 57.0.18 → ~57.0.19\n12 other packages may need updating. Run npx expo install --check for details.\nLogs for your project will appear below.\n---\n<local-user>   43737   0.2  1.1 440158176 180000   ??  SN    3:37PM   0:01.90 node worktree/javascript-control-invalid-1/node_modules/.bin/expo start --port 8081\n<local-user>   43715   0.0  0.5 436315760  79488   ??  SN    3:37PM   0:00.29 npm exec expo start --port 8081",
+          "output": "<process output omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -751,7 +751,7 @@
           "startSeconds": 62.336,
           "endSeconds": 62.455,
           "command": "df -h workspace/ExternalSSD 2>/dev/null; diskutil info workspace/ExternalSSD 2>/dev/null | grep -i \"file system\\|type\"; ls workspace/stim-bench-coordinator",
-          "output": "Filesystem      Size    Used   Avail Capacity iused ifree %iused  Mounted on\n/dev/disk7s1   1.8Ti   412Gi   1.4Ti    23%     12M   15G    0%   workspace/ExternalSSD\n   Partition Type:            <simulator-udid>\n   File System Personality:   APFS\n   Type (Bundle):             apfs\n   Media Type:                Generic\ninvestigations\npr-validate\nrelease-rc5\nrelease-rc6\nrelease-rc7\nrelease-rc8\ntrailhead-derived-data-fix-worktrees\ntrailhead-derived-data-matrix-worktrees\ntrailhead-v3\ntrailhead-v3-worktrees\ntrailhead-v4-worktrees\nv2-opus-20260831\nv3-20260902\nv4-20260903",
+          "output": "<machine storage inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -887,7 +887,7 @@
           "startSeconds": 435.39,
           "endSeconds": 435.634,
           "command": "xcrun simctl list devices | grep -A2 -B2 \"javascript-control\"",
-          "output": "    stim-fa326b6d-repro-derived-data-at-fix (iPhone 17 26.5) (<simulator-udid>) (Shutdown) \n    stim-parked (iPhone 17 26.5) 3372 (<simulator-udid>) (Shutdown) \n    Trailhead javascript-control (<simulator-udid>) (Booted)",
+          "output": "<device inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -1162,7 +1162,7 @@
         "benchmark-timeout-25m",
         "runner-exit-143",
         "proof-failed",
-        "missing-successful-command:agent-device open com.appandflow.trailhead --foreground --platform ios --udid 9FDF34CC-7C61-4362-A823-64171334CB25"
+        "missing-successful-command:agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>"
       ],
       "settingsReadySeconds": null,
       "appAliveSeconds": 354.036,
@@ -1189,7 +1189,7 @@
         {
           "id": "28adb745-faa7-4868-9cc0-5cf5e316c7c0-0",
           "atSeconds": 57.359,
-          "text": "APFS supports fast clone copies with `cp -c`. Let's copy node_modules, ios/Pods, ios/build, and the gitignored xcode.env.local file."
+          "text": "APFS supports fast clone copies with `cp -c`. Let's copy node_modules, ios/Pods, ios/build, and the gitignored <local-host> file."
         },
         {
           "id": "a9b4df98-c5c8-4511-956f-f743027879c7-0",
@@ -1267,7 +1267,7 @@
           "startSeconds": 48.477,
           "endSeconds": 48.539,
           "command": "SRC=workspace/trailhead-v3\nDST=worktree/native-control-invalid-1\necho \"--- src ios ---\"; ls -la $SRC/ios\necho \"--- src node_modules exists ---\"; [ -d \"$SRC/node_modules\" ] && echo yes\necho \"--- src ios/Pods exists ---\"; [ -d \"$SRC/ios/Pods\" ] && echo yes\necho \"--- src ios build dir ---\"; [ -d \"$SRC/ios/build\" ] && echo yes\necho \"--- android dirs ---\"; ls -la $SRC/android 2>/dev/null | head -30",
-          "output": "--- src ios ---\ntotal 232\ndrwxr-xr-x@ 13 <local-user>  staff    416 Sep  2 23:37 .\ndrwxr-xr-x@ 27 <local-user>  staff    864 Sep  3 01:30 ..\n-rw-r--r--@  1 <local-user>  staff    321 Sep  2 23:24 .gitignore\n-rw-r--r--@  1 <local-user>  staff    482 Sep  2 23:24 .xcode.env\n-rw-r--r--@  1 <local-user>  staff     61 Sep  2 23:37 .xcode.env.local\n-rw-r--r--@  1 <local-user>  staff   2897 Sep  2 23:24 Podfile\n-rw-r--r--@  1 <local-user>  staff  95498 Sep  3 00:04 Podfile.lock\n-rw-r--r--@  1 <local-user>  staff    261 Sep  2 23:24 Podfile.properties.json\ndrwxr-xr-x@ 22 <local-user>  staff    704 Sep  3 02:59 Pods\ndrwxr-xr-x@ 10 <local-user>  staff    320 Sep  2 23:24 Trailhead\ndrwxr-xr-x@  4 <local-user>  staff    128 Sep  2 23:37 Trailhead.xcodeproj\ndrwxr-xr-x@  3 <local-user>  staff     96 Sep  2 23:24 Trailhead.xcworkspace\ndrwxr-xr-x@  3 <local-user>  staff     96 Sep  2 23:37 build\n--- src node_modules exists ---\nyes\n--- src ios/Pods exists ---\nyes\n--- src ios build dir ---\nyes\n--- android dirs ---\ntotal 64\ndrwxr-xr-x@ 10 <local-user>  staff   320 Sep  2 23:24 .\ndrwxr-xr-x@ 27 <local-user>  staff   864 Sep  3 01:30 ..\n-rw-r--r--@  1 <local-user>  staff   183 Sep  2 23:24 .gitignore\ndrwxr-xr-x@  6 <local-user>  staff   192 Sep  2 23:24 app\n-rw-r--r--@  1 <local-user>  staff   556 Sep  2 23:24 build.gradle\ndrwxr-xr-x@  3 <local-user>  staff    96 Sep  2 23:24 gradle\n-rw-r--r--@  1 <local-user>  staff  2569 Sep  2 23:24 gradle.properties\n-rwxr-xr-x@  1 <local-user>  staff  8618 Sep  2 23:24 gradlew\n-rw-r--r--@  1 <local-user>  staff  2995 Sep  2 23:24 gradlew.bat\n-rw-r--r--@  1 <local-user>  staff  1262 Sep  2 23:24 settings.gradle",
+          "output": "--- src ios ---\ntotal 232\ndrwxr-xr-x@ 13 <local-user>  staff    416 Sep  2 23:37 .\ndrwxr-xr-x@ 27 <local-user>  staff    864 Sep  3 01:30 ..\n-rw-r--r--@  1 <local-user>  staff    321 Sep  2 23:24 .gitignore\n-rw-r--r--@  1 <local-user>  staff    482 Sep  2 23:24 .xcode.env\n-rw-r--r--@  1 <local-user>  staff     61 Sep  2 23:37 .<local-host>\n-rw-r--r--@  1 <local-user>  staff   2897 Sep  2 23:24 Podfile\n-rw-r--r--@  1 <local-user>  staff  95498 Sep  3 00:04 Podfile.lock\n-rw-r--r--@  1 <local-user>  staff    261 Sep  2 23:24 Podfile.properties.json\ndrwxr-xr-x@ 22 <local-user>  staff    704 Sep  3 02:59 Pods\ndrwxr-xr-x@ 10 <local-user>  staff    320 Sep  2 23:24 Trailhead\ndrwxr-xr-x@  4 <local-user>  staff    128 Sep  2 23:37 Trailhead.xcodeproj\ndrwxr-xr-x@  3 <local-user>  staff     96 Sep  2 23:24 Trailhead.xcworkspace\ndrwxr-xr-x@  3 <local-user>  staff     96 Sep  2 23:37 build\n--- src node_modules exists ---\nyes\n--- src ios/Pods exists ---\nyes\n--- src ios build dir ---\nyes\n--- android dirs ---\ntotal 64\ndrwxr-xr-x@ 10 <local-user>  staff   320 Sep  2 23:24 .\ndrwxr-xr-x@ 27 <local-user>  staff   864 Sep  3 01:30 ..\n-rw-r--r--@  1 <local-user>  staff   183 Sep  2 23:24 .gitignore\ndrwxr-xr-x@  6 <local-user>  staff   192 Sep  2 23:24 app\n-rw-r--r--@  1 <local-user>  staff   556 Sep  2 23:24 build.gradle\ndrwxr-xr-x@  3 <local-user>  staff    96 Sep  2 23:24 gradle\n-rw-r--r--@  1 <local-user>  staff  2569 Sep  2 23:24 gradle.properties\n-rwxr-xr-x@  1 <local-user>  staff  8618 Sep  2 23:24 gradlew\n-rw-r--r--@  1 <local-user>  staff  2995 Sep  2 23:24 gradlew.bat\n-rw-r--r--@  1 <local-user>  staff  1262 Sep  2 23:24 settings.gradle",
           "exitCode": 0
         },
         {
@@ -1275,14 +1275,14 @@
           "startSeconds": 53.933,
           "endSeconds": 55.551,
           "command": "SRC=workspace/trailhead-v3\nDST=worktree/native-control-invalid-1\ndiskutil info workspace/ExternalSSD | grep -E \"File System|Type\"\ndu -sh \"$SRC/node_modules\" \"$SRC/ios/Pods\" \"$SRC/ios/build\" 2>/dev/null",
-          "output": "   Partition Type:            <simulator-udid>\n   File System Personality:   APFS\n   Type (Bundle):             apfs\n   Media Type:                Generic\n2.5G\tworkspace/node_modules\n1.2G\tworkspace/Pods\n1.1M\tworkspace/build",
+          "output": "<machine storage inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
           "id": "toolu_01YTyDdP7mbeQ2W9NaGL3ek6",
           "startSeconds": 59.133,
           "endSeconds": 71.045,
-          "command": "SRC=workspace/trailhead-v3\nDST=worktree/native-control-invalid-1\ntime cp -Rc \"$SRC/node_modules\" \"$DST/node_modules\"\ntime cp -Rc \"$SRC/ios/Pods\" \"$DST/ios/Pods\"\ntime cp -Rc \"$SRC/ios/build\" \"$DST/ios/build\"\ncp -c \"$SRC/ios/.xcode.env.local\" \"$DST/ios/.xcode.env.local\"\necho done",
+          "command": "SRC=workspace/trailhead-v3\nDST=worktree/native-control-invalid-1\ntime cp -Rc \"$SRC/node_modules\" \"$DST/node_modules\"\ntime cp -Rc \"$SRC/ios/Pods\" \"$DST/ios/Pods\"\ntime cp -Rc \"$SRC/ios/build\" \"$DST/ios/build\"\ncp -c \"$SRC/ios/.<local-host>\" \"$DST/ios/.<local-host>\"\necho done",
           "output": "cp -Rc \"$SRC/node_modules\" \"$DST/node_modules\"  0.08s user 6.78s system 82% cpu 8.353 total\ncp -Rc \"$SRC/ios/Pods\" \"$DST/ios/Pods\"  0.05s user 2.78s system 81% cpu 3.487 total\ncp -Rc \"$SRC/ios/build\" \"$DST/ios/build\"  0.00s user 0.01s system 83% cpu 0.019 total\ndone",
           "exitCode": 0
         },
@@ -1290,8 +1290,8 @@
           "id": "toolu_019TG6KmichJa8gAFTJrsSke",
           "startSeconds": 74.381,
           "endSeconds": 74.438,
-          "command": "DST=worktree/native-control-invalid-1\ncat \"$DST/ios/.xcode.env.local\"\necho \"---\"\ncat \"$DST/ios/.xcode.env\"\necho \"---\"\nls \"$DST\"\necho \"--- node_modules check ---\"\nls \"$DST/node_modules\" | head -3\necho \"--- Pods check ---\"\nls \"$DST/ios/Pods\" | head -3",
-          "output": "export NODE_BINARY=/opt/homebrew/Cellar/node/26.7.0/bin/node\n---\n# This `.xcode.env` file is versioned and is used to source the environment\n# used when running script phases inside Xcode.\n# To customize your local environment, you can create an `.xcode.env.local`\n# file that is not versioned.\n\n# NODE_BINARY variable contains the PATH to the node executable.\n#\n# Customize the NODE_BINARY variable here.\n# For example, to use nvm with brew, add the following line\n# . \"$(brew --prefix nvm)/nvm.sh\" --no-use\nexport NODE_BINARY=$(command -v node)\n---\nAGENTS.md\nCLAUDE.md\nLICENSE\nREADME.md\nandroid\napp\napp.json\nassets\nbench\ndocs\neslint.config.js\nios\nnode_modules\npackage-lock.json\npackage.json\nscripts\nsrc\ntsconfig.json\n--- node_modules check ---\n@babel\n@drizzle-team\n@egjs\n--- Pods check ---\nExpoFileSystem\nExpoFont\nExpoImage",
+          "command": "DST=worktree/native-control-invalid-1\ncat \"$DST/ios/.<local-host>\"\necho \"---\"\ncat \"$DST/ios/.xcode.env\"\necho \"---\"\nls \"$DST\"\necho \"--- node_modules check ---\"\nls \"$DST/node_modules\" | head -3\necho \"--- Pods check ---\"\nls \"$DST/ios/Pods\" | head -3",
+          "output": "export NODE_BINARY=/opt/homebrew/Cellar/node/26.7.0/bin/node\n---\n# This `.xcode.env` file is versioned and is used to source the environment\n# used when running script phases inside Xcode.\n# To customize your local environment, you can create an `.<local-host>`\n# file that is not versioned.\n\n# NODE_BINARY variable contains the PATH to the node executable.\n#\n# Customize the NODE_BINARY variable here.\n# For example, to use nvm with brew, add the following line\n# . \"$(brew --prefix nvm)/nvm.sh\" --no-use\nexport NODE_BINARY=$(command -v node)\n---\nAGENTS.md\nCLAUDE.md\nLICENSE\nREADME.md\nandroid\napp\napp.json\nassets\nbench\ndocs\neslint.config.js\nios\nnode_modules\npackage-lock.json\npackage.json\nscripts\nsrc\ntsconfig.json\n--- node_modules check ---\n@babel\n@drizzle-team\n@egjs\n--- Pods check ---\nExpoFileSystem\nExpoFont\nExpoImage",
           "exitCode": 0
         },
         {
@@ -1315,7 +1315,7 @@
           "startSeconds": 87.212,
           "endSeconds": 87.789,
           "command": "xcrun simctl boot <simulator-udid>\nxcrun simctl list devices | grep \"native-control-invalid-1\"",
-          "output": "    Trailhead native-control-invalid-1 (<simulator-udid>) (Booted)",
+          "output": "<device inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -1431,7 +1431,7 @@
           "startSeconds": 40.301,
           "endSeconds": 40.36,
           "command": "ls -la ios/ && echo \"---Pods---\" && ls ios/Pods 2>/dev/null | head -5 && echo \"---exists?---\" && [ -d ios/Pods ] && echo \"Pods exists\" || echo \"no Pods dir\"",
-          "output": "total 232\ndrwxr-xr-x@ 13 <local-user>  staff    416 Sep  2 23:37 .\ndrwxr-xr-x@ 27 <local-user>  staff    864 Sep  3 01:30 ..\n-rw-r--r--@  1 <local-user>  staff    321 Sep  2 23:24 .gitignore\n-rw-r--r--@  1 <local-user>  staff    482 Sep  2 23:24 .xcode.env\n-rw-r--r--@  1 <local-user>  staff     61 Sep  2 23:37 .xcode.env.local\n-rw-r--r--@  1 <local-user>  staff   2897 Sep  2 23:24 Podfile\n-rw-r--r--@  1 <local-user>  staff  95498 Sep  3 00:04 Podfile.lock\n-rw-r--r--@  1 <local-user>  staff    261 Sep  2 23:24 Podfile.properties.json\ndrwxr-xr-x@ 22 <local-user>  staff    704 Sep  3 02:59 Pods\ndrwxr-xr-x@ 10 <local-user>  staff    320 Sep  2 23:24 Trailhead\ndrwxr-xr-x@  4 <local-user>  staff    128 Sep  2 23:37 Trailhead.xcodeproj\ndrwxr-xr-x@  3 <local-user>  staff     96 Sep  2 23:24 Trailhead.xcworkspace\ndrwxr-xr-x@  3 <local-user>  staff     96 Sep  2 23:37 build\n---Pods---\nExpoFileSystem\nExpoFont\nExpoImage\nExpoLocation\nExpoModulesCore\n---exists?---\nPods exists",
+          "output": "total 232\ndrwxr-xr-x@ 13 <local-user>  staff    416 Sep  2 23:37 .\ndrwxr-xr-x@ 27 <local-user>  staff    864 Sep  3 01:30 ..\n-rw-r--r--@  1 <local-user>  staff    321 Sep  2 23:24 .gitignore\n-rw-r--r--@  1 <local-user>  staff    482 Sep  2 23:24 .xcode.env\n-rw-r--r--@  1 <local-user>  staff     61 Sep  2 23:37 .<local-host>\n-rw-r--r--@  1 <local-user>  staff   2897 Sep  2 23:24 Podfile\n-rw-r--r--@  1 <local-user>  staff  95498 Sep  3 00:04 Podfile.lock\n-rw-r--r--@  1 <local-user>  staff    261 Sep  2 23:24 Podfile.properties.json\ndrwxr-xr-x@ 22 <local-user>  staff    704 Sep  3 02:59 Pods\ndrwxr-xr-x@ 10 <local-user>  staff    320 Sep  2 23:24 Trailhead\ndrwxr-xr-x@  4 <local-user>  staff    128 Sep  2 23:37 Trailhead.xcodeproj\ndrwxr-xr-x@  3 <local-user>  staff     96 Sep  2 23:24 Trailhead.xcworkspace\ndrwxr-xr-x@  3 <local-user>  staff     96 Sep  2 23:37 build\n---Pods---\nExpoFileSystem\nExpoFont\nExpoImage\nExpoLocation\nExpoModulesCore\n---exists?---\nPods exists",
           "exitCode": 0
         },
         {
@@ -1454,7 +1454,7 @@
           "id": "toolu_0118a5KyCkJxUuV5VBEUbVDo",
           "startSeconds": 95.498,
           "endSeconds": 107.835,
-          "command": "WT=worktree/native-control-invalid-2\nSRC=workspace/trailhead-v3\necho \"Copying ios native outputs...\"\ncp -a \"$SRC/ios/Pods\" \"$WT/ios/Pods\"\ncp -a \"$SRC/ios/build\" \"$WT/ios/build\"\n[ -f \"$SRC/ios/.xcode.env.local\" ] && cp -a \"$SRC/ios/.xcode.env.local\" \"$WT/ios/.xcode.env.local\"\necho done_ios\nls \"$SRC/android\" \n",
+          "command": "WT=worktree/native-control-invalid-2\nSRC=workspace/trailhead-v3\necho \"Copying ios native outputs...\"\ncp -a \"$SRC/ios/Pods\" \"$WT/ios/Pods\"\ncp -a \"$SRC/ios/build\" \"$WT/ios/build\"\n[ -f \"$SRC/ios/.<local-host>\" ] && cp -a \"$SRC/ios/.<local-host>\" \"$WT/ios/.<local-host>\"\necho done_ios\nls \"$SRC/android\" \n",
           "output": "Copying ios native outputs...\ndone_ios\napp\nbuild.gradle\ngradle\ngradle.properties\ngradlew\ngradlew.bat\nsettings.gradle",
           "exitCode": 0
         },
@@ -1705,7 +1705,7 @@
           "startSeconds": 79.697,
           "endSeconds": 80.634,
           "command": "xcrun simctl boot <simulator-udid>\nxcrun simctl list devices | grep \"sonnet-rc12\"",
-          "output": "    Trailhead native-control (<simulator-udid>) (Booted)",
+          "output": "<device inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -1945,7 +1945,7 @@
           "startSeconds": 389.853,
           "endSeconds": 390,
           "command": "ps -p 36865 -o pid,etime,command\nxcrun simctl list devices | grep sonnet-rc12",
-          "output": "<process output omitted from public artifact>",
+          "output": "<device inventory omitted from public artifact>",
           "exitCode": 0
         }
       ],
