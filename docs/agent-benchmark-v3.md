@@ -48,13 +48,30 @@ confirmatory samples.
 
 | Model          | Stim      | Control   | Speedup | Commands           | Estimated model cost |
 | -------------- | --------- | --------- | ------- | ------------------ | -------------------- |
-| `gpt-5.6-luna` | 122.795 s | 449.804 s | 3.66x   | 17 vs 45, 62% less | $0.023 vs $0.111     |
+| `gpt-5.6-luna` | 138.872 s | 406.534 s | 2.93x   | 15 vs 48, 69% less | $0.028 vs $0.114     |
 | `gpt-5.6-sol`  | 122.393 s | 510.613 s | 4.17x   | 18 vs 23, 22% less | $0.508 vs $1.058     |
 
 The treatment used simulator-pool commit `3f3d55e`, stacked on the redundant
 simulator-list and boot/fingerprint-overlap changes, rather than the published
-package. Both treatment runs recorded the expected native build-cache hit and
-all four runs retained a Metro bundle containing the requested changed string.
+package. The pool code was present but deliberately not exercised: the protocol
+required every timed run to create and later delete a fresh simulator, and each
+treatment run recorded `created`, never `adopted`. The measured difference
+therefore includes Stim's orchestration and portable build cache, not parked
+simulator reuse. Both treatment runs recorded the expected native build-cache
+hit and all four valid runs retained a Metro bundle containing the requested
+changed string. Luna's changed-bundle proof completed in 150.924 seconds with
+Stim and 478.739 seconds in control, a 3.17x difference outside the primary
+app-alive metric.
+
+Two earlier Luna control attempts remain immutable invalid records. One reached
+an app-alive observation at 470.438 seconds but the changed-bundle proof timed
+out. The other has no coordinator app-alive record or stamped event stream;
+operator process inspection found Expo waiting in a macOS System Events query,
+while its preserved rollout shows later build/install/launch activity followed
+by repeated Metro liveness failures. The coordinator rescheduled the same cell
+until the valid control run above completed. Invalid attempts are reported for
+harness audit and are not substituted into the matched result.
+
 Cost estimates use the direct token rates recorded on 2026-09-03 from the
 official [`gpt-5.6-luna`](https://developers.openai.com/api/docs/models/gpt-5.6-luna)
 and [`gpt-5.6-sol`](https://developers.openai.com/api/docs/models/gpt-5.6-sol)
@@ -232,9 +249,12 @@ every reset compare `diskutil info -plist` volume UUIDs and fail if they differ.
 `cp -c` success alone is not accepted as proof of a clone. Restores target only
 benchmark-owned paths:
 
-- A run-specific `STIM_HOME` cloned from the Stim golden. It contains one
-  JavaScript-fingerprint build artifact plus the pinned `compilation-cache`
-  and `metro-cache`; it has no workspace registry or device records.
+- A run-specific `STIM_HOME` cloned from the Stim golden. The current pilot
+  golden retains the pre-normalization artifact and the post-normalization
+  `7d04e2...-debug-sim` artifact. Only the latter matches the fixture's current
+  JavaScript fingerprint; preflight resolves that exact key before every run.
+  The golden also carries the pinned `compilation-cache` and `metro-cache`; it
+  has no workspace registry or device records.
 - Trailhead-named DerivedData directories plus golden
   `ModuleCache.noindex` and `CompilationCache.noindex`. Other projects' Xcode
   state is untouched.
@@ -274,9 +294,10 @@ Reset also:
    thermal warning invalidates and reschedules the run.
 5. Records first `simctl` latency and the later `bootstatus` interval.
 
-Golden preparation logs show exactly one cacheable Stim artifact and the
-compilation-cache hit ratios. A golden is never rebuilt within a block. If it
-must change, remaining cells move to a new block id.
+Golden preparation logs show which single current key preflight resolves from
+the retained artifacts, plus the compilation-cache hit ratios. A golden is
+never rebuilt within a block. If it must change, remaining cells move to a new
+block id.
 
 ## Runner and tool isolation
 
@@ -359,7 +380,7 @@ Claude's per-model fields also include `webSearchRequests`, `costUSD`,
 `costBasis`; there is no `thinkingTokens` field in `modelUsage`. Tool-call and
 shell-command counts replace runner-specific turn counts.
 
-The Codex priority price table is pinned on 2026-09-02 from the direct official
+The Codex priority price table is pinned on 2026-09-03 from the direct official
 model pages: [Sol](https://developers.openai.com/api/docs/models/gpt-5.6-sol),
 [Terra](https://developers.openai.com/api/docs/models/gpt-5.6-terra), and
 [Luna](https://developers.openai.com/api/docs/models/gpt-5.6-luna). The
@@ -411,10 +432,12 @@ One directory per run contains:
 
 `dispatch` writes `meta.json`, the exact prompt, and stamped streams. `collect`
 alone produces `commands.log` and `run.json`; `report` consumes only immutable
-run directories. `run.json` stores environment hashes, cache states, process
-observations, phase fields, raw token vectors, notional cost, tool/command
-counts, `retrySecondsByClass`, struggles with event offsets, deviations, and
-cleanup results under one versioned schema.
+run directories. The pilot `run.json` stores the runner, model, requested and
+returned service-tier evidence, arm, variant, validity reasons, app-alive and
+proof times, simulator/worktree evidence, proof record, raw token vector,
+command count, and an empty reserved `retrySecondsByClass` object. The later
+calibration driver must version and add cache-state, phase, struggle-offset,
+deviation, and cleanup fields before those stages begin.
 
 A run is invalid if it changes the main checkout; violates skill, binary, MCP,
 subagent, cwd, or directory isolation; overlaps another timed run; starts from
@@ -447,11 +470,16 @@ not from v2 repetitions. Recomputed v2 app-alive times were about 358 seconds
 for control and 147 seconds for Stim, but the asymmetric MCP configuration and
 different measurement setup make the 2.4x ratio historical context only.
 
-## Driver
+## Pilot driver
 
-The resumable driver lives outside this repository under
-`stim-bench-coordinator/v3-20260902/`. Its stages are `prepare`, `preflight`,
-`reset`, `dispatch`, `collect`, and `report`. A parser change never requires a
-timed rerun. Destructive cleanup accepts only manifest-listed,
-benchmark-prefixed paths and simulator UDIDs; it never sweeps a home directory,
-all DerivedData, or an unverified device.
+A machine-local Codex pilot helper lives outside this repository under
+`stim-bench-coordinator/v3-20260902/`. It implements `prepare`, `preflight`,
+profile and runner smokes, one-run `dispatch`, idempotent `collect`, explicit
+one-run `cleanup`, and `report`. It does not yet dispatch Claude, schedule
+calibration or confirmatory blocks, compute the pre-registered sample size, or
+implement the final manifest allowlist. Those stages must not start until those
+capabilities exist and are version-pinned. The current cleanup command accepts
+one explicit run directory, derives only that run's benchmark branch,
+worktree, simulator, Metro process, and scoped `STIM_HOME`, and records its
+actions. Parser/report changes reuse preserved run evidence and do not require
+a timed rerun.
