@@ -1,6 +1,6 @@
 {
   "name": "@stim-cli/expo-build-cache",
-  "version": "1.0.0-rc.11",
+  "version": "1.0.0-rc.12",
   "description": "Local Expo build cache provider: installs a cached .app/.apk instead of compiling when no native input changed.",
   "license": "MIT",
   "repository": {
