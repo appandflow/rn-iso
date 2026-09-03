@@ -1,6 +1,6 @@
 {
   "name": "@stim-cli/cache",
-  "version": "1.0.0-rc.10",
+  "version": "1.0.0-rc.11",
   "description": "Cache provider contract and tier coordination for Stim.",
   "license": "MIT",
   "repository": {
