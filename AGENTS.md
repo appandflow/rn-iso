@@ -68,6 +68,14 @@ the branch limited to that issue, run the required checks, and open a pull
 request that links the issue, with a description following
 `.github/PULL_REQUEST_TEMPLATE.md`.
 
+A change that depends on an unmerged pull request branches from that pull
+request's branch and links the two as a GitHub stack with `gh stack link
+<lower> <upper>` (bottom to top), so the diff shown is against the parent, not
+`main`. The pull request body names the dependency, and every member still gets
+its own review and CI. Merge the stack bottom-up with `gh stack merge` once
+every member is clear and green. Independent issues stay separate pull
+requests; do not stack to skip a review.
+
 As soon as the pull request is open, assign a fresh agent that did not implement
 the change to review the issue, diff, tests, and user-facing guidance. Address
 every actionable finding and rerun the affected checks. Mark the pull request
