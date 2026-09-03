@@ -20,7 +20,10 @@ const modelPricing = {
 
 const absolutePathPattern = /(?<![A-Za-z0-9._-])\/(?:Users|Volumes|private|tmp|var\/folders)\/[^\s'"`,;)]+/g;
 const ipAddressPattern = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
+const ipv6LoopbackPattern = /\[::1\]|(?<![A-Za-z0-9:])::1(?![A-Za-z0-9:])/g;
 const simulatorIdPattern = /\b[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}\b/gi;
+const agentDeviceBundlePattern = /\b(?:[A-Za-z0-9-]+\.)+[A-Za-z0-9.-]*agentdevice[A-Za-z0-9.-]*\b/gi;
+const processInspectionPattern = /(?:^|[;&|]\s*)(?:ps|pgrep)(?:\s|$)/;
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
@@ -71,9 +74,18 @@ export function sanitizeBenchmarkText(value, replacements = []) {
   }
   text = text.replaceAll(userInfo().username, '<local-user>');
   return text
+    .replace(agentDeviceBundlePattern, '<agent-device-helper>')
     .replace(simulatorIdPattern, '<simulator-udid>')
     .replace(ipAddressPattern, '<local-ip>')
+    .replace(ipv6LoopbackPattern, '<local-ip>')
     .replace(absolutePathPattern, (path) => replacementLabel(path));
+}
+
+export function sanitizeCommandOutput(command, value, replacements = []) {
+  if (processInspectionPattern.test(unwrapShellCommand(command))) {
+    return '<process output omitted from public artifact>';
+  }
+  return sanitizeBenchmarkText(clipped(value), replacements);
 }
 
 export function estimateTokenCost(usage, model) {
@@ -118,7 +130,7 @@ function eventsFor(runDir, start, replacements) {
         startSeconds: relativeSeconds(begin?.at ?? stamped.arrivedAt, start),
         endSeconds: relativeSeconds(stamped.arrivedAt, start),
         command: sanitizeBenchmarkText(unwrapShellCommand(item.command ?? begin?.command ?? ''), replacements),
-        output: sanitizeBenchmarkText(clipped(item.aggregated_output), replacements),
+        output: sanitizeCommandOutput(item.command ?? begin?.command ?? '', item.aggregated_output, replacements),
         exitCode: item.exit_code,
       });
     }
@@ -139,6 +151,10 @@ function assertPortable(payload) {
   if (leakedPath) throw new Error(`benchmark export contains an absolute machine path: ${leakedPath}`);
   const leakedIp = serialized.match(ipAddressPattern)?.[0];
   if (leakedIp) throw new Error(`benchmark export contains an IP address: ${leakedIp}`);
+  const leakedIpv6 = serialized.match(ipv6LoopbackPattern)?.[0];
+  if (leakedIpv6) throw new Error(`benchmark export contains an IPv6 address: ${leakedIpv6}`);
+  const leakedHelper = serialized.match(agentDeviceBundlePattern)?.[0];
+  if (leakedHelper) throw new Error(`benchmark export contains an agent-device helper identifier: ${leakedHelper}`);
   if (serialized.includes('janicduplessis')) {
     throw new Error('benchmark export contains a local username');
   }

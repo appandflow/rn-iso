@@ -4,6 +4,7 @@ import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
 import BenchmarkTimeline from '@site/src/components/BenchmarkTimeline';
 import {
+  comparableRuns,
   formatCost,
   formatSeconds,
   formatTokens,
@@ -29,8 +30,9 @@ function ComparisonCard({
   runs: BenchmarkRun[];
   maxSeconds: number;
 }): ReactNode {
-  const stim = runs.find((run) => run.arm === 'stim');
-  const control = runs.find((run) => run.arm === 'control');
+  const comparable = comparableRuns(runs);
+  const stim = comparable.find((run) => run.arm === 'stim');
+  const control = comparable.find((run) => run.arm === 'control');
   const improvement =
     stim && control ? Math.round((1 - stim.settingsReadySeconds / control.settingsReadySeconds) * 100) : null;
   return (
@@ -39,25 +41,28 @@ function ComparisonCard({
       <span className={styles.gain}>
         {improvement == null ? 'Matched run unavailable' : `Stim reached Settings ${improvement}% sooner`}
       </span>
-      {runs.map((run) => (
-        <div className={styles.barRow} key={run.id}>
-          <div className={styles.barHead}>
-            <span>{run.arm === 'stim' ? 'Stim' : 'Control'}</span>
-            <strong>{formatSeconds(run.settingsReadySeconds)}</strong>
+      {runs.map((run) => {
+        const endpoint = comparable.find((candidate) => candidate.id === run.id)?.settingsReadySeconds ?? null;
+        return (
+          <div className={styles.barRow} key={run.id}>
+            <div className={styles.barHead}>
+              <span>{run.arm === 'stim' ? 'Stim' : 'Control'}</span>
+              <strong>{formatSeconds(endpoint)}</strong>
+            </div>
+            <div className={styles.barTrack}>
+              <div
+                className={`${styles.bar} ${run.arm === 'control' ? styles.controlBar : ''}`}
+                style={{ width: `${endpoint === null ? 0 : (endpoint / maxSeconds) * 100}%` }}
+              />
+            </div>
+            <div className={styles.barMeta}>
+              <span>{formatTokens(totalTokens(run.usage))} tokens</span>
+              <span>{formatCost(run.estimatedTokenCostUsd)} est.</span>
+              <span>{run.commandCount} commands</span>
+            </div>
           </div>
-          <div className={styles.barTrack}>
-            <div
-              className={`${styles.bar} ${run.arm === 'control' ? styles.controlBar : ''}`}
-              style={{ width: `${(run.settingsReadySeconds / maxSeconds) * 100}%` }}
-            />
-          </div>
-          <div className={styles.barMeta}>
-            <span>{formatTokens(totalTokens(run.usage))} tokens</span>
-            <span>{formatCost(run.estimatedTokenCostUsd)} est.</span>
-            <span>{run.commandCount} commands</span>
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </article>
   );
 }
@@ -73,7 +78,7 @@ export default function Benchmarks(): ReactNode {
       })),
     [],
   );
-  const maxSeconds = Math.max(...benchmark.runs.map((run) => run.settingsReadySeconds));
+  const maxSeconds = Math.max(1, ...comparableRuns(benchmark.runs).map((run) => run.settingsReadySeconds));
 
   return (
     <Layout

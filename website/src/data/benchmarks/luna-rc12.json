@@ -509,7 +509,7 @@
           "startSeconds": 512.003,
           "endSeconds": 512.127,
           "command": "ps -p 47751 -o pid=,stat=,command=; lsof -nP -iTCP:8081 -sTCP:LISTEN",
-          "output": "",
+          "output": "<process output omitted from public artifact>",
           "exitCode": 1
         },
         {
@@ -541,7 +541,7 @@
           "startSeconds": 523.302,
           "endSeconds": 523.302,
           "command": "ps -axo pid=,ppid=,stat=,command= | rg '[e]xpo|[m]etro|[n]ode.*8081|[n]ode.*start' || true",
-          "output": "43932     1 S    /bin/zsh -c source workspace/snapshot-zsh-1788146976739-hr9q3g.sh 2>/dev/null || true && setopt NO_EXTENDED_GLOB NO_BARE_GLOB_QUAL 2>/dev/null || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'CO=workspace/release-rc7\\012tail -n 0 -F $CO/qa-progress.log 2>/dev/null | grep --line-buffered -E \"DONE caches-bare-android|DONE caches-expo-android-rerun\" | while read line; do echo \"$line\"; case \"$line\" in *expo-android-rerun*) exit 0;; esac; done' < /dev/null && pwd -P >| tmp/claude-912a-cwd\n43933 43932 S    ugrep -G --ignore-files --hidden -I --exclude-dir=.git --exclude-dir=.svn --exclude-dir=.hg --exclude-dir=.bzr --exclude-dir=.jj --exclude-dir=.sl --line-buffered -E DONE caches-bare-android|DONE caches-expo-android-rerun\n",
+          "output": "<process output omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -557,7 +557,7 @@
           "startSeconds": 544.018,
           "endSeconds": 544.399,
           "command": "ps -p 58800 -o pid=,ppid=,stat=,command=; lsof -nP -iTCP:8081 -sTCP:LISTEN; xcrun simctl spawn <simulator-udid> launchctl list | rg -i 'trailhead|appandflow' || true; test -s results/luna-rc12/javascript-control/proof/settings.png && echo PROOF_PRESENT; git status --short --branch",
-          "output": "56540\t0\tUIKitApplication:com.appandflow.trailhead[5d1f][rb-legacy]\nPROOF_PRESENT\n## bench/javascript-control\n M app/(tabs)/settings.tsx\n",
+          "output": "<process output omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -565,7 +565,7 @@
           "startSeconds": 552.269,
           "endSeconds": 552.269,
           "command": "ps -p 58800 -o pid=,ppid=,stat=,command=; lsof -nP -iTCP:8081 -sTCP:LISTEN",
-          "output": "",
+          "output": "<process output omitted from public artifact>",
           "exitCode": 1
         },
         {
@@ -581,7 +581,7 @@
           "startSeconds": 565.505,
           "endSeconds": 565.505,
           "command": "sed -n '1,160p' .metro.log; ps -p 59145 -o pid=,ppid=,stat=,command=; lsof -nP -iTCP:8081 -sTCP:LISTEN",
-          "output": "",
+          "output": "<process output omitted from public artifact>",
           "exitCode": 1
         },
         {
@@ -589,7 +589,7 @@
           "startSeconds": 581.879,
           "endSeconds": 581.879,
           "command": "command -v setsid || true; ps -axo pid=,ppid=,stat=,command= | rg 'expo start|metro|react-native|node.*8081' || true; lsof -nP -iTCP:8081 -sTCP:LISTEN",
-          "output": "  464     1 S    /Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python -m http.server 4782 --directory workspace/build\n59248 45741 Ss   node ./node_modules/.bin/expo start --dev-client --localhost\n59365 45741 Ss   /bin/zsh -lc command -v setsid || true; ps -axo pid=,ppid=,stat=,command= | rg 'expo start|metro|react-native|node.*8081' || true; lsof -nP -iTCP:8081 -sTCP:LISTEN\n59423 59365 R    rg expo start|metro|react-native|node.*8081\nCOMMAND   PID           USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME\nnode    59248 <local-user>   37u  IPv6 0xc984d0a1223455c2      0t0  TCP [::1]:8081 (LISTEN)\n",
+          "output": "<process output omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -613,7 +613,7 @@
           "startSeconds": 615.546,
           "endSeconds": 617.98,
           "command": "sleep 2; ps -p 59596 -o pid=,ppid=,stat=,command=; lsof -nP -iTCP:8081 -sTCP:LISTEN; xcrun simctl spawn <simulator-udid> launchctl list | rg -i 'trailhead|appandflow' || true; git status --short --branch",
-          "output": "59596     1 Ss   node ./node_modules/.bin/expo start --dev-client --localhost\nCOMMAND   PID           USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME\nnode    59596 <local-user>   34u  IPv6 0x9fba8e7e5f3a047e      0t0  TCP [::1]:8081 (LISTEN)\n56540\t0\tUIKitApplication:com.appandflow.trailhead[5d1f][rb-legacy]\n## bench/javascript-control\n M app/(tabs)/settings.tsx\n?? .metro.log\n",
+          "output": "<process output omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -645,7 +645,7 @@
           "startSeconds": 634.909,
           "endSeconds": 635.287,
           "command": "ps -p 59596 -o pid=,ppid=,stat=,command=; lsof -nP -iTCP:8081 -sTCP:LISTEN; xcrun simctl spawn <simulator-udid> launchctl list | rg -i 'trailhead|appandflow' || true",
-          "output": "56540\t0\tUIKitApplication:com.appandflow.trailhead[5d1f][rb-legacy]\n",
+          "output": "<process output omitted from public artifact>",
           "exitCode": 0
         }
       ],
@@ -787,7 +787,7 @@
           "startSeconds": 71.89,
           "endSeconds": 230.141,
           "command": "stim ios",
-          "output": "  device      booting stim-aea16a06-bench-luna-rc12-gpt-5-6-luna- (iPhone 17 26.5) (<simulator-udid>)\n  fingerprint 959dc4.. miss (5.7s)\n  build       compiling Debug with xcodebuild\n  cache       compilation cache on (CAS at results/luna-rc12/native-stim/stim-home/compilation-cache)\n  device      resetting privacy grants and the keychain on <simulator-udid>\n  build       still compiling (30s of ~4m15s)\n  build       still compiling (1m00s of ~4m15s)\n  build       still compiling (1m30s of ~4m15s)\n  build       still compiling (2m00s of ~4m15s)\n  cache       compilation cache 1394/1394 hits (100%)\n  build       ok (2m15s)\n  device      stim-aea16a06-bench-luna-rc12-gpt-5-6-luna- (iPhone 17 26.5) (3372..) adopted (40.4s)\n  install     removed com.janic.agentdevice.runner.uitests.xctrunner, left by the previous workspace\n  install     Trailhead.app -> stim-aea16a06-bench-luna-rc12-gpt-5-6-luna- (iPhone 17 26.5) (3372..) (2.9s)\n  install     dev client prepared (694ms)\n  launch      com.appandflow.trailhead (447ms)\n  verify      bundle loaded, process alive, stable for 3s -- the first screen may still be rendering (11.5s total)\nOK: com.appandflow.trailhead on stim-aea16a06-bench-luna-rc12-gpt-5-6-luna- (iPhone 17 26.5) (3372..), Metro port 8082 (built, 2m38s)\n  device      stim-aea16a06-bench-luna-rc12-gpt-5-6-luna- (iPhone 17 26.5) (<simulator-udid>)\n  app         com.appandflow.trailhead\n  metro       running on port 8082\n  cache       built\n  compilation cache 1394/1394 hits (100%)\n  logs        results/luna-rc12/native-stim/stim-home/workspaces/bench-luna-rc12-gpt-5-6-luna-native-stim-1788451--2d4669efce242aab/logs\n",
+          "output": "  device      booting stim-aea16a06-bench-luna-rc12-gpt-5-6-luna- (iPhone 17 26.5) (<simulator-udid>)\n  fingerprint 959dc4.. miss (5.7s)\n  build       compiling Debug with xcodebuild\n  cache       compilation cache on (CAS at results/luna-rc12/native-stim/stim-home/compilation-cache)\n  device      resetting privacy grants and the keychain on <simulator-udid>\n  build       still compiling (30s of ~4m15s)\n  build       still compiling (1m00s of ~4m15s)\n  build       still compiling (1m30s of ~4m15s)\n  build       still compiling (2m00s of ~4m15s)\n  cache       compilation cache 1394/1394 hits (100%)\n  build       ok (2m15s)\n  device      stim-aea16a06-bench-luna-rc12-gpt-5-6-luna- (iPhone 17 26.5) (3372..) adopted (40.4s)\n  install     removed <agent-device-helper>, left by the previous workspace\n  install     Trailhead.app -> stim-aea16a06-bench-luna-rc12-gpt-5-6-luna- (iPhone 17 26.5) (3372..) (2.9s)\n  install     dev client prepared (694ms)\n  launch      com.appandflow.trailhead (447ms)\n  verify      bundle loaded, process alive, stable for 3s -- the first screen may still be rendering (11.5s total)\nOK: com.appandflow.trailhead on stim-aea16a06-bench-luna-rc12-gpt-5-6-luna- (iPhone 17 26.5) (3372..), Metro port 8082 (built, 2m38s)\n  device      stim-aea16a06-bench-luna-rc12-gpt-5-6-luna- (iPhone 17 26.5) (<simulator-udid>)\n  app         com.appandflow.trailhead\n  metro       running on port 8082\n  cache       built\n  compilation cache 1394/1394 hits (100%)\n  logs        results/luna-rc12/native-stim/stim-home/workspaces/bench-luna-rc12-gpt-5-6-luna-native-stim-1788451--2d4669efce242aab/logs\n",
           "exitCode": 0
         },
         {

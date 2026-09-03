@@ -34,8 +34,8 @@ export type BenchmarkRun = {
   arm: 'stim' | 'control';
   valid: boolean;
   invalidReasons: string[];
-  settingsReadySeconds: number;
-  appAliveSeconds: number;
+  settingsReadySeconds: number | null;
+  appAliveSeconds: number | null;
   totalSeconds: number;
   commandCount: number;
   usage: BenchmarkUsage;
@@ -103,15 +103,22 @@ export function totalTokens(usage: BenchmarkUsage): number {
   return usage.input_tokens + usage.output_tokens;
 }
 
+export function comparableRuns(runs: BenchmarkRun[]): Array<BenchmarkRun & { settingsReadySeconds: number }> {
+  return runs.filter(
+    (run): run is BenchmarkRun & { settingsReadySeconds: number } => run.valid && run.settingsReadySeconds !== null,
+  );
+}
+
 export function formatTokens(value: number): string {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 2)}M`;
   if (value >= 1_000) return `${(value / 1_000).toFixed(value >= 100_000 ? 0 : 1)}k`;
   return String(value);
 }
 
-export function formatSeconds(value: number): string {
-  if (value >= 60) {
-    const rounded = Math.round(value);
+export function formatSeconds(value: number | null): string {
+  if (value === null) return 'unavailable';
+  const rounded = Math.round(value);
+  if (rounded >= 60) {
     return `${Math.floor(rounded / 60)}m ${rounded % 60}s`;
   }
   return `${value.toFixed(value < 10 ? 1 : 0)}s`;

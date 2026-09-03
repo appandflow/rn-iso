@@ -1,19 +1,29 @@
 import { describe, expect, it } from 'vitest';
-import { estimateTokenCost, sanitizeBenchmarkText } from './export-benchmark-viewer.mjs';
+import { estimateTokenCost, sanitizeBenchmarkText, sanitizeCommandOutput } from './export-benchmark-viewer.mjs';
 
 describe('benchmark viewer export', () => {
   it('replaces machine paths, run ids, and simulator ids', () => {
     const source =
       '/Volumes/ExternalSSD/Developer/bench/results/run-123/proof/settings.png ' +
-      '/tmp/run-123-settings.png 3372C014-23D1-4939-ABF6-94912654C56E 10.0.0.188';
+      '/tmp/run-123-settings.png 3372C014-23D1-4939-ABF6-94912654C56E 10.0.0.188 [::1] ' +
+      'com.janic.agentdevice.runner.uitests.xctrunner';
     const output = sanitizeBenchmarkText(source, [
       ['/Volumes/ExternalSSD/Developer/bench/results/run-123', 'results/luna/javascript-stim'],
       ['run-123', 'javascript-stim'],
     ]);
 
     expect(output).toBe(
-      'results/luna/javascript-stim/proof/settings.png tmp/javascript-stim-settings.png <simulator-udid> <local-ip>',
+      'results/luna/javascript-stim/proof/settings.png tmp/javascript-stim-settings.png <simulator-udid> <local-ip> <local-ip> <agent-device-helper>',
     );
+  });
+
+  it('omits machine-global process output', () => {
+    const output = sanitizeCommandOutput(
+      '/bin/zsh -lc "ps -axo command= | rg \'expo|metro\'"',
+      'node ./node_modules/.bin/expo start\n/bin/zsh -c tail -F workspace/release-rc7/qa-progress.log',
+    );
+
+    expect(output).toBe('<process output omitted from public artifact>');
   });
 
   it('prices cached input separately without double-counting reasoning tokens', () => {

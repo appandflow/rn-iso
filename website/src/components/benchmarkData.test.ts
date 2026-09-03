@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { assignCommandLanes, formatSeconds, type BenchmarkCommand } from './benchmarkData';
+import {
+  assignCommandLanes,
+  comparableRuns,
+  formatSeconds,
+  type BenchmarkCommand,
+  type BenchmarkRun,
+} from './benchmarkData';
 
 function command(id: string, startSeconds: number, endSeconds: number): BenchmarkCommand {
   return { id, startSeconds, endSeconds, command: id, output: '', exitCode: 0 };
@@ -27,5 +33,21 @@ describe('formatSeconds', () => {
   it('keeps short command durations in seconds', () => {
     expect(formatSeconds(2.55)).toBe('2.5s');
     expect(formatSeconds(30)).toBe('30s');
+  });
+
+  it('chooses minutes after rounding and handles a missing endpoint', () => {
+    expect(formatSeconds(59.6)).toBe('1m 0s');
+    expect(formatSeconds(59.4)).toBe('59s');
+    expect(formatSeconds(null)).toBe('unavailable');
+  });
+});
+
+describe('comparableRuns', () => {
+  it('excludes invalid and missing Settings endpoints', () => {
+    const valid = { id: 'valid', valid: true, settingsReadySeconds: 42 } as BenchmarkRun;
+    const invalid = { id: 'invalid', valid: false, settingsReadySeconds: 31 } as BenchmarkRun;
+    const missing = { id: 'missing', valid: true, settingsReadySeconds: null } as BenchmarkRun;
+
+    expect(comparableRuns([valid, invalid, missing]).map((run) => run.id)).toEqual(['valid']);
   });
 });
