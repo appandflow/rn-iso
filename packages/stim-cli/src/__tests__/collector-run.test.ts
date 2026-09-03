@@ -326,6 +326,48 @@ describe('the ios collector, spawned for real against a fake xcrun', () => {
     expect(deviceLog().some((r) => r.event === 'collector_stopped')).toBeTruthy();
   });
 
+  test('a distinct --app-executable anchors the predicate to it, not to --app-name', async () => {
+    // #264: the shim only accepts the anchor built from --app-executable, not --app-name.
+    writeShim(
+      'xcrun',
+      [
+        `case "$*" in`,
+        `  'simctl spawn UDID-1 log stream --style ndjson --predicate processImagePath ENDSWITH "/MyAppDev.app/MyApp"') ;;`,
+        `  *) echo "unexpected argv: $*" >&2; exit 9 ;;`,
+        `esac`,
+        ...iosShimLines()
+          .slice(0, 1)
+          .map((l) => `cat <<'LINE'\n${l}\nLINE`),
+        'exec sleep 30',
+      ].join('\n'),
+    );
+
+    const child = spawnCollector([
+      '--platform',
+      'ios',
+      '--root',
+      root,
+      '--udid',
+      'UDID-1',
+      '--bundle',
+      'com.example.app',
+      '--app-name',
+      'MyAppDev',
+      '--app-executable',
+      'MyApp',
+    ]);
+
+    const registered = await until(() => readCollectors(root).ios as CollectorEntry, {
+      label: 'the collector registration',
+    });
+    expect(registered.pid).toBe(child.pid);
+    expect(deviceLog().some((r) => r.event === 'collector_failed')).toBe(false);
+
+    process.kill(childPid(child), 'SIGTERM');
+    const result = await exited(child);
+    expect(result).toEqual({ code: 0, signal: null });
+  });
+
   test('survives the stream ending: a record, and exit 0', async () => {
     writeShim(
       'xcrun',

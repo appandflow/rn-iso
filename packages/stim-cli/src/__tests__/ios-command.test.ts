@@ -1982,7 +1982,7 @@ describe('the collector', () => {
   test('the command hands the collector CFBundleExecutable, so the log predicate can anchor to it', async () => {
     reserve();
     let seenAppPath: unknown;
-    const { calls } = await run(
+    const { calls, stderr } = await run(
       {},
       {
         buildIos: async () => ({
@@ -1999,11 +1999,12 @@ describe('the collector', () => {
     expect(seenAppPath).toBe('/tmp/dd/Build/Products/Debug-iphonesimulator/FixtureDev.app');
     expect(calls.args.replaceCollector.appExecutable).toBe('Fixture');
     expect(calls.args.replaceCollector.appName).toBe('FixtureDev');
+    expect(stderr).not.toMatch(/Could not read CFBundleExecutable/);
   });
 
   test('a missing CFBundleExecutable leaves the collector to fall back to the .app basename', async () => {
     reserve();
-    const { calls } = await run(
+    const { calls, stderr } = await run(
       {},
       {
         buildIos: async () => ({
@@ -2014,6 +2015,8 @@ describe('the collector', () => {
       },
     );
     expect(calls.args.replaceCollector.appExecutable).toBe(null);
+    expect(stderr).toMatch(/Could not read CFBundleExecutable/);
+    expect(stderr).toMatch(/FixtureDev\.app/);
   });
 });
 

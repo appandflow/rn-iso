@@ -1523,6 +1523,13 @@ async function finishIosRun({
   const scheme = release ? undefined : d.devClientScheme(root, appPath);
   const appName = appNameFromPath(appPath);
   const appExecutable = appPath ? d.readBundleExecutable(appPath) : null;
+  if (appPath && !appExecutable) {
+    note(
+      chalk.dim(
+        `Could not read CFBundleExecutable from ${appPath}; the device log predicate falls back to the .app basename.`,
+      ),
+    );
+  }
   const dropSwapDir = () => {
     if (!swapDir) return;
     try {
