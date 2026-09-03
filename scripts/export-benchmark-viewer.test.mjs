@@ -57,9 +57,9 @@ describe('benchmark viewer export', () => {
   });
 
   it('redacts local hostnames and complete or abbreviated simulator identifiers', () => {
-    expect(sanitizeBenchmarkText('Janics-Mac-mini.local A35AFE7E-06D9-4E4B-A14D-0451595A13BC grep A35AFE7E')).toBe(
-      '<local-host> <simulator-udid> grep <simulator-udid-prefix>',
-    );
+    expect(
+      sanitizeBenchmarkText('Janics-Mac-mini.local A35AFE7E-06D9-4E4B-A14D-0451595A13BC grep A35AFE7E (3372..)'),
+    ).toBe('<local-host> <simulator-udid> grep <simulator-udid-prefix> (<simulator-udid-prefix>)');
     expect(sanitizeBenchmarkText('estimated cost 0.02353276')).toBe('estimated cost 0.02353276');
   });
 
@@ -93,6 +93,18 @@ describe('benchmark viewer export', () => {
   it('omits machine-global storage inventories', () => {
     expect(sanitizeCommandOutput('df -h /Volumes/ExternalSSD; diskutil info /Volumes/ExternalSSD', 'private')).toBe(
       '<machine storage inventory omitted from public artifact>',
+    );
+  });
+
+  it('omits branch inventories that can contain user-scoped remote refs', () => {
+    expect(
+      sanitizeCommandOutput('git status --short; git branch -a', 'remotes/origin/@janic/issue-1-clear-filters'),
+    ).toBe('<branch inventory omitted from public artifact>');
+  });
+
+  it('redacts a user-scoped remote branch outside an inventory', () => {
+    expect(sanitizeBenchmarkText('checked remotes/origin/@private-user/feature')).toBe(
+      'checked remotes/origin/@<user>/feature',
     );
   });
 
@@ -203,7 +215,7 @@ describe('benchmark viewer export', () => {
         variant: 'native',
         arm: 'stim',
         valid: false,
-        invalidReasons: ['missing command for A35AFE7E-06D9-4E4B-A14D-0451595A13BC on Janics-Mac-mini.local'],
+        invalidReasons: ['missing command for A35AFE7E-06D9-4E4B-A14D-0451595A13BC (3372..) on Janics-Mac-mini.local'],
         commandCount: 0,
         screen: { valid: false },
       }),
@@ -215,6 +227,8 @@ describe('benchmark viewer export', () => {
       memory: 'Test memory',
     });
 
-    expect(payload.runs[0].invalidReasons).toEqual(['missing command for <simulator-udid> on <local-host>']);
+    expect(payload.runs[0].invalidReasons).toEqual([
+      'missing command for <simulator-udid> (<simulator-udid-prefix>) on <local-host>',
+    ]);
   });
 });

@@ -24,11 +24,14 @@ const ipAddressPattern = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
 const ipv6LoopbackPattern = /\[::1\]|(?<![A-Za-z0-9:])::1(?![A-Za-z0-9:])/g;
 const simulatorIdPattern = /\b[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}\b/gi;
 const simulatorIdPrefixPattern = /\b(?=[0-9A-F]{8}\b)(?=[0-9A-F]*[A-F])[0-9A-F]{8}\b/g;
+const simulatorShortIdPattern = /\b[0-9A-F]{4}\.\./gi;
 const localHostnamePattern = /\b(?:[A-Za-z0-9-]+\.)+local\b/gi;
+const remoteBranchUserPattern = /(\bremotes\/[^/\s]+\/)@[^/\s]+(?=\/)/g;
 const agentDeviceBundlePattern = /\b(?:[A-Za-z0-9-]+\.)+[A-Za-z0-9.-]*agentdevice[A-Za-z0-9.-]*\b/gi;
 const processInspectionPattern = /\b(?:ps|pgrep)(?:\s|$)/;
 const deviceInventoryPattern = /\b(?:agent-device devices|xcrun simctl list devices)\b/;
 const machineStoragePattern = /\b(?:df|diskutil)(?:\s|$)/;
+const branchInventoryPattern = /\bgit\s+(?:branch|for-each-ref)(?:\s|$)/;
 const interactiveShellPattern = /^(?:bash|sh|zsh)$/;
 
 function readJson(path) {
@@ -114,10 +117,12 @@ export function sanitizeBenchmarkText(value, replacements = []) {
   }
   text = text.replace(agentDeviceBundlePattern, '<agent-device-helper>');
   text = text.replace(absolutePathPattern, (path) => replacementLabel(path));
+  text = text.replace(remoteBranchUserPattern, '$1@<user>');
   text = text.replaceAll(userInfo().username, '<local-user>');
   return text
     .replace(simulatorIdPattern, '<simulator-udid>')
     .replace(simulatorIdPrefixPattern, '<simulator-udid-prefix>')
+    .replace(simulatorShortIdPattern, '<simulator-udid-prefix>')
     .replace(localHostnamePattern, '<local-host>')
     .replace(ipAddressPattern, '<local-ip>')
     .replace(ipv6LoopbackPattern, '<local-ip>');
@@ -133,6 +138,9 @@ export function sanitizeCommandOutput(command, value, replacements = []) {
   }
   if (machineStoragePattern.test(unwrapped)) {
     return '<machine storage inventory omitted from public artifact>';
+  }
+  if (branchInventoryPattern.test(unwrapped)) {
+    return '<branch inventory omitted from public artifact>';
   }
   if (processInspectionPattern.test(unwrapped)) {
     return '<process output omitted from public artifact>';
@@ -270,8 +278,14 @@ function assertPortable(payload) {
   if (leakedSimulatorPrefix) {
     throw new Error(`benchmark export contains a simulator identifier prefix: ${leakedSimulatorPrefix}`);
   }
+  const leakedSimulatorShortId = serialized.match(simulatorShortIdPattern)?.[0];
+  if (leakedSimulatorShortId) {
+    throw new Error(`benchmark export contains a simulator identifier prefix: ${leakedSimulatorShortId}`);
+  }
   const leakedHostname = serialized.match(localHostnamePattern)?.[0];
   if (leakedHostname) throw new Error(`benchmark export contains a local hostname: ${leakedHostname}`);
+  const leakedRemoteBranchUser = serialized.match(remoteBranchUserPattern)?.[0];
+  if (leakedRemoteBranchUser) throw new Error('benchmark export contains a user-scoped remote branch');
   if (serialized.includes('janicduplessis')) {
     throw new Error('benchmark export contains a local username');
   }

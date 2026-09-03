@@ -168,7 +168,7 @@ UUID, username, device UDID, or path in that file.
 
 The exporter refuses data that still contains a local username or an absolute
 home, volume, temporary, or simulator path. It omits machine-global process,
-device, and storage listings, plus interactive shell transcripts whose
+device, storage, and branch listings, plus interactive shell transcripts whose
 cursor-control output cannot be made portable. Review the generated diff before
 publishing because command output can contain other project-specific data.
 

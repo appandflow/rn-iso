@@ -134,7 +134,7 @@
           "startSeconds": 63.516,
           "endSeconds": 93.856,
           "command": "stim ios",
-          "output": "  device      booting stim-58bd14ac-bench-luna-rc12-gpt-5-6-luna- (iPhone 17 26.5) (<simulator-udid>)\n  fingerprint b1232a.. hit (4.3s)\n  device      resetting privacy grants and the keychain on <simulator-udid>\n  device      stim-58bd14ac-bench-luna-rc12-gpt-5-6-luna- (iPhone 17 26.5) (3372..) adopted (13.1s)\n  install     unchanged (stim-58bd14ac-bench-luna-rc12-gpt-5-6-luna- (iPhone 17 26.5) already has this build) (593ms)\n  install     dev client prepared (830ms)\n  launch      com.appandflow.trailhead (559ms)\n  verify      bundle loaded, process alive, stable for 3s -- the first screen may still be rendering (14.1s total)\nOK: com.appandflow.trailhead on stim-58bd14ac-bench-luna-rc12-gpt-5-6-luna- (iPhone 17 26.5) (3372..), Metro port 8082 (from cache, 30.2s)\n  device      stim-58bd14ac-bench-luna-rc12-gpt-5-6-luna- (iPhone 17 26.5) (<simulator-udid>)\n  app         com.appandflow.trailhead\n  metro       running on port 8082\n  cache       from cache\n  compilation cache not run; artifact cache supplied the app\n  logs        results/luna-rc12/javascript-stim/stim-home/workspaces/bench-luna-rc12-gpt-5-6-luna-javascript-stim-178--c66d4b812513ab06/logs\n",
+          "output": "  device      booting stim-58bd14ac-bench-luna-rc12-gpt-5-6-luna- (iPhone 17 26.5) (<simulator-udid>)\n  fingerprint b1232a.. hit (4.3s)\n  device      resetting privacy grants and the keychain on <simulator-udid>\n  device      stim-58bd14ac-bench-luna-rc12-gpt-5-6-luna- (iPhone 17 26.5) (<simulator-udid-prefix>) adopted (13.1s)\n  install     unchanged (stim-58bd14ac-bench-luna-rc12-gpt-5-6-luna- (iPhone 17 26.5) already has this build) (593ms)\n  install     dev client prepared (830ms)\n  launch      com.appandflow.trailhead (559ms)\n  verify      bundle loaded, process alive, stable for 3s -- the first screen may still be rendering (14.1s total)\nOK: com.appandflow.trailhead on stim-58bd14ac-bench-luna-rc12-gpt-5-6-luna- (iPhone 17 26.5) (<simulator-udid-prefix>), Metro port 8082 (from cache, 30.2s)\n  device      stim-58bd14ac-bench-luna-rc12-gpt-5-6-luna- (iPhone 17 26.5) (<simulator-udid>)\n  app         com.appandflow.trailhead\n  metro       running on port 8082\n  cache       from cache\n  compilation cache not run; artifact cache supplied the app\n  logs        results/luna-rc12/javascript-stim/stim-home/workspaces/bench-luna-rc12-gpt-5-6-luna-javascript-stim-178--c66d4b812513ab06/logs\n",
           "exitCode": 0
         },
         {
@@ -304,7 +304,7 @@
           "startSeconds": 13.96,
           "endSeconds": 13.96,
           "command": "test -e worktree/javascript-control && echo TARGET_EXISTS || echo TARGET_MISSING; git branch --list 'bench/javascript-control'",
-          "output": "TARGET_MISSING\n",
+          "output": "<branch inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
@@ -798,7 +798,7 @@
           "startSeconds": 71.89,
           "endSeconds": 230.141,
           "command": "stim ios",
-          "output": "  device      booting stim-aea16a06-bench-luna-rc12-gpt-5-6-luna- (iPhone 17 26.5) (<simulator-udid>)\n  fingerprint 959dc4.. miss (5.7s)\n  build       compiling Debug with xcodebuild\n  cache       compilation cache on (CAS at results/luna-rc12/native-stim/stim-home/compilation-cache)\n  device      resetting privacy grants and the keychain on <simulator-udid>\n  build       still compiling (30s of ~4m15s)\n  build       still compiling (1m00s of ~4m15s)\n  build       still compiling (1m30s of ~4m15s)\n  build       still compiling (2m00s of ~4m15s)\n  cache       compilation cache 1394/1394 hits (100%)\n  build       ok (2m15s)\n  device      stim-aea16a06-bench-luna-rc12-gpt-5-6-luna- (iPhone 17 26.5) (3372..) adopted (40.4s)\n  install     removed <agent-device-helper>, left by the previous workspace\n  install     Trailhead.app -> stim-aea16a06-bench-luna-rc12-gpt-5-6-luna- (iPhone 17 26.5) (3372..) (2.9s)\n  install     dev client prepared (694ms)\n  launch      com.appandflow.trailhead (447ms)\n  verify      bundle loaded, process alive, stable for 3s -- the first screen may still be rendering (11.5s total)\nOK: com.appandflow.trailhead on stim-aea16a06-bench-luna-rc12-gpt-5-6-luna- (iPhone 17 26.5) (3372..), Metro port 8082 (built, 2m38s)\n  device      stim-aea16a06-bench-luna-rc12-gpt-5-6-luna- (iPhone 17 26.5) (<simulator-udid>)\n  app         com.appandflow.trailhead\n  metro       running on port 8082\n  cache       built\n  compilation cache 1394/1394 hits (100%)\n  logs        results/luna-rc12/native-stim/stim-home/workspaces/bench-luna-rc12-gpt-5-6-luna-native-stim-1788451--2d4669efce242aab/logs\n",
+          "output": "  device      booting stim-aea16a06-bench-luna-rc12-gpt-5-6-luna- (iPhone 17 26.5) (<simulator-udid>)\n  fingerprint 959dc4.. miss (5.7s)\n  build       compiling Debug with xcodebuild\n  cache       compilation cache on (CAS at results/luna-rc12/native-stim/stim-home/compilation-cache)\n  device      resetting privacy grants and the keychain on <simulator-udid>\n  build       still compiling (30s of ~4m15s)\n  build       still compiling (1m00s of ~4m15s)\n  build       still compiling (1m30s of ~4m15s)\n  build       still compiling (2m00s of ~4m15s)\n  cache       compilation cache 1394/1394 hits (100%)\n  build       ok (2m15s)\n  device      stim-aea16a06-bench-luna-rc12-gpt-5-6-luna- (iPhone 17 26.5) (<simulator-udid-prefix>) adopted (40.4s)\n  install     removed <agent-device-helper>, left by the previous workspace\n  install     Trailhead.app -> stim-aea16a06-bench-luna-rc12-gpt-5-6-luna- (iPhone 17 26.5) (<simulator-udid-prefix>) (2.9s)\n  install     dev client prepared (694ms)\n  launch      com.appandflow.trailhead (447ms)\n  verify      bundle loaded, process alive, stable for 3s -- the first screen may still be rendering (11.5s total)\nOK: com.appandflow.trailhead on stim-aea16a06-bench-luna-rc12-gpt-5-6-luna- (iPhone 17 26.5) (<simulator-udid-prefix>), Metro port 8082 (built, 2m38s)\n  device      stim-aea16a06-bench-luna-rc12-gpt-5-6-luna- (iPhone 17 26.5) (<simulator-udid>)\n  app         com.appandflow.trailhead\n  metro       running on port 8082\n  cache       built\n  compilation cache 1394/1394 hits (100%)\n  logs        results/luna-rc12/native-stim/stim-home/workspaces/bench-luna-rc12-gpt-5-6-luna-native-stim-1788451--2d4669efce242aab/logs\n",
           "exitCode": 0
         },
         {
@@ -981,7 +981,7 @@
           "startSeconds": 17.239,
           "endSeconds": 17.239,
           "command": "git branch --list 'bench/native-control'; test -e worktree/native-control && echo TARGET_EXISTS || true",
-          "output": "",
+          "output": "<branch inventory omitted from public artifact>",
           "exitCode": 0
         },
         {
