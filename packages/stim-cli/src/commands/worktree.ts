@@ -2,9 +2,10 @@ import { existsSync, readdirSync, realpathSync } from 'fs';
 import { basename, dirname, resolve } from 'path';
 import chalk from 'chalk';
 import { type Command, InvalidArgumentError } from 'commander';
-import { phaseLine, plural } from '../command-output.ts';
+import { clockTime, phaseLine, plural } from '../command-output.ts';
 import { resolveSettings, SETTING_SHAPE_REMEDY, settingShapeErrors, unknownSettingKeys } from '../settings.ts';
 import { getProject, isPathPrefix, loadConfig, removeProject, upsertProject } from '../config.ts';
+import type { ReleasedLease } from '../engine/device-lease.ts';
 import { podInstallCommand } from '../engine/bundler.ts';
 import { reclaimProject } from '../reclaim.ts';
 import { withManagedRemoteWorktreeRemovalLock, withManagedTunnelRemovalLock } from '../engine/tunnel.ts';
@@ -550,6 +551,11 @@ function describeKeptDevice(s: SkippedDevice): string {
   return s.udid && s.udid !== s.name ? `${s.name} (${s.udid})` : s.name;
 }
 
+function releasedLeaseFact(lease: ReleasedLease): string {
+  const device = lease.deviceName ? `${lease.deviceName} (${lease.id})` : lease.id;
+  return `released the ${lease.platform} lease on ${device} (it ran until ${clockTime(lease.expiresAt)})`;
+}
+
 interface ReclaimAllResult {
   dereferenced: string[];
   killedPids: number[];
@@ -560,6 +566,7 @@ interface ReclaimAllResult {
   reclaimedKeys: string[];
   stoppedSessions: string[];
   stoppedTunnels: string[];
+  releasedLeases: ReleasedLease[];
   removedWorkspaceDirs: string[];
   failedWorkspaceDirs: string[];
 }
@@ -595,6 +602,7 @@ async function reclaimAll(
   const retainedResources: RetainedResource[] = [];
   const stoppedSessions: string[] = [];
   const stoppedTunnels: string[] = [];
+  const releasedLeases: ReleasedLease[] = [];
   const removedWorkspaceDirs: string[] = [];
   const failedWorkspaceDirs: string[] = [];
   for (const key of keys) {
@@ -608,6 +616,7 @@ async function reclaimAll(
     skippedDevices.push(...r.skippedDevices);
     if (r.stoppedSession) stoppedSessions.push(r.stoppedSession);
     if (r.stoppedTunnel) stoppedTunnels.push(r.stoppedTunnel);
+    releasedLeases.push(...r.releasedLeases);
     removedWorkspaceDirs.push(...r.removedWorkspaceDirs);
     failedWorkspaceDirs.push(...r.failedWorkspaceDirs);
     if (r.keptEntry) {
@@ -649,6 +658,7 @@ async function reclaimAll(
     reclaimedKeys: [...keys],
     stoppedSessions,
     stoppedTunnels,
+    releasedLeases,
     removedWorkspaceDirs,
     failedWorkspaceDirs,
   };
@@ -677,21 +687,34 @@ async function reclaimEnvironment(root: string, why: string): Promise<void> {
   await withManagedRemoteWorktreeRemovalLock(root, () =>
     withReclaimLocks(root, async (lockedKeys) => {
       const result = await reclaimAll(root, lockedKeys);
-      for (const dir of result.removedWorkspaceDirs) {
-        console.error(chalk.dim(`  removed ${dir} (this workspace's own output)`));
+      for (const device of result.deletedDevices) {
+        console.error(chalk.dim(phaseLine('device', `deleted ${device}`)));
       }
-      for (const dir of result.failedWorkspaceDirs) console.error(chalk.yellow(`  could not remove ${dir}`));
-      if (result.dereferenced.length)
-        console.error(chalk.dim(`  no longer referenced: ${result.dereferenced.join(', ')}`));
-      for (const pid of result.killedPids) console.error(chalk.dim(`  killed Metro pid ${pid}`));
-      if (result.deletedDevices.length)
-        console.error(chalk.dim(`  deleted device(s): ${result.deletedDevices.join(', ')}`));
+      for (const session of result.stoppedSessions) {
+        console.error(chalk.dim(phaseLine('device', `stopped remote session ${session}`)));
+      }
+      for (const tunnel of result.stoppedTunnels) {
+        console.error(chalk.dim(phaseLine('lan', `stopped the ${tunnel} tunnel`)));
+      }
+      for (const lease of result.releasedLeases) {
+        console.error(chalk.dim(phaseLine('lease', releasedLeaseFact(lease))));
+      }
+      for (const pid of result.killedPids) console.error(chalk.dim(phaseLine('metro', `killed pid ${pid}`)));
+      for (const dir of result.removedWorkspaceDirs) {
+        console.error(chalk.dim(phaseLine('workspace', `removed ${dir}`)));
+      }
+      for (const dir of result.failedWorkspaceDirs) {
+        console.error(chalk.yellow(phaseLine('workspace', `could not remove ${dir}`)));
+      }
+      if (result.dereferenced.length) {
+        console.error(chalk.dim(phaseLine('workspace', `no longer referenced: ${result.dereferenced.join(', ')}`)));
+      }
       if (result.keptEntries.length) {
         reportRetainedResources(root, result);
         return;
       }
       for (const s of result.skippedDevices) {
-        console.error(chalk.yellow(`  kept ${describeKeptDevice(s)}: ${s.reason}`));
+        console.error(chalk.yellow(phaseLine('device', `kept ${describeKeptDevice(s)}: ${s.reason}`)));
       }
       console.error(chalk.green(`Reclaimed the environment; the working tree stays (${why}).`));
     }),
@@ -770,23 +793,39 @@ function restorePodChurn(path: string, files: string[]): void {
 }
 
 function printRemovalCleanup(result: ReclaimAllResult, failed: boolean): void {
-  const print = failed ? console.error : console.log;
-  if (!failed) {
-    for (const dir of result.removedWorkspaceDirs) print(chalk.dim(`  removed workspace output ${dir}`));
+  for (const device of result.deletedDevices) {
+    console.error(chalk.dim(phaseLine('device', `deleted ${device}`)));
   }
-  if (result.dereferenced.length) print(chalk.dim(`  no longer referenced: ${result.dereferenced.join(', ')}`));
-  for (const pid of result.killedPids) print(chalk.dim(`  killed Metro pid ${pid}`));
-  if (result.deletedDevices.length) print(chalk.dim(`  deleted device(s): ${result.deletedDevices.join(', ')}`));
-  if (result.stoppedSessions.length)
-    print(chalk.dim(`  stopped remote session(s): ${result.stoppedSessions.join(', ')}`));
-  if (result.stoppedTunnels.length) print(chalk.dim(`  stopped tunnel(s): ${result.stoppedTunnels.join(', ')}`));
+  for (const session of result.stoppedSessions) {
+    console.error(chalk.dim(phaseLine('device', `stopped remote session ${session}`)));
+  }
+  for (const tunnel of result.stoppedTunnels) {
+    console.error(chalk.dim(phaseLine('lan', `stopped the ${tunnel} tunnel`)));
+  }
+  for (const lease of result.releasedLeases) {
+    console.error(chalk.dim(phaseLine('lease', releasedLeaseFact(lease))));
+  }
+  for (const pid of result.killedPids) console.error(chalk.dim(phaseLine('metro', `killed pid ${pid}`)));
+  if (!failed) {
+    for (const dir of result.removedWorkspaceDirs) console.error(chalk.dim(phaseLine('workspace', `removed ${dir}`)));
+  }
+  if (result.dereferenced.length) {
+    console.error(chalk.dim(phaseLine('workspace', `no longer referenced: ${result.dereferenced.join(', ')}`)));
+  }
   for (const skipped of result.skippedDevices) {
-    print((failed ? chalk.dim : chalk.yellow)(`  kept ${describeKeptDevice(skipped)}: ${skipped.reason}`));
+    console.error(
+      (failed ? chalk.dim : chalk.yellow)(
+        phaseLine('device', `kept ${describeKeptDevice(skipped)}: ${skipped.reason}`),
+      ),
+    );
   }
   for (const kept of result.keptEntries) {
-    print(
+    console.error(
       (failed ? chalk.dim : chalk.yellow)(
-        `  Stim still tracks ${kept} because environment cleanup failed; re-run \`stim gc --delete\` once the cause is fixed.`,
+        phaseLine(
+          'workspace',
+          `${kept} still tracked -- environment cleanup failed; re-run \`stim gc --delete\` once the cause is fixed`,
+        ),
       ),
     );
   }
@@ -813,7 +852,9 @@ async function runRemove(target: string | undefined, opts: RemoveOptions = {}): 
       }
       if (!branchExists(mainRoot, branch)) {
         removeProject(path);
-        console.log(chalk.green(`Branch ${branch} is already absent; cleared its pending cleanup record.`));
+        console.error(
+          chalk.dim(phaseLine('branch', `${branch} is already absent; cleared its pending cleanup record`)),
+        );
         return;
       }
       const checkedOutAt = listWorktrees(mainRoot).find(
@@ -839,7 +880,7 @@ async function runRemove(target: string | undefined, opts: RemoveOptions = {}): 
       try {
         deleteBranch(mainRoot, branch, pending.worktreePendingBranchSha);
         removeProject(path);
-        console.log(chalk.green(`Deleted branch ${branch} and cleared its pending cleanup record.`));
+        console.error(chalk.dim(phaseLine('branch', `deleted ${branch}; cleared its pending cleanup record`)));
       } catch (error) {
         console.error(chalk.red(`Could not delete branch ${branch}: ${String((error as Error)?.message || error)}`));
         console.error(chalk.dim(`Retry with: stim worktree remove ${path}`));
@@ -919,49 +960,56 @@ async function runRemove(target: string | undefined, opts: RemoveOptions = {}): 
         process.exitCode = 1;
         return;
       }
-      console.log(chalk.green(`Removed worktree ${path}`));
+      const finish = (): void => {
+        printRemovalCleanup(result, false);
+        console.error(chalk.dim(phaseLine('removed', path)));
+      };
       if (deleteOwnedBranch && branch) {
         if (!approvedBranchSha) {
-          console.error(chalk.yellow(`  kept branch ${branch}: Stim could not record its commit before removal`));
+          console.error(
+            chalk.yellow(phaseLine('branch', `kept ${branch} (Stim could not record its commit before removal)`)),
+          );
           process.exitCode = 1;
-          printRemovalCleanup(result, false);
+          finish();
           return;
         }
         upsertProject(path, { worktreeRemovalComplete: true, worktreePendingBranchSha: approvedBranchSha });
         if (!branchDeleteCwd) {
-          console.error(chalk.yellow(`  kept branch ${branch}: Stim could not find the main worktree`));
+          console.error(chalk.yellow(phaseLine('branch', `kept ${branch} (Stim could not find the main worktree)`)));
           console.error(chalk.dim(`  Retry with: stim worktree remove ${path}`));
           process.exitCode = 1;
-          printRemovalCleanup(result, false);
+          finish();
           return;
         }
         const checkedOutAt = listWorktrees(branchDeleteCwd).find(
           (candidate) => candidate.branch === branch && resolve(candidate.path) !== resolve(path),
         )?.path;
         if (checkedOutAt) {
-          console.error(chalk.yellow(`  kept branch ${branch}: it is checked out at ${checkedOutAt}`));
+          console.error(chalk.yellow(phaseLine('branch', `kept ${branch} (it is checked out at ${checkedOutAt})`)));
           console.error(
             chalk.dim(`  Switch that worktree to another branch, then retry: stim worktree remove ${path}`),
           );
           process.exitCode = 1;
-          printRemovalCleanup(result, false);
+          finish();
           return;
         }
         try {
           deleteBranch(branchDeleteCwd, branch, approvedBranchSha);
-          console.log(chalk.dim(`  deleted branch ${branch}`));
+          console.error(chalk.dim(phaseLine('branch', `deleted ${branch}`)));
         } catch (error) {
-          console.error(chalk.yellow(`  kept branch ${branch}: ${String((error as Error)?.message || error)}`));
+          console.error(
+            chalk.yellow(phaseLine('branch', `kept ${branch} (${String((error as Error)?.message || error)})`)),
+          );
           console.error(chalk.dim(`  Retry with: git -C ${branchDeleteCwd} branch -D -- ${branch}`));
           process.exitCode = 1;
-          printRemovalCleanup(result, false);
+          finish();
           return;
         }
       } else if (branch && retainedBranchReason) {
-        console.log(chalk.dim(`  kept branch ${branch}: ${retainedBranchReason}`));
+        console.error(chalk.dim(phaseLine('branch', `kept ${branch} (${retainedBranchReason})`)));
       }
       removeProject(path);
-      printRemovalCleanup(result, false);
+      finish();
     }),
   );
 }

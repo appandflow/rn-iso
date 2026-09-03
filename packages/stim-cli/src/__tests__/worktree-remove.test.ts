@@ -487,7 +487,7 @@ test('action: main-checkout artifact deletion blocks a concurrent replacement tu
   let competingStart: Promise<'started' | 'refused'> | null = null;
   const original = console.error;
   console.error = (message) => {
-    if (String(message).includes("this workspace's own output")) {
+    if (/^\s*workspace\s+removed\s/.test(String(message))) {
       competingStart = withManagedRemoteWorktreeLock(mainDir, async () => {
         ensureWorkspaceStorage(mainDir);
         writeFileSync(workspaceStateFile(mainDir), JSON.stringify({ metroTunnel: { pid: 5252 } }));
@@ -611,6 +611,48 @@ test('action: removes the branch that Stim created when it has no unique commits
   expect(exec.calls.run.some((call) => /update-ref -d refs\/heads\/worktree-feat-x abc123/.test(call))).toBe(true);
 });
 
+test('action: on success, prints only the label-column vocabulary on stderr and nothing on stdout', async () => {
+  upsertProject(wtDir, {
+    worktreeRoot: true,
+    worktreeBranch: 'worktree-feat-x',
+    worktreeBranchOwned: true,
+    worktreeMainRoot: mainDir,
+    platforms: { ios: { deviceUdid: 'U1', owned: true, deviceName: 'stim-x' } },
+  });
+  ensureWorkspaceStorage(wtDir);
+  writeFileSync(join(workspaceDir(wtDir), 'state.json'), '{}');
+  const exec = makeExecutor({
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'worktree-feat-x' },
+    ]),
+    mainTrees: [mainDir],
+    simctlList: simctlJson([{ udid: 'U1', name: 'stim-x', state: 'Shutdown', isAvailable: true }]),
+  });
+  setExecutor(exec);
+
+  const logs: string[] = [];
+  const errs: string[] = [];
+  const originalLog = console.log;
+  const originalError = console.error;
+  console.log = (m) => logs.push(String(m));
+  console.error = (m) => errs.push(String(m));
+  try {
+    const run = captureAction(registerRemove);
+    await run(wtDir, {});
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+  }
+
+  expect(process.exitCode).not.toBe(1);
+  expect(logs).toEqual([]);
+  expect(errs.some((line) => /^\s*device\s+deleted stim-x$/.test(line))).toBe(true);
+  expect(errs.some((line) => /^\s*workspace\s+removed /.test(line))).toBe(true);
+  expect(errs.some((line) => /^\s*branch\s+deleted worktree-feat-x$/.test(line))).toBe(true);
+  expect(errs.some((line) => new RegExp(`^\\s*removed\\s+${wtDir}$`).test(line))).toBe(true);
+});
+
 test('action: keeps a branch that existed before Stim attached the worktree', async () => {
   upsertProject(wtDir, {
     worktreeRoot: true,
@@ -626,19 +668,19 @@ test('action: keeps a branch that existed before Stim attached the worktree', as
   });
   setExecutor(exec);
 
-  const logs: string[] = [];
-  const originalLog = console.log;
-  console.log = (message) => logs.push(String(message));
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (message) => errs.push(String(message));
   try {
     const run = captureAction(registerRemove);
     await run(wtDir, {});
   } finally {
-    console.log = originalLog;
+    console.error = original;
   }
 
   expect(process.exitCode).not.toBe(1);
   expect(exec.calls.run.some((call) => /branch -D/.test(call))).toBe(false);
-  expect(logs.some((line) => /kept branch worktree-feat-x: Stim did not create it/.test(line))).toBe(true);
+  expect(errs.some((line) => /branch\s+kept worktree-feat-x \(Stim did not create it\)/.test(line))).toBe(true);
 });
 
 test('action: force removal keeps an owned branch that has unique commits', async () => {
@@ -657,20 +699,20 @@ test('action: force removal keeps an owned branch that has unique commits', asyn
   });
   setExecutor(exec);
 
-  const logs: string[] = [];
-  const originalLog = console.log;
-  console.log = (message) => logs.push(String(message));
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (message) => errs.push(String(message));
   try {
     const run = captureAction(registerRemove);
     await run(wtDir, { force: true });
   } finally {
-    console.log = originalLog;
+    console.error = original;
   }
 
   expect(process.exitCode).not.toBe(1);
   expect(exec.calls.run.some((call) => /worktree remove --force/.test(call))).toBe(true);
   expect(exec.calls.run.some((call) => /branch -D/.test(call))).toBe(false);
-  expect(logs.some((line) => /kept branch worktree-feat-x: it has 1 unique commit/.test(line))).toBe(true);
+  expect(errs.some((line) => /branch\s+kept worktree-feat-x \(it has 1 unique commit/.test(line))).toBe(true);
 });
 
 test('action: a branch deletion failure keeps ownership state and exits unsuccessfully', async () => {
@@ -972,14 +1014,14 @@ test('action: an occupied owned sim is deleted with the rest -- the environment 
   });
   setExecutor(exec);
 
-  const logs: string[] = [];
-  const originalLog = console.log;
-  console.log = (msg) => logs.push(msg);
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (msg) => errs.push(String(msg));
   const run = captureAction(registerRemove);
   try {
     await run(wtDir, {});
   } finally {
-    console.log = originalLog;
+    console.error = original;
   }
 
   expect(process.exitCode).not.toBe(1);
@@ -991,7 +1033,7 @@ test('action: an occupied owned sim is deleted with the rest -- the environment 
   expect(getProject(nestedDir1)).toBe(null);
   expect(getProject(nestedDir2)).toBe(null);
 
-  expect(!logs.some((l) => /kept .*device|kept .*sim/i.test(l))).toBeTruthy();
+  expect(!errs.some((l) => /kept .*device|kept .*sim/i.test(l))).toBeTruthy();
 });
 
 test('action: a project-local .stim directory is ordinary dirt and refuses removal', async () => {
@@ -1497,4 +1539,9 @@ test('action: removal releases this workspace lease and leaves another workspace
 
   expect(process.exitCode).not.toBe(1);
   expect(listLeaseFiles().map((entry) => entry.id)).toEqual(['R5CT']);
+  expect(
+    errs.some((line) =>
+      /^\s*lease\s+released the ios lease on UDID-MINE \(it ran until \d{2}:\d{2}:\d{2}\)/.test(line),
+    ),
+  ).toBe(true);
 });

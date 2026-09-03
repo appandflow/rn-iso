@@ -83,12 +83,14 @@ export const OUTPUT_LABELS: readonly string[] = [
   'prebuild',
   'ready',
   'remedy',
+  'removed',
   'setting',
   'state',
   'stats',
   'stop',
   'swap',
   'verify',
+  'workspace',
 ];
 
 export function isOutputLabel(label: unknown): boolean {
