@@ -192,8 +192,25 @@ describe('runPodInstall', () => {
     });
     expect(result.ok).toBe(true);
     expect(beats.length >= 1).toBe(true);
-    expect(beats[0]).toMatch(/^ {2}pods\s+still running \(/);
-    expect(beats[0]).toMatch(/Installing FlipperKit/);
+    expect(beats[0]).toMatch(/^ {2}pods\s+still installing \(/);
+    expect(beats[0]).not.toMatch(/Installing FlipperKit/);
+  });
+
+  test("a `pods` heartbeat carries this project's last pod install when stats have one", async () => {
+    mkdirSync(join(root, 'ios'), { recursive: true });
+    const beats: string[] = [];
+    const child = makeChildProcess({ pid: 4243 });
+    const result = await runPodInstall(root, collectingWriter(), {
+      spawnFn: () => {
+        setTimeout(() => child.emit('exit', 0, null), 120);
+        return child;
+      },
+      heartbeatMs: 25,
+      estimateMs: 100_000,
+      onHeartbeat: (l: string) => beats.push(l),
+    });
+    expect(result.ok).toBe(true);
+    expect(beats[0]).toMatch(/^ {2}pods\s+still installing \(\d+s of ~1m40s\)$/);
   });
 
   test('a non-zero exit comes back as {failed, lastLines}, never a throw', async () => {
@@ -391,7 +408,7 @@ describe('runPodInstall through bundler (#137)', () => {
     expect(result.ok).toBe(true);
     expect(calls[1]?.opts.cwd).toBe(root);
     expect(beats[0]).toMatch(/^ {2}gems\s+still running \(/);
-    expect(beats[0]).toMatch(/Fetching cocoapods/);
+    expect(beats[0]).not.toMatch(/Fetching cocoapods/);
   });
 
   test('a Gemfile with no Gemfile.lock stays on plain `pod install`, so nothing writes a lockfile', async () => {

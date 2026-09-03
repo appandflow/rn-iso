@@ -260,6 +260,7 @@ async function runCaptured(
     env: NodeJS.ProcessEnv;
     event: string;
     label?: string | null;
+    estimateMs?: number | null;
   },
 ): Promise<CapturedRun> {
   const startedAt = ctx.now();
@@ -292,9 +293,9 @@ async function runCaptured(
     ? startBuildHeartbeat({
         intervalMs: ctx.heartbeatMs,
         elapsed: () => ctx.now() - startedAt,
-        lastLine: () => transcript.at(-1) ?? '',
         emit: ctx.onHeartbeat,
         label: ctx.label,
+        estimateMs: ctx.estimateMs ?? null,
       })
     : () => {};
 
@@ -428,11 +429,13 @@ export async function runPodInstall(
     spawnFn = null,
     now = Date.now,
     heartbeatMs = HEARTBEAT_INTERVAL_MS,
+    estimateMs = null,
     onHeartbeat = (line: string) => console.error(line),
   }: {
     spawnFn?: SpawnFn | null;
     now?: () => number;
     heartbeatMs?: number;
+    estimateMs?: number | null;
     onHeartbeat?: (line: string) => void;
   } = {},
 ): Promise<PodInstallResult> {
@@ -475,6 +478,7 @@ export async function runPodInstall(
     env: bundler && pin ? bundlerEnv(root, pin.gemfile) : podEnv(root),
     event: 'pod_install',
     label: 'pods',
+    estimateMs,
   });
 
   if (run.error) {

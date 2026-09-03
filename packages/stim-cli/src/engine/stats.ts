@@ -19,6 +19,8 @@ export interface StatsBucket {
   timeSavedMs: number;
   firstRunAt: string;
   lastRunAt: string;
+  lastColdBuildMs?: number;
+  lastPodsMs?: number;
 }
 
 export type StatsScope = Partial<Record<StatsPlatform, StatsBucket>>;
@@ -36,6 +38,17 @@ export interface StatsRun {
   cacheHit: CacheHitLevel;
   waitedForBuild: boolean;
   durationMs: number;
+  coldBuildMs?: number;
+  podsMs?: number;
+}
+
+/**
+ * The two phase durations a run reads back to size its own heartbeat: the
+ * project's last cold build and its last `pod install`, in milliseconds.
+ */
+export interface RunEstimates {
+  coldBuildMs: number | null;
+  podsMs: number | null;
 }
 
 export interface RecordStatsResult {
@@ -58,6 +71,8 @@ interface RunOutcome {
 export interface RunRecorder {
   setProject(key: string): void;
   setCacheKey(key: string): void;
+  setBuildMs(ms: number): void;
+  setPodsMs(ms: number): void;
   record(outcome: RunOutcome): void;
 }
 
@@ -89,15 +104,16 @@ export function statsProjectKey({
 export function updateStats(record: StatsRecord, run: StatsRun, now: number): StatsRecord {
   const at = new Date(now).toISOString();
   const durationMs = wholeMs(run.durationMs);
+  const phases = { coldBuildMs: wholeMs(run.coldBuildMs), podsMs: wholeMs(run.podsMs) };
   const projects: Record<string, StatsScope> = { ...record.projects };
   const scope: StatsScope = { ...projects[run.projectKey] };
   const machine: StatsScope = { ...record.machine };
   const before = scope[run.platform] ?? null;
   const credit = creditMs(before, run, durationMs);
 
-  scope[run.platform] = applyRun(before, run, { at, durationMs, credit });
+  scope[run.platform] = applyRun(before, run, { at, durationMs, credit, phases });
   projects[run.projectKey] = scope;
-  machine[run.platform] = applyRun(machine[run.platform] ?? null, run, { at, durationMs, credit });
+  machine[run.platform] = applyRun(machine[run.platform] ?? null, run, { at, durationMs, credit, phases });
 
   return { version: STATS_VERSION, machine, projects };
 }
@@ -124,6 +140,31 @@ export function readStats(): ReadStatsResult {
     };
   }
   return { record: normalize(parsed), note: null };
+}
+
+function projectEstimates(record: StatsRecord | null, projectKey: string, platform: StatsPlatform): RunEstimates {
+  const bucket = record?.projects?.[projectKey]?.[platform] ?? null;
+  return {
+    coldBuildMs: positive(bucket?.lastColdBuildMs),
+    podsMs: positive(bucket?.lastPodsMs),
+  };
+}
+
+export function readRunEstimates({
+  projectKey,
+  platform,
+  read = readStats,
+}: {
+  projectKey: string | null;
+  platform: StatsPlatform;
+  read?: () => ReadStatsResult;
+}): RunEstimates {
+  if (!projectKey) return { coldBuildMs: null, podsMs: null };
+  try {
+    return projectEstimates(read().record, projectKey, platform);
+  } catch {
+    return { coldBuildMs: null, podsMs: null };
+  }
 }
 
 export function recordRunStats(run: StatsRun, now: number): RecordStatsResult {
@@ -156,6 +197,8 @@ export function createRunRecorder({
 }): RunRecorder {
   let projectKey: string | null = null;
   let cacheKey: string | null = null;
+  let coldBuildMs = 0;
+  let podsMs = 0;
   let recorded = false;
   return {
     setProject(key: string): void {
@@ -164,12 +207,27 @@ export function createRunRecorder({
     setCacheKey(key: string): void {
       cacheKey = key;
     },
+    setBuildMs(ms: number): void {
+      coldBuildMs = wholeMs(ms);
+    },
+    setPodsMs(ms: number): void {
+      podsMs = wholeMs(ms);
+    },
     record({ failed, cacheHit = false, waited = null, durationMs }: RunOutcome): void {
       if (!projectKey || !cacheKey || recorded) return;
       recorded = true;
       try {
         const outcome = write(
-          { platform, projectKey, failed, cacheHit, waitedForBuild: Boolean(waited), durationMs },
+          {
+            platform,
+            projectKey,
+            failed,
+            cacheHit,
+            waitedForBuild: Boolean(waited),
+            durationMs,
+            ...(coldBuildMs > 0 ? { coldBuildMs } : {}),
+            ...(podsMs > 0 ? { podsMs } : {}),
+          },
           now(),
         );
         if (outcome?.note) note(outcome.note);
@@ -264,13 +322,20 @@ function normalizeBucket(bucket: Record<string, unknown>): StatsBucket {
     timeSavedMs: count(bucket.timeSavedMs),
     firstRunAt: timestamp(bucket.firstRunAt),
     lastRunAt: timestamp(bucket.lastRunAt),
+    ...(count(bucket.lastColdBuildMs) > 0 ? { lastColdBuildMs: count(bucket.lastColdBuildMs) } : {}),
+    ...(count(bucket.lastPodsMs) > 0 ? { lastPodsMs: count(bucket.lastPodsMs) } : {}),
   };
 }
 
 function applyRun(
   bucket: StatsBucket | null,
   run: StatsRun,
-  { at, durationMs, credit }: { at: string; durationMs: number; credit: number },
+  {
+    at,
+    durationMs,
+    credit,
+    phases,
+  }: { at: string; durationMs: number; credit: number; phases: { coldBuildMs: number; podsMs: number } },
 ): StatsBucket {
   const next: StatsBucket = bucket
     ? { ...bucket }
@@ -289,6 +354,8 @@ function applyRun(
       };
   next.runs += 1;
   next.lastRunAt = at;
+  if (phases.coldBuildMs > 0) next.lastColdBuildMs = phases.coldBuildMs;
+  if (phases.podsMs > 0) next.lastPodsMs = phases.podsMs;
   if (run.failed) {
     next.failed += 1;
     return next;
@@ -316,6 +383,11 @@ function creditMs(bucket: StatsBucket | null, run: StatsRun, durationMs: number)
 
 function isHit(cacheHit: CacheHitLevel): boolean {
   return cacheHit === 'local' || cacheHit === 'remote';
+}
+
+function positive(value: unknown): number | null {
+  const ms = wholeMs(value);
+  return ms > 0 ? ms : null;
 }
 
 function wholeMs(value: unknown): number {

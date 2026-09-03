@@ -435,6 +435,7 @@ export async function buildAndroid(
     env = process.env,
     buildCache = true,
     heartbeatMs = HEARTBEAT_INTERVAL_MS,
+    estimateMs = null,
     onHeartbeat = (line: string) => console.error(line),
     onNote = (line: string) => console.error(line),
   }: {
@@ -443,6 +444,7 @@ export async function buildAndroid(
     env?: NodeJS.ProcessEnv;
     buildCache?: boolean;
     heartbeatMs?: number;
+    estimateMs?: number | null;
     onHeartbeat?: (line: string) => void;
     onNote?: (line: string) => void;
   } = {},
@@ -476,11 +478,9 @@ export async function buildAndroid(
   const startedAt = now();
   const tail: string[] = [];
   const window: string[] = [];
-  let lastTranscriptLine = '';
   const push = (line: unknown) => {
     const msg = stripAnsi(String(line)).trimEnd();
     if (!msg.trim()) return;
-    lastTranscriptLine = msg;
     tail.push(msg);
     if (tail.length > LAST_LINES) tail.shift();
     window.push(msg);
@@ -509,8 +509,8 @@ export async function buildAndroid(
   const stopHeartbeat = startBuildHeartbeat({
     intervalMs: heartbeatMs,
     elapsed: () => now() - startedAt,
-    lastLine: () => lastTranscriptLine,
     emit: onHeartbeat,
+    estimateMs,
   });
 
   const result = await waitForChild(child);

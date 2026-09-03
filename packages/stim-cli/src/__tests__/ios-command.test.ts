@@ -4620,9 +4620,84 @@ describe('run statistics', () => {
       cacheHit: false,
       waitedForBuild: false,
       durationMs: expect.any(Number),
+      coldBuildMs: 161000,
     });
     expect((runs[0]?.run.durationMs as number) > 0).toBe(true);
     expect(runs[0]?.now).toBe(clock);
+  });
+
+  test('the build phase and the pod install reach the record', async () => {
+    reserve();
+    const { runs, recordStats } = recorder();
+    await run({}, { recordStats, readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'B' }) });
+
+    expect(runs[0]?.run.coldBuildMs).toBe(161000);
+    expect(runs[0]?.run.podsMs).toBe(18000);
+  });
+
+  test('a cache hit compiles nothing, so it carries no build duration', async () => {
+    reserve();
+    const { runs, recordStats } = recorder();
+    await run({}, { recordStats, resolveBuild: (_platform, _key) => join(root, 'cached', 'Fixture.app') });
+
+    expect(runs[0]?.run).not.toHaveProperty('coldBuildMs');
+    expect(runs[0]?.run).not.toHaveProperty('podsMs');
+  });
+
+  test("the heartbeat is sized by this project's last cold build and last pod install", async () => {
+    reserve();
+    const seen: { build: unknown; pods: unknown } = { build: null, pods: null };
+    const { exitCode } = await run(
+      {},
+      {
+        readEstimates: () => ({ coldBuildMs: 190_000, podsMs: 100_000 }),
+        readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'B' }),
+        runPodInstall: async (_root, _writer, options) => {
+          seen.pods = options?.estimateMs;
+          return { ok: true, durationMs: 18000 };
+        },
+        buildIos: async (args) => {
+          seen.build = (args as { estimateMs?: number | null }).estimateMs;
+          return {
+            appPath: join(root, 'build', 'Fixture.app'),
+            bundleId: 'com.example.app',
+            durationMs: 161000,
+            scheme: 'Fixture',
+          };
+        },
+      },
+    );
+
+    expect(exitCode).toBe(null);
+    expect(seen.build).toBe(190_000);
+    expect(seen.pods).toBe(100_000);
+  });
+
+  test('a stats file this Stim cannot read costs the run nothing: it builds with no estimate', async () => {
+    reserve();
+    writeFileSync(join(tmpHome, 'stats.json'), 'not json at all');
+    const { recordStats } = recorder();
+    const seen: unknown[] = [];
+    const { exitCode, stderr } = await run(
+      {},
+      {
+        recordStats,
+        buildIos: async (args) => {
+          seen.push((args as { estimateMs?: number | null }).estimateMs);
+          return {
+            appPath: join(root, 'build', 'Fixture.app'),
+            bundleId: 'com.example.app',
+            durationMs: 161000,
+            scheme: 'Fixture',
+          };
+        },
+      },
+    );
+
+    expect(exitCode).toBe(null);
+    expect(seen).toEqual([null]);
+    expect(stderr).not.toMatch(/stats/i);
+    expect(readFileSync(join(tmpHome, 'stats.json'), 'utf-8')).toBe('not json at all');
   });
 
   test('a cache hit is recorded as a hit', async () => {

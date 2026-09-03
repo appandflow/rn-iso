@@ -6,7 +6,9 @@ import { Command } from 'commander';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import statsCommand from '../commands/stats.ts';
 import {
+  createRunRecorder,
   emptyStats,
+  readRunEstimates,
   readStats,
   recordRunStats,
   statsFile,
@@ -194,6 +196,47 @@ describe('the update rule', () => {
     expect(Number.isInteger(bucket.timeSavedMs)).toBe(true);
   });
 
+  test('a miss that compiled records the build phase, in both buckets', () => {
+    const record = updateStats(emptyStats(), run({ durationMs: 240_000, coldBuildMs: 190_000 }), T0);
+
+    expect(bucketOf(record, '/repo/app').lastColdBuildMs).toBe(190_000);
+    expect(record.machine.ios?.lastColdBuildMs).toBe(190_000);
+  });
+
+  test('a pod install records its own duration, in both buckets', () => {
+    const record = updateStats(emptyStats(), run({ durationMs: 240_000, podsMs: 100_000 }), T0);
+
+    expect(bucketOf(record, '/repo/app').lastPodsMs).toBe(100_000);
+    expect(record.machine.ios?.lastPodsMs).toBe(100_000);
+  });
+
+  test('the last value wins: a later cold build replaces the one before it', () => {
+    let record = updateStats(emptyStats(), run({ durationMs: 240_000, coldBuildMs: 190_000, podsMs: 100_000 }), T0);
+    record = updateStats(record, run({ durationMs: 300_000, coldBuildMs: 250_000 }), T1);
+    const bucket = bucketOf(record, '/repo/app');
+
+    expect(bucket.lastColdBuildMs).toBe(250_000);
+    expect(bucket.lastPodsMs).toBe(100_000);
+  });
+
+  test('a run with no long phase leaves both fields exactly as they were', () => {
+    let record = updateStats(emptyStats(), run({ durationMs: 240_000, coldBuildMs: 190_000, podsMs: 100_000 }), T0);
+    record = updateStats(record, run({ cacheHit: 'local', durationMs: 30_000 }), T1);
+    record = updateStats(record, run({ failed: true, durationMs: 5_000 }), T1);
+    const bucket = bucketOf(record, '/repo/app');
+
+    expect(bucket.lastColdBuildMs).toBe(190_000);
+    expect(bucket.lastPodsMs).toBe(100_000);
+  });
+
+  test('a bucket that never compiled carries neither field, so the payload is unchanged', () => {
+    const record = updateStats(emptyStats(), run({ durationMs: 240_000 }), T0);
+    const bucket = bucketOf(record, '/repo/app');
+
+    expect('lastColdBuildMs' in bucket).toBe(false);
+    expect('lastPodsMs' in bucket).toBe(false);
+  });
+
   test('the input record is not mutated', () => {
     const before = updateStats(emptyStats(), run({ durationMs: 240_000 }), T0);
     const snapshot = JSON.stringify(before);
@@ -264,6 +307,88 @@ describe('the stats file', () => {
     expect(statsProjectKey({ root, commonDir: join(repo, 'bare.git'), repoRoot: repo })).toBe(root);
 
     rmSync(repo, { recursive: true, force: true });
+  });
+});
+
+describe('the run recorder', () => {
+  function recorderFor(writes: { run: StatsRun; now: number }[]) {
+    const recorder = createRunRecorder({
+      platform: 'ios',
+      write: (statsRun, at) => {
+        writes.push({ run: statsRun, now: at });
+        return { recorded: true, note: null };
+      },
+      now: () => T0,
+      note: () => {},
+    });
+    recorder.setProject('/repo/app');
+    recorder.setCacheKey('ios-abc');
+    return recorder;
+  }
+
+  test('the build and pod install durations reach the record', () => {
+    const writes: { run: StatsRun; now: number }[] = [];
+    const recorder = recorderFor(writes);
+    recorder.setPodsMs(100_000);
+    recorder.setBuildMs(190_000);
+    recorder.record({ failed: false, cacheHit: false, durationMs: 300_000 });
+
+    expect(writes).toHaveLength(1);
+    expect(writes[0]?.run.coldBuildMs).toBe(190_000);
+    expect(writes[0]?.run.podsMs).toBe(100_000);
+  });
+
+  test('a run with neither phase sends neither field', () => {
+    const writes: { run: StatsRun; now: number }[] = [];
+    recorderFor(writes).record({ failed: false, cacheHit: 'local', durationMs: 30_000 });
+
+    expect(writes[0]?.run).not.toHaveProperty('coldBuildMs');
+    expect(writes[0]?.run).not.toHaveProperty('podsMs');
+  });
+});
+
+describe('the estimates a run reads back', () => {
+  test('the project bucket supplies the last cold build and the last pod install', () => {
+    const record = updateStats(emptyStats(), run({ projectKey: root, coldBuildMs: 190_000, podsMs: 100_000 }), T0);
+    writeFileSync(statsFile(), JSON.stringify(record));
+
+    expect(readRunEstimates({ projectKey: root, platform: 'ios' })).toEqual({
+      coldBuildMs: 190_000,
+      podsMs: 100_000,
+    });
+  });
+
+  test('another project, another platform, and no file at all all read as no record', () => {
+    const record = updateStats(emptyStats(), run({ projectKey: root, coldBuildMs: 190_000 }), T0);
+    writeFileSync(statsFile(), JSON.stringify(record));
+
+    expect(readRunEstimates({ projectKey: '/elsewhere', platform: 'ios' })).toEqual({
+      coldBuildMs: null,
+      podsMs: null,
+    });
+    expect(readRunEstimates({ projectKey: root, platform: 'android' })).toEqual({
+      coldBuildMs: null,
+      podsMs: null,
+    });
+    rmSync(statsFile(), { force: true });
+    expect(readRunEstimates({ projectKey: root, platform: 'ios' })).toEqual({ coldBuildMs: null, podsMs: null });
+    expect(readRunEstimates({ projectKey: null, platform: 'ios' })).toEqual({ coldBuildMs: null, podsMs: null });
+  });
+
+  test('a corrupt file and a throwing read are silent: the run gets no estimate and no note', () => {
+    writeFileSync(statsFile(), 'not json at all');
+
+    expect(readRunEstimates({ projectKey: root, platform: 'ios' })).toEqual({ coldBuildMs: null, podsMs: null });
+    expect(
+      readRunEstimates({
+        projectKey: root,
+        platform: 'ios',
+        read: () => {
+          throw new Error('nope');
+        },
+      }),
+    ).toEqual({ coldBuildMs: null, podsMs: null });
+    expect(readFileSync(statsFile(), 'utf-8')).toBe('not json at all');
   });
 });
 

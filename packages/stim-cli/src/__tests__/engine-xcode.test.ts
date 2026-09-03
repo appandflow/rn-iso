@@ -628,16 +628,25 @@ describe('reading the bundle id', () => {
 });
 
 describe('the heartbeat line', () => {
-  test('carries the activity hint, truncated to one readable line', () => {
-    expect(heartbeatLine(30_000, 'CompileC App.o')).toBe('  build       still running (30s): CompileC App.o');
-    const long = 'x'.repeat(200);
-    const line = heartbeatLine(30_000, long);
-    expect(line.endsWith('...')).toBe(true);
-    expect(line.length).toBeLessThan(120);
+  test("names what the phase is doing and never the tool's own last line", () => {
+    expect(heartbeatLine(30_000)).toBe('  build       still compiling (30s)');
+    expect(heartbeatLine(90_000, 'pods')).toBe('  pods        still installing (1m30s)');
+    expect(heartbeatLine(30_000, 'swap')).toBe('  swap        still running (30s)');
   });
 
-  test('omits the hint before the child has printed anything', () => {
-    expect(heartbeatLine(30_000, '')).toBe('  build       still running (30s)');
+  test("sizes the elapsed against this project's last comparable phase", () => {
+    expect(heartbeatLine(60_000, 'build', 190_000)).toBe('  build       still compiling (1m00s of ~3m10s)');
+    expect(heartbeatLine(90_000, 'pods', 100_000)).toBe('  pods        still installing (1m30s of ~1m40s)');
+  });
+
+  test('past the estimate the line says usually, so a slow machine does not read as a hang', () => {
+    expect(heartbeatLine(240_000, 'build', 190_000)).toBe('  build       still compiling (4m00s, usually ~3m10s)');
+    expect(heartbeatLine(190_000, 'build', 190_000)).toBe('  build       still compiling (3m10s of ~3m10s)');
+  });
+
+  test('with no record for this project the line is the elapsed alone', () => {
+    expect(heartbeatLine(60_000, 'build', null)).toBe('  build       still compiling (1m00s)');
+    expect(heartbeatLine(60_000, 'build', 0)).toBe('  build       still compiling (1m00s)');
   });
 });
 
@@ -675,12 +684,17 @@ describe('the heartbeat cadence', () => {
     };
   }
 
-  function heartbeat(scheduler: ReturnType<typeof fakeScheduler>, beats: string[], intervalMs = 30_000) {
+  function heartbeat(
+    scheduler: ReturnType<typeof fakeScheduler>,
+    beats: string[],
+    intervalMs = 30_000,
+    estimateMs: number | null = null,
+  ) {
     return startBuildHeartbeat({
       intervalMs,
       elapsed: scheduler.now,
-      lastLine: () => '',
       emit: (line) => beats.push(line),
+      estimateMs,
       schedule: scheduler.schedule,
     });
   }
@@ -694,9 +708,9 @@ describe('the heartbeat cadence', () => {
     scheduler.advance(30_000);
     stop();
     expect(beats).toEqual([
-      '  build       still running (30s)',
-      '  build       still running (1m00s)',
-      '  build       still running (1m30s)',
+      '  build       still compiling (30s)',
+      '  build       still compiling (1m00s)',
+      '  build       still compiling (1m30s)',
     ]);
     expect(scheduler.idle()).toBe(true);
   });
@@ -711,10 +725,10 @@ describe('the heartbeat cadence', () => {
     scheduler.advance(30_000);
     stop();
     expect(beats).toEqual([
-      '  build       still running (30s)',
-      '  build       still running (5m30s)',
-      '  build       still running (6m00s)',
-      '  build       still running (6m30s)',
+      '  build       still compiling (30s)',
+      '  build       still compiling (5m30s)',
+      '  build       still compiling (6m00s)',
+      '  build       still compiling (6m30s)',
     ]);
   });
 
@@ -725,10 +739,25 @@ describe('the heartbeat cadence', () => {
     scheduler.advance(30_000);
     scheduler.jump(29_999);
     scheduler.fire();
-    expect(beats).toEqual(['  build       still running (30s)']);
+    expect(beats).toEqual(['  build       still compiling (30s)']);
     scheduler.advance(1);
     stop();
-    expect(beats).toEqual(['  build       still running (30s)', '  build       still running (1m00s)']);
+    expect(beats).toEqual(['  build       still compiling (30s)', '  build       still compiling (1m00s)']);
+  });
+
+  test('the estimate rides every beat and flips to usually once it is passed', () => {
+    const scheduler = fakeScheduler();
+    const beats: string[] = [];
+    const stop = heartbeat(scheduler, beats, 30_000, 70_000);
+    scheduler.advance(30_000);
+    scheduler.advance(30_000);
+    scheduler.advance(30_000);
+    stop();
+    expect(beats).toEqual([
+      '  build       still compiling (30s of ~1m10s)',
+      '  build       still compiling (1m00s of ~1m10s)',
+      '  build       still compiling (1m30s, usually ~1m10s)',
+    ]);
   });
 
   test('a non-positive interval schedules nothing at all', () => {
@@ -1172,7 +1201,7 @@ describe('buildIos with a mocked executor', () => {
     child.stdout.emit('data', 'CompileC main.o\n');
     await new Promise((r) => setTimeout(r, 80));
     expect(beats.length).toBeGreaterThanOrEqual(1);
-    expect(beats[0]).toMatch(/^ {2}build {6} still running \(\d+s\): CompileC main\.o$/);
+    expect(beats[0]).toMatch(/^ {2}build {6} still compiling \(\d+s\)$/);
     makeProduct(dd);
     child.emit('close', 0, null);
     await promise;

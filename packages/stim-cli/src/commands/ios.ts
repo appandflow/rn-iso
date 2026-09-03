@@ -121,7 +121,14 @@ import {
   uploadRemote,
   type LoadProjectProviderResult,
 } from '../engine/remote-cache.ts';
-import { createRunRecorder, recordRunStats, statsProjectKey, type RunRecorder } from '../engine/stats.ts';
+import {
+  createRunRecorder,
+  readRunEstimates,
+  recordRunStats,
+  statsProjectKey,
+  type RunEstimates,
+  type RunRecorder,
+} from '../engine/stats.ts';
 import { swapJsBundle } from '../engine/js-swap.ts';
 import {
   buildIos,
@@ -906,6 +913,7 @@ interface IosDeps {
   writeWorkspaceState: typeof writeWorkspaceState;
   createWriter: typeof createNdjsonWriter;
   recordStats: typeof recordRunStats;
+  readEstimates: typeof readRunEstimates;
   now: () => number;
 }
 
@@ -981,6 +989,7 @@ const DEFAULT_DEPS: IosDeps = {
   writeWorkspaceState,
   createWriter: createNdjsonWriter,
   recordStats: recordRunStats,
+  readEstimates: readRunEstimates,
   now: () => Date.now(),
 };
 
@@ -1853,7 +1862,10 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     gitCommonDir: d.gitCommonDir(root),
     repoRoot: settingsRepoRoot,
   };
-  stats.setProject(statsProjectKey({ root, commonDir: settingsContext.gitCommonDir, repoRoot: settingsRepoRoot }));
+  const projectKey = statsProjectKey({ root, commonDir: settingsContext.gitCommonDir, repoRoot: settingsRepoRoot });
+  stats.setProject(projectKey);
+  let estimatesRead: RunEstimates | null = null;
+  const estimates = (): RunEstimates => (estimatesRead ??= d.readEstimates({ projectKey, platform: PLATFORM }));
   const settings = d.resolveSettings(settingsContext);
   const [shapeError, ...moreShapeErrors] = settingShapeErrors(settings);
   if (shapeError) {
@@ -2592,7 +2604,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
         const verdict = d.podsAreStale(podState.lockText, podState.manifestText);
         const action = podAction(podState, verdict);
         if (action.install) {
-          const result = await d.runPodInstall(root, logWriter());
+          const result = await d.runPodInstall(root, logWriter(), { estimateMs: estimates().podsMs });
           const podCommand = result?.command || 'pod install';
           for (const line of result?.notes || []) note(chalk.dim(phaseLine('pods', line)));
           if (result?.failed) {
@@ -2606,6 +2618,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
             });
             return false;
           }
+          stats.setPodsMs(result?.durationMs ?? 0);
           phase(
             'pods',
             `${action.reason} -> installed with \`${podCommand}\` (${formatDuration(result?.durationMs ?? 0)})`,
@@ -2657,6 +2670,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
             ...(physical ? { sdk: IPHONEOS_SDK } : {}),
             logWriter: logWriter(),
             ...(configuration ? { configuration } : {}),
+            estimateMs: estimates().coldBuildMs,
           });
           if (result?.failed) {
             phase('build', `FAILED after ${formatDuration(result.durationMs)}`);
@@ -2672,6 +2686,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
             return false;
           }
           compilationCache = result.compilationCache ?? COMPILATION_CACHE_UNAVAILABLE;
+          stats.setBuildMs(result.durationMs ?? 0);
           phase('build', `ok (${formatDuration(result.durationMs)})`);
           appPath = result.appPath ?? null;
           bundleId = result.bundleId ?? null;

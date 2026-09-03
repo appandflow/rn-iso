@@ -75,7 +75,14 @@ import {
   tunnelModeSetting,
   unknownSettingKeys,
 } from '../settings.ts';
-import { createRunRecorder, recordRunStats, statsProjectKey, type RunRecorder } from '../engine/stats.ts';
+import {
+  createRunRecorder,
+  readRunEstimates,
+  recordRunStats,
+  statsProjectKey,
+  type RunEstimates,
+  type RunRecorder,
+} from '../engine/stats.ts';
 import { gitCommonDir, repoRoot } from '../worktree.ts';
 import { readCollectors } from '../collector/state.ts';
 import { MODE_BARE, MODE_EXPO, readWorkspaceState, writeWorkspaceState } from '../supervisor/state.ts';
@@ -828,6 +835,7 @@ interface RunAndroidOptions {
   createWriter?: typeof createNdjsonWriter;
   writeState?: typeof writeWorkspaceState;
   recordStats?: typeof recordRunStats;
+  readEstimates?: typeof readRunEstimates;
   now?: () => number;
   out?: (line: string) => void;
   emit?: (line: string) => void;
@@ -1573,6 +1581,7 @@ function resolveRunAndroidOptions(
     createWriter = createNdjsonWriter,
     writeState = writeWorkspaceState,
     recordStats = recordRunStats,
+    readEstimates = readRunEstimates,
     now = Date.now,
     out = (line) => console.error(line),
     emit = (line) => console.log(line),
@@ -1647,6 +1656,7 @@ function resolveRunAndroidOptions(
     createWriter,
     writeState,
     recordStats,
+    readEstimates,
     now,
     out,
     emit,
@@ -1723,6 +1733,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     createWriter,
     writeState,
     recordStats,
+    readEstimates,
     now,
     out,
     emit,
@@ -1832,7 +1843,10 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     gitCommonDir: gitCommonDir(root),
     repoRoot: settingsRepoRoot,
   };
-  stats.setProject(statsProjectKey({ root, commonDir: settingsContext.gitCommonDir, repoRoot: settingsRepoRoot }));
+  const projectKey = statsProjectKey({ root, commonDir: settingsContext.gitCommonDir, repoRoot: settingsRepoRoot });
+  stats.setProject(projectKey);
+  let estimatesRead: RunEstimates | null = null;
+  const estimates = (): RunEstimates => (estimatesRead ??= readEstimates({ projectKey, platform: PLATFORM }));
   const settings = resolveSettingsFor(settingsContext);
   const [shapeError, ...moreShapeErrors] = settingShapeErrors(settings);
   if (shapeError) {
@@ -2467,7 +2481,10 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
 
           if (!apkPath) {
             phase('build', `compiling ${variant || 'debug'} with Gradle`);
-            const built: BuildAndroidResultLike = await build({ root, logWriter: writer, variant });
+            const built: BuildAndroidResultLike = await build(
+              { root, logWriter: writer, variant },
+              { estimateMs: estimates().coldBuildMs },
+            );
             if (built.failed) {
               const diagnostics = built.diagnostics || [];
               for (const diag of diagnostics) {
@@ -2491,6 +2508,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
               return false;
             }
             apkPath = built.apkPath ?? null;
+            stats.setBuildMs(built.durationMs ?? 0);
             phase('build', `ok (${formatDuration(built.durationMs)})`);
             if (built.apkNote) phase('build', chalk.yellow(built.apkNote));
 

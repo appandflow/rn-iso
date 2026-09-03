@@ -4447,9 +4447,51 @@ describe('run statistics', () => {
       cacheHit: false,
       waitedForBuild: false,
       durationMs: expect.any(Number),
+      coldBuildMs: 161000,
     });
     expect((runs[0]?.run.durationMs as number) > 0).toBe(true);
     expect(runs[0]?.now).toBe(clock);
+  });
+
+  test('a cache hit compiles nothing, so it carries no build duration', async () => {
+    const { runs, recordStats } = recorder();
+    const h = harness({ recordStats, resolveCached: () => fakeApk(), build: never('the build') });
+
+    expect((await h.run()).ok).toBe(true);
+    expect(runs[0]?.run).not.toHaveProperty('coldBuildMs');
+    expect(runs[0]?.run).not.toHaveProperty('podsMs');
+  });
+
+  test("the heartbeat is sized by this project's last cold build", async () => {
+    const seen: unknown[] = [];
+    const h = harness({
+      readEstimates: () => ({ coldBuildMs: 190_000, podsMs: null }),
+      build: async (_args: BuildArgs = {}, options: { estimateMs?: number | null } = {}) => {
+        seen.push(options.estimateMs);
+        return { ok: true, apkPath: fakeApk(), durationMs: 161000, lastLines: [] };
+      },
+    });
+
+    expect((await h.run()).ok).toBe(true);
+    expect(seen).toEqual([190_000]);
+  });
+
+  test('a stats file this Stim cannot read costs the run nothing: it builds with no estimate', async () => {
+    writeFileSync(join(home, 'stats.json'), 'not json at all');
+    const { recordStats } = recorder();
+    const seen: unknown[] = [];
+    const h = harness({
+      recordStats,
+      build: async (_args: BuildArgs = {}, options: { estimateMs?: number | null } = {}) => {
+        seen.push(options.estimateMs);
+        return { ok: true, apkPath: fakeApk(), durationMs: 161000, lastLines: [] };
+      },
+    });
+
+    expect((await h.run()).ok).toBe(true);
+    expect(seen).toEqual([null]);
+    expect(h.stderr.some((line) => /stats/i.test(line))).toBe(false);
+    expect(readFileSync(join(home, 'stats.json'), 'utf-8')).toBe('not json at all');
   });
 
   test('a cache hit is recorded as a hit', async () => {
