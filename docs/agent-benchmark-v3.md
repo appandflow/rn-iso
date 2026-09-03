@@ -39,6 +39,28 @@ detectable effect at useful precision. The report also gives medians, complete
 ranges, and paired run-order plots; it does not turn screening observations
 into comparative claims or select models for repeats after seeing outcomes.
 
+## OpenAI recorder pilot
+
+The first recorder pilot completed one valid matched JavaScript pair on each
+available OpenAI model below. These runs validate the harness and remain
+descriptive screening evidence; they are not native calibration or
+confirmatory samples.
+
+| Model          | Stim      | Control   | Speedup | Commands           | Estimated model cost |
+| -------------- | --------- | --------- | ------- | ------------------ | -------------------- |
+| `gpt-5.6-luna` | 122.795 s | 449.804 s | 3.66x   | 17 vs 45, 62% less | $0.023 vs $0.111     |
+| `gpt-5.6-sol`  | 122.393 s | 510.613 s | 4.17x   | 18 vs 23, 22% less | $0.508 vs $1.058     |
+
+The treatment used simulator-pool commit `3f3d55e`, stacked on the redundant
+simulator-list and boot/fingerprint-overlap changes, rather than the published
+package. Both treatment runs recorded the expected native build-cache hit and
+all four runs retained a Metro bundle containing the requested changed string.
+Cost estimates use the direct token rates recorded on 2026-09-03 from the
+official [`gpt-5.6-luna`](https://developers.openai.com/api/docs/models/gpt-5.6-luna)
+and [`gpt-5.6-sol`](https://developers.openai.com/api/docs/models/gpt-5.6-sol)
+model pages; they exclude tool and machine runtime. One pair per model is not a
+variance estimate.
+
 ## Pins
 
 `pins.env` is created before golden preparation and is immutable for a block.
@@ -98,66 +120,32 @@ or a control build without Swift compile/link evidence, invalidates the run.
 
 ## Exact prompts
 
-The coordinator substitutes only `<run-id>`, `<run-dir>`, and
-`<main-checkout>`. The timed prompt never mentions preparation, cache state,
-DerivedData, or the other arm.
+The coordinator substitutes only `<run-id>`, `<run-dir>`, `<main-checkout>`,
+and `<worktree-parent>`. The timed prompt never mentions preparation, cache
+state, DerivedData, or the other arm.
 
 ### Stim, JavaScript
 
 ```text
-In <main-checkout>, create a git worktree for branch bench/<run-id>. In that
-worktree, change the Settings offline-map subtitle from "Keep map tiles for
-saved trails on device" to "Keep saved trail maps available offline". Use the
-Stim skill to run the iOS app on a new iPhone 17 simulator running iOS 26.5;
-do not use an existing simulator. Leave the changed app running. Do not use
-subagents. Carry installed dependencies and native outputs from the main
-checkout into the new worktree. Do not read or write outside the checkout, the
-worktree, and <run-dir>. When the app is running, report the worktree path and
-stop; the coordinator will verify and clean up.
+In <main-checkout>, create a git worktree for branch bench/<run-id> under <worktree-parent>. In that worktree, change the Settings offline-map subtitle from "Keep map tiles for saved trails on device" to "Keep saved trail maps available offline". Use the Stim skill and only the pinned command available on PATH as exactly `stim` (never through npx or an absolute path). Keep the inherited STIM_HOME unchanged. Run the iOS app on a new iPhone 17 simulator running iOS 26.5; do not use an existing simulator. Leave the changed app and its Metro server running. Carry installed dependencies and native outputs from the main checkout into the new worktree. Do not use subagents. Do not read or write outside the checkout, the worktree, and <run-dir>. When the app is running, report the worktree path and stop; the coordinator will verify and clean up.
 ```
 
 ### Control, JavaScript
 
 ```text
-In <main-checkout>, create a git worktree for branch bench/<run-id>. In that
-worktree, change the Settings offline-map subtitle from "Keep map tiles for
-saved trails on device" to "Keep saved trail maps available offline". Run the
-iOS app with the project's local Expo and Apple tooling on a new iPhone 17
-simulator running iOS 26.5; do not use an existing simulator. Leave the changed
-app running. Do not use Stim or subagents. Do not read or write outside the
-checkout, the worktree, and <run-dir>. Carry installed dependencies and native
-outputs from the main checkout into the new worktree. When the app is running,
-report the worktree path and stop; the coordinator will verify and clean up.
+In <main-checkout>, create a git worktree for branch bench/<run-id> under <worktree-parent>. In that worktree, change the Settings offline-map subtitle from "Keep map tiles for saved trails on device" to "Keep saved trail maps available offline". Run the iOS app with the project's local Expo and Apple tooling on a new iPhone 17 simulator running iOS 26.5; do not use an existing simulator. Start Metro as a detached process and leave both Metro and the changed app running. Do not use Stim. Carry installed dependencies and native outputs from the main checkout into the new worktree. Do not use subagents. Do not read or write outside the checkout, the worktree, and <run-dir>. When the app is running, report the worktree path and stop; the coordinator will verify and clean up.
 ```
 
 ### Stim, native
 
 ```text
-In <main-checkout>, create a git worktree for branch bench/<run-id>. In that
-worktree, edit ios/Trailhead/AppDelegate.swift so that immediately after the
-existing window assignment it sets the window accessibilityIdentifier to
-"Trailhead <run-id>". Use the Stim skill to run the iOS app and leave the
-changed app running on a new iPhone 17 simulator running iOS 26.5; do not use
-an existing simulator. Do not use subagents. Carry installed dependencies and
-native outputs from the main checkout into the new worktree. Do not read or
-write outside the checkout, the worktree, and <run-dir>. When the app is
-running, report the worktree path and stop; the coordinator will verify and
-clean up.
+In <main-checkout>, create a git worktree for branch bench/<run-id> under <worktree-parent>. In that worktree, edit ios/Trailhead/AppDelegate.swift so that immediately after the existing window assignment it sets the window accessibilityIdentifier to "Trailhead <run-id>". Use the Stim skill and only the pinned command available on PATH as exactly `stim` (never through npx or an absolute path). Keep the inherited STIM_HOME unchanged. Run the iOS app and leave it running on a new iPhone 17 simulator running iOS 26.5; do not use an existing simulator. Carry installed dependencies and native outputs from the main checkout into the new worktree. Do not use subagents. Do not read or write outside the checkout, the worktree, and <run-dir>. When the app is running, report the worktree path and stop; the coordinator will verify and clean up.
 ```
 
 ### Control, native
 
 ```text
-In <main-checkout>, create a git worktree for branch bench/<run-id>. In that
-worktree, edit ios/Trailhead/AppDelegate.swift so that immediately after the
-existing window assignment it sets the window accessibilityIdentifier to
-"Trailhead <run-id>". Run the iOS app with the project's local Expo and Apple
-tooling on a new iPhone 17 simulator running iOS 26.5; do not use an existing
-simulator. Leave the changed app running. Do not use Stim or subagents. Do not
-read or write outside the checkout, the worktree, and <run-dir>. Carry
-installed dependencies and native outputs from the main checkout into the new
-worktree. When the app is running, report the worktree path and stop; the
-coordinator will verify and clean up.
+In <main-checkout>, create a git worktree for branch bench/<run-id> under <worktree-parent>. In that worktree, edit ios/Trailhead/AppDelegate.swift so that immediately after the existing window assignment it sets the window accessibilityIdentifier to "Trailhead <run-id>". Run the iOS app with the project's local Expo and Apple tooling on a new iPhone 17 simulator running iOS 26.5; do not use an existing simulator. Leave the changed app running. Do not use Stim. Carry installed dependencies and native outputs from the main checkout into the new worktree. Do not use subagents. Do not read or write outside the checkout, the worktree, and <run-dir>. When the app is running, report the worktree path and stop; the coordinator will verify and clean up.
 ```
 
 ## Primary metric and proof
@@ -168,8 +156,9 @@ observation that all of these are true on the run's newly created simulator:
 
 1. `com.appandflow.trailhead` was installed after dispatch.
 2. `simctl get_app_container` resolves the installed bundle.
-3. `simctl spawn <udid> ps -axo pid,command` contains the live Trailhead
-   application executable.
+3. Host `ps -A -o command=` contains the live Trailhead application executable
+   under that simulator's UDID-specific CoreSimulator data path. This host-side
+   check is used because current iOS simulator runtimes do not ship `ps`.
 
 The watcher polls independently of the runner command. This makes a
 long-running Expo/Metro process and a short-lived Stim command equivalent. The
@@ -177,6 +166,12 @@ simulator UDID is discovered from post-dispatch `simctl list --json` changes;
 exactly one newly created simulator must exist. The Stim arm must record it as
 owned, while the control arm records its benchmark name. Ambiguity invalidates
 the run.
+
+For the JavaScript variant, the watcher also requests the development bundle
+at the first app-alive observation and saves it under `proof/`. The collector
+must find the requested changed string in that captured bundle. This avoids
+depending on either runner's background-process lifetime after the measured
+app has already become live.
 
 The proof gate is separate from the headline time:
 
