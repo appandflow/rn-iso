@@ -67,6 +67,8 @@ const ENV = {
   STIM_METRO_CACHE: METRO_CACHE_ROOT,
   TMPDIR: CACHE_TMP_DIR,
   CI: '1',
+  STIM_POOL_IOS_PARKED_MAX: '0',
+  STIM_POOL_ANDROID_PARKED_MAX: '0',
 };
 process.env.STIM_HOME = HOME_DIR;
 // Android runs get a throwaway gradle home so build-cache-1 starts empty and

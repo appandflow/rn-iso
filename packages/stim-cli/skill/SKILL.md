@@ -28,9 +28,8 @@ E404 in a repo with a private registry, use:
 npx --registry=https://registry.npmjs.org stim-cli <command>
 ```
 
-Prefer plain output: it streams each phase and ends with the device ID, app ID,
-Metro state, cache result, and log path. Use `--json` only when a script must
-parse a stable payload.
+Prefer plain output: it streams each phase and ends with the facts the next step
+needs. Use `--json` only when a script must parse a stable payload.
 
 ## Normal workflow
 
@@ -89,15 +88,20 @@ still building` means Metro has not finished the bundle; wait and query the
   `No matching log records` on stderr. JSON mode prints zero bytes when no
   records match. Do not read the NDJSON files directly.
 - Use `stim status` when resuming a workspace or recovering missing device,
-  port, server, or build facts. A normal `start` and platform run already print
-  what the next step needs. Use `stim doctor` when a build is
-  unexpectedly slow or the environment looks incomplete.
+  port, server, or build facts; a normal `start` and platform run already print
+  them. Use `stim doctor` when a build is unexpectedly slow or the environment
+  looks incomplete.
 
 ## Ownership and deletion
 
-Stim creates, boots, and deletes only devices it created. Owned devices use
-the `stim-<label>` name. Never point Stim at a user-created emulator or
-simulator.
+Stim creates, boots, and deletes only devices it created. Owned simulators use
+the `stim-<label> (<model> <runtime>)` name. Never point Stim at a user-created
+emulator or simulator.
+
+`worktree remove` parks the workspace's simulator for a later one to adopt. A
+parked simulator is Stim-owned: never delete one by hand; `gc --delete` empties
+the pool (`stim guide lifecycle`). A first launch on a physical iPhone can need
+one-time taps the remedy names.
 
 `stim android --device [serial]` and `stim ios --device [udid]` install on a
 connected physical device. Stim never creates, boots, or deletes hardware, and
@@ -108,17 +112,13 @@ A `--device` run leases that device for the run. `stim device lock ios --for
 (`stim guide lifecycle`). Never delete another workspace's lease file under
 `~/.stim/device-locks`; `gc --delete` removes the expired ones.
 
-A physical iPhone's first launch can need two one-time taps: developer
-trust, which only the user can grant, and Local Network, which a device tool
-accepts. The remedy names which; an uninstall clears both.
-
 Treat a refusal as an ownership or state mismatch: read its code and remedy.
 Never reach for `--force` first.
 
 Ask the user before these actions:
 
 - `worktree remove`, because it deletes the worktree, its Stim-created branch
-  when it has no unique commits, and its owned device.
+  when it has no unique commits, and gives up its owned device.
 - `worktree remove --force`, because it also discards uncommitted and untracked
   files.
 - `gc --delete`, because it deletes orphaned resources. `gc --delete --cache all`

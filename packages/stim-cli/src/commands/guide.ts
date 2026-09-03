@@ -356,7 +356,8 @@ RULES
   - Never assume "booted" is your simulator. Other agents have theirs booted
     too.
   - Every device Stim creates or boots is one Stim created, named
-    stim-<label>. The exceptions are \`android --device\` and
+    stim-<label> (<model> <runtime>) on iOS. The exceptions are
+    \`android --device\` and
     \`ios --device\`, which use a connected physical device Stim never
     creates, boots, or deletes.`,
   },
@@ -1511,7 +1512,7 @@ STIM_CONFIG_CORRUPT  ("Stim config at <path> is not valid JSON")
   #    installed (or built), app launched wired to port 8082, device-log
   #    collector attached.
   stim ios          # or: stim android
-    device      stim-app-412 (BF2A..) booted (9s)
+    device      stim-app-412 (iPhone 17 26.5) (BF2A..) booted (9s)
     fingerprint a3f9b1.. hit (2s)
     install     from cache (3s)
     launch      com.example.app (1s)
@@ -1616,7 +1617,7 @@ PROGRESS ON A LONG RUN
   caller needs it to \`cd\` into; a removed path has no such use:
 
     branch      deleted worktree-e2e-1
-    device      deleted stim-e2e-1
+    device      parked stim-parked (iPhone 17 26.5) 9c1f (9C1F..)
     lease       released the ios lease on 00008101-000A10913C89001E (it ran until 14:32:10)
     workspace   removed /w/.stim/workspaces/3f9c2a
     removed     /w/worktree-e2e-1
@@ -1628,6 +1629,60 @@ PROGRESS ON A LONG RUN
   with a sentence instead of a \`removed\` line, because the checkout itself
   is never touched: \`Reclaimed the environment; the working tree stays (it
   is the main checkout).\`
+
+  THE SIMULATOR POOL
+  \`worktree remove\` PARKS this workspace's owned simulator instead of
+  deleting it, and the next workspace that wants the same model and runtime
+  ADOPTS it. A simulator that has booted before boots in about 9s; a freshly
+  created one costs about 30s, and \`simctl erase\` puts most of that back, so
+  a parked simulator keeps its app installed and is cleaned in pieces:
+
+    at park       shut down, the app's data cleared on disk (Documents,
+                  Library, tmp, SystemData: NSUserDefaults, AsyncStorage,
+                  SQLite), renamed \`stim-parked (<model> <runtime>) <4 hex>\`
+    at adoption   renamed for the adopting workspace, then, inside the boot
+                  the run pays anyway, \`simctl privacy reset all\` and
+                  \`simctl keychain reset\`; at install, every OTHER app the
+                  previous workspace left is uninstalled
+
+  A parked simulator KEEPS its system state: pasteboard, Safari data, photos,
+  contacts, calendars, installed profiles, Simulator settings, app-group
+  containers, and device-level defaults. Isolation covers the app's data, the
+  privacy grants, the keychain and the installed apps -- not a clean system
+  image. Set the bound to 0 when a project needs one.
+
+  Adoption matches the device type AND the runtime EXACTLY: a ticket that asks
+  for an iPad never gets an iPhone, and a request for iOS 18.5 never gets 26.5.
+  No match creates a new simulator, as before. After a runtime upgrade the
+  parked simulators on the old runtime are never adopted; they leave by
+  eviction or \`gc --delete\`.
+
+  The pool holds \`pool.iosParkedMax\` simulators (default 3, about 2.5 GB
+  each). Past that the oldest parked one is deleted:
+
+    device      parked stim-parked (iPhone 17 26.5) 9c1f (9C1F..)
+    device      deleted stim-parked (iPhone 17 26.5) 4b02 (pool over 3)
+
+  and an adopting run says so where a plain boot would say \`booted\`:
+
+    device      stim-app-412 (iPhone 17 26.5) (9C1F..) adopted (11s)
+
+  That time includes the two resets, so it runs longer than a plain boot.
+  \`stim status\` prints one line while the pool is not empty:
+
+    pool: 2 parked iOS simulators (max 3)
+
+  \`stim gc\` reports the pool, and \`stim gc --delete\` empties it:
+
+    Parked simulators (2, 5.1 GB):
+      ios stim-parked (iPhone 17 26.5) 9c1f (9C1F..) iPhone 17 26.5 parked 3d ago 2.6 GB
+                  --delete deletes every parked simulator and empties the pool.
+
+  That deletion works even under a redirected \`STIM_HOME\`, where the sweep
+  for unlisted \`stim-\` devices stays refused: a parked record in THIS config
+  proves that simulator is Stim's and parked by this home. \`stop\` never
+  parks -- it shuts the owned simulator down and keeps it assigned. Neither
+  does \`gc --delete\`, which is deleting what it finds.
 
   A GAP BETWEEN HEARTBEATS IS NOT A HANG. Stim runs device tools
   synchronously, so a long \`simctl\`, \`adb\` or copy call holds the timer
@@ -2216,8 +2271,10 @@ TWO REPORTS, TWO QUESTIONS
     body: () => `CLEANUP AND DISK
 
 WHAT RECLAIMS AN OWNED DEVICE
-  stim worktree remove    deletes every owned device under the worktree
-  stim gc --delete        sweeps stim-* devices no project references
+  stim worktree remove    parks the owned simulator (\`guide lifecycle\`) and
+                            deletes every other owned device under the worktree
+  stim gc --delete        sweeps stim-* devices no project references, and
+                            empties the pool of parked simulators
   stim gc --delete --older-than <days>
                             also reaps the device of a project nothing has
                             touched in that long, even though the project is
@@ -2660,6 +2717,28 @@ or via the environment, which overrides the file:
 
 Unset, 0, or any non-positive value means NO enforcement -- the default, where
 Stim limits nothing. See \`guide lifecycle\` for what each cap does.
+
+THE SIMULATOR POOL BOUND IS MACHINE-LEVEL TOO
+\`pool.iosParkedMax\` caps how many parked simulators \`worktree remove\` may
+leave behind for a later workspace to adopt. It is machine-level for the same
+reason: the disk they sit on is the whole machine's, about 2.5 GB each.
+
+  {
+    "pool": { "iosParkedMax": 3 }
+  }
+
+in ~/.stim/config.json, or STIM_POOL_IOS_PARKED_MAX in the environment, which
+overrides the file. Absent means 3. \`0\` turns parking and adoption off:
+\`worktree remove\` deletes the simulator, \`ios\` never adopts, and a pool
+that already exists stays where it is until \`gc --delete\`. A value that is
+not a whole number 0 or more is refused by name on \`worktree remove\` and
+\`ios\`, and warned about by \`status\`, \`gc\` and \`doctor\`.
+
+When STIM_HOME is set, parking and adoption are OFF unless
+STIM_POOL_IOS_PARKED_MAX is set too. A redirected home is a scoped config --
+test suites and the end-to-end harness use one -- and a scoped config must not
+leave simulators on the machine it cannot account for. A redirected home that
+wants a pool says so with the variable.
 
 STIM NEEDS NO PROJECT CHANGES TO RUN
 Nothing above is required to use Stim. The performance caches that used to

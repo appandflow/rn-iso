@@ -2,12 +2,14 @@ import { existsSync, readdirSync, realpathSync } from 'fs';
 import { basename, dirname, resolve } from 'path';
 import chalk from 'chalk';
 import { type Command, InvalidArgumentError } from 'commander';
-import { phaseLine, plural, releasedLeaseFact } from '../command-output.ts';
+import { phaseLine, plural, releasedLeaseFact, shortUdid } from '../command-output.ts';
 import { resolveSettings, SETTING_SHAPE_REMEDY, settingShapeErrors, unknownSettingKeys } from '../settings.ts';
 import { getProject, isPathPrefix, loadConfig, removeProject, upsertProject } from '../config.ts';
 import type { ReleasedLease } from '../engine/device-lease.ts';
 import { podInstallCommand } from '../engine/bundler.ts';
 import { reclaimProject } from '../reclaim.ts';
+import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../sim-pool.ts';
+import type { ParkedDevice } from '../teardown.ts';
 import { withManagedRemoteWorktreeRemovalLock, withManagedTunnelRemovalLock } from '../engine/tunnel.ts';
 import { readMetroTunnel, readRemoteSession } from '../supervisor/state.ts';
 import {
@@ -555,6 +557,10 @@ interface ReclaimAllResult {
   dereferenced: string[];
   killedPids: number[];
   deletedDevices: string[];
+  parkedDevices: ParkedDevice[];
+  evictedDevices: ParkedDevice[];
+  poolNotes: string[];
+  parkedMax: number;
   skippedDevices: SkippedDevice[];
   keptEntries: string[];
   retainedResources: RetainedResource[];
@@ -592,6 +598,9 @@ async function reclaimAll(
   const dereferenced: string[] = [];
   const killedPids: number[] = [];
   const deletedDevices: string[] = [];
+  const parkedDevices: ParkedDevice[] = [];
+  const evictedDevices: ParkedDevice[] = [];
+  const poolNotes: string[] = [];
   const skippedDevices: SkippedDevice[] = [];
   const keptEntries: string[] = [];
   const retainedResources: RetainedResource[] = [];
@@ -603,11 +612,15 @@ async function reclaimAll(
   for (const key of keys) {
     const r = await reclaimProject(key, {
       deleteOwnedDevices: true,
+      parkOwnedDevices: true,
       preserveProjectRecord: preserveRootProject && key === rootPath,
     });
     dereferenced.push(...r.dereferenced);
     if (r.killedPid) killedPids.push(r.killedPid);
     deletedDevices.push(...r.deletedDevices);
+    parkedDevices.push(...r.parkedDevices);
+    evictedDevices.push(...r.evictedDevices);
+    poolNotes.push(...r.poolNotes);
     skippedDevices.push(...r.skippedDevices);
     if (r.stoppedSession) stoppedSessions.push(r.stoppedSession);
     if (r.stoppedTunnel) stoppedTunnels.push(r.stoppedTunnel);
@@ -647,6 +660,10 @@ async function reclaimAll(
     dereferenced,
     killedPids,
     deletedDevices,
+    parkedDevices,
+    evictedDevices,
+    poolNotes,
+    parkedMax: parkedMaxSetting('ios').max,
     skippedDevices,
     keptEntries,
     retainedResources,
@@ -657,6 +674,18 @@ async function reclaimAll(
     removedWorkspaceDirs,
     failedWorkspaceDirs,
   };
+}
+
+function poolLines(result: ReclaimAllResult): string[] {
+  const lines: string[] = [];
+  for (const device of result.parkedDevices) {
+    lines.push(chalk.dim(phaseLine('device', `parked ${device.name} (${shortUdid(device.udid)})`)));
+  }
+  for (const device of result.evictedDevices) {
+    lines.push(chalk.dim(phaseLine('device', `deleted ${device.name} (pool over ${result.parkedMax})`)));
+  }
+  for (const note of result.poolNotes) lines.push(chalk.yellow(phaseLine('device', note)));
+  return lines;
 }
 
 function reportRetainedResources(root: string, result: ReclaimAllResult): void {
@@ -682,6 +711,7 @@ async function reclaimEnvironment(root: string, why: string): Promise<void> {
   await withManagedRemoteWorktreeRemovalLock(root, () =>
     withReclaimLocks(root, async (lockedKeys) => {
       const result = await reclaimAll(root, lockedKeys);
+      for (const line of poolLines(result)) console.error(line);
       for (const device of result.deletedDevices) {
         console.error(chalk.dim(phaseLine('device', `deleted ${device}`)));
       }
@@ -788,6 +818,7 @@ function restorePodChurn(path: string, files: string[]): void {
 }
 
 function printRemovalCleanup(result: ReclaimAllResult, failed: boolean): void {
+  for (const line of poolLines(result)) console.error(line);
   for (const device of result.deletedDevices) {
     console.error(chalk.dim(phaseLine('device', `deleted ${device}`)));
   }
@@ -817,6 +848,13 @@ function printRemovalCleanup(result: ReclaimAllResult, failed: boolean): void {
 }
 
 async function runRemove(target: string | undefined, opts: RemoveOptions = {}): Promise<void> {
+  const poolError = parkedMaxSetting('ios').error;
+  if (poolError) {
+    console.error(chalk.red(poolError));
+    console.error(chalk.dim(POOL_SETTING_REMEDY));
+    process.exitCode = 1;
+    return;
+  }
   let path = removalPath(target);
   if (!existsSync(path)) {
     const pending = getProject(path);

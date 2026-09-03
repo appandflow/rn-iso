@@ -8,6 +8,7 @@ import {
   OUTPUT_LABELS,
   phaseLine,
   shortHash,
+  shortUdid,
 } from '../command-output.ts';
 
 test('formatDuration uses one format for every command', () => {
@@ -57,6 +58,12 @@ test('shortHash keeps short values and abbreviates long values', () => {
   expect(shortHash('12345678')).toBe('12345678');
   expect(shortHash('123456789')).toBe('123456..');
   expect(shortHash(null)).toBe('');
+});
+
+test('shortUdid keeps short values and abbreviates simulator ids', () => {
+  expect(shortUdid('A1F3')).toBe('A1F3');
+  expect(shortUdid('A1F3-0000')).toBe('A1F3..');
+  expect(shortUdid(null)).toBe('');
 });
 
 test('the label set is closed, sorted, and free of duplicates', () => {

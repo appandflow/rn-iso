@@ -157,7 +157,7 @@ function parseFirst(lines: string[]) {
 
 interface RecordedArgs {
   [key: string]: unknown;
-  installIosApp: { appPath?: unknown };
+  installIosApp: { appPath?: unknown; proveInstalled?: unknown };
   launchIosApp: { devClientScheme?: unknown; metroPort?: unknown; bundleId?: unknown };
   buildIos: { configuration?: unknown; root?: unknown };
   swapJsBundle: { cachedAppPath?: unknown; isExpo?: unknown; root?: unknown };
@@ -519,6 +519,73 @@ describe('the simulator boot gate', () => {
     expect(calls.order.includes('buildIos')).toBe(false);
     expect(calls.order.includes('installIosApp')).toBe(false);
     expect(errs.join('\n')).toMatch(/STIM_NO_FINGERPRINT/);
+  });
+});
+
+describe('parked simulator adoption', () => {
+  test('sweeps old apps before install, uses the parked cache key, and reports adopted', async () => {
+    reserve();
+    const events: string[] = [];
+    let installArgs: Record<string, unknown> = {};
+    const { exitCode, errs } = await run(
+      { metroCheck: false },
+      {
+        ensureOwnedDevice: async () => ({
+          deviceUdid: UDID,
+          deviceName: 'stim-fixture (iPhone 17 Pro 26.5)',
+          owned: true,
+          adopted: true,
+          adoptionPending: true,
+          parkedCacheKey: `${FINGERPRINT}-debug-sim`,
+        }),
+        clearOtherUserApps: () => {
+          events.push('sweep');
+          return { listed: true, removed: ['com.example.old'], failed: [] };
+        },
+        clearIosAdoptionPending: () => events.push('clear'),
+        installIosApp: (args) => {
+          events.push('install');
+          installArgs = args;
+          return { ok: true, skipped: true };
+        },
+      },
+    );
+    expect(exitCode).toBe(null);
+    expect(events).toEqual(['sweep', 'clear', 'install']);
+    expect(installArgs.proveInstalled).toBe(true);
+    expect(errs.join('\n')).toMatch(/device\s+stim-fixture .* adopted/);
+    expect(errs.join('\n')).toMatch(/removed com\.example\.old/);
+  });
+
+  test('a failed app listing leaves adoption pending for the next run', async () => {
+    reserve();
+    let cleared = false;
+    let proveInstalled: unknown;
+    const { exitCode, errs } = await run(
+      { metroCheck: false },
+      {
+        ensureOwnedDevice: async () => ({
+          deviceUdid: UDID,
+          deviceName: 'stim-fixture (iPhone 17 Pro 26.5)',
+          owned: true,
+          adopted: true,
+          adoptionPending: true,
+          parkedCacheKey: 'different-build',
+        }),
+        clearOtherUserApps: () => ({ listed: false, removed: [], failed: [] }),
+        clearIosAdoptionPending: () => {
+          cleared = true;
+        },
+        installIosApp: (args) => {
+          proveInstalled = args.proveInstalled;
+          return { ok: true };
+        },
+      },
+    );
+    expect(exitCode).toBe(null);
+    expect(cleared).toBe(false);
+    expect(errs.join('\n')).toMatch(/could not list apps .* cleanup will retry/);
+    expect(proveInstalled).toBe(false);
   });
 });
 

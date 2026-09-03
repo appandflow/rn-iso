@@ -150,9 +150,14 @@ checks, and registry remedies, which cannot assume a global install.
 ### 2. Create, boot, and delete only owned devices
 
 Stim can create, boot, shut down, or delete only devices it created, named
-`stim-<label>` and recorded with `owned: true`. Never do any of those to a
-user-created emulator or simulator. Keep a device record when teardown fails so
-`gc` can find the device later.
+`stim-<label> (<model> <runtime>)` and recorded with `owned: true`. Never do any
+of those to a user-created emulator or simulator. Keep a device record when
+teardown fails so `gc` can find the device later.
+
+Stim parks an owned simulator it no longer needs instead of deleting it, up to a
+configured maximum, and adopts a parked one before creating. Parked simulators
+are Stim-owned, listed in the pool record, and deleted only by eviction or
+`gc --delete`.
 
 A physical device reached through `android --device` or `ios --device` is
 used but not owned. Hardware cannot be created or booted, so those paths
@@ -201,8 +206,9 @@ distribution remain out of scope.
 
 ### 4. Centralize device teardown
 
-All shutdown and deletion flows must use `src/teardown.ts`. Re-resolve ownership
-before each destructive command. Contain per-device failures so batch cleanup
+All shutdown and deletion flows must use `src/teardown.ts`, and so does park,
+which is the flow that gives a simulator up without deleting it. Re-resolve
+ownership before each destructive command. Contain per-device failures so batch cleanup
 can continue. `stop` shuts down devices; it never deletes them.
 
 ### 5. Redirect test state

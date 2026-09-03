@@ -25,9 +25,11 @@ import {
   diskLine,
   environmentState,
   parseDfFree,
+  poolLine,
   tightVolumes,
   unprovisionedWorktrees,
 } from '../status.ts';
+import { parkedMaxSetting, POOL_SETTING_REMEDY, readParked } from '../sim-pool.ts';
 import type { EnvironmentState, VolumeInfo, SimFacts, MetroFacts, WorktreeFacts } from '../status.ts';
 
 type SupervisorRecordExt = SupervisorRecord & { mode?: string | null };
@@ -100,6 +102,8 @@ export default function statusCommand(program: Command): void {
         worktrees as unknown as WorktreeFacts[],
         projects.map(([p]) => p),
       );
+      const poolMax = parkedMaxSetting('ios');
+      const pool = poolLine({ platform: 'ios', parked: readParked('ios').length, max: poolMax.max });
 
       if (opts.json) {
         console.log(
@@ -116,6 +120,8 @@ export default function statusCommand(program: Command): void {
 
       if (projects.length === 0 && orphanWorktrees.length === 0) {
         console.log(chalk.dim('No projects registered.'));
+        if (poolMax.error) console.log(chalk.yellow(`${poolMax.error} ${POOL_SETTING_REMEDY}`));
+        if (pool) console.log(chalk.dim(pool));
         for (const line of deviceLeaseLines(leases, leaseNow)) console.log(line);
         return;
       }
@@ -167,6 +173,9 @@ export default function statusCommand(program: Command): void {
         }
         for (const w of state.warnings) console.log(chalk.yellow(`  ! ${w}`));
       }
+
+      if (poolMax.error) console.log(chalk.yellow(`\n${poolMax.error} ${POOL_SETTING_REMEDY}`));
+      if (pool) console.log(chalk.dim(`\n${pool}`));
 
       const leaseLines = deviceLeaseLines(leases, leaseNow);
       if (leaseLines.length) {

@@ -8,6 +8,7 @@ import {
   environmentState,
   formatSpace,
   parseDfFree,
+  poolLine,
   tightVolumes,
   unprovisionedWorktrees,
   type DeviceLeaseState,
@@ -86,6 +87,14 @@ test('capacity says nothing when the machine size is unknown', () => {
 test('unprovisioned worktrees are the ones with no registered environment', () => {
   const worktrees = [{ path: '/wt/a' }, { path: '/wt/b' }];
   expect(unprovisionedWorktrees(worktrees, ['/wt/a']).map((w) => w.path)).toEqual(['/wt/b']);
+});
+
+test('poolLine reports a bounded pool and a disabled pool that still has parked devices', () => {
+  expect(poolLine({ platform: 'ios', parked: 0, max: 3 })).toBe(null);
+  expect(poolLine({ platform: 'ios', parked: 2, max: 3 })).toBe('pool: 2 parked iOS simulators (max 3)');
+  expect(poolLine({ platform: 'ios', parked: 1, max: 0 })).toBe(
+    'pool: 1 parked iOS simulator (parking off; gc --delete removes them)',
+  );
 });
 
 test('parseDfFree reads the available and total columns from df -k', () => {

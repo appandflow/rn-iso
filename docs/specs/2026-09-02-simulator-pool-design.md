@@ -1,6 +1,6 @@
 # Simulator pool
 
-Date: 2026-09-02. Status: proposed. Issue: #273.
+Date: 2026-09-02. Status: implemented. Issue: #273.
 
 ## Summary
 

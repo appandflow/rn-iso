@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { setExecutor, resetExecutor } from '../exec.ts';
@@ -13,6 +13,12 @@ import {
   deleteIosSim,
   occupyingApps,
   bootIosSim,
+  clearAppDataContainer,
+  deleteParkedIosSim,
+  findAppDataContainer,
+  listUserApps,
+  parkedSimName,
+  parseUserApps,
 } from '../sim/ios.ts';
 import assert from 'node:assert';
 import { makeChildProcess, makeExitingChild } from './_factories.ts';
@@ -54,6 +60,37 @@ test('parseSimctlList includes runtime in each entry', () => {
   const a = sims.find((s) => s.udid === 'UDID-A');
   assert(a);
   expect(a.runtime).toBe('com.apple.CoreSimulator.SimRuntime.iOS-17-2');
+});
+
+test('parseSimctlList can retain unavailable devices and their data sizes', () => {
+  const out = JSON.stringify({
+    devices: {
+      'com.apple.CoreSimulator.SimRuntime.iOS-17-2': [
+        {
+          udid: 'UDID-OLD',
+          name: 'stim-old',
+          state: 'Shutdown',
+          isAvailable: false,
+          dataPath: '/tmp/CoreSimulator/UDID-OLD/data',
+          dataPathSize: 1234,
+          deviceTypeIdentifier: 'iphone-15',
+        },
+      ],
+    },
+  });
+  expect(parseSimctlList(out)).toEqual([]);
+  expect(parseSimctlList(out, { includeUnavailable: true })).toEqual([
+    {
+      udid: 'UDID-OLD',
+      name: 'stim-old',
+      state: 'Shutdown',
+      runtime: 'com.apple.CoreSimulator.SimRuntime.iOS-17-2',
+      deviceTypeIdentifier: 'iphone-15',
+      dataPath: '/tmp/CoreSimulator/UDID-OLD/data',
+      dataPathSize: 1234,
+      available: false,
+    },
+  ]);
 });
 
 test('listAllIosSims uses simctl via executor', () => {
@@ -344,6 +381,103 @@ test('ownedSimName does not double the ownership prefix', () => {
   expect(ownedSimName('feat-a/tlon-mobile')).toBe('stim-feat-a-tlon-mobile');
   expect(ownedSimName('stim-x').startsWith('stim-')).toBeTruthy();
   expect(ownedSimName('Stim').startsWith('stim-')).toBeTruthy();
+});
+
+test('owned and parked simulator names show model and runtime and stay within 60 characters', () => {
+  expect(ownedSimName('feat-login', { model: 'iPhone 17', runtime: '26.5' })).toBe('stim-feat-login (iPhone 17 26.5)');
+  const long = parkedSimName('A1F3-0000', {
+    model: 'iPad Pro 13-inch (M4) with a deliberately very long qualifier',
+    runtime: '26.5',
+  });
+  expect(long.startsWith('stim-parked (')).toBe(true);
+  expect(long.endsWith(' 26.5) a1f3')).toBe(true);
+  expect(long.length).toBeLessThanOrEqual(60);
+});
+
+test('parseUserApps keeps only user applications', () => {
+  expect(
+    parseUserApps(
+      JSON.stringify({
+        'com.example.one': { ApplicationType: 'User' },
+        'com.apple.Preferences': { ApplicationType: 'System' },
+        'com.example.two': { ApplicationType: 'User' },
+      }),
+    ),
+  ).toEqual(['com.example.one', 'com.example.two']);
+  expect(parseUserApps('not json')).toEqual([]);
+});
+
+test('listUserApps passes the udid as one argv element and converts the property list', () => {
+  const calls: string[][] = [];
+  setExecutor({
+    run: () => {
+      throw new Error('must not invoke a shell');
+    },
+    runFile(file, args = []) {
+      calls.push([file, ...args]);
+      if (file === 'xcrun') return '{ "com.example.app" = { ApplicationType = User; }; }';
+      return JSON.stringify({ 'com.example.app': { ApplicationType: 'User' } });
+    },
+    runQuiet: () => null,
+    spawn: () => null,
+  });
+  expect(listUserApps('UDID WITH SPACES')).toEqual(['com.example.app']);
+  expect(calls[0]).toEqual(['xcrun', 'simctl', 'listapps', 'UDID WITH SPACES']);
+  expect(calls[1]?.slice(0, 5)).toEqual(['plutil', '-convert', 'json', '-o', '-']);
+});
+
+test('the parked app data lookup reads metadata and clearing preserves the container directories', () => {
+  const dataPath = join(tmpHome, 'device-data');
+  const app = join(dataPath, 'Containers', 'Data', 'Application', 'APP-UUID');
+  for (const dir of ['Documents', 'Library', 'tmp', 'SystemData']) {
+    mkdirSync(join(app, dir), { recursive: true });
+    writeFileSync(join(app, dir, 'state.txt'), 'old');
+  }
+  writeFileSync(join(app, '.com.apple.mobile_container_manager.metadata.plist'), 'metadata');
+  setExecutor({
+    run: () => '',
+    runFile(file, args = []) {
+      expect(file).toBe('plutil');
+      expect(args.at(-1)).toBe(join(app, '.com.apple.mobile_container_manager.metadata.plist'));
+      return 'com.example.app';
+    },
+    runQuiet: () => null,
+    spawn: () => null,
+  });
+  expect(findAppDataContainer(dataPath, 'com.example.app')).toBe(app);
+  clearAppDataContainer(app);
+  for (const dir of ['Documents', 'Library', 'tmp', 'SystemData']) {
+    expect(existsSync(join(app, dir))).toBe(true);
+    expect(existsSync(join(app, dir, 'state.txt'))).toBe(false);
+  }
+});
+
+test('deleteParkedIosSim re-resolves the name before deletion', () => {
+  const calls: string[][] = [];
+  setExecutor({
+    run: () =>
+      JSON.stringify({
+        devices: {
+          'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
+            {
+              udid: 'U1',
+              name: 'My renamed simulator',
+              state: 'Shutdown',
+              isAvailable: true,
+              deviceTypeIdentifier: 'iphone-17',
+            },
+          ],
+        },
+      }),
+    runFile(file, args = []) {
+      calls.push([file, ...args]);
+      return '';
+    },
+    runQuiet: () => null,
+    spawn: () => null,
+  });
+  expect(() => deleteParkedIosSim('U1')).toThrow(/not Stim-owned/);
+  expect(calls).toEqual([]);
 });
 
 function bootSimList(state: string) {

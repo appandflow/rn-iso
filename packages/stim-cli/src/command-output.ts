@@ -58,6 +58,11 @@ export function phaseLine(label: unknown, text: string): string {
   return `  ${String(label).padEnd(LABEL_WIDTH)} ${text}`;
 }
 
+export function shortUdid(udid: unknown): string {
+  const text = String(udid ?? '');
+  return text.length > 4 ? `${text.slice(0, 4)}..` : text;
+}
+
 export function shortHash(hash: unknown): string {
   const text = String(hash ?? '');
   return text.length > 8 ? `${text.slice(0, 6)}..` : text;

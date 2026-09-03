@@ -13,6 +13,7 @@ import { liveOwnedDeviceCount } from './engine/device.ts';
 import { simslimIsOnPath } from './engine/simslim.ts';
 import { listBuildSlots } from './engine/build-slots.ts';
 import { type IosSimRecord, listAllIosSims } from './sim/ios.ts';
+import { parkedMaxSetting, POOL_SETTING_REMEDY } from './sim-pool.ts';
 import { ccacheEnabled, COMPILATION_CACHE_MIN_XCODE, detectXcodeMajor, parseXcodeMajor } from './engine/xcode.ts';
 import { type AdbDevices, listAdbDevices } from './sim/android.ts';
 import {
@@ -624,6 +625,12 @@ export function runDoctor(
   const settingShapeFindings = settingShapeErrors(projectSettings).map((error) =>
     finding('cost', 'A setting has the wrong type', error, SETTING_SHAPE_REMEDY),
   );
+  const poolSettingError = parkedMaxSetting('ios').error;
+  if (poolSettingError) {
+    settingShapeFindings.push(
+      finding('cost', 'The simulator pool bound is not a number', poolSettingError, POOL_SETTING_REMEDY),
+    );
+  }
   let simslimProfile: string | null = null;
   let simslimProfileError: string | null = null;
   try {

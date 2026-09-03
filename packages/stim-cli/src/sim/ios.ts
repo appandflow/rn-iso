@@ -1,3 +1,6 @@
+import { mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts';
 
@@ -7,6 +10,9 @@ export interface IosSimRecord {
   state: string;
   runtime: string;
   deviceTypeIdentifier: string;
+  dataPath?: string;
+  dataPathSize?: number;
+  available: boolean;
 }
 
 export interface IosDeviceType {
@@ -32,33 +38,51 @@ export interface ResolvedIosSim {
   notOwned?: string;
 }
 
-export function parseSimctlList(jsonOutput: string): IosSimRecord[] {
+export function parseSimctlList(
+  jsonOutput: string,
+  { includeUnavailable = false }: { includeUnavailable?: boolean } = {},
+): IosSimRecord[] {
   const data = JSON.parse(jsonOutput) as {
     devices?: Record<
       string,
-      Array<{ udid: string; name: string; state: string; deviceTypeIdentifier: string; isAvailable?: boolean }>
+      Array<{
+        udid: string;
+        name: string;
+        state: string;
+        deviceTypeIdentifier: string;
+        isAvailable?: boolean;
+        dataPath?: string;
+        dataPathSize?: number;
+      }>
     >;
   };
   const sims: IosSimRecord[] = [];
   for (const [runtime, devices] of Object.entries(data.devices || {})) {
     if (!/\.iOS-/.test(runtime)) continue;
     for (const dev of devices) {
-      if (!dev.isAvailable) continue;
+      const available = Boolean(dev.isAvailable);
+      if (!available && !includeUnavailable) continue;
       sims.push({
         udid: dev.udid,
         name: dev.name,
         state: dev.state,
         runtime,
         deviceTypeIdentifier: dev.deviceTypeIdentifier,
+        available,
+        ...(typeof dev.dataPath === 'string' ? { dataPath: dev.dataPath } : {}),
+        ...(typeof dev.dataPathSize === 'number' ? { dataPathSize: dev.dataPathSize } : {}),
       });
     }
   }
   return sims;
 }
 
-export function listAllIosSims({ timeoutMs }: { timeoutMs?: number } = {}): IosSimRecord[] {
+export function listAllIosSims({
+  timeoutMs,
+  includeUnavailable = false,
+}: { timeoutMs?: number; includeUnavailable?: boolean } = {}): IosSimRecord[] {
   const out = getExecutor().run('xcrun simctl list devices --json', { timeoutMs });
-  return parseSimctlList(out);
+  return parseSimctlList(out, { includeUnavailable });
 }
 
 export function listBootedIosSims(): IosSimRecord[] {
@@ -245,15 +269,51 @@ export function sanitizeDeviceLabel(label: string): string {
     .replace(/^-+|-+$/g, '');
 }
 
-export function ownedSimName(label: string): string {
-  const clean = sanitizeDeviceLabel(label);
-  return `stim-${clean.startsWith('stim-') ? clean.slice('stim-'.length) : clean}`;
+const SIM_NAME_MAX = 60;
+
+const PARKED_SIM_LABEL = 'parked';
+
+export interface SimModel {
+  model: string | null;
+  runtime: string | null;
 }
 
-export function createOwnedIosSim(
-  label: string,
-  { deviceType, runtime }: { deviceType?: string; runtime?: string } = {},
-): { udid: string; name: string; deviceType: string | null; runtime: string | null } {
+function fitSimName(label: string, { model, runtime }: SimModel, suffix = '', preserveLabel = false): string {
+  const version = runtime ?? '';
+  const modelName = model ?? '';
+  if (!version && !modelName) return `stim-${label}${suffix}`;
+  const fixed = `stim-`.length + ' ('.length + 1 + ')'.length + version.length + suffix.length;
+  let over = fixed + label.length + modelName.length - SIM_NAME_MAX;
+  let shortLabel = label;
+  if (over > 0 && !preserveLabel) {
+    const cut = Math.min(over, label.length);
+    shortLabel = label.slice(0, label.length - cut);
+    over -= cut;
+  }
+  const shortModel = over > 0 ? modelName.slice(0, Math.max(0, modelName.length - over)) : modelName;
+  return `stim-${shortLabel} (${shortModel} ${version})${suffix}`;
+}
+
+export function ownedSimName(label: string, model: SimModel = { model: null, runtime: null }): string {
+  const clean = sanitizeDeviceLabel(label);
+  return fitSimName(clean.startsWith('stim-') ? clean.slice('stim-'.length) : clean, model);
+}
+
+export function parkedSimName(udid: string, model: SimModel): string {
+  return fitSimName(PARKED_SIM_LABEL, model, ` ${udid.replace(/-/g, '').slice(0, 4).toLowerCase()}`, true);
+}
+
+export interface IosCreationChoice {
+  deviceTypeId: string;
+  runtimeId: string;
+  deviceType: string | null;
+  runtime: string | null;
+}
+
+export function resolveIosCreation({
+  deviceType,
+  runtime,
+}: { deviceType?: string; runtime?: string } = {}): IosCreationChoice {
   const deviceTypes = listIosDeviceTypes();
   const runtimes = listIosRuntimes();
   const pick = pickDefaultIosCreation(deviceTypes, runtimes, { deviceType, runtime });
@@ -262,14 +322,111 @@ export function createOwnedIosSim(
       'No matching simulator device type / runtime is installed. Install one via Xcode, or pass --device-type / --runtime.',
     );
   }
-  const name = ownedSimName(label);
-  const udid = getExecutor().run(`xcrun simctl create "${name}" "${pick.deviceTypeId}" "${pick.runtimeId}"`).trim();
   return {
-    udid,
-    name,
+    deviceTypeId: pick.deviceTypeId,
+    runtimeId: pick.runtimeId,
     deviceType: deviceTypes.find((d) => d.identifier === pick.deviceTypeId)?.name ?? null,
     runtime: runtimes.find((r) => r.identifier === pick.runtimeId)?.version ?? null,
   };
+}
+
+export function createOwnedIosSim(
+  label: string,
+  { deviceType, runtime }: { deviceType?: string; runtime?: string } = {},
+  choice: IosCreationChoice = resolveIosCreation({ deviceType, runtime }),
+): { udid: string; name: string; deviceType: string | null; runtime: string | null } {
+  const name = ownedSimName(label, { model: choice.deviceType, runtime: choice.runtime });
+  const udid = getExecutor().run(`xcrun simctl create "${name}" "${choice.deviceTypeId}" "${choice.runtimeId}"`).trim();
+  return { udid, name, deviceType: choice.deviceType, runtime: choice.runtime };
+}
+
+export function renameIosSim(udid: string, name: string): void {
+  getExecutor().runFile('xcrun', ['simctl', 'rename', udid, name]);
+}
+
+export function resetIosPrivacy(udid: string): void {
+  getExecutor().runFile('xcrun', ['simctl', 'privacy', udid, 'reset', 'all']);
+}
+
+export function resetIosKeychain(udid: string): void {
+  getExecutor().runFile('xcrun', ['simctl', 'keychain', udid, 'reset']);
+}
+
+export function uninstallIosApp(udid: string, bundleId: string): void {
+  getExecutor().runFile('xcrun', ['simctl', 'uninstall', udid, bundleId]);
+}
+
+interface ListedApp {
+  ApplicationType?: unknown;
+}
+
+export function parseUserApps(jsonOutput: string): string[] {
+  let data: unknown;
+  try {
+    data = JSON.parse(jsonOutput);
+  } catch {
+    return [];
+  }
+  if (data === null || typeof data !== 'object' || Array.isArray(data)) return [];
+  return Object.entries(data as Record<string, ListedApp>)
+    .filter(([, app]) => app !== null && typeof app === 'object' && app.ApplicationType === 'User')
+    .map(([bundleId]) => bundleId);
+}
+
+const LISTAPPS_TIMEOUT_MS = 60000;
+
+export function listUserApps(udid: string): string[] {
+  const exec = getExecutor();
+  const dir = mkdtempSync(join(tmpdir(), 'stim-listapps-'));
+  const plist = join(dir, 'apps.plist');
+  try {
+    writeFileSync(plist, exec.runFile('xcrun', ['simctl', 'listapps', udid], { timeoutMs: LISTAPPS_TIMEOUT_MS }));
+    return parseUserApps(exec.runFile('plutil', ['-convert', 'json', '-o', '-', plist]));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+const CONTAINER_METADATA = '.com.apple.mobile_container_manager.metadata.plist';
+const CLEARED_CONTAINER_DIRS = ['Documents', 'Library', 'tmp', 'SystemData'];
+const PLUTIL_TIMEOUT_MS = 10000;
+
+export function findAppDataContainer(dataPath: string, bundleId: string): string | null {
+  const root = join(dataPath, 'Containers', 'Data', 'Application');
+  let entries: string[];
+  try {
+    entries = readdirSync(root);
+  } catch {
+    return null;
+  }
+  const exec = getExecutor();
+  for (const entry of entries) {
+    const dir = join(root, entry);
+    let identifier: string | null;
+    try {
+      identifier = exec.runFile('plutil', ['-extract', 'MCMMetadataIdentifier', 'raw', join(dir, CONTAINER_METADATA)], {
+        timeoutMs: PLUTIL_TIMEOUT_MS,
+      });
+    } catch {
+      continue;
+    }
+    if (identifier.trim() === bundleId) return dir;
+  }
+  return null;
+}
+
+export function clearAppDataContainer(container: string): void {
+  for (const name of CLEARED_CONTAINER_DIRS) {
+    const dir = join(container, name);
+    let children: string[];
+    try {
+      if (!statSync(dir).isDirectory()) continue;
+      children = readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const child of children) rmSync(join(dir, child), { recursive: true, force: true });
+  }
 }
 
 export function resolveOwnedIosSim(udid: string): ResolvedIosSim {
@@ -288,6 +445,15 @@ export function deleteIosSim(udid: string): void {
     );
   }
   getExecutor().run(`xcrun simctl delete ${udid}`);
+}
+
+export function deleteParkedIosSim(udid: string): void {
+  const sim = listAllIosSims({ includeUnavailable: true }).find((entry) => entry.udid === udid);
+  if (!sim) return;
+  if (!sim.name.startsWith('stim-')) {
+    throw new Error(`Simulator ${udid} is now named "${sim.name}" and is not Stim-owned; refusing to delete it.`);
+  }
+  getExecutor().runFile('xcrun', ['simctl', 'delete', udid]);
 }
 
 export function listIosRuntimes(): IosRuntime[] {

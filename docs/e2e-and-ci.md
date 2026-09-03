@@ -45,15 +45,16 @@ The one non-real piece is the leaf hash function: the real CLI has a direct `@ex
 
 ## The native e2e
 
-There are TWO native suites, on one 2x2 matrix and one shared harness
+There are three native suites and one shared harness
 (`test/e2e/native/harness.mjs`, which owns the fixture creation, the process
-wrappers, the cleanup checks and the diagnostics dump so both drivers build and
+wrappers, the cleanup checks and the diagnostics dump so all drivers build and
 tear down the same app the same way):
 
-| suite      | driver               | proves                                               | when                        |
-| ---------- | -------------------- | ---------------------------------------------------- | --------------------------- |
-| **loop**   | `run-native-e2e.mjs` | the dev loop works end to end                        | nightly, PR label, dispatch |
-| **caches** | `run-cache-e2e.mjs`  | each individual cache is engaged, storing and reused | on demand                   |
+| suite      | driver               | proves                                                  | when                        |
+| ---------- | -------------------- | ------------------------------------------------------- | --------------------------- |
+| **loop**   | `run-native-e2e.mjs` | the dev loop works end to end                           | nightly, PR label, dispatch |
+| **caches** | `run-cache-e2e.mjs`  | each individual cache is engaged, storing and reused    | on demand                   |
+| **pool**   | `run-pool-e2e.mjs`   | iOS simulators are parked, evicted, adopted, and reaped | on demand                   |
 
 ### The loop suite
 
@@ -90,6 +91,18 @@ node test/e2e/native/run-native-e2e.mjs --framework bare --platform android --dr
 The fixture-creation commands are version-sensitive; each is overridable with an
 env var (`STIM_E2E_BARE_INIT`, `STIM_E2E_EXPO_INIT`) so a runner can adjust
 them without touching assertion logic.
+
+### The simulator pool suite
+
+`test/e2e/native/run-pool-e2e.mjs` runs on iOS. With a pool bound of one, it
+creates two workspace simulators, proves the first is parked and then evicted,
+proves a third workspace adopts the survivor, and finishes by proving
+`gc --delete` empties the pool. Run it by hand with:
+
+```bash
+node test/e2e/native/run-pool-e2e.mjs --framework expo
+node test/e2e/native/run-pool-e2e.mjs --framework bare --dry-run
+```
 
 ### The cache suite
 

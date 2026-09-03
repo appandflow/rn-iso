@@ -72,6 +72,8 @@ export interface StimConfig {
   projects: Record<string, ProjectRecord>;
   repos: Record<string, RepoRecord>;
   concurrency?: { maxBuilds?: unknown; maxDevices?: unknown };
+  pool?: { iosParkedMax?: unknown; androidParkedMax?: unknown };
+  parked?: { ios?: unknown; android?: unknown };
   caches?: { buildCache?: unknown; metroCache?: unknown; injectMetroStore?: unknown };
   [key: string]: unknown;
 }
