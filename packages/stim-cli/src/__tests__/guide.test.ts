@@ -45,7 +45,7 @@ test('the lifecycle topic grids every label the output vocabulary allows, and no
       .trim()
       .split('\n')
       .filter((line) => line.trim() !== ''),
-  ).toHaveLength(6);
+  ).toHaveLength(7);
   expect(grid.trim().split(/\s+/).toSorted()).toEqual(
     OUTPUT_LABELS.filter((label) => label !== '' && !SUMMARY_ONLY_LABELS.includes(label)).toSorted(),
   );

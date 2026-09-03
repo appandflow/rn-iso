@@ -13,6 +13,7 @@ import {
 } from '../sandbox.ts';
 import { detectFingerprintParity, detectXcodeMajor, runDoctor } from '../doctor.ts';
 import type { DoctorPlatform, Finding } from '../doctor.ts';
+import { phaseLine } from '../command-output.ts';
 
 interface DoctorOptions {
   json?: boolean;
@@ -23,6 +24,51 @@ interface DoctorOptions {
 export function parseDoctorPlatform(value: string): DoctorPlatform {
   if (value === 'ios' || value === 'android') return value;
   throw new InvalidArgumentError('expected one of: ios, android');
+}
+
+function doctorTarget(platform?: DoctorPlatform): string {
+  if (platform === 'ios') return 'iOS';
+  if (platform === 'android') return 'Android';
+  return 'all platforms';
+}
+
+export function doctorSuccessLines(platform?: DoctorPlatform): string[] {
+  const lines = [
+    `Doctor (${doctorTarget(platform)})`,
+    phaseLine('result', 'PASS'),
+    phaseLine('findings', '0'),
+    '',
+    'Project',
+    phaseLine('project', 'main checkout, dependencies, local upstream'),
+    phaseLine('settings', 'every Stim setting type'),
+  ];
+
+  if (platform !== 'android') {
+    lines.push('', 'iOS');
+    lines.push(phaseLine('setup', 'CocoaPods, warm state, dev client'));
+    lines.push(phaseLine('caches', 'Metro, Xcode compilation, ccache, build provider'));
+    lines.push(phaseLine('devices', 'remote device, SimSlim profile'));
+  }
+  if (platform !== 'ios') {
+    lines.push('', 'Android');
+    lines.push(phaseLine('setup', 'warm state, dev client'));
+    lines.push(phaseLine('caches', 'Metro, Gradle build provider'));
+    lines.push(phaseLine('devices', 'remote device'));
+  }
+
+  lines.push('', 'Shared');
+  lines.push(phaseLine('services', 'EAS session'));
+  lines.push(phaseLine('fingerprint', 'parity when dependencies are absent'));
+  lines.push('', 'Handled automatically');
+  const suppliedCaches =
+    platform === 'ios'
+      ? 'Metro transform store, Xcode compilation cache'
+      : platform === 'android'
+        ? 'Metro transform store, Gradle build cache'
+        : 'Metro transform store, Xcode compilation cache, Gradle build cache';
+  lines.push(phaseLine('caches', suppliedCaches));
+  lines.push(phaseLine('meaning', 'missing project cache settings are healthy'));
+  return lines;
 }
 
 /**
@@ -115,27 +161,17 @@ export default function doctorCommand(program: Command): void {
       }
 
       if (findings.length === 0) {
-        console.log(chalk.green('Nothing to flag.'));
-        const nativeChecks =
-          opts.platform === 'ios'
-            ? 'CocoaPods, iOS warm state, dev client, Metro cacheStores, Xcode compilation cache, ccache, build cache provider, iOS remote device and SimSlim profile'
-            : opts.platform === 'android'
-              ? 'Android warm state, dev client, Metro cacheStores, build cache provider and Android remote device'
-              : 'CocoaPods, iOS and Android warm state, dev client, ccache, Metro cacheStores, compilation cache, build cache provider, remote devices and SimSlim profile';
-        console.log(
-          chalk.dim(
-            `Checked: main-checkout dependencies, ${nativeChecks}, local upstream, EAS session, the type of every setting Stim reads and, on a checkout without installed dependencies, fingerprint parity.`,
-          ),
-        );
-        console.log(
-          chalk.dim(
-            'Nothing to flag means nothing Stim cannot handle itself: it supplies the Metro transform store, the Xcode compilation cache and the Gradle build cache on its own command lines, so a project that configures none of them is clean here.',
-          ),
-        );
+        const lines = doctorSuccessLines(opts.platform);
+        for (const [index, line] of lines.entries()) {
+          if (index === 1) console.log(chalk.green(line));
+          else if (line && !line.startsWith('  ')) console.log(chalk.bold(line));
+          else console.log(chalk.dim(line));
+        }
         return;
       }
 
       const ordered = findings.toSorted((a, b) => (a.level === b.level ? 0 : a.level === 'cost' ? -1 : 1));
+      console.log(chalk.bold(`Doctor (${doctorTarget(opts.platform)})`));
       for (const f of ordered) {
         const tag = f.level === 'cost' ? chalk.yellow('costs time') : chalk.dim('note');
         console.log(`\n${tag}  ${chalk.bold(f.title)}`);

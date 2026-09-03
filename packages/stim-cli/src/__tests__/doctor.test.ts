@@ -21,7 +21,7 @@ import {
   parseXcodeMajor,
   checkConcurrency,
 } from '../doctor.ts';
-import doctorCommand, { parseDoctorPlatform } from '../commands/doctor.ts';
+import doctorCommand, { doctorSuccessLines, parseDoctorPlatform } from '../commands/doctor.ts';
 import type { Finding } from '../doctor.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import type { EasAuthResult } from '../engine/remote-cache.ts';
@@ -1083,6 +1083,33 @@ test('doctor --json prints exactly one line of JSON on stdout', async () => {
   expect(Array.isArray(payload.findings)).toBe(true);
   expect(typeof payload.project).toBe('string');
   expect(payload.platform).toBe(null);
+});
+
+test('doctor success output groups iOS checks and optional capabilities', () => {
+  const output = doctorSuccessLines('ios').join('\n');
+
+  expect(output).toContain('Doctor (iOS)');
+  expect(output).toContain('result      PASS');
+  expect(output).toContain('findings    0');
+  expect(output).toContain('Project');
+  expect(output).toContain('iOS');
+  expect(output).toContain('setup       CocoaPods, warm state, dev client');
+  expect(output).toContain('caches      Metro, Xcode compilation, ccache, build provider');
+  expect(output).toContain('Handled automatically');
+  expect(output).toContain('missing project cache settings are healthy');
+  expect(output).not.toContain('Android');
+  expect(output).not.toContain('Nothing to flag means');
+});
+
+test('doctor success output scopes native checks to Android', () => {
+  const output = doctorSuccessLines('android').join('\n');
+
+  expect(output).toContain('Doctor (Android)');
+  expect(output).toContain('Android');
+  expect(output).toContain('setup       warm state, dev client');
+  expect(output).toContain('caches      Metro, Gradle build provider');
+  expect(output).not.toContain('Xcode compilation');
+  expect(output).not.toContain('SimSlim');
 });
 
 test('doctor --platform includes the selection in JSON and suppresses the other warm-state finding', async () => {

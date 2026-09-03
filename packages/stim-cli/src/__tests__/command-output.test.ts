@@ -75,8 +75,8 @@ test('the label set is closed, sorted, and free of duplicates', () => {
   expect(isOutputLabel('wired')).toBe(false);
 });
 
-test('every label the run and lifecycle commands print comes from that one set', () => {
-  for (const command of ['ios', 'android', 'worktree', 'start', 'stop']) {
+test('every label the run, lifecycle, and doctor commands print comes from that one set', () => {
+  for (const command of ['ios', 'android', 'worktree', 'start', 'stop', 'doctor']) {
     const src = readFileSync(new URL(`../commands/${command}.ts`, import.meta.url), 'utf-8');
     const labels = new Set<string>();
     for (const match of src.matchAll(/\bphase(?:Line)?\(\s*'((?:[^'\\]|\\.)*)'/g)) labels.add(match[1]!);

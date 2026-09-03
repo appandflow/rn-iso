@@ -1555,12 +1555,13 @@ PROGRESS ON A LONG RUN
   The labels are a closed set, and nothing else is ever printed in that
   column:
 
-    device      metro       lan         lease       fingerprint
-    prebuild    pods        gems        cache       build
-    swap        ip.txt      install     launch      verify
-    logs        branch      carry       ready       stop
-    port        setting     state       stats       error
-    remedy      log         failed      removed     workspace
+    branch      build       cache       caches      carry       device
+    devices     error       failed      findings    fingerprint gems
+    install     ip.txt      lan         launch      lease       log
+    logs        meaning     metro       pods        port        prebuild
+    project     ready       remedy      removed     result      services
+    setting     settings    setup       state       stats       stop
+    swap        verify      workspace
 
   \`app\` and \`compilation cache\` join them in the stdout block a successful
   run ends with, and nowhere else. A line states a fact; the reason a fact
