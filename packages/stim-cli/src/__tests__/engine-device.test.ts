@@ -198,6 +198,63 @@ describe('ensureBooted: ios', () => {
     setExecutor({ run: () => '', runQuiet: () => '', runFile: () => '', spawn: () => null });
     expect((await ensureBooted({ platform: 'ios', device: {} })).reason).toMatch(/No iOS simulator is recorded/);
   });
+
+  test('does not list simulators again when this run already booted the sim', async () => {
+    const commands: string[] = [];
+    setExecutor({
+      run: (cmd: string) => {
+        commands.push(cmd);
+        throw new Error(`unexpected run: ${cmd}`);
+      },
+      runQuiet: (cmd: string) => {
+        commands.push(cmd);
+        return '';
+      },
+      runFile: () => '',
+      spawn: () => null,
+    });
+    const result = await ensureBooted({
+      platform: 'ios',
+      device: { deviceUdid: 'U1', owned: true, bootedUdid: 'U1' },
+    });
+    expect(result).toEqual({ ok: true, udid: 'U1' });
+    expect(commands).toEqual([]);
+  });
+
+  test('still lists a reused sim, which can have been shut down since it was resolved', async () => {
+    const commands: string[] = [];
+    setExecutor({
+      run: (cmd: string) => {
+        commands.push(cmd);
+        return simList([{ udid: 'U1', name: 'stim-app', state: 'Booted', isAvailable: true }]);
+      },
+      runQuiet: () => '',
+      runFile: () => '',
+      spawn: () => null,
+    });
+    const result = await ensureBooted({ platform: 'ios', device: { deviceUdid: 'U1', owned: true } });
+    expect(result).toEqual({ ok: true, udid: 'U1' });
+    expect(commands.filter((c) => c.includes('list devices')).length).toBe(1);
+  });
+
+  test('a boot recorded for another sim does not vouch for this one', async () => {
+    const commands: string[] = [];
+    setExecutor({
+      run: (cmd: string) => {
+        commands.push(cmd);
+        return simList([{ udid: 'U1', name: 'stim-app', state: 'Booted', isAvailable: true }]);
+      },
+      runQuiet: () => '',
+      runFile: () => '',
+      spawn: () => null,
+    });
+    const result = await ensureBooted({
+      platform: 'ios',
+      device: { deviceUdid: 'U1', owned: true, bootedUdid: 'U2' },
+    });
+    expect(result).toEqual({ ok: true, udid: 'U1' });
+    expect(commands.filter((c) => c.includes('list devices')).length).toBe(1);
+  });
 });
 
 describe('ensureBooted: android', () => {
@@ -665,6 +722,58 @@ describe('ensureOwnedDevice: ios', () => {
       expect(notes.some((n) => /not Stim-owned by name/i.test(n))).toBeTruthy();
     } finally {
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a created sim reports the boot it just performed', async () => {
+    const root = projectDir();
+    try {
+      const { run, exec } = iosExecutor([]);
+      setExecutor(exec);
+      const result = await ensureOwnedDevice({
+        platform: 'ios',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: {},
+      });
+      expect(result.created).toBe(true);
+      expect(result.bootedUdid).toBe('NEW-UDID');
+      expect(run.filter((c) => c === 'xcrun simctl bootstatus NEW-UDID -b').length).toBe(1);
+      expect(getProject(root)?.platforms?.ios).toEqual({ deviceUdid: 'NEW-UDID', owned: true, deviceName: 'stim-app' });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a reused sim reports a boot only when it had to perform one', async () => {
+    const shutdown = projectDir();
+    const booted = projectDir();
+    try {
+      setDevice(shutdown, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app' });
+      setExecutor(iosExecutor([{ udid: 'U1', name: 'stim-app', state: 'Shutdown', isAvailable: true }]).exec);
+      const afterBoot = await ensureOwnedDevice({
+        platform: 'ios',
+        project: getProject(shutdown),
+        projectPath: shutdown,
+        label: 'app',
+        settings: {},
+      });
+      expect(afterBoot.bootedUdid).toBe('U1');
+
+      setDevice(booted, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app' });
+      setExecutor(iosExecutor([{ udid: 'U1', name: 'stim-app', state: 'Booted', isAvailable: true }]).exec);
+      const alreadyBooted = await ensureOwnedDevice({
+        platform: 'ios',
+        project: getProject(booted),
+        projectPath: booted,
+        label: 'app',
+        settings: {},
+      });
+      expect(alreadyBooted.bootedUdid).toBeUndefined();
+    } finally {
+      rmSync(shutdown, { recursive: true, force: true });
+      rmSync(booted, { recursive: true, force: true });
     }
   });
 

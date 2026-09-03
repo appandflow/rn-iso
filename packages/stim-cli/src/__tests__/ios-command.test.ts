@@ -40,6 +40,8 @@ import {
   writeLastBuild,
 } from '../commands/ios.ts';
 import { asProcessExit, makeChildProcess, makeError, makeExecutor, makeMetroResolution } from './_factories.ts';
+import { ensureBooted } from '../engine/device.ts';
+import { resetExecutor, setExecutor } from '../exec.ts';
 import { RELEASE_VERIFY_WAIT_MS } from '../engine/app-install.ts';
 import { DEVICECTL_INSTALL_TIMEOUT_MS, LAUNCH_PROBE_TIMEOUT_MS } from '../engine/ios-device.ts';
 import type { RecordStatsResult, StatsRun } from '../engine/stats.ts';
@@ -109,6 +111,7 @@ afterEach(() => {
   rmSync(tmpHome, { recursive: true, force: true });
   rmSync(root, { recursive: true, force: true });
   delete process.env.STIM_HOME;
+  resetExecutor();
 });
 
 function captureAction(register: typeof registerIos, deps: LooseDeps) {
@@ -462,6 +465,66 @@ describe('the simulator boot gate', () => {
     );
     expect(exitCode).toBe(null);
     expect(calls.order.includes('buildIos')).toBe(true);
+  });
+});
+
+function simctlClock(step: number) {
+  const state = { now: 1_000_000 };
+  setExecutor(
+    makeExecutor({
+      run: (cmd: string) => {
+        if (!cmd.includes('simctl list devices')) return '';
+        state.now += step;
+        return JSON.stringify({
+          devices: {
+            'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
+              { udid: UDID, name: 'stim-fixture', state: 'Booted', isAvailable: true },
+            ],
+          },
+        });
+      },
+    }),
+  );
+  return state;
+}
+
+describe('the boot this run performed', () => {
+  test('is trusted: the booted line does not pay for another simulator list', async () => {
+    reserve();
+    const clock = simctlClock(8000);
+    const { errs, exitCode } = await run(
+      {},
+      {
+        now: () => clock.now,
+        ensureBooted,
+        ensureOwnedDevice: async () => ({
+          deviceUdid: UDID,
+          deviceName: 'stim-fixture',
+          owned: true,
+          created: true,
+          bootedUdid: UDID,
+        }),
+      },
+    );
+    expect(exitCode).toBe(null);
+    const line = errs.find((l) => /booted \(/.test(l));
+    assert(line);
+    expect(Number(/booted \((\d+)ms\)/.exec(line)?.[1])).toBeLessThan(100);
+  });
+
+  test('a sim this run did not boot is still listed, and the line says what that cost', async () => {
+    reserve();
+    const clock = simctlClock(8000);
+    const { errs, exitCode } = await run(
+      {},
+      {
+        now: () => clock.now,
+        ensureBooted,
+        ensureOwnedDevice: async () => ({ deviceUdid: UDID, deviceName: 'stim-fixture', owned: true }),
+      },
+    );
+    expect(exitCode).toBe(null);
+    expect(errs.join('\n')).toMatch(/booted \(8s\)/);
   });
 });
 
