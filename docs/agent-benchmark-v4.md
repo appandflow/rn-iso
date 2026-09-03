@@ -97,14 +97,15 @@ creates a new benchmark-named iPhone 17 on iOS 26.5.
 ## Settings readiness proof
 
 App-process liveness is retained as a secondary milestone. The primary
-readiness endpoint is the first successful copied Settings screenshot after
-the expected changed content is present.
+readiness endpoint is completion of the successful Settings screenshot command
+after the expected changed content is present. Copying that PNG into retained
+results is a validity gate, not a later timing endpoint.
 
 After launch, every agent must use `agent-device`. The required command
 sequence is:
 
 ```text
-agent-device open com.appandflow.trailhead --foreground
+agent-device open com.appandflow.trailhead --foreground --platform ios --udid <run-udid>
 <handle Expo onboarding if it appears and navigate by semantic label to Settings>
 agent-device wait text "<expected text>"
 agent-device screenshot /tmp/<run-id>-settings.png
@@ -112,22 +113,30 @@ cp /tmp/<run-id>-settings.png <run-dir>/proof/settings.png
 agent-device close
 ```
 
-The explicit bundle identifier prevents an existing automation session from
-selecting unrelated hardware. The temporary screenshot path avoids Simulator
-write restrictions on external volumes. JavaScript waits for `Keep saved trail
-maps available offline`; native waits for `Offline maps`.
+The agent reads `<run-udid>` from the Stim result or control simulator-creation
+output. The explicit UDID prevents an existing automation session from
+selecting unrelated hardware; a bundle identifier alone is insufficient. The
+temporary screenshot path avoids Simulator write restrictions on external
+volumes. JavaScript waits for `Keep saved trail maps available offline`; native
+waits for `Offline maps`.
 
-The collector accepts the screenshot only when all required commands completed
-in order after dispatch, the PNG has a valid signature and dimensions, its
-timestamps fit the run, and the copied file exists. The JavaScript source and
-captured Metro bundle must contain the changed subtitle. Native must have the
-exact run marker in the live window accessibility node. Missing proof makes the
-attempt invalid even when the app process is alive.
+The collector accepts the screenshot only when the targeted open command names
+the same UDID recorded by the independent app watcher, all required commands
+completed in order after dispatch, the PNG has a valid signature and
+dimensions, its timestamps fit the run, and the copied file exists. The
+JavaScript source and captured Metro bundle must contain the changed subtitle.
+Native must have the exact run marker in the live window accessibility node.
+Missing proof makes the attempt invalid even when the app process is alive.
+
+The initial Luna pilot predated this UDID-binding correction. Each of its four
+valid snapshots still proved the target through the run-specific changed text
+or native accessibility marker, so those attempts remain valid. Any later
+block must use the explicit UDID command above.
 
 ## Metrics and records
 
 The primary metric is `dispatchToScreenReadySeconds`: dispatch to completion
-of the copied, validated Settings screenshot. Report
+of the successful, validated `agent-device screenshot` command. Report
 `dispatchToAppAliveSeconds` separately. Also retain command count, raw token
 fields, worktree and simulator evidence, cache and adoption/build output, and
 invalid-attempt reasons.
