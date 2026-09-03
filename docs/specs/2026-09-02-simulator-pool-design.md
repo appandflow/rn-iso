@@ -37,7 +37,7 @@ The pool is machine state under the global config lock, in
 
     "pool": {
       "ios": [
-        { "udid": "...", "name": "stim-parked-<8 hex>", "deviceTypeIdentifier": "...",
+        { "udid": "...", "name": "stim-parked-<model>-<runtime>-<4 hex>", "deviceTypeIdentifier": "...",
           "runtimeIdentifier": "...", "parkedAt": "...", "parkedFrom": "/canonical/root",
           "lastBundleId": "com.example.app" }
       ],
@@ -57,6 +57,24 @@ config. `0` disables parking: `worktree remove` deletes the simulator as
 today and nothing is adopted. A value that is not a whole number is
 `STIM_BAD_ARG` at the command that reads it.
 
+## Naming
+
+An owned simulator's name carries its model and runtime so `simctl list`
+and the Simulator app show what a workspace runs on:
+
+    stim-<label>-<model>-<runtime>        e.g. stim-feat-login-iPhone-17-26.5
+    stim-parked-<model>-<runtime>-<4 hex> e.g. stim-parked-iPad-Pro-13-inch-M4-26.5-a1f3
+
+The model is the device type's name with spaces turned into `-` and
+parentheses dropped; the runtime is its version. Names are capped at 60
+characters: the label is shortened first (keeping its start), then the
+model, never the `stim-` prefix or the runtime, and a shortened name is
+still unique per machine because ownership is recorded by udid, not by
+name. Ownership checks match the `stim-` prefix and the registry's udid, as
+today; the label segment stays the workspace's label. Android AVDs follow
+the same shape within `avdmanager`'s charset (`[A-Za-z0-9._-]`):
+`stim-<label>-api<level>-<abi>`, e.g. `stim-feat-login-api36-arm64`.
+
 ## Park
 
 Parking replaces deletion inside `teardown.ts`'s owned-device removal
@@ -68,7 +86,8 @@ orphaned workspace both park when the pool has room:
    (registry `bundleId`); skip silently when none is recorded.
 3. `simctl privacy <udid> reset all <bundleId>` and
    `simctl keychain <udid> reset`.
-4. `simctl rename <udid> stim-parked-<first 8 of the udid>`.
+4. `simctl rename <udid> stim-parked-<model>-<runtime>-<4 hex>` (the hex
+   from the udid).
 5. Under the config lock: append the record; if the pool now exceeds the
    maximum, delete the oldest by `parkedAt` (`simctl delete`) and drop
    its record. Removing the device record from the project registry happens
@@ -89,8 +108,8 @@ When `ensureOwnedIosDevice` finds no owned simulator for the workspace:
    `deviceTypeIdentifier` and `runtimeIdentifier` both match, oldest
    first; remove its record from the pool and record it as this workspace's
    owned device in the same write, with `adopted: true`.
-3. `simctl rename <udid> stim-<label>` (0.2 s) so the ownership naming
-   rule holds without exception.
+3. `simctl rename <udid> stim-<label>-<model>-<runtime>` (0.2 s) so the
+   ownership naming rule holds without exception.
 4. Boot and configure as today (SimSlim profile, dev-menu preferences,
    scheme preapproval). The `device` phase line reads
    `stim-<label> (<udid>) adopted (<time>)` instead of `created`.
