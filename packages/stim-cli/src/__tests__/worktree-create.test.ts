@@ -285,7 +285,7 @@ test('create action: --base takes any ref this repo resolves, and branches from 
       expect(logs).toEqual([target]);
       expect(process.exitCode).not.toBe(1);
       expect(execSync('git rev-parse HEAD', { cwd: target, encoding: 'utf-8' }).trim()).toBe(releaseSha);
-      const branchedFrom = errs.filter((e) => String(e).startsWith('Branched '));
+      const branchedFrom = errs.filter((e) => /^  branch {6}worktree-/.test(String(e)));
       expect(branchedFrom.length).toBe(1);
       expect(String(branchedFrom[0])).toMatch(new RegExp(`from ${ref.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')} \\(`));
       expect(String(branchedFrom[0])).toMatch(new RegExp(releaseSha.slice(0, 7)));
@@ -496,8 +496,8 @@ test('create action: an existing branch is reported as attached, not as branched
       worktreeBranchOwned: false,
       worktreeMainRoot: repo,
     });
-    expect(errs.some((e) => /Attached to the existing branch worktree-feat-again/.test(String(e)))).toBeTruthy();
-    expect(!errs.some((e) => String(e).startsWith('Branched '))).toBeTruthy();
+    expect(errs.some((e) => /^  branch {6}attached to the existing worktree-feat-again/.test(String(e)))).toBeTruthy();
+    expect(!errs.some((e) => /^  branch {6}worktree-feat-again from /.test(String(e)))).toBeTruthy();
   } finally {
     process.exitCode = 0;
     rmSync(base, { recursive: true, force: true });
@@ -571,7 +571,7 @@ test('create action: a leftover branch already AT the base is refused too, since
     expect(text).toContain('STIM_WORKTREE_BRANCH_EXISTS');
     expect(text).toMatch(/coincidence, not the guarantee/);
     expect(text).toMatch(/branch -D worktree-feat-same/);
-    expect(text).not.toMatch(/Attached to the existing branch/);
+    expect(text).not.toMatch(/attached to the existing/);
   } finally {
     process.exitCode = 0;
     rmSync(base, { recursive: true, force: true });
@@ -805,8 +805,9 @@ test('create action: a same-named tag does not stand in for the branch in the --
 
 test('carriedChangesLine and carryConflictWarning cap at three files and count the rest', () => {
   expect(carriedChangesLine(['app.json'])).toBe(
-    'Carried 1 uncommitted change(s) from the source (app.json) -- uncommitted here too; commit deliberately.',
+    'carried 1 uncommitted change from the source (app.json) -- uncommitted here too; commit deliberately',
   );
+  expect(carriedChangesLine(['a', 'b'])).toContain('carried 2 uncommitted changes from the source');
   expect(carriedChangesLine(['a', 'b', 'c', 'd', 'e'])).toContain('(a, b, c, +2)');
   const warning = carryConflictWarning(['a', 'b', 'c', 'd']);
   expect(warning).toContain('(a, b, c, +1)');
@@ -836,7 +837,9 @@ test('create action: --carry-ignored applies the source uncommitted changes when
     expect(readFileSync(join(wt, 'app.json'), 'utf-8')).toContain('dirty-scheme');
     const status = execSync('git status --porcelain -- app.json', { cwd: wt, encoding: 'utf-8' }).trim();
     expect(status).toBe('M app.json');
-    expect(errs.some((e) => /Carried 1 uncommitted change\(s\) from the source \(app\.json\)/.test(e))).toBeTruthy();
+    expect(
+      errs.some((e) => /^  carry {7}carried 1 uncommitted change from the source \(app\.json\)/.test(e)),
+    ).toBeTruthy();
     expect(errs.some((e) => /uncommitted here too; commit deliberately/.test(e))).toBeTruthy();
     expect(process.exitCode).not.toBe(1);
   } finally {
@@ -866,7 +869,9 @@ test('create action: --carry-ignored warns and applies NOTHING when the base div
     expect(logs).toEqual([wt]);
     expect(readFileSync(join(wt, 'app.json'), 'utf-8')).toBe('first version\n');
     expect(execSync('git status --porcelain', { cwd: wt, encoding: 'utf-8' }).trim()).toBe('');
-    expect(errs.some((e) => /Could not carry the source's uncommitted changes \(app\.json\)/.test(e))).toBeTruthy();
+    expect(
+      errs.some((e) => /^  carry {7}could not carry the source's uncommitted changes \(app\.json\)/.test(e)),
+    ).toBeTruthy();
     expect(errs.some((e) => /base diverges from the source HEAD/.test(e))).toBeTruthy();
     expect(errs.some((e) => /fingerprints and cache keys/.test(e))).toBeTruthy();
     expect(process.exitCode).not.toBe(1);
@@ -892,7 +897,7 @@ test('create action: a plain create (no --carry-ignored) is pure HEAD -- no diff
     const wt = join(defaultWorktreeDir(repo), 'feat-plain');
     expect(readFileSync(join(wt, 'app.json'), 'utf-8')).toBe('{"expo":{}}\n');
     expect(execSync('git status --porcelain', { cwd: wt, encoding: 'utf-8' }).trim()).toBe('');
-    expect(errs.some((e) => /Carried .* uncommitted|Could not carry/.test(e))).toBe(false);
+    expect(errs.some((e) => /carried .* uncommitted|could not carry/.test(e))).toBe(false);
   } finally {
     process.exitCode = 0;
     rmSync(base, { recursive: true, force: true });
@@ -908,8 +913,11 @@ test('warmCarryCategories recognizes dependency, CocoaPods, and native output pa
       'apps/mobile/android/app/build',
     ]),
   ).toEqual({ dependencies: true, pods: true, nativeOutput: true });
-  expect(warmCarrySummary(['node_modules'])).toBe(
-    'Carried warm state: dependencies=yes, CocoaPods=no, native build output=no.',
+  expect(warmCarrySummary(['node_modules'], undefined, true)).toBe(
+    'node_modules (APFS clone); no Pods; no native build output',
+  );
+  expect(warmCarrySummary(['node_modules', 'ios/Pods', 'ios/build'], undefined, false)).toBe(
+    'node_modules, Pods, native build output (byte copy)',
   );
 });
 
@@ -981,9 +989,9 @@ test('create action: a plain create reports the exact warm-worktree command when
 
     const { errs } = await runCreateInRepo(repo, 'feat-warm-hint', { base: 'head' });
 
-    expect(errs.some((e) => /Warm source not carried: dependencies, CocoaPods, native build output/.test(e))).toBe(
-      true,
-    );
+    expect(
+      errs.some((e) => /^  carry {7}warm source not carried: dependencies, CocoaPods, native build output/.test(e)),
+    ).toBe(true);
     expect(errs.some((e) => /stim worktree create <name> --carry-ignored/.test(e))).toBe(true);
   } finally {
     process.exitCode = 0;
@@ -1019,8 +1027,8 @@ test('create action: pods installed against an uncommitted Podfile.lock carried 
     expect(readFileSync(join(wt, 'ios', 'Podfile.lock'), 'utf-8')).toBe(
       readFileSync(join(wt, 'ios', 'Pods', 'Manifest.lock'), 'utf-8'),
     );
-    expect(errs.some((e) => /Carried ios\/Pods does not match/.test(e))).toBe(false);
-    expect(errs.some((e) => /Carried 1 uncommitted change\(s\)/.test(e))).toBe(true);
+    expect(errs.some((e) => /carried ios\/Pods does not match/.test(e))).toBe(false);
+    expect(errs.some((e) => /^  carry {7}carried 1 uncommitted change /.test(e))).toBe(true);
   } finally {
     process.exitCode = 0;
     rmSync(base, { recursive: true, force: true });
@@ -1037,7 +1045,7 @@ test('create action: pods that disagree with the Podfile.lock on disk still get 
 
     const { errs } = await runCreateInRepo(repo, 'feat-pods-stale', { base: 'head', carryIgnored: true });
 
-    const warning = errs.find((e) => /Carried ios\/Pods does not match/.test(e));
+    const warning = errs.find((e) => /^  carry {7}carried ios\/Pods does not match/.test(e));
     expect(warning).toContain('the ios/Podfile.lock on disk here');
     expect(warning).toContain('pod install');
   } finally {
@@ -1066,13 +1074,51 @@ test('create action: --carry-ignored reports warm categories and the copy mode',
     const { errs } = await runCreateInRepo(repo, 'feat-warm-summary', { base: 'head', carryIgnored: true });
 
     expect(
-      errs.some((e) => /Carried warm state: dependencies=yes, CocoaPods=yes, native build output=yes/.test(e)),
+      errs.some((e) => /^  carry {7}node_modules, Pods, native build output \((APFS clone|byte copy)\)$/.test(e)),
     ).toBe(true);
-    expect(errs.some((e) => /Worktree ready\. Cloned dependencies may be stale/.test(e))).toBe(true);
-    expect(errs.some((e) => /Copy mode: (APFS copy-on-write clone|full byte copy)/.test(e))).toBe(true);
+    expect(errs.some((e) => /Cloned dependencies may be stale/.test(e))).toBe(false);
+    expect(errs.some((e) => /^  ready {7}\//.test(e))).toBe(true);
   } finally {
     process.exitCode = 0;
     rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('create action: the stale-carry line prints only when the branch lockfile differs', async () => {
+  for (const [label, useOldBase] of [
+    ['a branch whose lockfile matches the source', false],
+    ['a branch pinned before the lockfile changed', true],
+  ] as const) {
+    resetExecutor();
+    const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-stale-')));
+    const repo = join(base, 'repo');
+    try {
+      const git = initScratchRepo(repo);
+      writeFileSync(join(repo, '.gitignore'), 'node_modules/\n');
+      writeFileSync(join(repo, 'package.json'), '{"name":"app"}\n');
+      writeFileSync(join(repo, 'package-lock.json'), '{"lockfileVersion":3,"packages":{}}\n');
+      git('git add .gitignore package.json package-lock.json');
+      git('git commit -q -m lockfile');
+      const first = git('git rev-parse HEAD').trim();
+      writeFileSync(join(repo, 'package-lock.json'), '{"lockfileVersion":3,"packages":{"node_modules/pkg":{}}}\n');
+      git('git add package-lock.json');
+      git('git commit -q -m bump');
+      mkdirSync(join(repo, 'node_modules', 'pkg'), { recursive: true });
+      writeFileSync(join(repo, 'node_modules', 'pkg', 'index.js'), 'dep');
+
+      const { errs } = await runCreateInRepo(repo, `feat-stale-${useOldBase ? 'yes' : 'no'}`, {
+        base: useOldBase ? first : 'head',
+        carryIgnored: true,
+      });
+
+      expect({
+        label,
+        stale: errs.some((e) => /^  carry {7}carried dependencies may be stale/.test(e)),
+      }).toEqual({ label, stale: useOldBase });
+    } finally {
+      process.exitCode = 0;
+      rmSync(base, { recursive: true, force: true });
+    }
   }
 });
 
@@ -1104,10 +1150,10 @@ test('create action: a cold --carry-ignored create prints one exact dependency r
 
     const { errs } = await runCreateInRepo(repo, 'feat-cold-carry', { base: 'head', carryIgnored: true });
 
-    const remedies = errs.filter((e) => /Dependencies were not carried/.test(e));
+    const remedies = errs.filter((e) => /^  carry {7}no dependencies carried/.test(e));
     expect(remedies).toHaveLength(1);
     expect(remedies[0]).toContain('npm ci');
-    expect(errs.some((e) => /Worktree ready\. Install dependencies yourself/.test(e))).toBe(true);
+    expect(errs.some((e) => /^  ready {7}\//.test(e))).toBe(true);
   } finally {
     process.exitCode = 0;
     rmSync(base, { recursive: true, force: true });

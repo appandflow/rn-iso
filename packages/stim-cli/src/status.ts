@@ -1,4 +1,4 @@
-import { formatElapsed } from './command-output.ts';
+import { clockTime, formatElapsed } from './command-output.ts';
 import type { ProjectRecord } from './config.ts';
 import type { LeaseFileEntry } from './engine/device-lease.ts';
 
@@ -231,12 +231,6 @@ export function deviceLeaseStates(
       parsed: Boolean(lease),
     };
   });
-}
-
-function clockTime(iso: string): string {
-  const at = new Date(iso);
-  if (Number.isNaN(at.getTime())) return iso;
-  return [at.getHours(), at.getMinutes(), at.getSeconds()].map((n) => String(n).padStart(2, '0')).join(':');
 }
 
 export function deviceLeaseLines(states: readonly DeviceLeaseState[], now: number): string[] {

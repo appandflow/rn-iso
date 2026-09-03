@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { DEFAULT_FINGERPRINT_IGNORES } from '../build-cache.ts';
 import { OUTPUT_LABELS } from '../command-output.ts';
 import { topicNames, renderTopic, renderIndex } from '../commands/guide.ts';
+import { carriedChangesLine, carryConflictWarning } from '../commands/worktree.ts';
 import { ANDROID_AVD_CONFIG_HELP } from '../settings.ts';
 import { CONSOLE_ENV, deviceConsoleArgs } from '../collector/ios-device.ts';
 import { HEARTBEAT_INTERVAL_MS } from '../engine/xcode.ts';
@@ -51,6 +52,17 @@ test('the lifecycle topic grids every label the output vocabulary allows, and no
   expect(body.slice(start)).toMatch(/`app` and `compilation cache` join them in the stdout block/);
 });
 
+test('the lifecycle topic shows the lifecycle commands in the same label column', () => {
+  const body = renderTopic('lifecycle');
+  assert(body);
+  expect(body).toMatch(/branch\s+worktree-e2e-1 from HEAD \(9d0ebc4\)/);
+  expect(body).toMatch(/carry\s+node_modules \(APFS clone\); no Pods; no native build output/);
+  expect(body).toMatch(/ready\s+\/w\/worktree-e2e-1/);
+  expect(body).toMatch(/metro\s+starting on port 8083 \(expo-child, supervisor pid 13724\)/);
+  expect(body).toMatch(/stop\s+collector ios pid 45268/);
+  expect(body).toMatch(/port\s+released 8084/);
+});
+
 test('the errors topic names the two device fallbacks under the label that prints them', () => {
   const body = renderTopic('errors');
   assert(body);
@@ -59,6 +71,34 @@ test('the errors topic names the two device fallbacks under the label that print
   expect(body).not.toMatch(/^ *device app {2}/m);
   const src = readFileSync(new URL('../commands/ios.ts', import.meta.url), 'utf-8');
   expect(src.includes("'device app'")).toBe(false);
+});
+
+test('the errors topic quotes the stop refusals in the column stop actually prints', () => {
+  const body = renderTopic('errors');
+  assert(body);
+  expect(body).toMatch(/"metro {7}refusing to kill port <n>/);
+  expect(body).toMatch(/"stop {8}refusing to signal supervisor pid <n>/);
+  expect(body).not.toMatch(/"metro: refusing/);
+  expect(body).not.toMatch(/"supervisor: refusing/);
+  const src = readFileSync(new URL('../commands/stop.ts', import.meta.url), 'utf-8');
+  expect(src).toContain("phaseLine('metro', `refusing to kill port ${port}");
+  expect(src).toContain("phaseLine('stop', `refusing to signal supervisor pid ${target.pid}");
+});
+
+test('the errors topic quotes the carry lines exactly as worktree create writes them', () => {
+  const body = renderTopic('errors');
+  assert(body);
+  expect(body).toMatch(/"carry {7}carried 2 uncommitted changes from the source/);
+  expect(body).toMatch(/"carry {7}could not carry the source's uncommitted changes/);
+  expect(carriedChangesLine(['a', 'b'])).toMatch(/^carried 2 uncommitted changes from the source/);
+  expect(carryConflictWarning(['a'])).toMatch(/^could not carry the source's uncommitted changes/);
+});
+
+test('the errors topic states that the stale-carry line only prints on a real difference', () => {
+  const body = renderTopic('errors');
+  assert(body);
+  expect(body).toMatch(/carry\s+carried dependencies may be stale/);
+  expect(body).toMatch(/a carry whose lockfile matches is\s+silent/);
 });
 
 test('an unknown topic renders nothing rather than throwing', () => {

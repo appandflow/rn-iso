@@ -1251,13 +1251,14 @@ STIM_LOCK_TIMEOUT
 
 --- TEARDOWN AND WORKSPACE REFUSALS ---
 
-"metro: refusing to kill port <n>: ... runs from <dir>, outside <project>"
-  (stop) Stim will not kill a process it cannot attribute to you.
+"metro       refusing to kill port <n>: ... runs from <dir>, outside
+<project>"  (stop)
+  Stim will not kill a process it cannot attribute to you.
   \`stim stop --force\` kills it without proving whose it is -- ask the user
   first. That flag is reachable only when no supervisor is recorded for this
   workspace, and it never deletes anything.
 
-"supervisor: refusing to signal pid <n>: ..."  (stop)
+"stop        refusing to signal supervisor pid <n>: ..."  (stop)
   The two records describing that supervisor disagree, or it records a port
   this project did not reserve. A pid is a number the OS reuses, so it is not
   signalled. The port reservation is KEPT -- it is the only handle a retry
@@ -1333,8 +1334,8 @@ STIM_WORKTREE_BRANCH_EXISTS  (worktree create)
   \`gc --delete --cache "compilation cache"\`, then build again. The next
   build is a cold one.
 
-"Carried <dir>/Pods does not match the <dir>/Podfile.lock on disk here"
-(worktree create)
+"carry       carried <dir>/Pods does not match the <dir>/Podfile.lock on
+disk here"  (worktree create)
   \`ios/Pods\` is gitignored, so --carry-ignored clones it; \`ios/Podfile.lock\`
   is tracked. The check compares the cloned
   \`Pods/Manifest.lock\` with the \`Podfile.lock\` that is on disk in the new
@@ -1348,29 +1349,35 @@ STIM_WORKTREE_BRANCH_EXISTS  (worktree create)
   source's uncommitted changes"); the branch lockfile then stands, and this
   note is about that lockfile.
 
-"Warm source not carried: ... For the next worktree, use: stim worktree create
-<name> --carry-ignored"  (worktree create)
+"carry       warm source not carried: ... For the next worktree, use: stim
+worktree create <name> --carry-ignored"  (worktree create)
   A plain create found installed dependencies, CocoaPods, or native build output
   in the source. The new worktree stays clean. Use the printed command for the
   next worktree to clone that warm state.
 
-"Carried warm state: dependencies=..., CocoaPods=..., native build output=..."
-  The line reports each useful warm category. The following copy-mode line says
-  whether APFS used a copy-on-write clone or Stim made a full byte copy.
+"carry       node_modules (APFS clone); no Pods; no native build output"
+  One line names every useful warm category, carried or not, and the copy mode
+  APFS gave the carried ones: a copy-on-write clone, or a full byte copy when
+  the clone was unavailable.
 
-"Dependencies were not carried. Run ... before building."
-  The source has no node_modules to clone. Run the printed package-manager
-  command in the new worktree.
+"carry       no dependencies carried. Run ... before building."
+  There was no node_modules to clone, or --carry-ignored was not passed. Run
+  the printed package-manager command in the new worktree.
 
-"Carried N uncommitted change(s) from the source (...) -- uncommitted here
-too; commit deliberately."  (worktree create --carry-ignored)
+"carry       carried dependencies may be stale: they do not match ..."
+  The lockfile that came with the cloned node_modules is not the lockfile this
+  BRANCH has. Nothing else prints this: a carry whose lockfile matches is
+  silent, so the line always means a real difference. Run the printed command.
+
+"carry       carried 2 uncommitted changes from the source (...) --
+uncommitted here too; commit deliberately"  (worktree create --carry-ignored)
   The source tree had uncommitted tracked changes, and the cloned artifacts
   were installed against that working tree -- so the same changes were applied
   to the new worktree as a patch, still uncommitted. Whether they belong in a
   commit is your call; the tool never commits for you.
 
-"Could not carry the source's uncommitted changes (...)"  (worktree create
---carry-ignored)
+"carry       could not carry the source's uncommitted changes (...)"
+(worktree create --carry-ignored)
   The worktree's --base diverges from the source HEAD, so that patch does not
   apply and NOTHING was changed here. Until those changes are reconciled, this
   worktree fingerprints differently from the source and misses the cache
@@ -1548,6 +1555,22 @@ PROGRESS ON A LONG RUN
 
     build       still running (1m30s): > Task :app:compileDebugKotlin
     build       waiting on /w/app-411 (pid 41233, 1m30s elapsed)
+
+  The lifecycle commands use the same column. \`worktree create\` keeps the
+  created path alone on stdout and reports itself on stderr:
+
+    branch      worktree-e2e-1 from HEAD (9d0ebc4)
+    carry       node_modules (APFS clone); no Pods; no native build output
+    ready       /w/worktree-e2e-1
+
+  \`start\` names the port, the supervisor mode and its pid on one line
+  (\`metro       starting on port 8083 (expo-child, supervisor pid 13724)\`),
+  and \`stop\` reports what it released:
+
+    stop        supervisor pid 34856
+    stop        collector ios pid 45268
+    device      shut down stim-e2e-2
+    port        released 8084
 
   A GAP BETWEEN HEARTBEATS IS NOT A HANG. Stim runs device tools
   synchronously, so a long \`simctl\`, \`adb\` or copy call holds the timer

@@ -1,4 +1,4 @@
-import { formatElapsed } from '../command-output.ts';
+import { clockTime, formatElapsed } from '../command-output.ts';
 import { STABILITY_WINDOW_MS, VERIFY_TIMEOUT_MS } from './app-install.ts';
 import {
   deviceLeasePath,
@@ -54,12 +54,6 @@ export interface RunLeaseRefusal {
   message: string;
   remedy: string;
   lease: LeaseFacts | null;
-}
-
-function clockTime(iso: string): string {
-  const at = new Date(iso);
-  if (Number.isNaN(at.getTime())) return iso;
-  return [at.getHours(), at.getMinutes(), at.getSeconds()].map((n) => String(n).padStart(2, '0')).join(':');
 }
 
 export function leaseExpiryText(expiresAt: string, now: number): string {

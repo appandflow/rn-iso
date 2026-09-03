@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'fs
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { Command } from 'commander';
+import { clockTime } from '../command-output.ts';
 import { saveConfig, getProject } from '../config.ts';
 import { verifyCollectorOwnership } from '../collector/ownership.ts';
 import { ensureWorkspaceStorage, supervisorPidFile, workspaceStateFile } from '../paths.ts';
@@ -194,6 +195,35 @@ test('a live supervisor is SIGTERMed as a group and its Metro is left to it', as
   expect(r.outcomes.metro.status).toBe('skipped');
   expect(calls.cleared).toBe(1);
   expect(calls.stateCleared).toBe(1);
+});
+
+test('the headline stop lines land in the label column, not as colon sentences', async () => {
+  const { opts } = seams({
+    state: { pid: 4242, port: 8083, mode: 'expo-child' },
+    collectors: { ios: { pid: 111 } },
+    project: { metroPort: 8083, platforms: { ios: { deviceUdid: 'U1', owned: true } } },
+    isAlive: () => true,
+  });
+  const reported: string[] = [];
+  const r = await runStop({ ...opts, report: (line: string) => reported.push(line) });
+  expect(r.ok).toBe(true);
+  const text = reported.join('\n');
+  expect(text).toMatch(/^  stop {8}supervisor pid 4242$/m);
+  expect(text).toMatch(/^  stop {8}collector ios pid 111$/m);
+  expect(text).toMatch(/^  device {6}shut down stim-a$/m);
+  expect(text).toMatch(/^  port {8}released 8083$/m);
+  expect(text).not.toMatch(/^(supervisor|collectors|metro|ios|android|port|leases):/m);
+});
+
+test('a metro stopped without a supervisor reports itself in the same column', async () => {
+  const { opts } = seams({
+    project: { metroPort: 8083, platforms: {} },
+    resolveMetro: async () => makeMetroResolution.identified({ metro: { pid: 90, leader: 88, cwd: '/proj/a' } }),
+  });
+  const reported: string[] = [];
+  const r = await runStop({ ...opts, report: (line: string) => reported.push(line) });
+  expect(r.outcomes.metro.status).toBe('stopped');
+  expect(reported.join('\n')).toMatch(/^  metro {7}stopped pid 90 on port 8083$/m);
 });
 
 test('a supervisor that outlives the wait is reported, never SIGKILLed', async () => {
@@ -618,7 +648,7 @@ test('stop refuses to signal a collector pid it cannot prove, and keeps the reco
     { platform: 'android', pid: 222, status: 'stopped' },
   ]);
   expect(r.summary).toMatch(/1 collector left unsignalled/);
-  expect(reported.join('\n')).toMatch(/refusing to signal ios pid 111/);
+  expect(reported.join('\n')).toMatch(/^  stop {8}refusing to signal collector ios pid 111/m);
 
   const payload = JSON.parse(JSON.stringify({ root: '/proj/a', ok: r.ok, ...r.outcomes }));
   expect(payload.collectors).toEqual({
@@ -802,7 +832,7 @@ test('a stopped session with an unreconciled claim is reported and keeps its ret
   });
 
   expect(result.ok).toBe(false);
-  expect(lines.join('\n')).toMatch(/stopped session drs_8/i);
+  expect(lines.join('\n')).toMatch(/^  device {6}stopped remote session drs_8/m);
   expect(lines.join('\n')).toMatch(/ownership claim.*could not be removed/i);
   const state = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
   expect(state.remoteDevice.sessionId).toBe('drs_8');
@@ -1142,7 +1172,10 @@ test('stop releases the leases this workspace holds and lists them', async () =>
   ]);
   expect(r.summary).toMatch(/ios lease on UDID-1 released/);
   expect(reported.join('\n')).toMatch(
-    new RegExp(`released the ios lease on UDID-1 \\(it ran until ${taken.lease.expiresAt}\\)`),
+    new RegExp(
+      `^  lease {7}released the ios lease on UDID-1 \\(it ran until ${clockTime(taken.lease.expiresAt)}\\)$`,
+      'm',
+    ),
   );
   expect(listLeaseFiles().map((entry) => entry.id)).toEqual(['R5CT']);
 

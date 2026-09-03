@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import { rmSync } from 'fs';
 import type { Command } from 'commander';
+import { clockTime, phaseLine, plural } from '../command-output.ts';
 import { clearSupervisor, getProject, upsertProject } from '../config.ts';
 import type { ProjectRecord, SupervisorRecord } from '../config.ts';
 import { findProjectRoot } from '../project.ts';
@@ -359,17 +360,17 @@ export async function runStop({
 
   const target = resolveSupervisorTarget({ state: sup, record: proj?.supervisor ?? null, reservedPort, isAlive });
   if (target.status === 'none') {
-    report(chalk.dim('supervisor: none recorded'));
+    report(chalk.dim(phaseLine('stop', 'no supervisor recorded')));
   } else if (target.status === 'stale') {
     outcomes.supervisor = {
       status: 'already-stopped',
       pid: target.pid,
       reason: `recorded pid ${target.pid} is not running`,
     };
-    report(chalk.dim(`supervisor: pid ${target.pid} is already gone (stale record)`));
+    report(chalk.dim(phaseLine('stop', `supervisor pid ${target.pid} is already gone (stale record)`)));
   } else if (target.status === 'unverified') {
     outcomes.supervisor = { status: 'unverified', pid: target.pid, reason: target.reason };
-    report(chalk.yellow(`supervisor: refusing to signal pid ${target.pid}: ${target.reason}`));
+    report(chalk.yellow(phaseLine('stop', `refusing to signal supervisor pid ${target.pid}: ${target.reason}`)));
     ok = false;
     stillHolding = `supervisor pid ${target.pid} could not be verified`;
   } else {
@@ -390,7 +391,10 @@ export async function runStop({
   if (unverifiedCollectors.length) {
     report(
       chalk.dim(
-        `collectors: keeping the records; ${unverifiedCollectors.length} pid(s) could not be verified, and a later \`ios\` / \`android\` run replaces them`,
+        phaseLine(
+          'stop',
+          `keeping the collector records; ${plural(unverifiedCollectors.length, 'pid')} could not be verified, and a later \`ios\` / \`android\` run replaces them`,
+        ),
       ),
     );
   } else if (outcomes.collectors.entries.length) clearCollectors(root);
@@ -403,7 +407,7 @@ export async function runStop({
   if (supervisorHandled) {
     outcomes.metro = { status: 'skipped', reason: 'the supervisor owns the dev server on this port' };
   } else if (reservedPort === null) {
-    report(chalk.dim('metro: no port reserved'));
+    report(chalk.dim(phaseLine('metro', 'no port reserved')));
   } else {
     outcomes.metro = await stopMetro(reservedPort, root, { force, resolveMetro, killMetro, findListener, report });
     if (outcomes.metro.status === 'refused' || outcomes.metro.status === 'failed') {
@@ -413,7 +417,7 @@ export async function runStop({
   }
 
   if (stillHolding) {
-    report(chalk.dim('device: left alone (something is still running)'));
+    report(chalk.dim(phaseLine('device', 'left alone (something is still running)')));
   } else {
     outcomes.device = shutDownDevices(proj, { teardownIos, teardownAvd, report });
     if (outcomes.device.ios?.status === 'failed' || outcomes.device.android?.status === 'failed') ok = false;
@@ -426,12 +430,12 @@ export async function runStop({
     outcomes.device.remote = { status: result.status, label: sessionId, reason: result.reason };
     if (result.status === 'failed') {
       ok = false;
-      report(chalk.red(`remote: ${result.reason ?? `could not stop session ${sessionId}`}`));
+      report(chalk.red(phaseLine('device', result.reason ?? `could not stop remote session ${sessionId}`)));
     } else {
-      report(chalk.dim(`remote: stopped session ${sessionId}`));
+      report(chalk.dim(phaseLine('device', `stopped remote session ${sessionId}`)));
       if (result.reason) {
         ok = false;
-        report(chalk.yellow(`remote: ${result.reason}`));
+        report(chalk.yellow(phaseLine('device', result.reason)));
       } else {
         clearRemoteSession(root, sessionId);
       }
@@ -447,18 +451,21 @@ export async function runStop({
       ok = false;
       tunnelHolding = result.reason ?? `could not stop the ${tunnel.provider} tunnel`;
       if (!stillHolding) stillHolding = tunnelHolding;
-      report(chalk.red(`tunnel: ${tunnelHolding}`));
+      report(chalk.red(phaseLine('lan', tunnelHolding)));
     } else {
       if (!clearManagedMetroTunnel(root, tunnel)) {
         tunnelHolding = 'a replacement managed tunnel record appeared during cleanup and remains active';
         stillHolding = stillHolding ?? tunnelHolding;
         ok = false;
         outcomes.metroTunnel = { status: 'failed', provider: tunnel.provider, reason: tunnelHolding };
-        report(chalk.red(`tunnel: ${tunnelHolding}`));
+        report(chalk.red(phaseLine('lan', tunnelHolding)));
       } else {
         report(
           chalk.dim(
-            result.status === 'missing' ? 'tunnel: already gone' : `tunnel: stopped the ${tunnel.provider} tunnel`,
+            phaseLine(
+              'lan',
+              result.status === 'missing' ? 'tunnel already gone' : `stopped the ${tunnel.provider} tunnel`,
+            ),
           ),
         );
       }
@@ -469,12 +476,19 @@ export async function runStop({
 
   outcomes.releasedLeases = releaseLeases(root);
   for (const lease of outcomes.releasedLeases) {
-    report(chalk.dim(`leases: released the ${lease.platform} lease on ${lease.id} (it ran until ${lease.expiresAt})`));
+    report(
+      chalk.dim(
+        phaseLine(
+          'lease',
+          `released the ${lease.platform} lease on ${lease.id} (it ran until ${clockTime(lease.expiresAt)})`,
+        ),
+      ),
+    );
   }
 
   if (stillHolding) {
     outcomes.port = { status: 'kept', port: reservedPort, reason: stillHolding };
-    report(chalk.yellow(`port: keeping reservation ${reservedPort ?? '(none)'} -- ${stillHolding}`));
+    report(chalk.yellow(phaseLine('port', `keeping reservation ${reservedPort ?? '(none)'} -- ${stillHolding}`)));
     const supervisorIsDown =
       outcomes.supervisor.status === 'none' ||
       outcomes.supervisor.status === 'already-stopped' ||
@@ -487,7 +501,7 @@ export async function runStop({
     if (reservedPort !== null) {
       freePort(root, reservedPort);
       outcomes.port = { status: 'freed', port: reservedPort };
-      report(chalk.dim(`port: released ${reservedPort}`));
+      report(chalk.dim(phaseLine('port', `released ${reservedPort}`)));
     }
     clearState(root);
     await clearRegistration(root);
@@ -517,30 +531,38 @@ function reapCollectors(
   for (const target of targets) {
     if (target.status === 'invalid') {
       entries.push({ platform: target.platform, pid: target.pid, status: 'invalid' });
-      report(chalk.dim(`collectors: ignoring an unusable ${target.platform} record`));
+      report(chalk.dim(phaseLine('stop', `ignoring an unusable ${target.platform} collector record`)));
       continue;
     }
     if (target.status === 'stale') {
       entries.push({ platform: target.platform, pid: target.pid, status: 'already-stopped' });
-      report(chalk.dim(`collectors: ${target.platform} pid ${target.pid} is already gone`));
+      report(chalk.dim(phaseLine('stop', `collector ${target.platform} pid ${target.pid} is already gone`)));
       continue;
     }
     if (target.status === 'unverified') {
       entries.push({ platform: target.platform, pid: target.pid, status: 'unverified', reason: target.reason });
-      report(chalk.yellow(`collectors: refusing to signal ${target.platform} pid ${target.pid}: ${target.reason}`));
+      report(
+        chalk.yellow(
+          phaseLine('stop', `refusing to signal collector ${target.platform} pid ${target.pid}: ${target.reason}`),
+        ),
+      );
       continue;
     }
     try {
       signal(target.pid as number);
       entries.push({ platform: target.platform, pid: target.pid, status: 'stopped' });
-      report(chalk.green(`collectors: stopped ${target.platform} pid ${target.pid}`));
+      report(chalk.green(phaseLine('stop', `collector ${target.platform} pid ${target.pid}`)));
     } catch {
       entries.push({ platform: target.platform, pid: target.pid, status: 'already-stopped' });
-      report(chalk.dim(`collectors: ${target.platform} pid ${target.pid} exited before it could be signalled`));
+      report(
+        chalk.dim(
+          phaseLine('stop', `collector ${target.platform} pid ${target.pid} exited before it could be signalled`),
+        ),
+      );
     }
   }
   if (entries.length === 0) {
-    report(chalk.dim('collectors: none recorded'));
+    report(chalk.dim(phaseLine('stop', 'no collectors recorded')));
     return { status: 'none', entries };
   }
   return { status: 'stopped', entries };
@@ -558,27 +580,33 @@ async function stopSupervisor(
     report: (line: string) => void;
   },
 ): Promise<SupervisorOutcome> {
-  report(chalk.dim(`supervisor: sending SIGTERM to process group ${target.pid}`));
+  report(chalk.dim(phaseLine('stop', `sending SIGTERM to supervisor process group ${target.pid}`)));
   let signalled = false;
   try {
     signalled = killGroup(target.pid);
   } catch (e) {
     signalled = false;
-    report(chalk.red(`supervisor: could not signal pid ${target.pid}: ${String((e as Error)?.message || e)}`));
+    report(
+      chalk.red(
+        phaseLine('stop', `could not signal supervisor pid ${target.pid}: ${String((e as Error)?.message || e)}`),
+      ),
+    );
   }
   if (!signalled) {
     const reason = `could not signal supervisor pid ${target.pid}`;
-    report(chalk.red(`supervisor: ${reason}`));
+    report(chalk.red(phaseLine('stop', reason)));
     return { status: 'failed', pid: target.pid, port: target.port ?? null, reason };
   }
   const died = await waiter(target.pid as number);
   if (died) {
-    report(chalk.green(`supervisor: stopped (pid ${target.pid})`));
+    report(chalk.green(phaseLine('stop', `supervisor pid ${target.pid}`)));
     return { status: 'stopped', pid: target.pid, port: target.port ?? null, mode: target.mode ?? null };
   }
   const reason = `supervisor pid ${target.pid} did not exit within ${Math.round(DEFAULT_WAIT_MS / 1000)}s of SIGTERM`;
-  report(chalk.red(`supervisor: ${reason}`));
-  report(chalk.dim(`  inspect it with \`ps -p ${target.pid}\`, or signal it yourself: kill -9 -${target.pid}`));
+  report(chalk.red(phaseLine('stop', reason)));
+  report(
+    chalk.dim(phaseLine('', `inspect it with \`ps -p ${target.pid}\`, or signal it yourself: kill -9 -${target.pid}`)),
+  );
   return { status: 'timeout', pid: target.pid, port: target.port ?? null, reason };
 }
 
@@ -601,31 +629,31 @@ async function stopMetro(
 ): Promise<MetroOutcome> {
   const resolution = await resolveMetro(port, root);
   if (resolution.missing) {
-    report(chalk.dim(`metro: nothing listening on port ${port}`));
+    report(chalk.dim(phaseLine('metro', `nothing listening on port ${port}`)));
     return { status: 'missing', port };
   }
   if (resolution.notOurs && !force) {
-    report(chalk.yellow(`metro: refusing to kill port ${port}: ${resolution.notOurs}`));
-    report(chalk.dim('  pass --force to kill it anyway'));
+    report(chalk.yellow(phaseLine('metro', `refusing to kill port ${port}: ${resolution.notOurs}`)));
+    report(chalk.dim(phaseLine('', 'pass --force to kill it anyway')));
     return { status: 'refused', port, reason: resolution.notOurs };
   }
   const identified = Boolean(resolution.metro);
   const pid = identified ? resolution.metro!.pid : findListener(port);
   const leader = identified ? (resolution.metro!.leader ?? pid) : pid;
   if (!leader) {
-    report(chalk.dim(`metro: nothing listening on port ${port}`));
+    report(chalk.dim(phaseLine('metro', `nothing listening on port ${port}`)));
     return { status: 'missing', port };
   }
   if (!killMetro(leader, pid)) {
     const reason = `could not kill the process on port ${port}`;
-    report(chalk.red(`metro: ${reason}`));
+    report(chalk.red(phaseLine('metro', reason)));
     return { status: 'failed', port, pid, reason };
   }
   if (identified) {
-    report(chalk.green(`metro: stopped (pid ${pid} on port ${port})`));
+    report(chalk.green(phaseLine('metro', `stopped pid ${pid} on port ${port}`)));
     return { status: 'stopped', port, pid };
   }
-  report(chalk.yellow(`metro: killed pid ${pid} on port ${port} (forced, identity unverified)`));
+  report(chalk.yellow(phaseLine('metro', `killed pid ${pid} on port ${port} (forced, identity unverified)`)));
   return { status: 'forced', port, pid };
 }
 
@@ -661,9 +689,9 @@ function shutDownDevices(
         label: iosUdid,
         reason: 'Stim does not own this device',
       };
-      report(chalk.dim(`ios: ${iosUdid} is not Stim-owned, leaving it running`));
+      report(chalk.dim(phaseLine('device', `${iosUdid} is not Stim-owned, leaving it running`)));
     } else {
-      device.ios = reportDevice('ios', iosUdid, teardownIos(iosUdid, { del: false, label: iosName }), report);
+      device.ios = reportDevice(iosUdid, teardownIos(iosUdid, { del: false, label: iosName }), report);
     }
   }
 
@@ -676,35 +704,30 @@ function shutDownDevices(
         label: android.avdName,
         reason: 'Stim does not own this device',
       };
-      report(chalk.dim(`android: ${android.avdName} is not Stim-owned, leaving it running`));
+      report(chalk.dim(phaseLine('device', `${android.avdName} is not Stim-owned, leaving it running`)));
     } else {
-      device.android = reportDevice('android', android.avdName, teardownAvd(android.avdName, { del: false }), report);
+      device.android = reportDevice(android.avdName, teardownAvd(android.avdName, { del: false }), report);
     }
   }
 
   return device;
 }
 
-function reportDevice(
-  platform: string,
-  label: string,
-  r: TeardownResult,
-  report: (line: string) => void,
-): DeviceOutcomeEntry {
+function reportDevice(label: string, r: TeardownResult, report: (line: string) => void): DeviceOutcomeEntry {
   if (r.status === 'torn-down') {
-    report(chalk.green(`${platform}: shut down ${r.label ?? label}`));
+    report(chalk.green(phaseLine('device', `shut down ${r.label ?? label}`)));
     return { status: 'shut-down', label: r.label ?? label };
   }
   if (r.status === 'missing') {
-    report(chalk.dim(`${platform}: ${label} is already gone`));
+    report(chalk.dim(phaseLine('device', `${label} is already gone`)));
     return { status: 'missing', label };
   }
   if (r.status === 'skipped') {
     const reason = r.kind === 'occupied' ? occupiedSkipReason(r.reason as string, r.holders) : r.reason;
-    report(chalk.yellow(`${platform}: skipped ${label}: ${reason}`));
+    report(chalk.yellow(phaseLine('device', `skipped ${label}: ${reason}`)));
     return { status: 'skipped', kind: r.kind ?? null, label, reason };
   }
-  report(chalk.red(`${platform}: failed to shut down ${label}: ${r.reason}`));
+  report(chalk.red(phaseLine('device', `failed to shut down ${label}: ${r.reason}`)));
   return { status: 'failed', label, reason: r.reason };
 }
 

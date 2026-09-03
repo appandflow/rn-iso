@@ -2,6 +2,7 @@ import chalk from 'chalk';
 import type { ChildProcess } from 'node:child_process';
 import { mkdirSync, openSync, readFileSync } from 'node:fs';
 import type { Command } from 'commander';
+import { phaseLine } from '../command-output.ts';
 import type { StartError, StartFacts, SupervisorRecord } from '../types.ts';
 import { getProject, upsertProject } from '../config.ts';
 import { getExecutor } from '../exec.ts';
@@ -424,7 +425,14 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
           child.on?.('error', (err) => {
             childExit = { code: null, signal: null, error: err };
           });
-          out(chalk.dim(`Supervisor pid ${child.pid} starting the dev server on port ${port}...`));
+          out(
+            chalk.dim(
+              phaseLine(
+                'metro',
+                `starting on port ${port} (${isExpo ? 'expo-child' : 'bare-inproc'}, supervisor pid ${child.pid})`,
+              ),
+            ),
+          );
           spawnedChild = child;
           return child;
         };
@@ -984,6 +992,6 @@ function report({
     ? `supervisor pid ${facts.supervisorPid}${facts.mode ? ` (${facts.mode})` : ''}`
     : 'started outside Stim';
   out(chalk.green(`OK: dev server on port ${port}, ${who}${alreadyRunning ? ' (already running)' : ''} ${waited}`));
-  out(chalk.dim(`Logs: ${logsDir}`));
+  out(chalk.dim(phaseLine('logs', logsDir)));
   return facts;
 }

@@ -1,5 +1,6 @@
 import chalk from 'chalk';
 import type { Command } from 'commander';
+import { clockTime } from '../command-output.ts';
 import {
   fileLeaseIo,
   parseLeaseDuration,
@@ -90,12 +91,6 @@ export interface LockFacts {
   grantedAt: string | null;
   expiresAt: string;
   leaseSeconds: number;
-}
-
-function clockTime(iso: string): string {
-  const at = new Date(iso);
-  if (Number.isNaN(at.getTime())) return iso;
-  return [at.getHours(), at.getMinutes(), at.getSeconds()].map((n) => String(n).padStart(2, '0')).join(':');
 }
 
 export function grantLine(facts: LockFacts, durationText: string): string {

@@ -33,6 +33,16 @@ export function formatElapsed(ms: unknown): string {
   return minutes > 0 ? `${minutes}m${String(seconds).padStart(2, '0')}s` : `${seconds}s`;
 }
 
+export function plural(count: number, singular: string, many = `${singular}s`): string {
+  return `${count} ${count === 1 ? singular : many}`;
+}
+
+export function clockTime(iso: string): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return iso;
+  return [at.getHours(), at.getMinutes(), at.getSeconds()].map((n) => String(n).padStart(2, '0')).join(':');
+}
+
 export function phaseLine(label: unknown, text: string): string {
   return `  ${String(label).padEnd(LABEL_WIDTH)} ${text}`;
 }
@@ -102,10 +112,9 @@ export function launchErrorReport(records: readonly LaunchErrorRecord[]): { summ
     .filter((record) => record.src !== 'device')
     .map((record) => (record.msg === undefined || record.msg === null ? '' : String(record.msg)))
     .filter((msg) => msg !== '');
-  const noun = fromDevice.length === 1 ? 'record' : 'records';
   const summary =
     fromDevice.length === 0
       ? null
-      : `${fromDevice.length} error-level ${noun} in the device log during launch (logs --errors --source device)`;
+      : `${plural(fromDevice.length, 'error-level record')} in the device log during launch (logs --errors --source device)`;
   return { summary, lines };
 }
