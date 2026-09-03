@@ -142,7 +142,8 @@ export function parseLogStreamLine(line: string, { now = Date.now }: { now?: () 
   return recordFromLogEvent(event, { now });
 }
 
-export function logStreamArgs(udid: string, appName: string): string[] {
+export function logStreamArgs(udid: string, appName: string, executableName?: string | null): string[] {
+  const exe = executableName && executableName.trim() !== '' ? executableName.trim() : appName;
   return [
     'simctl',
     'spawn',
@@ -152,7 +153,7 @@ export function logStreamArgs(udid: string, appName: string): string[] {
     '--style',
     'ndjson',
     '--predicate',
-    `processImagePath CONTAINS[c] "${appName}"`,
+    `processImagePath ENDSWITH "/${appName}.app/${exe}"`,
   ];
 }
 
@@ -164,14 +165,16 @@ export function appNameFromBundleId(bundleId: string | null | undefined): string
 export function startIosLogStream({
   udid,
   appName,
+  executableName = null,
   spawnFn = null,
 }: {
   udid: string;
   appName: string;
+  executableName?: string | null;
   spawnFn?: ((cmd: string, args: string[], opts: SpawnOptions) => ChildProcess) | null;
 }): ChildProcess {
   const spawn = spawnFn || ((cmd: string, args: string[], opts: SpawnOptions) => getExecutor().spawn(cmd, args, opts));
-  return spawn('xcrun', logStreamArgs(udid, appName), {
+  return spawn('xcrun', logStreamArgs(udid, appName, executableName), {
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: false,
   });

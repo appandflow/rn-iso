@@ -124,8 +124,8 @@ describe('ios: log stream ndjson', () => {
     expect(parseLogStreamLine('{"eventType":"logEvent","messageType":"Default","eventMessage":"   "}')).toBe(null);
   });
 
-  test('logStreamArgs is the exact argv, with the predicate quoted for the device', () => {
-    expect(logStreamArgs('U1', 'MyApp')).toEqual([
+  test('logStreamArgs is the exact argv, anchored to the app executable path', () => {
+    expect(logStreamArgs('U1', 'MyApp', 'MyApp')).toEqual([
       'simctl',
       'spawn',
       'U1',
@@ -134,8 +134,32 @@ describe('ios: log stream ndjson', () => {
       '--style',
       'ndjson',
       '--predicate',
-      'processImagePath CONTAINS[c] "MyApp"',
+      'processImagePath ENDSWITH "/MyApp.app/MyApp"',
     ]);
+  });
+
+  test('logStreamArgs anchors to CFBundleExecutable when it differs from the .app basename', () => {
+    const args = logStreamArgs('U1', 'MyAppDev', 'MyApp');
+    expect(args[args.length - 1]).toBe('processImagePath ENDSWITH "/MyAppDev.app/MyApp"');
+  });
+
+  test('logStreamArgs falls back to the .app basename as the executable when none is given', () => {
+    expect(logStreamArgs('U1', 'MyApp')).toEqual(logStreamArgs('U1', 'MyApp', null));
+    expect(logStreamArgs('U1', 'MyApp')[8]).toBe('processImagePath ENDSWITH "/MyApp.app/MyApp"');
+  });
+
+  test('a short app name no longer admits an unrelated system process such as SpringBoard', () => {
+    const predicate = logStreamArgs('U1', 'app')[8];
+    assert(predicate);
+    const suffix = predicate.match(/ENDSWITH "(.+)"$/)?.[1];
+    assert(suffix);
+    const appsOwnPath =
+      '/Users/x/Library/Developer/CoreSimulator/Devices/U/data/Containers/Bundle/Application/ABC/app.app/app';
+    const springBoardPath = '/System/Library/CoreServices/SpringBoard.app/SpringBoard';
+    const amsengagementdPath = '/usr/libexec/amsengagementd';
+    expect(appsOwnPath.endsWith(suffix)).toBe(true);
+    expect(springBoardPath.endsWith(suffix)).toBe(false);
+    expect(amsengagementdPath.endsWith(suffix)).toBe(false);
   });
 
   test('appNameFromBundleId is the last segment, as a fallback for a caller with only a bundle id', () => {

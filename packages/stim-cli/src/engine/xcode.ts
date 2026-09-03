@@ -359,6 +359,35 @@ export function readBundleId(appPath: string, { exec = null }: { exec?: Executor
   }
 }
 
+export function parseBundleExecutable(plistJson: unknown): string | null {
+  if (typeof plistJson !== 'string') return null;
+  let data: unknown;
+  try {
+    data = JSON.parse(plistJson);
+  } catch {
+    return null;
+  }
+  if (!data || typeof data !== 'object') return null;
+  const name = (data as { CFBundleExecutable?: unknown }).CFBundleExecutable;
+  return typeof name === 'string' && name.trim() !== '' ? name.trim() : null;
+}
+
+export function readBundleExecutable(appPath: string, { exec = null }: { exec?: Executor | null } = {}): string | null {
+  const executor = exec || getExecutor();
+  try {
+    const json = executor.runFile('plutil', ['-convert', 'json', '-o', '-', join(appPath, 'Info.plist')]);
+    const name = parseBundleExecutable(json);
+    if (name) return name;
+  } catch {}
+  try {
+    const value = executor.runFile('defaults', ['read', join(appPath, 'Info'), 'CFBundleExecutable']);
+    const trimmed = String(value).trim();
+    return trimmed === '' ? null : trimmed;
+  } catch {
+    return null;
+  }
+}
+
 export function tailLines(lines: unknown, count = 5): string[] {
   const nonEmpty = (Array.isArray(lines) ? lines : []).filter((l) => typeof l === 'string' && l.trim() !== '');
   return nonEmpty.slice(-count);

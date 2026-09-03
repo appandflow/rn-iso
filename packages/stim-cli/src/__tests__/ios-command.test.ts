@@ -160,12 +160,13 @@ interface RecordedArgs {
   swapJsBundle: { cachedAppPath?: unknown; isExpo?: unknown; root?: unknown };
   verifyReleaseLaunch: { pid?: unknown };
   readBundleId: unknown;
+  readBundleExecutable: unknown;
   storeBuild: { options?: unknown; platform?: unknown; path?: unknown; key?: unknown };
   resolveBuild: { key?: unknown };
   verifyLaunch: { since?: unknown; logsDir?: unknown; platform?: unknown };
   uploadRemote: { fingerprintHash?: unknown; buildPath?: unknown };
   resolveRemote: { projectRoot?: unknown; platform?: unknown; fingerprintHash?: unknown };
-  replaceCollector: { udid?: unknown; bundleId?: unknown; appName?: unknown };
+  replaceCollector: { udid?: unknown; bundleId?: unknown; appName?: unknown; appExecutable?: unknown };
   loadProjectProvider: { isExpo?: unknown };
   acquireBuildLock: { root?: unknown; platform?: unknown; logFile?: unknown; key?: unknown };
   untrackedNativeFiles: { projectRoot?: unknown };
@@ -262,6 +263,10 @@ function harness(overrides: LooseDeps = {}) {
     readBundleId: (path) => {
       record('readBundleId', path);
       return 'com.example.app';
+    },
+    readBundleExecutable: (path) => {
+      record('readBundleExecutable', path);
+      return null;
     },
     installIosApp: (args) => {
       record('installIosApp', args);
@@ -1935,6 +1940,28 @@ describe('the collector', () => {
     expect(opts.cwd).toBe(root);
   });
 
+  test('an --app-executable is appended when the caller supplies CFBundleExecutable', async () => {
+    const h = collectorHarness();
+    h.opts.appExecutable = 'Fixture';
+    await replaceCollector(h.opts);
+    const firstSpawn = h.spawns[0];
+    assert(firstSpawn);
+    expect(firstSpawn.args.slice(1)).toEqual([
+      '--platform',
+      'ios',
+      '--root',
+      root,
+      '--udid',
+      UDID,
+      '--bundle',
+      'com.example.app',
+      '--app-name',
+      'FixtureDev',
+      '--app-executable',
+      'Fixture',
+    ]);
+  });
+
   test('the command hands it the app name derived from the .app basename', async () => {
     reserve();
     const { calls } = await run(
@@ -1950,6 +1977,46 @@ describe('the collector', () => {
     expect(calls.args.replaceCollector.appName).toBe('FixtureDev');
     expect(calls.args.replaceCollector.bundleId).toBe('com.example.app');
     expect(calls.args.replaceCollector.udid).toBe(UDID);
+  });
+
+  test('the command hands the collector CFBundleExecutable, so the log predicate can anchor to it', async () => {
+    reserve();
+    let seenAppPath: unknown;
+    const { calls, stderr } = await run(
+      {},
+      {
+        buildIos: async () => ({
+          appPath: '/tmp/dd/Build/Products/Debug-iphonesimulator/FixtureDev.app',
+          bundleId: 'com.example.app',
+          durationMs: 1000,
+        }),
+        readBundleExecutable: (path) => {
+          seenAppPath = path;
+          return 'Fixture';
+        },
+      },
+    );
+    expect(seenAppPath).toBe('/tmp/dd/Build/Products/Debug-iphonesimulator/FixtureDev.app');
+    expect(calls.args.replaceCollector.appExecutable).toBe('Fixture');
+    expect(calls.args.replaceCollector.appName).toBe('FixtureDev');
+    expect(stderr).not.toMatch(/Could not read CFBundleExecutable/);
+  });
+
+  test('a missing CFBundleExecutable leaves the collector to fall back to the .app basename', async () => {
+    reserve();
+    const { calls, stderr } = await run(
+      {},
+      {
+        buildIos: async () => ({
+          appPath: '/tmp/dd/Build/Products/Debug-iphonesimulator/FixtureDev.app',
+          bundleId: 'com.example.app',
+          durationMs: 1000,
+        }),
+      },
+    );
+    expect(calls.args.replaceCollector.appExecutable).toBe(null);
+    expect(stderr).toMatch(/Could not read CFBundleExecutable/);
+    expect(stderr).toMatch(/FixtureDev\.app/);
   });
 });
 

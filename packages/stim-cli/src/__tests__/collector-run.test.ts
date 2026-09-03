@@ -106,6 +106,7 @@ describe('parseArgs', () => {
         udid: 'U1',
         bundleId: 'com.example.MyApp',
         appName: 'MyApp',
+        appExecutable: null,
         serial: null,
         packageName: null,
         physical: false,
@@ -135,6 +136,7 @@ describe('parseArgs', () => {
       udid: 'U1',
       bundleId: 'com.example.MyApp',
       appName: 'MyApp',
+      appExecutable: null,
       serial: null,
       packageName: null,
       physical: true,
@@ -169,6 +171,25 @@ describe('parseArgs', () => {
         '--app-name',
         'MyApp',
       ]).appName,
+    ).toBe('MyApp');
+  });
+
+  test('--app-executable carries CFBundleExecutable separately from the .app basename', () => {
+    expect(
+      parseArgs([
+        '--platform',
+        'ios',
+        '--root',
+        '/abs',
+        '--udid',
+        'U1',
+        '--bundle',
+        'com.example.app',
+        '--app-name',
+        'MyAppDev',
+        '--app-executable',
+        'MyApp',
+      ]).appExecutable,
     ).toBe('MyApp');
   });
 
@@ -250,12 +271,12 @@ function iosShimLines() {
 
 describe('the ios collector, spawned for real against a fake xcrun', () => {
   test('registers its own pid, writes records, and clears the registration on SIGTERM', async () => {
-    const banner = 'Filtering the log data using "processImagePath CONTAINS[c] \\"MyApp\\""';
+    const banner = 'Filtering the log data using "processImagePath ENDSWITH \\"/MyApp.app/MyApp\\""';
     writeShim(
       'xcrun',
       [
         `case "$*" in`,
-        `  'simctl spawn UDID-1 log stream --style ndjson --predicate processImagePath CONTAINS[c] "MyApp"') ;;`,
+        `  'simctl spawn UDID-1 log stream --style ndjson --predicate processImagePath ENDSWITH "/MyApp.app/MyApp"') ;;`,
         `  *) echo "unexpected argv: $*" >&2; exit 9 ;;`,
         `esac`,
         `echo "${banner}" >&2`,
@@ -303,6 +324,51 @@ describe('the ios collector, spawned for real against a fake xcrun', () => {
     expect(result).toEqual({ code: 0, signal: null });
     expect('collectors' in (state() || {})).toBe(false);
     expect(deviceLog().some((r) => r.event === 'collector_stopped')).toBeTruthy();
+  });
+
+  test('a distinct --app-executable anchors the predicate to it, not to --app-name', async () => {
+    writeShim(
+      'xcrun',
+      [
+        `case "$*" in`,
+        `  'simctl spawn UDID-1 log stream --style ndjson --predicate processImagePath ENDSWITH "/MyAppDev.app/MyApp"') ;;`,
+        `  *) echo "unexpected argv: $*" >&2; exit 9 ;;`,
+        `esac`,
+        ...iosShimLines().map((l) => `cat <<'LINE'\n${l}\nLINE`),
+        'exec sleep 30',
+      ].join('\n'),
+    );
+
+    const child = spawnCollector([
+      '--platform',
+      'ios',
+      '--root',
+      root,
+      '--udid',
+      'UDID-1',
+      '--bundle',
+      'com.example.app',
+      '--app-name',
+      'MyAppDev',
+      '--app-executable',
+      'MyApp',
+    ]);
+
+    const registered = await until(() => readCollectors(root).ios as CollectorEntry, {
+      label: 'the collector registration',
+    });
+    expect(registered.pid).toBe(child.pid);
+
+    await until(() => deviceLog().find((r) => r.src === 'device' && r.proc === 'locationd') ?? null, {
+      label: 'a parsed device record',
+    });
+    expect(deviceLog().some((r) => r.event === 'collector_stderr' && /unexpected argv/.test(String(r.msg)))).toBe(
+      false,
+    );
+
+    process.kill(childPid(child), 'SIGTERM');
+    const result = await exited(child);
+    expect(result).toEqual({ code: 0, signal: null });
   });
 
   test('survives the stream ending: a record, and exit 0', async () => {
