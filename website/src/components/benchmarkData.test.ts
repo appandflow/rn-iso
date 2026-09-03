@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   assignCommandLanes,
   comparableRuns,
+  commandAtCursor,
   formatSeconds,
   initialAuditSelection,
+  timeBreakdown,
   type BenchmarkCommand,
   type BenchmarkRun,
 } from './benchmarkData';
@@ -65,5 +67,34 @@ describe('initialAuditSelection', () => {
 
     expect(initialAuditSelection(run)).toBeNull();
     expect(run.proof).toBeNull();
+  });
+});
+
+describe('timeBreakdown', () => {
+  it('uses command interval union for wall time and reports concurrency separately', () => {
+    const run = {
+      totalSeconds: 20,
+      commands: [command('first', 2, 10), command('overlap', 5, 8), command('later', 12, 15)],
+    } as BenchmarkRun;
+
+    expect(timeBreakdown(run)).toEqual({
+      shellActiveSeconds: 11,
+      agentOtherSeconds: 9,
+      summedCommandSeconds: 14,
+      peakConcurrency: 2,
+    });
+  });
+});
+
+describe('commandAtCursor', () => {
+  const commands = [command('first', 2, 10), command('overlap', 5, 8), command('later', 12, 15)];
+
+  it('shows the most recently started active command without revealing its final output', () => {
+    expect(commandAtCursor(commands, 6)).toEqual({ command: commands[1], state: 'running' });
+  });
+
+  it('keeps the latest completed command visible between events', () => {
+    expect(commandAtCursor(commands, 11)).toEqual({ command: commands[1], state: 'complete' });
+    expect(commandAtCursor(commands, 0)).toBeNull();
   });
 });

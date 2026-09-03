@@ -13,9 +13,16 @@ import {
   type BenchmarkRun,
 } from '@site/src/components/benchmarkData';
 import benchmarkJson from '@site/src/data/benchmarks/luna-rc12.json';
+import opusBenchmarkJson from '@site/src/data/benchmarks/opus-rc12.json';
+import sonnetBenchmarkJson from '@site/src/data/benchmarks/sonnet-rc12.json';
+import solBenchmarkJson from '@site/src/data/benchmarks/sol-rc12.json';
 import styles from './benchmarks.module.css';
 
-const benchmark = benchmarkJson as BenchmarkData;
+const benchmarks = [benchmarkJson, solBenchmarkJson, sonnetBenchmarkJson, opusBenchmarkJson] as BenchmarkData[];
+
+function defaultRun(benchmark: BenchmarkData): BenchmarkRun {
+  return comparableRuns(benchmark.runs)[0] ?? benchmark.runs[0];
+}
 
 function displayVariant(variant: BenchmarkRun['variant']): string {
   return variant === 'javascript' ? 'JavaScript change' : 'Native change';
@@ -41,7 +48,7 @@ function ComparisonCard({
       <span className={styles.gain}>
         {improvement == null ? 'Matched run unavailable' : `Stim reached Settings ${improvement}% sooner`}
       </span>
-      {runs.map((run) => {
+      {comparable.map((run) => {
         const endpoint = comparable.find((candidate) => candidate.id === run.id)?.settingsReadySeconds ?? null;
         return (
           <div className={styles.barRow} key={run.id}>
@@ -57,7 +64,7 @@ function ComparisonCard({
             </div>
             <div className={styles.barMeta}>
               <span>{formatTokens(totalTokens(run.usage))} tokens</span>
-              <span>{formatCost(run.estimatedTokenCostUsd)} est.</span>
+              <span>{formatCost(run.estimatedTokenCostUsd)} cost</span>
               <span>{run.commandCount} commands</span>
             </div>
           </div>
@@ -68,15 +75,17 @@ function ComparisonCard({
 }
 
 export default function Benchmarks(): ReactNode {
-  const [activeId, setActiveId] = useState(benchmark.runs[0].id);
-  const activeRun = benchmark.runs.find((run) => run.id === activeId) ?? benchmark.runs[0];
+  const [stage, setStage] = useState(benchmarks[0].stage);
+  const benchmark = benchmarks.find((candidate) => candidate.stage === stage) ?? benchmarks[0];
+  const [activeId, setActiveId] = useState(defaultRun(benchmark).id);
+  const activeRun = benchmark.runs.find((run) => run.id === activeId) ?? defaultRun(benchmark);
   const grouped = useMemo(
     () =>
       (['javascript', 'native'] as const).map((variant) => ({
         variant,
         runs: benchmark.runs.filter((run) => run.variant === variant),
       })),
-    [],
+    [benchmark],
   );
   const maxSeconds = Math.max(1, ...comparableRuns(benchmark.runs).map((run) => run.settingsReadySeconds));
 
@@ -88,7 +97,7 @@ export default function Benchmarks(): ReactNode {
       <main className={styles.page}>
         <div className="container">
           <header className={styles.hero}>
-            <div className={styles.eyebrow}>Agent benchmark · protocol v{benchmark.protocolVersion}</div>
+            <div className={styles.eyebrow}>Agent benchmark / protocol v{benchmark.protocolVersion}</div>
             <Heading as="h1">{benchmark.title}: Stim vs local toolchain</Heading>
             <p>
               One matched run per arm. The sole performance endpoint is elapsed time from agent dispatch to a validated
@@ -96,13 +105,30 @@ export default function Benchmarks(): ReactNode {
             </p>
           </header>
 
+          <nav className={styles.modelPicker} aria-label="Benchmark model">
+            <span>Model</span>
+            {benchmarks.map((candidate) => (
+              <button
+                key={candidate.stage}
+                type="button"
+                aria-pressed={candidate.stage === benchmark.stage}
+                onClick={() => {
+                  setStage(candidate.stage);
+                  setActiveId(defaultRun(candidate).id);
+                }}
+              >
+                {candidate.title}
+              </button>
+            ))}
+          </nav>
+
           <section className={styles.comparison} aria-labelledby="comparison-title">
             <div className={styles.sectionHeading}>
               <Heading as="h2" id="comparison-title">
                 Settings-ready comparison
               </Heading>
               <p>
-                Recorded {benchmark.recordedOn} ·{' '}
+                Recorded {benchmark.recordedOn} /{' '}
                 {benchmark.runs.every((run) => run.valid) ? 'all runs valid' : 'contains invalid runs'}
               </p>
             </div>
@@ -111,6 +137,34 @@ export default function Benchmarks(): ReactNode {
                 <ComparisonCard key={variant} variant={variant} runs={runs} maxSeconds={maxSeconds} />
               ))}
             </div>
+          </section>
+
+          <section className={styles.environment} aria-labelledby="environment-title">
+            <div>
+              <span>Benchmark machine</span>
+              <Heading as="h2" id="environment-title">
+                {benchmark.environment.machine.model}
+              </Heading>
+              <p>
+                {benchmark.environment.machine.chip} / {benchmark.environment.machine.memory}
+              </p>
+            </div>
+            <dl>
+              <div>
+                <dt>System</dt>
+                <dd>{benchmark.environment.macos}</dd>
+              </div>
+              <div>
+                <dt>Toolchain</dt>
+                <dd>
+                  {benchmark.environment.xcode} / {benchmark.environment.node}
+                </dd>
+              </div>
+              <div>
+                <dt>Device</dt>
+                <dd>{benchmark.environment.simulator}</dd>
+              </div>
+            </dl>
           </section>
 
           <section className={styles.audit} aria-labelledby="audit-title">
@@ -130,18 +184,21 @@ export default function Benchmarks(): ReactNode {
                   aria-pressed={run.id === activeRun.id}
                   onClick={() => setActiveId(run.id)}
                 >
-                  {run.variant} · {run.arm}
+                  {run.variant} / {run.arm}
+                  {run.valid ? '' : ' / invalid attempt'}
                 </button>
               ))}
             </div>
-            <BenchmarkTimeline key={activeRun.id} run={activeRun} />
+            <BenchmarkTimeline key={`${benchmark.stage}-${activeRun.id}`} run={activeRun} />
           </section>
 
           <aside className={styles.notes}>
             <p>
-              <strong>About cost.</strong> {benchmark.pricing?.estimateNote}{' '}
+              <strong>About cost.</strong>{' '}
+              {benchmark.pricing?.estimateNote ??
+                'Provider-reported cost is shown when the benchmark runner supplies it.'}{' '}
               {benchmark.pricing ? (
-                <a href={benchmark.pricing.source}>See the recorded model’s official token rates.</a>
+                <a href={benchmark.pricing.source}>See the recorded model's official token rates.</a>
               ) : null}
             </p>
             <p>

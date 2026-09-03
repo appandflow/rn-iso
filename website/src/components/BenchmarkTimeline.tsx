@@ -1,12 +1,14 @@
 import type { CSSProperties, ReactNode } from 'react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import useBaseUrl from '@docusaurus/useBaseUrl';
 import {
   assignCommandLanes,
+  commandAtCursor,
   formatCost,
   formatSeconds,
   formatTokens,
   initialAuditSelection,
+  timeBreakdown,
   totalTokens,
   type BenchmarkAuditSelection,
   type BenchmarkCommand,
@@ -31,7 +33,19 @@ function eventTime(selected: BenchmarkAuditSelection): number {
   return selected.event.atSeconds;
 }
 
-function TerminalDetail({ command }: { command: BenchmarkCommand }): ReactNode {
+function TerminalDetail({
+  command,
+  state = 'complete',
+  cursorSeconds,
+}: {
+  command: BenchmarkCommand;
+  state?: 'running' | 'complete';
+  cursorSeconds?: number;
+}): ReactNode {
+  const elapsed =
+    state === 'running'
+      ? Math.max(0, (cursorSeconds ?? command.startSeconds) - command.startSeconds)
+      : command.endSeconds - command.startSeconds;
   return (
     <section className={styles.terminal} aria-live="polite">
       <div className={styles.terminalBar}>
@@ -42,13 +56,13 @@ function TerminalDetail({ command }: { command: BenchmarkCommand }): ReactNode {
         </span>
         <span>Terminal</span>
         <span>
-          {formatSeconds(command.endSeconds - command.startSeconds)} · exit {command.exitCode ?? '—'}
+          {formatSeconds(elapsed)} / {state === 'running' ? 'running' : `exit ${command.exitCode ?? '-'}`}
         </span>
       </div>
       <pre>
         <span className={styles.prompt}>$ </span>
         {displayCommand(command.command)}
-        {command.output ? `\n\n${command.output}` : ''}
+        {state === 'running' ? '\n\n... command still running' : command.output ? `\n\n${command.output}` : ''}
       </pre>
     </section>
   );
@@ -56,9 +70,45 @@ function TerminalDetail({ command }: { command: BenchmarkCommand }): ReactNode {
 
 export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): ReactNode {
   const [selected, setSelected] = useState<BenchmarkAuditSelection | null>(() => initialAuditSelection(run));
+  const [playbackMode, setPlaybackMode] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const [cursorSeconds, setCursorSeconds] = useState(0);
+  const [speed, setSpeed] = useState(20);
   const { commands, laneCount } = useMemo(() => assignCommandLanes(run.commands), [run.commands]);
+  const breakdown = useMemo(() => timeBreakdown(run), [run]);
+  const playbackCommand = useMemo(() => commandAtCursor(run.commands, cursorSeconds), [run.commands, cursorSeconds]);
   const proofSrc = useBaseUrl(run.proof?.src ?? '');
   const ticks = [0, 0.25, 0.5, 0.75, 1];
+
+  useEffect(() => {
+    if (!playing) return;
+    let frame = 0;
+    let previous = performance.now();
+    const advance = (now: number) => {
+      const elapsed = ((now - previous) / 1000) * speed;
+      previous = now;
+      setCursorSeconds((current) => {
+        const next = Math.min(run.totalSeconds, current + elapsed);
+        if (next >= run.totalSeconds) setPlaying(false);
+        return next;
+      });
+      frame = requestAnimationFrame(advance);
+    };
+    frame = requestAnimationFrame(advance);
+    return () => cancelAnimationFrame(frame);
+  }, [playing, run.totalSeconds, speed]);
+
+  function inspect(selection: BenchmarkAuditSelection): void {
+    setPlaying(false);
+    setPlaybackMode(false);
+    setSelected(selection);
+  }
+
+  function togglePlayback(): void {
+    setPlaybackMode(true);
+    if (cursorSeconds >= run.totalSeconds) setCursorSeconds(0);
+    setPlaying((current) => !current);
+  }
 
   return (
     <div className={styles.viewer}>
@@ -72,14 +122,14 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
           <span>Total tokens</span>
           <strong>{formatTokens(totalTokens(run.usage))}</strong>
           <small>
-            {formatTokens(run.usage.input_tokens)} input · {formatTokens(run.usage.output_tokens)} output ·{' '}
+            {formatTokens(run.usage.input_tokens)} input / {formatTokens(run.usage.output_tokens)} output /{' '}
             {formatTokens(run.usage.reasoning_output_tokens)} reasoning
           </small>
         </div>
         <div>
-          <span>Est. token cost</span>
+          <span>Token cost</span>
           <strong>{formatCost(run.estimatedTokenCostUsd)}</strong>
-          <small>API-equivalent base estimate</small>
+          <small>reported by runner or API-equivalent estimate</small>
         </div>
         <div>
           <span>Commands</span>
@@ -91,13 +141,90 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
       <div className={styles.runHeading}>
         <div>
           <h2>
-            {run.model} · {run.variant} · {run.arm}
+            {run.model} / {run.variant} / {run.arm}
           </h2>
           <span className={run.valid ? styles.valid : styles.invalid}>
             {run.valid ? 'Valid run' : `Invalid: ${run.invalidReasons.join(', ')}`}
           </span>
         </div>
         <span>Agent turn {formatSeconds(run.totalSeconds)}</span>
+      </div>
+
+      <div className={styles.breakdown}>
+        <div className={styles.breakdownBar} aria-label="Agent time category summary">
+          <span
+            className={styles.agentTime}
+            style={{ width: `${(breakdown.agentOtherSeconds / Math.max(1, run.totalSeconds)) * 100}%` }}
+          />
+          <span
+            className={styles.shellTime}
+            style={{ width: `${(breakdown.shellActiveSeconds / Math.max(1, run.totalSeconds)) * 100}%` }}
+          />
+        </div>
+        <div className={styles.breakdownLegend}>
+          <span>
+            <i className={styles.agentKey} />
+            Agent / other <strong>{formatSeconds(breakdown.agentOtherSeconds)}</strong>
+          </span>
+          <span>
+            <i className={styles.shellKey} />
+            Shell active <strong>{formatSeconds(breakdown.shellActiveSeconds)}</strong>
+          </span>
+          <span>
+            Commands summed <strong>{formatSeconds(breakdown.summedCommandSeconds)}</strong>
+          </span>
+          <span>
+            Peak concurrency <strong>{breakdown.peakConcurrency}</strong>
+          </span>
+        </div>
+        <small>
+          &quot;Agent / other&quot; is time with no command active; it includes reasoning, tool selection, harness
+          latency, and idle gaps.
+        </small>
+      </div>
+
+      <div className={styles.playbackControls}>
+        <button type="button" onClick={togglePlayback}>
+          {playing ? 'Pause' : 'Play'}
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setPlaying(false);
+            setPlaybackMode(true);
+            setCursorSeconds(0);
+          }}
+        >
+          Reset
+        </button>
+        <label>
+          <span className="sr-only">Playback position</span>
+          <input
+            type="range"
+            min={0}
+            max={Math.max(0.01, run.totalSeconds)}
+            step={0.1}
+            value={cursorSeconds}
+            onChange={(event) => {
+              setPlaying(false);
+              setPlaybackMode(true);
+              setCursorSeconds(Number(event.currentTarget.value));
+            }}
+          />
+        </label>
+        <strong>
+          {formatSeconds(cursorSeconds)} / {formatSeconds(run.totalSeconds)}
+        </strong>
+        <select
+          value={speed}
+          onChange={(event) => setSpeed(Number(event.currentTarget.value))}
+          aria-label="Playback speed"
+        >
+          <option value={1}>1x</option>
+          <option value={5}>5x</option>
+          <option value={20}>20x</option>
+          <option value={60}>60x</option>
+        </select>
       </div>
 
       <div className={styles.timelineScroller} tabIndex={0} aria-label="Benchmark command timeline">
@@ -109,6 +236,9 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
                 {formatSeconds(run.totalSeconds * tick)}
               </span>
             ))}
+            {playbackMode ? (
+              <i className={styles.playhead} style={{ left: position(cursorSeconds, run.totalSeconds) }} />
+            ) : null}
           </div>
 
           <div className={styles.laneLabel}>Agent</div>
@@ -120,13 +250,16 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
                 className={styles.agentDot}
                 style={{ left: position(message.atSeconds, run.totalSeconds) }}
                 aria-label={`Agent note at ${formatSeconds(message.atSeconds)}`}
-                onClick={() => setSelected({ kind: 'message', event: message })}
+                onClick={() => inspect({ kind: 'message', event: message })}
               />
             ))}
           </div>
 
           <div className={styles.laneLabel}>Shell</div>
           <div className={styles.shellTracks} style={{ '--lane-count': laneCount } as CSSProperties}>
+            {playbackMode ? (
+              <i className={styles.playhead} style={{ left: position(cursorSeconds, run.totalSeconds) }} />
+            ) : null}
             {Array.from({ length: laneCount }, (_, lane) => (
               <div className={styles.shellTrack} key={lane}>
                 {commands
@@ -136,7 +269,10 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
                       key={command.id}
                       type="button"
                       className={`${styles.commandBar} ${command.exitCode === 0 ? '' : styles.commandFailed} ${
-                        selected?.kind === 'command' && selected.event.id === command.id ? styles.commandSelected : ''
+                        (playbackMode && playbackCommand?.command.id === command.id) ||
+                        (!playbackMode && selected?.kind === 'command' && selected.event.id === command.id)
+                          ? styles.commandSelected
+                          : ''
                       }`}
                       style={{
                         left: position(command.startSeconds, run.totalSeconds),
@@ -148,7 +284,7 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
                       aria-label={`${shortCommand(command.command)}, ${formatSeconds(
                         command.endSeconds - command.startSeconds,
                       )}, exit ${command.exitCode ?? 'unknown'}`}
-                      onClick={() => setSelected({ kind: 'command', event: command })}
+                      onClick={() => inspect({ kind: 'command', event: command })}
                     >
                       {shortCommand(command.command)}
                     </button>
@@ -166,14 +302,24 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
                 className={`${styles.deviceDot} ${marker.kind === 'settingsReady' ? styles.readyDot : ''}`}
                 style={{ left: position(marker.atSeconds, run.totalSeconds) }}
                 aria-label={`${marker.label} at ${formatSeconds(marker.atSeconds)}`}
-                onClick={() => setSelected({ kind: 'marker', event: marker })}
+                onClick={() => inspect({ kind: 'marker', event: marker })}
               />
             ))}
           </div>
         </div>
       </div>
 
-      {selected?.kind === 'command' ? (
+      {playbackMode && playbackCommand ? (
+        <TerminalDetail command={playbackCommand.command} state={playbackCommand.state} cursorSeconds={cursorSeconds} />
+      ) : playbackMode ? (
+        <section className={styles.eventDetail} aria-live="polite">
+          <div>
+            <strong>Waiting for the first command</strong>
+            <span>+{formatSeconds(cursorSeconds)}</span>
+          </div>
+          <p>Playback follows recorded event boundaries. Command output appears when that command completes.</p>
+        </section>
+      ) : selected?.kind === 'command' ? (
         <TerminalDetail command={selected.event} />
       ) : selected ? (
         <section className={styles.eventDetail} aria-live="polite">
@@ -196,7 +342,7 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
         <summary>Commands in order ({run.commands.length})</summary>
         <div>
           {run.commands.map((command) => (
-            <button type="button" key={command.id} onClick={() => setSelected({ kind: 'command', event: command })}>
+            <button type="button" key={command.id} onClick={() => inspect({ kind: 'command', event: command })}>
               <span>+{formatSeconds(command.startSeconds)}</span>
               <code>{shortCommand(command.command)}</code>
               <span>{formatSeconds(command.endSeconds - command.startSeconds)}</span>
@@ -211,8 +357,8 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
             <span>Validated proof</span>
             <h2>Settings screen</h2>
             <p>
-              Captured by <code>agent-device</code> after it found “{run.proof.expected}”. This screenshot completion is
-              the timing endpoint used above.
+              Captured by <code>agent-device</code> after it found &quot;{run.proof.expected}&quot;. This screenshot
+              completion is the timing endpoint used above.
             </p>
           </div>
           <img
@@ -228,7 +374,7 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
           <div>
             <span>Proof unavailable</span>
             <h2>No validated Settings screenshot</h2>
-            <p>This attempt did not reach the benchmark’s required visual endpoint.</p>
+            <p>This attempt did not reach the benchmark's required visual endpoint.</p>
           </div>
         </section>
       )}

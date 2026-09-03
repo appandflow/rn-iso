@@ -1,6 +1,24 @@
-import { describe, expect, it } from 'vitest';
-import { userInfo } from 'node:os';
-import { estimateTokenCost, sanitizeBenchmarkText, sanitizeCommandOutput } from './export-benchmark-viewer.mjs';
+import { afterEach, describe, expect, it } from 'vitest';
+import { tmpdir, userInfo } from 'node:os';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import {
+  benchmarkEnvironment,
+  estimateTokenCost,
+  eventsFor,
+  sanitizeBenchmarkText,
+  sanitizeCommandOutput,
+} from './export-benchmark-viewer.mjs';
+
+const tempDirs = [];
+
+function stamp(arrivedAt, event) {
+  return JSON.stringify({ arrivedAt, stream: 'stdout', line: JSON.stringify(event) });
+}
+
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
 
 describe('benchmark viewer export', () => {
   it('replaces machine paths, run ids, and simulator ids', () => {
@@ -18,6 +36,25 @@ describe('benchmark viewer export', () => {
     );
   });
 
+  it('redacts both the label and target of a Markdown path link', () => {
+    const path = '/Volumes/ExternalSSD/Developer/stim-bench/worktrees/native-control';
+
+    expect(sanitizeBenchmarkText(`[${path}](${path})`)).toBe('[worktree/native-control](worktree/native-control)');
+  });
+
+  it('makes user-home paths relative before replacing the username', () => {
+    const username = userInfo().username;
+
+    expect(sanitizeBenchmarkText(`/Users/${username}/.agent-device/sessions/example`)).toBe('workspace/example');
+  });
+
+  it('strips terminal color codes before making machine paths relative', () => {
+    const coloredPath =
+      '\u001b[331m/\u001b[339mVolumes\u001b[49m\u001b[331m/\u001b[3103mExternalSSD\u001b[49m\u001b[331m/\u001b[3103mDeveloper\u001b[49m\u001b[331m/\u001b[3103mstim-bench\u001b[49m';
+
+    expect(sanitizeBenchmarkText(coloredPath)).toBe('workspace/stim-bench');
+  });
+
   it('omits machine-global process output', () => {
     const output = sanitizeCommandOutput(
       '/bin/zsh -lc "ps -axo command= | rg \'expo|metro\'"',
@@ -25,6 +62,15 @@ describe('benchmark viewer export', () => {
     );
 
     expect(output).toBe('<process output omitted from public artifact>');
+  });
+
+  it('omits interactive shell transcripts with cursor-control fragments', () => {
+    const output = sanitizeCommandOutput(
+      'zsh',
+      '\u001b[331m/\u001b[339mVolumes\r<external path rewritten by the terminal',
+    );
+
+    expect(output).toBe('<interactive shell transcript omitted from public artifact>');
   });
 
   it('redacts a helper identifier before replacing an OS username inside it', () => {
@@ -46,5 +92,73 @@ describe('benchmark viewer export', () => {
     );
 
     expect(cost).toBeCloseTo(0.02353276, 8);
+  });
+
+  it('combines sanitized hardware with recorded toolchain and simulator facts', () => {
+    const environment = benchmarkEnvironment(
+      {
+        preflight: {
+          actual: {
+            MACOS_VERSION: '26.5.2',
+            MACOS_BUILD: '25F84',
+            XCODE_VERSION: '26.6',
+            XCODE_BUILD: '17F113',
+            NODE_VERSION: '26.7.0',
+          },
+          parkedSimulator: {
+            deviceTypeIdentifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-17',
+            runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
+          },
+        },
+      },
+      { model: 'Mac mini', chip: 'Apple M4 Pro', memory: '64 GB' },
+    );
+
+    expect(environment).toEqual({
+      machine: { model: 'Mac mini', chip: 'Apple M4 Pro', memory: '64 GB' },
+      macos: 'macOS 26.5.2 (25F84)',
+      xcode: 'Xcode 26.6 (17F113)',
+      node: 'Node 26.7.0',
+      simulator: 'iPhone 17 / iOS 26.5',
+    });
+  });
+
+  it('extracts Claude Bash commands, output, and text messages', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'stim-claude-events-'));
+    tempDirs.push(dir);
+    writeFileSync(
+      join(dir, 'events.jsonl'),
+      [
+        stamp('2026-09-03T20:00:01.000Z', {
+          type: 'assistant',
+          uuid: 'note-1',
+          message: { content: [{ type: 'text', text: 'Checking the app.' }] },
+        }),
+        stamp('2026-09-03T20:00:02.000Z', {
+          type: 'assistant',
+          message: {
+            content: [{ type: 'tool_use', id: 'tool-1', name: 'Bash', input: { command: 'stim ios' } }],
+          },
+        }),
+        stamp('2026-09-03T20:00:05.000Z', {
+          type: 'user',
+          message: { content: [{ type: 'tool_result', tool_use_id: 'tool-1', content: 'build ok', is_error: false }] },
+        }),
+      ].join('\n'),
+    );
+
+    expect(eventsFor(dir, '2026-09-03T20:00:00.000Z', [])).toEqual({
+      messages: [{ id: 'note-1-0', atSeconds: 1, text: 'Checking the app.' }],
+      commands: [
+        {
+          id: 'tool-1',
+          startSeconds: 2,
+          endSeconds: 5,
+          command: 'stim ios',
+          output: 'build ok',
+          exitCode: 0,
+        },
+      ],
+    });
   });
 });
