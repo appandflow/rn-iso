@@ -31,19 +31,24 @@ test('the lifecycle topic separates an iOS install proof from dev-client prepara
   expect(body).toMatch(/slow simulator command is never charged\s+to an install that did not run/);
 });
 
-test('the lifecycle topic names every label the output vocabulary allows', () => {
+const SUMMARY_ONLY_LABELS = ['app', 'compilation cache'];
+
+test('the lifecycle topic grids every label the output vocabulary allows, and no others', () => {
   const body = renderTopic('lifecycle');
   assert(body);
-  const paragraph = body.slice(body.indexOf('The labels are a closed set'));
-  assert(paragraph);
-  for (const label of OUTPUT_LABELS) {
-    if (label === '') continue;
-    expect({ label, named: new RegExp(`\\b${label.replace('.', '\\.')}\\b`).test(paragraph) }).toEqual({
-      label,
-      named: true,
-    });
-  }
-  expect(paragraph).toMatch(/`app` and `compilation cache` join them in the stdout block/);
+  const start = body.indexOf('The labels are a closed set');
+  expect(start).toBeGreaterThan(-1);
+  const grid = body.slice(body.indexOf('column:', start) + 'column:'.length, body.indexOf('`app` and', start));
+  expect(
+    grid
+      .trim()
+      .split('\n')
+      .filter((line) => line.trim() !== ''),
+  ).toHaveLength(6);
+  expect(grid.trim().split(/\s+/).toSorted()).toEqual(
+    OUTPUT_LABELS.filter((label) => label !== '' && !SUMMARY_ONLY_LABELS.includes(label)).toSorted(),
+  );
+  expect(body.slice(start)).toMatch(/`app` and `compilation cache` join them in the stdout block/);
 });
 
 test('the errors topic names the two device fallbacks under the label that prints them', () => {

@@ -589,14 +589,18 @@ WHAT WRITES WHAT
                        point. Both collectors already narrow the stream to the
                        app: the simulator's \`log stream\` runs under a
                        processImagePath predicate, and \`adb logcat\` is filtered
-                       to the app's pid. So every record left is inside the
-                       app's own process, and the error-level ones are the Apple
-                       frameworks running there -- "Failed to send CA Event for
-                       app launch measurements", "NSBundle (null) initWithPath
-                       failed", the TCP refusal. Nothing about the record says
-                       which of them wrote it, so the run does not guess; a
-                       count plus the command that shows the records is the
-                       honest report. The app's OWN errors are not in this
+                       to the app's pid. So every record left is MEANT to be
+                       inside the app's own process, and the error-level ones
+                       are the Apple frameworks running there -- "Failed to send
+                       CA Event for app launch measurements", "NSBundle (null)
+                       initWithPath failed", the TCP refusal. Nothing about the
+                       record says which of them wrote it, so the run does not
+                       guess; a count plus the command that shows the records is
+                       the honest report. The iOS predicate matches on a
+                       substring of the process path today, which a short app
+                       name can widen past the app -- appandflow/stim#264
+                       anchors it. Until it lands, read the records rather than
+                       trusting the count to be the app's alone. The app's OWN errors are not in this
                        number: a redbox or a console.error arrives on the client
                        or metro source and still prints line by line.
 
