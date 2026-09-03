@@ -15,7 +15,6 @@ import { isPidAlive } from '../metro.ts';
 import {
   bootIosSim,
   createOwnedIosSim,
-  deleteParkedIosSim,
   IOS_BOOT_TIMEOUT_MS,
   listAllIosSims,
   iosRuntimeMatches,
@@ -47,7 +46,7 @@ import {
   type SystemImage,
 } from '../sim/android.ts';
 import { androidAvdConfigSetting, androidDataPartitionSizeGbSetting, iosSimSlimProfileSetting } from '../settings.ts';
-import { teardownOwnedAvd } from '../teardown.ts';
+import { teardownOwnedAvd, teardownParkedIosSim } from '../teardown.ts';
 import { reconcileSimSlim } from './simslim.ts';
 
 export interface OwnedDeviceRecord {
@@ -369,13 +368,24 @@ function takeParkedIosSim({
   for (const parked of candidates) {
     const sim = listed.get(parked.udid);
     if (!sim || !sim.available) {
-      out(
-        chalk.dim(
-          phaseLine('device', `deleted parked ${parked.name} (${parked.udid}): ${sim ? 'unavailable' : 'gone'}`),
-        ),
-      );
-      if (sim) deleteParkedIosSim(parked.udid);
-      dropParked('ios', parked.udid);
+      const result = sim ? teardownParkedIosSim(parked.udid, { label: parked.name }) : null;
+      const removed = sim ? result?.status === 'torn-down' : dropParked('ios', parked.udid);
+      if (removed) {
+        out(
+          chalk.dim(
+            phaseLine('device', `deleted parked ${parked.name} (${parked.udid}): ${sim ? 'unavailable' : 'gone'}`),
+          ),
+        );
+      } else if (result?.status === 'failed') {
+        out(
+          chalk.yellow(
+            phaseLine(
+              'device',
+              `could not delete unavailable parked ${parked.name} (${parked.udid}): ${result.reason}`,
+            ),
+          ),
+        );
+      }
       continue;
     }
     const device = {

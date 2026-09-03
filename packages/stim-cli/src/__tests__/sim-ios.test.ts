@@ -55,6 +55,13 @@ test('parseSimctlList flattens devices and filters unavailable', () => {
   expect(sims.map((s) => s.udid).toSorted()).toEqual(['UDID-A', 'UDID-B', 'UDID-C']);
 });
 
+test('parseSimctlList rejects structurally invalid successful output', () => {
+  for (const output of ['[]', '{}', '"ok"', '{"devices":[]}']) {
+    expect(() => parseSimctlList(output)).toThrow(/devices object/);
+  }
+  expect(() => parseSimctlList('{"devices":{"ios":{}}}')).toThrow(/to be an array/);
+});
+
 test('parseSimctlList includes runtime in each entry', () => {
   const sims = parseSimctlList(SIMCTL_OUTPUT);
   const a = sims.find((s) => s.udid === 'UDID-A');

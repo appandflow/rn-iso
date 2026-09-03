@@ -141,19 +141,23 @@ them.
    failure: there is nothing to clear.
 3. `simctl rename <udid> "stim-parked (<model> <runtime>) <4 hex>"`.
 4. Under the config lock: append the record, clear the workspace's
-   `platforms.ios` device record, and if the pool now exceeds the maximum
-   remove the oldest record by `parkedAt`; write once. `removeProject` still
-   removes the project entry at the end of the remove, as today.
-5. Outside the lock, `simctl delete` the evicted simulator through the
-   teardown delete path.
+   `platforms.ios` device record, and identify overflow by the oldest
+   `parkedAt`; write once without dropping the overflow records.
+   `removeProject` still removes the project entry at the end of the remove,
+   as today.
+5. For each overflow record, the teardown path reacquires the config lock and
+   verifies that the simulator is still parked before `simctl delete`. It
+   removes the record only after deletion succeeds. A failed deletion keeps
+   the record and can temporarily leave the pool above its bound.
 
 A crash between 3 and 4 leaves a workspace-owned simulator with a parked
-name, which the next `worktree remove` parks again; a crash between 4 and 5
-leaves a `stim-parked` simulator no record names, which is the orphan class
-`gc` reports and `--delete` removes. A step that fails falls back to
-deletion, as today, and prints the failed step. `stop` is unchanged: it shuts
-the owned simulator down and keeps it owned; parking is a consequence of
-giving the workspace up.
+name, which the next `worktree remove` parks again. A crash after step 4 keeps
+the pooled ownership record. If CoreSimulator deletion completed before a
+crash, the next successful `gc` listing proves the simulator absent and drops
+the record; otherwise `gc --delete` retries the claimed deletion. A park step
+that fails falls back to ownership-checked deletion, as today, and prints the
+failed step. `stop` is unchanged: it shuts the owned simulator down and keeps
+it owned; parking is a consequence of giving the workspace up.
 
 Park removes the previous workspace's app data, and adoption removes its
 privacy grants, the keychain, and its other apps. A parked simulator keeps

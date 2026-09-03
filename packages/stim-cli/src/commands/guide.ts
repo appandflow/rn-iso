@@ -1657,11 +1657,15 @@ PROGRESS ON A LONG RUN
   parked simulators on the old runtime are never adopted; they leave by
   eviction or \`gc --delete\`.
 
-  The pool holds \`pool.iosParkedMax\` simulators (default 3, about 2.5 GB
-  each). Past that the oldest parked one is deleted:
+  The pool targets at most \`pool.iosParkedMax\` simulators (default 3, about
+  2.5 GB each). Past that the oldest parked one is deleted:
 
     device      parked stim-parked (iPhone 17 26.5) 9c1f (9C1F..)
     device      deleted stim-parked (iPhone 17 26.5) 4b02 (pool over 3)
+
+  A failed or unverifiable deletion keeps its ownership record so \`gc\` can
+  retry it. The reported pool can temporarily exceed the bound rather than
+  orphaning a simulator.
 
   and an adopting run says so where a plain boot would say \`booted\`:
 
@@ -1672,11 +1676,16 @@ PROGRESS ON A LONG RUN
 
     pool: 2 parked iOS simulators (max 3)
 
-  \`stim gc\` reports the pool, and \`stim gc --delete\` empties it:
+  \`stim gc\` reports the pool, and \`stim gc --delete\` empties every entry
+  it can re-verify:
 
     Parked simulators (2, 5.1 GB):
       ios stim-parked (iPhone 17 26.5) 9c1f (9C1F..) iPhone 17 26.5 parked 3d ago 2.6 GB
                   --delete deletes every parked simulator and empties the pool.
+
+  If simulator listing or deletion fails, \`gc --delete\` reports the failure
+  and keeps that entry. It never turns an unverified absence into a dropped
+  ownership record.
 
   That deletion works even under a redirected \`STIM_HOME\`, where the sweep
   for unlisted \`stim-\` devices stays refused: a parked record in THIS config

@@ -40,6 +40,19 @@ export interface ParkRequest {
   simslimManaged?: boolean;
 }
 
+export function teardownParkedIosSim(
+  udid: string,
+  { label, deleteSim = deleteParkedIosSim }: { label?: string; deleteSim?: typeof deleteParkedIosSim } = {},
+): TeardownOutcome {
+  try {
+    const removed = removeParkedAfter('ios', udid, () => deleteSim(udid));
+    if (!removed) return { status: 'skipped', kind: 'not-parked', reason: 'simulator is no longer parked' };
+    return { status: 'torn-down', label: label ?? removed.name };
+  } catch (error) {
+    return { status: 'failed', reason: String((error as Error)?.message || error) };
+  }
+}
+
 function parkOwnedIosSim(udid: string, park: ParkRequest): { record: ParkedSim; evicted: ParkedSim[] } {
   const resolved = resolveOwnedIosSim(udid);
   if (resolved.missing) throw new Error(`simulator ${udid} disappeared after shutdown`);
@@ -91,13 +104,11 @@ export function teardownOwnedIosSim(
         const removed: ParkedDevice[] = [];
         const failures: string[] = [];
         for (const entry of evicted) {
-          try {
-            const deleted = removeParkedAfter('ios', entry.udid, () => deleteParkedIosSim(entry.udid));
-            if (deleted) removed.push({ udid: entry.udid, name: entry.name });
-          } catch (e) {
-            failures.push(
-              `could not delete evicted ${entry.name} (${entry.udid}): ${String((e as Error)?.message || e)}`,
-            );
+          const result = teardownParkedIosSim(entry.udid, { label: entry.name });
+          if (result.status === 'torn-down') {
+            removed.push({ udid: entry.udid, name: entry.name });
+          } else if (result.status === 'failed') {
+            failures.push(`could not delete evicted ${entry.name} (${entry.udid}): ${result.reason}`);
           }
         }
         return {

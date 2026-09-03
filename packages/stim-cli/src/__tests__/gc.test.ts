@@ -241,6 +241,34 @@ test('parked deletion keeps ownership records when simulator listing was unavail
   expect(formatGcReport({ parkedSims: report.parkedSims }).join('\n')).toMatch(/keeps entries it cannot verify/);
 });
 
+test('parked deletion keeps ownership records after malformed simctl list output', async () => {
+  upsertProject('/tmp/source', { platforms: { ios: { deviceUdid: 'P1', deviceName: 'stim-source', owned: true } } });
+  const record = {
+    udid: 'P1',
+    name: 'stim-parked (iPhone 17 26.5) p1',
+    deviceTypeIdentifier: 'iphone-17',
+    runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
+    parkedAt: '2026-09-01T00:00:00.000Z',
+    simslimManaged: false,
+  };
+  parkSim({ platform: 'ios', projectPath: '/tmp/source', record, max: 3 });
+  setExecutor({
+    run(cmd) {
+      if (cmd.includes('simctl list devices')) return '[]';
+      throw new Error(`unexpected run: ${cmd}`);
+    },
+    runQuiet: () => null,
+    spawn: () => null,
+  });
+
+  const report = await collectGcReport();
+  const output = await captureLog(() => deleteParkedSims(report.parkedSims));
+
+  expect(report.parkedSims[0]?.listed).toBe(null);
+  expect(output).toMatch(/Could not verify.*record was kept/);
+  expect(readParked('ios')).toEqual([record]);
+});
+
 test('headline does not claim "nothing to reclaim" without flagging unchecked entries', () => {
   const lines = formatGcReport({
     skipped: [{ dir: '/Volumes/ExternalSSD/proj', reason: 'volume /Volumes/ExternalSSD is not mounted' }],

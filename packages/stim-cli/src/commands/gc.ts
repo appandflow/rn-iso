@@ -26,22 +26,9 @@ import { isPidAlive } from '../metro.ts';
 import { detectIsExpo, findProjectRoot } from '../project.ts';
 import { reclaimProject } from '../reclaim.ts';
 import { SETTING_SHAPE_REMEDY } from '../settings.ts';
-import {
-  deleteParkedIosSim,
-  listAllIosSims,
-  listIosDeviceTypes,
-  parseRuntimeVersion,
-  type IosSimRecord,
-} from '../sim/ios.ts';
-import {
-  dropParked,
-  parkedMaxSetting,
-  POOL_SETTING_REMEDY,
-  readParked,
-  removeParkedAfter,
-  type ParkedSim,
-} from '../sim-pool.ts';
-import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.ts';
+import { listAllIosSims, listIosDeviceTypes, parseRuntimeVersion, type IosSimRecord } from '../sim/ios.ts';
+import { dropParked, parkedMaxSetting, POOL_SETTING_REMEDY, readParked, type ParkedSim } from '../sim-pool.ts';
+import { teardownOwnedIosSim, teardownOwnedAvd, teardownParkedIosSim } from '../teardown.ts';
 import { listAvds, ownedAvdDirectory } from '../sim/android.ts';
 import {
   declaredCachePaths,
@@ -178,7 +165,7 @@ interface GcDependencies {
   settingShapeErrors?: () => string[];
   listAllIosSims?: typeof listAllIosSims;
   listIosDeviceTypes?: typeof listIosDeviceTypes;
-  deleteParkedIosSim?: typeof deleteParkedIosSim;
+  deleteParkedIosSim?: (udid: string) => void;
 }
 
 // simctl and emulator listings can exceed 10 seconds on loaded hosts; 30 seconds still bounds hangs.
@@ -924,11 +911,17 @@ export function deleteParkedSims(parkedSims: readonly ParkedSimReport[], deps: G
       continue;
     }
     try {
-      const removed = sim.listed
-        ? removeParkedAfter('ios', sim.udid, () => (deps.deleteParkedIosSim ?? deleteParkedIosSim)(sim.udid))
-        : dropParked('ios', sim.udid);
+      const teardown = sim.listed
+        ? teardownParkedIosSim(sim.udid, { label: sim.name, deleteSim: deps.deleteParkedIosSim })
+        : null;
+      const removed = sim.listed ? teardown?.status === 'torn-down' : dropParked('ios', sim.udid);
       if (!removed) {
-        console.log(chalk.dim(`Skipped ${sim.name} (${sim.udid}); it is no longer parked.`));
+        if (teardown?.status === 'failed') {
+          failures++;
+          console.log(chalk.red(`Failed to delete parked ios sim ${sim.name}: ${teardown.reason}`));
+        } else {
+          console.log(chalk.dim(`Skipped ${sim.name} (${sim.udid}); it is no longer parked.`));
+        }
         continue;
       }
       emptied++;

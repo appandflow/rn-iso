@@ -42,7 +42,11 @@ export function parseSimctlList(
   jsonOutput: string,
   { includeUnavailable = false }: { includeUnavailable?: boolean } = {},
 ): IosSimRecord[] {
-  const data = JSON.parse(jsonOutput) as {
+  const parsed: unknown = JSON.parse(jsonOutput);
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Expected simctl list to return a JSON object with a devices object.');
+  }
+  const data = parsed as {
     devices?: Record<
       string,
       Array<{
@@ -56,8 +60,12 @@ export function parseSimctlList(
       }>
     >;
   };
+  if (data.devices === null || typeof data.devices !== 'object' || Array.isArray(data.devices)) {
+    throw new Error('Expected simctl list to return a JSON object with a devices object.');
+  }
   const sims: IosSimRecord[] = [];
-  for (const [runtime, devices] of Object.entries(data.devices || {})) {
+  for (const [runtime, devices] of Object.entries(data.devices)) {
+    if (!Array.isArray(devices)) throw new Error(`Expected simctl devices for ${runtime} to be an array.`);
     if (!/\.iOS-/.test(runtime)) continue;
     for (const dev of devices) {
       const available = Boolean(dev.isAvailable);
