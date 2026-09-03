@@ -63,6 +63,15 @@ test('the lifecycle topic shows the lifecycle commands in the same label column'
   expect(body).toMatch(/port\s+released 8084/);
 });
 
+test('the lifecycle topic documents slash-separated worktree names', () => {
+  const body = renderTopic('lifecycle');
+  assert(body);
+  expect(body).toMatch(/worktree create app\/412/);
+  expect(body).toMatch(/worktree-app\/412/);
+  expect(body).toMatch(/encoded directory directly under worktreeDir/);
+  expect(body).toMatch(/device labels include a stable hash/);
+});
+
 test('the errors topic names the two device fallbacks under the label that prints them', () => {
   const body = renderTopic('errors');
   assert(body);

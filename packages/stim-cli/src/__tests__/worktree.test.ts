@@ -6,6 +6,8 @@ import { join, dirname } from 'node:path';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import {
   defaultWorktreeDir,
+  defaultWorktreeLabel,
+  isValidWorktreeName,
   worktreePath,
   matchesInclude,
   isCarrySkipped,
@@ -39,6 +41,20 @@ test('default worktree dir is a sibling of the repo', () => {
 
 test('worktreePath joins the dir and the name', () => {
   expect(worktreePath({ worktreeDir: '/wt', name: 'feat-x' })).toBe('/wt/feat-x');
+  expect(worktreePath({ worktreeDir: '/wt', name: 'bench/run-1' })).toBe('/wt/bench%2Frun-1');
+});
+
+test('worktree names accept safe branch paths without accepting traversal or invalid refs', () => {
+  expect(isValidWorktreeName('bench/run-1')).toBe(true);
+  for (const name of ['bench//run', '/bench', 'bench/', 'bench/../run', 'bench/.hidden', 'bench/run.lock']) {
+    expect(isValidWorktreeName(name)).toBe(false);
+  }
+});
+
+test('slash worktree names get collision-resistant device labels while flat names stay unchanged', () => {
+  expect(defaultWorktreeLabel('bench-run-1')).toBe('bench-run-1');
+  expect(defaultWorktreeLabel('bench/run-1')).toMatch(/^[0-9a-f]{8}-bench-run-1$/);
+  expect(defaultWorktreeLabel('bench/run-1')).not.toBe(defaultWorktreeLabel('bench-run-1'));
 });
 
 test('matchesInclude supports gitignore-style patterns', () => {

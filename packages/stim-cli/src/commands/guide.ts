@@ -1500,7 +1500,11 @@ STIM_CONFIG_CORRUPT  ("Stim config at <path> is not valid JSON")
   # 1. Isolated worktree (skip if you are already in one).
   #    It branches from the current HEAD. Use --base fresh for origin/HEAD.
   #    It does NOT install dependencies -- that is yours.
-  cd "$(stim worktree create app-412 --carry-ignored)"
+  cd "$(stim worktree create app/412 --carry-ignored)"
+
+  # Slash-separated names create branches such as worktree-app/412 while the
+  # checkout remains one encoded directory directly under worktreeDir. Their
+  # default device labels include a stable hash so flat names cannot collide.
 
   # 2. The dev server, under a detached supervisor. Blocks until it is
   #    verifiably THIS project's, then hands your shell back.

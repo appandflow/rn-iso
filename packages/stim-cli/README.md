@@ -34,8 +34,12 @@ stim stop
 Create a warm isolated worktree with:
 
 ```bash
-stim worktree create feature-name --carry-ignored
+stim worktree create feature/settings --carry-ignored
 ```
+
+Slash-separated names keep the matching Git branch hierarchy while the
+worktree itself remains one directory under the configured worktree root. Its
+default device label includes a stable hash so a flat name cannot collide.
 
 Stim builds or restores the app, installs it, launches it, and checks launch
 readiness. Plain output streams progress and reports the complete result. Use

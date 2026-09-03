@@ -151,6 +151,30 @@ test('create action: success path writes exactly one stdout line, the worktree p
   }
 });
 
+test('create action: slash name keeps the Git hierarchy in one worktree directory', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-slash-')));
+  const repo = join(base, 'repo');
+  try {
+    initScratchRepo(repo);
+
+    const { logs } = await runCreateInRepo(repo, 'bench/run-1', {});
+
+    const expected = join(defaultWorktreeDir(repo), 'bench%2Frun-1');
+    expect(logs).toEqual([expected]);
+    expect(realpathSync(expected)).toBe(expected);
+    expect(execSync('git branch --show-current', { cwd: expected, encoding: 'utf-8' })).toBe('worktree-bench/run-1\n');
+    expect(getProject(expected)).toMatchObject({
+      label: expect.stringMatching(/^[0-9a-f]{8}-bench-run-1$/),
+      worktreeBranch: 'worktree-bench/run-1',
+      worktreeBranchOwned: true,
+    });
+  } finally {
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test('create action: a nested create records the repository main checkout', async () => {
   resetExecutor();
   const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-create-nested-')));

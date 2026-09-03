@@ -19,6 +19,7 @@ import {
   carryUncommittedChanges,
   depsOutOfSync,
   deleteBranch,
+  defaultWorktreeLabel,
   cloneIgnoredEntries,
   defaultWorktreeDir,
   dirtyPaths,
@@ -26,6 +27,7 @@ import {
   hasRemote,
   hasUncommittedWork,
   isMainWorkingTree,
+  isValidWorktreeName,
   isPodInstallChurn,
   listCarryableIgnoredEntries,
   listTrackedPaths,
@@ -212,9 +214,11 @@ export function registerCreate(worktree: Command): void {
       "clone the source's working state: every safe gitignored path (node_modules, Pods, build output) except nested Git worktrees and paths in .worktreeexclude, plus its uncommitted tracked changes (applied when they fit this base)",
     )
     .action(async (name, opts) => {
-      if (!/^[A-Za-z0-9._-]+$/.test(name)) {
+      if (!isValidWorktreeName(name)) {
         console.error(
-          chalk.red(`Invalid worktree name: "${name}". Use only letters, numbers, dots, dashes, and underscores.`),
+          chalk.red(
+            `Invalid worktree name: "${name}". Use slash-separated names made from letters, numbers, dots, dashes, and underscores.`,
+          ),
         );
         process.exitCode = 1;
         return;
@@ -395,7 +399,7 @@ export function registerCreate(worktree: Command): void {
 
       const mainRoot = listWorktrees(root).find((candidate) => isMainWorkingTree(candidate.path))?.path || root;
       upsertProject(target, {
-        label: opts.label || name,
+        label: opts.label || defaultWorktreeLabel(name),
         worktreeRoot: true,
         worktreeBranch: branch,
         worktreeBranchOwned: !reusedBranch,
