@@ -2,6 +2,9 @@
 
 Date: 2026-09-02. Issue: #281. This protocol supersedes the single-pair v2
 protocol in [`trailhead-agent-benchmark.md`](./trailhead-agent-benchmark.md).
+The later Settings-readiness and parked-simulator pilot is specified separately
+in [`agent-benchmark-v4.md`](./agent-benchmark-v4.md); its timings are not pooled
+with v3.
 The versions share an application test case, but their runner setup, cache
 preparation, and timing definitions differ, so v2 timings are historical
 context rather than samples in the v3 result.
