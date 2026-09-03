@@ -12,7 +12,7 @@ import {
   type IosSimRecord,
 } from './sim/ios.ts';
 import { resolveOwnedAvdSerial, shutdownAndroidEmulator, deleteAvd } from './sim/android.ts';
-import { parkSim, type ParkedSim } from './sim-pool.ts';
+import { parkSim, removeParkedAfter, type ParkedSim } from './sim-pool.ts';
 
 export interface ParkedDevice {
   udid: string;
@@ -92,8 +92,8 @@ export function teardownOwnedIosSim(
         const failures: string[] = [];
         for (const entry of evicted) {
           try {
-            deleteParkedIosSim(entry.udid);
-            removed.push({ udid: entry.udid, name: entry.name });
+            const deleted = removeParkedAfter('ios', entry.udid, () => deleteParkedIosSim(entry.udid));
+            if (deleted) removed.push({ udid: entry.udid, name: entry.name });
           } catch (e) {
             failures.push(
               `could not delete evicted ${entry.name} (${entry.udid}): ${String((e as Error)?.message || e)}`,

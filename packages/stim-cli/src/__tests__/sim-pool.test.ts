@@ -9,6 +9,7 @@ import {
   parkSim,
   parkedMaxSetting,
   readParked,
+  removeParkedAfter,
   selectParked,
   type ParkedSim,
 } from '../sim-pool.ts';
@@ -100,6 +101,52 @@ test('parking moves a device claim into the pool in one persisted update', () =>
   expect(parkSim({ platform: 'ios', projectPath: '/tmp/project', record: first, max: 3 })).toEqual([]);
   expect(getProject('/tmp/project')?.platforms?.ios).toBeUndefined();
   expect(readParked('ios').map((record) => record.udid)).toEqual(['FIRST']);
+});
+
+test('overflow records stay claimed until deletion succeeds', () => {
+  upsertProject('/tmp/project', {
+    platforms: { ios: { deviceUdid: first.udid, deviceName: 'stim-project', owned: true } },
+  });
+  parkSim({ platform: 'ios', projectPath: '/tmp/project', record: first, max: 1 });
+  expect(parkSim({ platform: 'ios', projectPath: '/tmp/project', record: second, max: 1 })).toEqual([first]);
+  expect(
+    readParked('ios')
+      .map((record) => record.udid)
+      .toSorted(),
+  ).toEqual(['FIRST', 'SECOND']);
+
+  expect(() =>
+    removeParkedAfter('ios', first.udid, () => {
+      throw new Error('simctl busy');
+    }),
+  ).toThrow(/simctl busy/);
+  expect(
+    readParked('ios')
+      .map((record) => record.udid)
+      .toSorted(),
+  ).toEqual(['FIRST', 'SECOND']);
+
+  expect(removeParkedAfter('ios', first.udid, () => {})).toEqual(first);
+  expect(readParked('ios').map((record) => record.udid)).toEqual(['SECOND']);
+});
+
+test('a deletion claim skips a simulator that another workspace adopted', () => {
+  upsertProject('/tmp/source', {
+    platforms: { ios: { deviceUdid: first.udid, deviceName: 'stim-source', owned: true } },
+  });
+  upsertProject('/tmp/adopter', { platforms: {} });
+  parkSim({ platform: 'ios', projectPath: '/tmp/source', record: first, max: 3 });
+  const device = { deviceUdid: first.udid, deviceName: 'stim-adopter', owned: true };
+  adoptParked({ platform: 'ios', projectPath: '/tmp/adopter', udid: first.udid, device });
+  let deleted = false;
+
+  expect(
+    removeParkedAfter('ios', first.udid, () => {
+      deleted = true;
+    }),
+  ).toBe(null);
+  expect(deleted).toBe(false);
+  expect(getProject('/tmp/adopter')?.platforms?.ios).toEqual(device);
 });
 
 test('adoption takes a pool record and creates the owned project claim in one persisted update', () => {

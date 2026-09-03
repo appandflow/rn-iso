@@ -361,13 +361,10 @@ interface ListedApp {
 }
 
 export function parseUserApps(jsonOutput: string): string[] {
-  let data: unknown;
-  try {
-    data = JSON.parse(jsonOutput);
-  } catch {
-    return [];
+  const data: unknown = JSON.parse(jsonOutput);
+  if (data === null || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error('Expected simctl listapps to convert to a JSON object.');
   }
-  if (data === null || typeof data !== 'object' || Array.isArray(data)) return [];
   return Object.entries(data as Record<string, ListedApp>)
     .filter(([, app]) => app !== null && typeof app === 'object' && app.ApplicationType === 'User')
     .map(([bundleId]) => bundleId);

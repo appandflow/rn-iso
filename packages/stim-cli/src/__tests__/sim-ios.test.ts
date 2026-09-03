@@ -404,7 +404,8 @@ test('parseUserApps keeps only user applications', () => {
       }),
     ),
   ).toEqual(['com.example.one', 'com.example.two']);
-  expect(parseUserApps('not json')).toEqual([]);
+  expect(() => parseUserApps('not json')).toThrow(/JSON/);
+  expect(() => parseUserApps('[]')).toThrow(/JSON object/);
 });
 
 test('listUserApps passes the udid as one argv element and converts the property list', () => {

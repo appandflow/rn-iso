@@ -214,11 +214,16 @@ export function describeDereferenced(project: ProjectRecord | null): string[] {
   return devices;
 }
 
+export function parkedIosCacheKey(lastBuild: unknown): string | null {
+  if (lastBuild === null || typeof lastBuild !== 'object' || Array.isArray(lastBuild)) return null;
+  const build = lastBuild as Record<string, unknown>;
+  return build.platform === 'ios' && typeof build.cacheKey === 'string' ? build.cacheKey : null;
+}
+
 function parkRequest(project: ProjectRecord | null, projectPath: string): ParkRequest | undefined {
   const { max, error } = parkedMaxSetting('ios');
   if (error || max <= 0) return undefined;
-  const lastBuild = readWorkspaceState(projectPath)?.lastBuild as { cacheKey?: unknown } | undefined;
-  const cacheKey = typeof lastBuild?.cacheKey === 'string' ? lastBuild.cacheKey : null;
+  const cacheKey = parkedIosCacheKey(readWorkspaceState(projectPath)?.lastBuild);
   return {
     projectPath,
     max,

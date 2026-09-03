@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { getProject, upsertProject } from '../config.ts';
 import { setExecutor, resetExecutor } from '../exec.ts';
-import { readParked } from '../sim-pool.ts';
+import { parkSim, readParked } from '../sim-pool.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.ts';
 
 let savedAndroidHome: string | undefined;
@@ -194,6 +194,86 @@ test('teardownOwnedIosSim parks an owned simulator and clears its project claim'
   }
 });
 
+test('a failed overflow eviction retains its parked ownership record', () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-pool-teardown-'));
+  process.env.STIM_HOME = home;
+  try {
+    const projectPath = '/tmp/pool-project';
+    upsertProject('/tmp/old-project', {
+      platforms: { ios: { deviceUdid: 'U0', deviceName: 'stim-old', owned: true } },
+    });
+    parkSim({
+      platform: 'ios',
+      projectPath: '/tmp/old-project',
+      max: 1,
+      record: {
+        udid: 'U0',
+        name: 'stim-parked (iPhone 17 26.5) u0',
+        deviceTypeIdentifier: 'iphone-17',
+        runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
+        parkedAt: '2026-09-01T00:00:00.000Z',
+        simslimManaged: false,
+      },
+    });
+    upsertProject(projectPath, {
+      platforms: { ios: { deviceUdid: 'U1', deviceName: 'stim-app', owned: true } },
+    });
+    let shutdown = false;
+    setExecutor({
+      run(cmd) {
+        if (cmd.includes('list devicetypes')) {
+          return JSON.stringify({ devicetypes: [{ identifier: 'iphone-17', name: 'iPhone 17' }] });
+        }
+        if (cmd.includes('list devices')) {
+          return JSON.stringify({
+            devices: {
+              'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
+                {
+                  udid: 'U0',
+                  name: 'stim-parked (iPhone 17 26.5) u0',
+                  state: 'Shutdown',
+                  isAvailable: true,
+                  deviceTypeIdentifier: 'iphone-17',
+                },
+                {
+                  udid: 'U1',
+                  name: 'stim-app',
+                  state: shutdown ? 'Shutdown' : 'Booted',
+                  isAvailable: true,
+                  deviceTypeIdentifier: 'iphone-17',
+                },
+              ],
+            },
+          });
+        }
+        return '';
+      },
+      runFile(_file, args = []) {
+        if (args[1] === 'delete' && args[2] === 'U0') throw new Error('simctl busy');
+        return '';
+      },
+      runQuiet(cmd) {
+        if (cmd.includes('simctl shutdown U1')) shutdown = true;
+        return '';
+      },
+      spawn: () => null,
+    });
+
+    const result = teardownOwnedIosSim('U1', { del: true, park: { projectPath, max: 1 } });
+
+    expect(result.status).toBe('torn-down');
+    expect(result.evictionFailures?.join('\n')).toMatch(/simctl busy/);
+    expect(
+      readParked('ios')
+        .map((record) => record.udid)
+        .toSorted(),
+    ).toEqual(['U0', 'U1']);
+  } finally {
+    delete process.env.STIM_HOME;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test('teardownOwnedIosSim falls back to deletion when parking fails', () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-pool-teardown-'));
   process.env.STIM_HOME = home;
@@ -233,6 +313,56 @@ test('teardownOwnedIosSim falls back to deletion when parking fails', () => {
     expect(result.parkFallback).toMatch(/device types unavailable/);
     expect(calls).toContain('xcrun simctl delete U1');
     expect(readParked('ios')).toEqual([]);
+  } finally {
+    delete process.env.STIM_HOME;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('parking fallback re-resolves ownership immediately before deletion', () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-pool-teardown-'));
+  process.env.STIM_HOME = home;
+  try {
+    const projectPath = '/tmp/pool-project';
+    upsertProject(projectPath, {
+      platforms: { ios: { deviceUdid: 'U1', deviceName: 'stim-app', owned: true } },
+    });
+    let lists = 0;
+    const calls: string[] = [];
+    setExecutor({
+      run(cmd) {
+        calls.push(cmd);
+        if (cmd.includes('list devices')) {
+          lists++;
+          const name = lists < 3 ? 'stim-app' : 'My iPhone';
+          return JSON.stringify({
+            devices: {
+              'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
+                {
+                  udid: 'U1',
+                  name,
+                  state: lists === 1 ? 'Booted' : 'Shutdown',
+                  isAvailable: true,
+                  deviceTypeIdentifier: 'iphone-17',
+                },
+              ],
+            },
+          });
+        }
+        if (cmd.includes('list devicetypes')) throw new Error('device types unavailable');
+        return '';
+      },
+      runFile: () => '',
+      runQuiet: () => '',
+      spawn: () => null,
+    });
+
+    const result = teardownOwnedIosSim('U1', { del: true, park: { projectPath, max: 1 } });
+
+    expect(result.status).toBe('failed');
+    expect(result.reason).toMatch(/not a Stim-owned sim/);
+    expect(calls.some((call) => call === 'xcrun simctl delete U1')).toBe(false);
+    expect(getProject(projectPath)?.platforms?.ios?.deviceUdid).toBe('U1');
   } finally {
     delete process.env.STIM_HOME;
     rmSync(home, { recursive: true, force: true });

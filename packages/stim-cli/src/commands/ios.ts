@@ -1470,19 +1470,20 @@ function cleanAdoptedIosApps({
   bundleId: string | null;
   phase: (name: unknown, text: string) => void;
   note: (line: string) => void;
-}): void {
+}): string | null {
   const swept = d.clearOtherUserApps({ udid, keep: bundleId });
   if (swept.removed.length) {
     phase('install', `removed ${swept.removed.join(', ')}, left by the previous workspace`);
   }
+  if (swept.listed && swept.failed.length === 0) {
+    d.clearIosAdoptionPending(root);
+    return null;
+  }
+  if (!swept.listed) return 'Could not list apps left by the previous workspace.';
   for (const failure of swept.failed) {
     note(chalk.yellow(phaseLine('install', `could not remove ${failure}, left by the previous workspace`)));
   }
-  if (swept.listed && swept.failed.length === 0) {
-    d.clearIosAdoptionPending(root);
-  } else if (!swept.listed) {
-    note(chalk.yellow(phaseLine('install', 'could not list apps left by the previous workspace; cleanup will retry')));
-  }
+  return `Could not remove ${swept.failed.join(', ')}, left by the previous workspace.`;
 }
 
 function resolveRunBundleId(d: IosDeps, root: string, appPath: string | null, bundleId: string | null): string | null {
@@ -1671,7 +1672,17 @@ async function finishIosRun({
     phase('launch', `${bundleId!} pid ${started.pid} ${launchTimer()}`);
   } else {
     const adopting = Boolean(device?.adoptionPending);
-    if (adopting) cleanAdoptedIosApps({ d, root, udid, bundleId, phase, note });
+    if (adopting) {
+      const cleanupFailure = cleanAdoptedIosApps({ d, root, udid, bundleId, phase, note });
+      if (cleanupFailure) {
+        return fail({
+          code: 'STIM_INSTALL_FAILED',
+          message: `${cleanupFailure} Stim kept the adoption cleanup pending and did not install or launch the app.`,
+          remedy: 'Run `stim ios` again after simulator tooling is responsive.',
+          build: { ...buildFailure, appPath, bundleId },
+        });
+      }
+    }
     const installTimer = stepTimer(d.now);
     const installed = d.installIosApp(
       {

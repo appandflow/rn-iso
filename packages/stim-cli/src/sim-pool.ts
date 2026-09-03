@@ -135,7 +135,7 @@ export function parkSim({
     const cfg = ensureConfig();
     const kept = readParked(platform, { config: cfg }).filter((r) => r.udid !== record.udid);
     const { keep, evicted } = evictOverflow([...kept, record], max);
-    writeParked(cfg, platform, keep);
+    writeParked(cfg, platform, [...keep, ...evicted]);
     const platforms = cfg.projects?.[projectPath]?.platforms;
     if (platforms) delete platforms[platform];
     saveConfig(cfg);
@@ -173,18 +173,28 @@ export function adoptParked({
   });
 }
 
-export function dropParked(platform: PoolPlatform, udid: string): boolean {
+export function removeParkedAfter(
+  platform: PoolPlatform,
+  udid: string,
+  beforeRemove: (record: ParkedSim) => void,
+): ParkedSim | null {
   return withConfigLock(() => {
     const cfg = loadConfig();
-    if (!cfg) return false;
+    if (!cfg) return null;
     const records = readParked(platform, { config: cfg });
-    if (!records.some((r) => r.udid === udid)) return false;
+    const record = records.find((candidate) => candidate.udid === udid);
+    if (!record) return null;
+    beforeRemove(record);
     writeParked(
       cfg,
       platform,
-      records.filter((r) => r.udid !== udid),
+      records.filter((candidate) => candidate.udid !== udid),
     );
     saveConfig(cfg);
-    return true;
+    return record;
   });
+}
+
+export function dropParked(platform: PoolPlatform, udid: string): boolean {
+  return removeParkedAfter(platform, udid, () => {}) !== null;
 }

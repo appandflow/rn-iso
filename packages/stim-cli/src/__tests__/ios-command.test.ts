@@ -557,7 +557,7 @@ describe('parked simulator adoption', () => {
     expect(errs.join('\n')).toMatch(/removed com\.example\.old/);
   });
 
-  test('a failed app listing leaves adoption pending for the next run', async () => {
+  test('a failed app listing refuses before install and leaves adoption pending', async () => {
     reserve();
     let cleared = false;
     let proveInstalled: unknown;
@@ -582,10 +582,40 @@ describe('parked simulator adoption', () => {
         },
       },
     );
-    expect(exitCode).toBe(null);
+    expect(exitCode).toBe(1);
     expect(cleared).toBe(false);
-    expect(errs.join('\n')).toMatch(/could not list apps .* cleanup will retry/);
-    expect(proveInstalled).toBe(false);
+    expect(errs.join('\n')).toMatch(/Could not list apps .* did not install or launch/);
+    expect(proveInstalled).toBe(undefined);
+  });
+
+  test('a failed old-app uninstall refuses before install and leaves adoption pending', async () => {
+    reserve();
+    let cleared = false;
+    let installed = false;
+    const { exitCode, errs } = await run(
+      { metroCheck: false },
+      {
+        ensureOwnedDevice: async () => ({
+          deviceUdid: UDID,
+          deviceName: 'stim-fixture (iPhone 17 Pro 26.5)',
+          owned: true,
+          adopted: true,
+          adoptionPending: true,
+        }),
+        clearOtherUserApps: () => ({ listed: true, removed: [], failed: ['com.example.old'] }),
+        clearIosAdoptionPending: () => {
+          cleared = true;
+        },
+        installIosApp: () => {
+          installed = true;
+          return { ok: true };
+        },
+      },
+    );
+    expect(exitCode).toBe(1);
+    expect(cleared).toBe(false);
+    expect(installed).toBe(false);
+    expect(errs.join('\n')).toMatch(/Could not remove com\.example\.old.*did not install or launch/);
   });
 });
 

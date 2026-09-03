@@ -33,7 +33,14 @@ import {
   parseRuntimeVersion,
   type IosSimRecord,
 } from '../sim/ios.ts';
-import { dropParked, parkedMaxSetting, POOL_SETTING_REMEDY, readParked, type ParkedSim } from '../sim-pool.ts';
+import {
+  dropParked,
+  parkedMaxSetting,
+  POOL_SETTING_REMEDY,
+  readParked,
+  removeParkedAfter,
+  type ParkedSim,
+} from '../sim-pool.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd } from '../teardown.ts';
 import { listAvds, ownedAvdDirectory } from '../sim/android.ts';
 import {
@@ -109,7 +116,7 @@ export interface ParkedSimReport {
   runtime: string | null;
   parkedAt: string;
   bytes: number | null;
-  listed: boolean;
+  listed: boolean | null;
 }
 
 interface GcReport {
@@ -169,6 +176,9 @@ interface GcDependencies {
   avdDirectory?: typeof ownedAvdDirectory;
   directorySize?: typeof directorySize;
   settingShapeErrors?: () => string[];
+  listAllIosSims?: typeof listAllIosSims;
+  listIosDeviceTypes?: typeof listIosDeviceTypes;
+  deleteParkedIosSim?: typeof deleteParkedIosSim;
 }
 
 // simctl and emulator listings can exceed 10 seconds on loaded hosts; 30 seconds still bounds hangs.
@@ -654,10 +664,15 @@ function formatParkedSimReport(parkedSims: readonly ParkedSimReport[], now: numb
     const model = [sim.model, sim.runtime].filter(Boolean).join(' ');
     const age = parkedAge(sim.parkedAt, now);
     const bytes = sim.bytes === null ? '' : ` ${formatBytes(sim.bytes)}`;
-    const gone = sim.listed ? '' : ' - not on this machine';
+    const gone =
+      sim.listed === false ? ' - not on this machine' : sim.listed === null ? ' - listing unavailable; kept' : '';
     lines.push(`  ios ${sim.name} (${shortUdid(sim.udid)})${model ? ` ${model}` : ''} ${age}${bytes}${gone}`);
   }
-  lines.push('              --delete deletes every parked simulator and empties the pool.');
+  lines.push(
+    parkedSims.some((sim) => sim.listed === null)
+      ? '              --delete keeps entries it cannot verify and deletes the rest.'
+      : '              --delete deletes every parked simulator and empties the pool.',
+  );
   return lines;
 }
 
@@ -866,6 +881,7 @@ export function describeParkedSims(
   records: readonly ParkedSim[],
   sims: readonly IosSimRecord[],
   deviceTypes: readonly { identifier: string; name: string }[],
+  { simsChecked = true }: { simsChecked?: boolean } = {},
 ): ParkedSimReport[] {
   const listed = new Map(sims.map((sim) => [sim.udid, sim]));
   return records.map((record) => {
@@ -877,30 +893,44 @@ export function describeParkedSims(
       runtime: sim ? parseRuntimeVersion(sim.runtime) : parseRuntimeVersion(record.runtimeIdentifier),
       parkedAt: record.parkedAt,
       bytes: typeof sim?.dataPathSize === 'number' ? sim.dataPathSize : null,
-      listed: Boolean(sim),
+      listed: simsChecked ? Boolean(sim) : null,
     };
   });
 }
 
-function collectParkedSims(): ParkedSimReport[] {
+function collectParkedSims(deps: GcDependencies): ParkedSimReport[] {
   const records = readParked('ios');
   if (records.length === 0) return [];
-  let sims: IosSimRecord[] = [];
+  let sims: IosSimRecord[];
   let deviceTypes: { identifier: string; name: string }[] = [];
   try {
-    sims = listAllIosSims({ timeoutMs: DEVICE_LIST_TIMEOUT_MS, includeUnavailable: true });
-    deviceTypes = listIosDeviceTypes();
+    sims = (deps.listAllIosSims ?? listAllIosSims)({ timeoutMs: DEVICE_LIST_TIMEOUT_MS, includeUnavailable: true });
+  } catch {
+    return describeParkedSims(records, [], [], { simsChecked: false });
+  }
+  try {
+    deviceTypes = (deps.listIosDeviceTypes ?? listIosDeviceTypes)();
   } catch {}
   return describeParkedSims(records, sims, deviceTypes);
 }
 
-function deleteParkedSims(parkedSims: readonly ParkedSimReport[]): number {
+export function deleteParkedSims(parkedSims: readonly ParkedSimReport[], deps: GcDependencies = {}): number {
   let failures = 0;
   let emptied = 0;
   for (const sim of parkedSims) {
+    if (sim.listed === null) {
+      failures++;
+      console.log(chalk.red(`Could not verify parked ios sim ${sim.name} (${sim.udid}); its pool record was kept.`));
+      continue;
+    }
     try {
-      if (sim.listed) deleteParkedIosSim(sim.udid);
-      dropParked('ios', sim.udid);
+      const removed = sim.listed
+        ? removeParkedAfter('ios', sim.udid, () => (deps.deleteParkedIosSim ?? deleteParkedIosSim)(sim.udid))
+        : dropParked('ios', sim.udid);
+      if (!removed) {
+        console.log(chalk.dim(`Skipped ${sim.name} (${sim.udid}); it is no longer parked.`));
+        continue;
+      }
       emptied++;
       console.log(
         chalk.green(
@@ -1110,7 +1140,7 @@ export async function collectGcReport(
       };
     }
   }
-  const parkedSims = collectParkedSims();
+  const parkedSims = collectParkedSims(deps);
   const deadProjects: string[] = [];
   const skipped: GcSkip[] = [];
   for (const path of Object.keys(cfg?.projects || {})) {
@@ -1371,7 +1401,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
     return;
   }
 
-  let deleteFailures = deleteParkedSims(report.parkedSims);
+  let deleteFailures = deleteParkedSims(report.parkedSims, deps);
 
   for (const path of deadProjects) {
     const result = await reclaimProject(path);

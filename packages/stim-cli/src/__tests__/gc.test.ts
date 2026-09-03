@@ -16,7 +16,7 @@ import { dirname, join } from 'node:path';
 import { METRO_NAMED_CACHE_LAYOUT } from '@stim-cli/core';
 import { Command } from 'commander';
 import { setExecutor, resetExecutor } from '../exec.ts';
-import { saveConfig, loadConfig } from '../config.ts';
+import { getProject, saveConfig, loadConfig, upsertProject } from '../config.ts';
 import { register } from '../cache-manifest.ts';
 import { ensureRemoteBootOwned, withRemoteSessionLock } from '../engine/device-remote.ts';
 import { deviceLeasePath, deviceLocksDir } from '../engine/device-lease.ts';
@@ -24,6 +24,7 @@ import { withEasProjectLock } from '../engine/eas-project-lock.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../paths.ts';
 import gcCommand, {
   collectGcReport,
+  deleteParkedSims,
   describeParkedSims,
   describeUnverifiableDevices,
   findOrphanedDevices,
@@ -33,6 +34,7 @@ import gcCommand, {
   runGc,
   selectCaches,
 } from '../commands/gc.ts';
+import { adoptParked, parkSim, readParked } from '../sim-pool.ts';
 import { makeConfig, makeIosSim, makeCacheDescriptor, makeBuildLock, makeBuildSlot } from './_factories.ts';
 
 describe('selectCaches', () => {
@@ -176,6 +178,67 @@ test('reports parked simulators with model, runtime, age, size, and delete effec
   expect(lines).toMatch(/A1F3\.\.\).*iPhone 17 26\.5.*parked 48h ago.*2M/);
   expect(lines).toMatch(/--delete deletes every parked simulator and empties the pool/);
   expect(lines).not.toMatch(/Nothing to reclaim/);
+});
+
+test('parked deletion skips a simulator adopted after report collection', async () => {
+  upsertProject('/tmp/source', { platforms: { ios: { deviceUdid: 'P1', deviceName: 'stim-source', owned: true } } });
+  upsertProject('/tmp/adopter', { platforms: {} });
+  const record = {
+    udid: 'P1',
+    name: 'stim-parked (iPhone 17 26.5) p1',
+    deviceTypeIdentifier: 'iphone-17',
+    runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
+    parkedAt: '2026-09-01T00:00:00.000Z',
+    simslimManaged: false,
+  };
+  parkSim({ platform: 'ios', projectPath: '/tmp/source', record, max: 3 });
+  const report = describeParkedSims([record], [makeIosSim({ udid: 'P1', name: record.name })], []);
+  const device = { deviceUdid: 'P1', deviceName: 'stim-adopter', owned: true };
+  adoptParked({ platform: 'ios', projectPath: '/tmp/adopter', udid: 'P1', device });
+  let deleted = false;
+
+  const output = await captureLog(() =>
+    deleteParkedSims(report, {
+      deleteParkedIosSim: () => {
+        deleted = true;
+      },
+    }),
+  );
+
+  expect(deleted).toBe(false);
+  expect(output).toMatch(/no longer parked/);
+  expect(getProject('/tmp/adopter')?.platforms?.ios).toEqual(device);
+});
+
+test('parked deletion keeps ownership records when simulator listing was unavailable', async () => {
+  upsertProject('/tmp/source', { platforms: { ios: { deviceUdid: 'P1', deviceName: 'stim-source', owned: true } } });
+  const record = {
+    udid: 'P1',
+    name: 'stim-parked (iPhone 17 26.5) p1',
+    deviceTypeIdentifier: 'iphone-17',
+    runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
+    parkedAt: '2026-09-01T00:00:00.000Z',
+    simslimManaged: false,
+  };
+  parkSim({ platform: 'ios', projectPath: '/tmp/source', record, max: 3 });
+  const report = await collectGcReport(
+    { unsafeAllowScopedDeviceSweep: true },
+    {
+      listAllIosSims: () => {
+        throw new Error('simctl unavailable');
+      },
+    },
+  );
+
+  let failures = 0;
+  const output = await captureLog(() => {
+    failures = deleteParkedSims(report.parkedSims);
+  });
+
+  expect(failures).toBe(1);
+  expect(output).toMatch(/Could not verify.*record was kept/);
+  expect(readParked('ios')).toEqual([record]);
+  expect(formatGcReport({ parkedSims: report.parkedSims }).join('\n')).toMatch(/keeps entries it cannot verify/);
 });
 
 test('headline does not claim "nothing to reclaim" without flagging unchecked entries', () => {
