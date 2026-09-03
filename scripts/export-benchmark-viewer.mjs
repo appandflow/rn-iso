@@ -144,7 +144,7 @@ function assertPortable(payload) {
   }
 }
 
-export function exportBenchmark(stageDir, outputPath, proofDir) {
+function exportBenchmark(stageDir, outputPath, proofDir) {
   const absoluteStageDir = resolve(stageDir);
   const stage = basename(absoluteStageDir);
   const resultsRoot = dirname(absoluteStageDir);
