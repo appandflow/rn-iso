@@ -53,6 +53,11 @@ export interface OwnedDeviceRecord {
   deviceType?: string | null;
   runtime?: string | null;
   systemImage?: string | null;
+  /**
+   * The simulator this call booted during this run. `ensureBooted` trusts it
+   * instead of listing simulators again; it is never persisted.
+   */
+  bootedUdid?: string;
 }
 
 interface DeviceSettings {
@@ -193,7 +198,8 @@ async function ensureOwnedIosDevice({
               'Run `stim worktree remove` (or `stim gc --delete`) to reap the current sim, then `stim ios` again to create the requested one.',
           );
         }
-        if (sim.state !== 'Booted') {
+        const bootedHere = sim.state !== 'Booted';
+        if (bootedHere) {
           out(chalk.dim(phaseLine('device', `booting ${sim.name} (${sim.udid})`)));
           bootIosSim(sim.udid);
         }
@@ -211,6 +217,7 @@ async function ensureOwnedIosDevice({
             out,
             reconcileIosSimulator,
           })),
+          ...(bootedHere ? { bootedUdid: sim.udid } : {}),
           deviceType: deviceTypes.find((d) => d.identifier === sim.deviceTypeIdentifier)?.name ?? null,
           runtime: parseRuntimeVersion(sim.runtime),
         };
@@ -249,7 +256,13 @@ async function ensureOwnedIosDevice({
     out,
     reconcileIosSimulator,
   });
-  return { ...configured, created: true, deviceType: created.deviceType, runtime: created.runtime };
+  return {
+    ...configured,
+    created: true,
+    bootedUdid: created.udid,
+    deviceType: created.deviceType,
+    runtime: created.runtime,
+  };
 }
 
 async function configureOwnedIosSim({
@@ -786,6 +799,7 @@ async function ensureIosBooted({
 }): Promise<BootResult> {
   const udid = device?.deviceUdid;
   if (!udid) return { failed: true, reason: 'No iOS simulator is recorded for this project.' };
+  if (device?.bootedUdid === udid) return { ok: true, udid };
 
   let resolved;
   try {
