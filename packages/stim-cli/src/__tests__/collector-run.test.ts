@@ -362,9 +362,9 @@ describe('the ios collector, spawned for real against a fake xcrun', () => {
     await until(() => deviceLog().find((r) => r.src === 'device' && r.proc === 'locationd') ?? null, {
       label: 'a parsed device record',
     });
-    expect(
-      deviceLog().some((r) => r.event === 'collector_stderr' && /unexpected argv/.test(String(r.msg))),
-    ).toBe(false);
+    expect(deviceLog().some((r) => r.event === 'collector_stderr' && /unexpected argv/.test(String(r.msg)))).toBe(
+      false,
+    );
 
     process.kill(childPid(child), 'SIGTERM');
     const result = await exited(child);
