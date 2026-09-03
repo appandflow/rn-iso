@@ -41,12 +41,21 @@ test('default worktree dir is a sibling of the repo', () => {
 
 test('worktreePath joins the dir and the name', () => {
   expect(worktreePath({ worktreeDir: '/wt', name: 'feat-x' })).toBe('/wt/feat-x');
-  expect(worktreePath({ worktreeDir: '/wt', name: 'bench/run-1' })).toBe('/wt/bench%2Frun-1');
+  expect(worktreePath({ worktreeDir: '/wt', name: 'feat_x' })).toBe('/wt/feat_x');
+  expect(worktreePath({ worktreeDir: '/wt', name: 'bench/run_1' })).toBe('/wt/bench+run_1');
 });
 
 test('worktree names accept safe branch paths without accepting traversal or invalid refs', () => {
   expect(isValidWorktreeName('bench/run-1')).toBe(true);
-  for (const name of ['bench//run', '/bench', 'bench/', 'bench/../run', 'bench/.hidden', 'bench/run.lock']) {
+  for (const name of [
+    'bench//run',
+    '/bench',
+    'bench/',
+    'bench/../run',
+    'bench/.hidden',
+    'bench/run.lock',
+    'bench+run',
+  ]) {
     expect(isValidWorktreeName(name)).toBe(false);
   }
 });
