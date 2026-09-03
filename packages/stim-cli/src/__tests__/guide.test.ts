@@ -236,9 +236,9 @@ test('the flags the guide advertises are the flags the commands define', () => {
     'logs.ts': ['--errors', '--follow', '--since', '--grep', '--tail'],
     'gc.ts': ['--delete', '--older-than', '--cache'],
     'worktree.ts': ['--carry-ignored', '--base', '--dir', '--label', '--force'],
-    'doctor.ts': ['--json', '--fix'],
+    'doctor.ts': ['--json', '--fix', '--platform'],
   };
-  expect(/doctor\s+--json --fix/.test(lifecycle)).toBeTruthy();
+  expect(/doctor\s+--json --fix --platform <ios\|android>/.test(lifecycle)).toBeTruthy();
 
   const retired: Record<string, string[]> = { 'gc.ts': ['--all'] };
   for (const [file, flags] of Object.entries(retired)) {

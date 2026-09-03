@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import type { Command } from 'commander';
+import { InvalidArgumentError, type Command } from 'commander';
 import { findProjectRoot } from '../project.ts';
 import { repoRoot } from '../worktree.ts';
 import {
@@ -12,11 +12,17 @@ import {
   sandboxFinding,
 } from '../sandbox.ts';
 import { detectFingerprintParity, detectXcodeMajor, runDoctor } from '../doctor.ts';
-import type { Finding } from '../doctor.ts';
+import type { DoctorPlatform, Finding } from '../doctor.ts';
 
 interface DoctorOptions {
   json?: boolean;
   fix?: boolean;
+  platform?: DoctorPlatform;
+}
+
+export function parseDoctorPlatform(value: string): DoctorPlatform {
+  if (value === 'ios' || value === 'android') return value;
+  throw new InvalidArgumentError('expected one of: ios, android');
 }
 
 /**
@@ -68,9 +74,14 @@ export default function doctorCommand(program: Command): void {
   program
     .command('doctor')
     .description(
-      'Inspect the main checkout and report project state that can make native worktrees slow or invalid. Read-only unless --fix is passed.',
+      'Inspect the main checkout and report project state that can make native worktrees slow or invalid. Read-only unless --fix is passed; --platform filters native findings.',
     )
     .option('--json', 'print the findings as JSON')
+    .option(
+      '--platform <platform>',
+      'report shared findings plus only this native platform: ios or android',
+      parseDoctorPlatform,
+    )
     .option(
       '--fix',
       'apply the findings Stim can repair itself and report the rest, which stay read-only. Every repair writes a per-user file, never a committed one, and refuses a file it cannot read back rather than replace it. Today one finding qualifies: the sandbox allowance.',
@@ -86,10 +97,11 @@ export default function doctorCommand(program: Command): void {
       if (opts.fix) applySandboxFix(root);
 
       const findings: Finding[] = runDoctor(root, {
-        xcodeMajor: detectXcodeMajor(),
+        xcodeMajor: opts.platform === 'android' ? null : detectXcodeMajor(),
+        platform: opts.platform,
       });
 
-      const parity = await detectFingerprintParity(root);
+      const parity = await detectFingerprintParity(root, { platform: opts.platform });
       if (parity) findings.push(parity);
 
       if (detectHarness()) {
@@ -98,15 +110,21 @@ export default function doctorCommand(program: Command): void {
       }
 
       if (opts.json) {
-        console.log(JSON.stringify({ project: root, findings }));
+        console.log(JSON.stringify({ project: root, platform: opts.platform ?? null, findings }));
         return;
       }
 
       if (findings.length === 0) {
         console.log(chalk.green('Nothing to flag.'));
+        const nativeChecks =
+          opts.platform === 'ios'
+            ? 'CocoaPods, iOS warm state, dev client, Metro cacheStores, Xcode compilation cache, ccache, build cache provider, iOS remote device and SimSlim profile'
+            : opts.platform === 'android'
+              ? 'Android warm state, dev client, Metro cacheStores, build cache provider and Android remote device'
+              : 'CocoaPods, iOS and Android warm state, dev client, ccache, Metro cacheStores, compilation cache, build cache provider, remote devices and SimSlim profile';
         console.log(
           chalk.dim(
-            'Checked: main-checkout dependencies, CocoaPods, native warm state and local upstream; dev client, ccache, Metro cacheStores, compilation cache, build cache provider, EAS session, SimSlim profile, the type of every setting Stim reads and, on a checkout without installed dependencies, fingerprint parity.',
+            `Checked: main-checkout dependencies, ${nativeChecks}, local upstream, EAS session, the type of every setting Stim reads and, on a checkout without installed dependencies, fingerprint parity.`,
           ),
         );
         console.log(
