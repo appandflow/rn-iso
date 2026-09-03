@@ -312,7 +312,7 @@ function fitSimName(label: string, { model, runtime }: SimModel, suffix = '', pr
   let shortLabel = label;
   if (over > 0 && !preserveLabel) {
     const cut = Math.min(over, label.length);
-    shortLabel = label.slice(0, label.length - cut);
+    shortLabel = label.slice(0, label.length - cut).replace(/[._-]+$/g, '');
     over -= cut;
   }
   const shortModel = over > 0 ? modelName.slice(0, Math.max(0, modelName.length - over)) : modelName;

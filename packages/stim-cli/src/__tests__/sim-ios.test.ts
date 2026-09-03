@@ -472,6 +472,12 @@ test('ownedSimName does not double the ownership prefix', () => {
 
 test('owned and parked simulator names show model and runtime and stay within 60 characters', () => {
   expect(ownedSimName('feat-login', { model: 'iPhone 17', runtime: '26.5' })).toBe('stim-feat-login (iPhone 17 26.5)');
+  expect(
+    ownedSimName('58bd14ac-bench-luna-rc12-gpt-5-6-luna-native-stim', {
+      model: 'iPhone 17',
+      runtime: '26.5',
+    }),
+  ).toBe('stim-58bd14ac-bench-luna-rc12-gpt-5-6-luna (iPhone 17 26.5)');
   const long = parkedSimName('A1F3-0000', {
     model: 'iPad Pro 13-inch (M4) with a deliberately very long qualifier',
     runtime: '26.5',
