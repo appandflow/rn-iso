@@ -2,6 +2,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFi
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { userInfo } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { stripVTControlCharacters } from 'node:util';
 
 const modelPricing = {
   'gpt-5.6-luna': {
@@ -18,12 +19,20 @@ const modelPricing = {
   },
 };
 
-const absolutePathPattern = /(?<![A-Za-z0-9._-])\/(?:Users|Volumes|private|tmp|var\/folders)\/[^\s'"`,;)]+/g;
+const absolutePathPattern = /(?<![A-Za-z0-9._-])\/(?:Users|Volumes|private|tmp|var\/folders)\/[^\s'"`,;()<>[\]]+/g;
 const ipAddressPattern = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
 const ipv6LoopbackPattern = /\[::1\]|(?<![A-Za-z0-9:])::1(?![A-Za-z0-9:])/g;
 const simulatorIdPattern = /\b[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}\b/gi;
+const simulatorIdPrefixPattern = /\b(?=[0-9A-F]{8}\b)(?=[0-9A-F]*[A-F])[0-9A-F]{8}\b/g;
+const simulatorShortIdPattern = /\b[0-9A-F]{4}\.\./gi;
+const localHostnamePattern = /\b(?:[A-Za-z0-9-]+\.)+local\b/gi;
+const remoteBranchUserPattern = /(\bremotes\/[^/\s]+\/)@[^/\s]+(?=\/)/g;
 const agentDeviceBundlePattern = /\b(?:[A-Za-z0-9-]+\.)+[A-Za-z0-9.-]*agentdevice[A-Za-z0-9.-]*\b/gi;
-const processInspectionPattern = /(?:^|[;&|]\s*)(?:ps|pgrep)(?:\s|$)/;
+const processInspectionPattern = /\b(?:ps|pgrep)(?:\s|$)/;
+const deviceInventoryPattern = /\b(?:agent-device devices|xcrun simctl list devices)\b/;
+const machineStoragePattern = /\b(?:df|diskutil)(?:\s|$)/;
+const branchInventoryPattern = /\bgit\s+(?:branch|for-each-ref)(?:\s|$)/;
+const interactiveShellPattern = /^(?:bash|sh|zsh)$/;
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
@@ -49,6 +58,40 @@ function formatStage(stage) {
     .join(' ');
 }
 
+function displaySimulator(meta) {
+  const parked = meta.preflight?.parkedSimulator ?? meta.expectedParkedSimulator;
+  const model = parked?.deviceTypeIdentifier
+    ?.replace('com.apple.CoreSimulator.SimDeviceType.', '')
+    .replaceAll('-', ' ');
+  const runtimeId = parked?.runtimeIdentifier?.replace('com.apple.CoreSimulator.SimRuntime.', '');
+  const runtimeMatch = runtimeId?.match(/^([A-Za-z]+)-(\d+)-(\d+)$/);
+  const runtime = runtimeMatch
+    ? `${runtimeMatch[1]} ${runtimeMatch[2]}.${runtimeMatch[3]}`
+    : runtimeId?.replaceAll('-', ' ');
+  return [model, runtime].filter(Boolean).join(' / ') || 'Not recorded';
+}
+
+export function benchmarkEnvironment(meta, machine = {}) {
+  const actual = meta.preflight?.actual ?? {};
+  return {
+    machine: {
+      model: machine.model ?? actual.MACHINE_MODEL ?? 'Not recorded',
+      chip: machine.chip ?? actual.MACHINE_CHIP ?? 'Not recorded',
+      memory: machine.memory ?? actual.MACHINE_MEMORY ?? 'Not recorded',
+    },
+    macos:
+      [actual.MACOS_VERSION && `macOS ${actual.MACOS_VERSION}`, actual.MACOS_BUILD && `(${actual.MACOS_BUILD})`]
+        .filter(Boolean)
+        .join(' ') || 'Not recorded',
+    xcode:
+      [actual.XCODE_VERSION && `Xcode ${actual.XCODE_VERSION}`, actual.XCODE_BUILD && `(${actual.XCODE_BUILD})`]
+        .filter(Boolean)
+        .join(' ') || 'Not recorded',
+    node: actual.NODE_VERSION ? `Node ${actual.NODE_VERSION}` : 'Not recorded',
+    simulator: displaySimulator(meta),
+  };
+}
+
 function replacementLabel(path) {
   const parts = path.split('/').filter(Boolean);
   const worktreeIndex = parts.findIndex((part) => part.includes('worktree'));
@@ -68,21 +111,38 @@ function unwrapShellCommand(command) {
 }
 
 export function sanitizeBenchmarkText(value, replacements = []) {
-  let text = String(value ?? '');
+  let text = stripVTControlCharacters(String(value ?? ''));
   for (const [absolute, portable] of replacements.toSorted((a, b) => b[0].length - a[0].length)) {
     text = text.replaceAll(absolute, portable);
   }
   text = text.replace(agentDeviceBundlePattern, '<agent-device-helper>');
+  text = text.replace(absolutePathPattern, (path) => replacementLabel(path));
+  text = text.replace(remoteBranchUserPattern, '$1@<user>');
   text = text.replaceAll(userInfo().username, '<local-user>');
   return text
     .replace(simulatorIdPattern, '<simulator-udid>')
+    .replace(simulatorIdPrefixPattern, '<simulator-udid-prefix>')
+    .replace(simulatorShortIdPattern, '<simulator-udid-prefix>')
+    .replace(localHostnamePattern, '<local-host>')
     .replace(ipAddressPattern, '<local-ip>')
-    .replace(ipv6LoopbackPattern, '<local-ip>')
-    .replace(absolutePathPattern, (path) => replacementLabel(path));
+    .replace(ipv6LoopbackPattern, '<local-ip>');
 }
 
 export function sanitizeCommandOutput(command, value, replacements = []) {
-  if (processInspectionPattern.test(unwrapShellCommand(command))) {
+  const unwrapped = unwrapShellCommand(command);
+  if (interactiveShellPattern.test(unwrapped)) {
+    return '<interactive shell transcript omitted from public artifact>';
+  }
+  if (deviceInventoryPattern.test(unwrapped)) {
+    return '<device inventory omitted from public artifact>';
+  }
+  if (machineStoragePattern.test(unwrapped)) {
+    return '<machine storage inventory omitted from public artifact>';
+  }
+  if (branchInventoryPattern.test(unwrapped)) {
+    return '<branch inventory omitted from public artifact>';
+  }
+  if (processInspectionPattern.test(unwrapped)) {
     return '<process output omitted from public artifact>';
   }
   return sanitizeBenchmarkText(clipped(value), replacements);
@@ -105,7 +165,23 @@ function relativeSeconds(iso, start) {
   return Math.max(0, (Date.parse(iso) - Date.parse(start)) / 1000);
 }
 
-function eventsFor(runDir, start, replacements) {
+function claudeToolOutput(event, content) {
+  const direct = typeof content.content === 'string' ? content.content : '';
+  const stdout = event.tool_use_result?.stdout ?? '';
+  const stderr = event.tool_use_result?.stderr ?? '';
+  return direct || [stdout, stderr].filter(Boolean).join('\n');
+}
+
+function collectPublicStrings(value, key = '') {
+  if (typeof value === 'string') return key === 'id' ? [] : [value];
+  if (Array.isArray(value)) return value.flatMap((item) => collectPublicStrings(item));
+  if (value && typeof value === 'object') {
+    return Object.entries(value).flatMap(([childKey, child]) => collectPublicStrings(child, childKey));
+  }
+  return [];
+}
+
+export function eventsFor(runDir, start, replacements) {
   const path = join(runDir, 'events.jsonl');
   if (!existsSync(path)) return { messages: [], commands: [] };
   const started = new Map();
@@ -141,39 +217,110 @@ function eventsFor(runDir, start, replacements) {
         text: sanitizeBenchmarkText(clipped(item.text, 4_000), replacements),
       });
     }
+
+    if (event.type === 'assistant' && Array.isArray(event.message?.content)) {
+      for (const [index, content] of event.message.content.entries()) {
+        if (content.type === 'tool_use' && content.name === 'Bash') {
+          started.set(content.id, { at: stamped.arrivedAt, command: content.input?.command ?? '' });
+        }
+        if (content.type === 'text' && content.text) {
+          messages.push({
+            id: `${event.uuid ?? event.message.id ?? 'claude-message'}-${index}`,
+            atSeconds: relativeSeconds(stamped.arrivedAt, start),
+            text: sanitizeBenchmarkText(clipped(content.text, 4_000), replacements),
+          });
+        }
+      }
+    }
+
+    if (event.type === 'user' && Array.isArray(event.message?.content)) {
+      for (const content of event.message.content) {
+        if (content.type !== 'tool_result') continue;
+        const begin = started.get(content.tool_use_id);
+        if (!begin) continue;
+        const output = claudeToolOutput(event, content);
+        commands.push({
+          id: content.tool_use_id,
+          startSeconds: relativeSeconds(begin.at, start),
+          endSeconds: relativeSeconds(stamped.arrivedAt, start),
+          command: sanitizeBenchmarkText(unwrapShellCommand(begin.command), replacements),
+          output: sanitizeCommandOutput(begin.command, output, replacements),
+          exitCode: content.is_error || event.tool_use_result?.interrupted ? 1 : 0,
+        });
+        started.delete(content.tool_use_id);
+      }
+    }
   }
   return { messages, commands };
 }
 
 function assertPortable(payload) {
-  const serialized = JSON.stringify(payload);
+  const serialized = JSON.stringify(collectPublicStrings(payload));
+  const leakedRoot = ['/Users', '/Volumes', '/private', '/var/folders', '/tmp/'].find((root) =>
+    serialized.includes(root),
+  );
+  if (leakedRoot) throw new Error(`benchmark export contains an absolute machine path root: ${leakedRoot}`);
   const leakedPath = serialized.match(absolutePathPattern)?.[0];
-  if (leakedPath) throw new Error(`benchmark export contains an absolute machine path: ${leakedPath}`);
+  if (leakedPath) {
+    const at = serialized.indexOf(leakedPath);
+    const field = serialized.slice(Math.max(0, at - 80), Math.min(serialized.length, at + leakedPath.length + 80));
+    throw new Error(`benchmark export contains an absolute machine path: ${leakedPath}\n${field}`);
+  }
   const leakedIp = serialized.match(ipAddressPattern)?.[0];
   if (leakedIp) throw new Error(`benchmark export contains an IP address: ${leakedIp}`);
   const leakedIpv6 = serialized.match(ipv6LoopbackPattern)?.[0];
   if (leakedIpv6) throw new Error(`benchmark export contains an IPv6 address: ${leakedIpv6}`);
   const leakedHelper = serialized.match(agentDeviceBundlePattern)?.[0];
   if (leakedHelper) throw new Error(`benchmark export contains an agent-device helper identifier: ${leakedHelper}`);
+  const leakedSimulatorId = serialized.match(simulatorIdPattern)?.[0];
+  if (leakedSimulatorId) throw new Error(`benchmark export contains a simulator identifier: ${leakedSimulatorId}`);
+  const leakedSimulatorPrefix = serialized.match(simulatorIdPrefixPattern)?.[0];
+  if (leakedSimulatorPrefix) {
+    throw new Error(`benchmark export contains a simulator identifier prefix: ${leakedSimulatorPrefix}`);
+  }
+  const leakedSimulatorShortId = serialized.match(simulatorShortIdPattern)?.[0];
+  if (leakedSimulatorShortId) {
+    throw new Error(`benchmark export contains a simulator identifier prefix: ${leakedSimulatorShortId}`);
+  }
+  const leakedHostname = serialized.match(localHostnamePattern)?.[0];
+  if (leakedHostname) throw new Error(`benchmark export contains a local hostname: ${leakedHostname}`);
+  const leakedRemoteBranchUser = serialized.match(remoteBranchUserPattern)?.[0];
+  if (leakedRemoteBranchUser) throw new Error('benchmark export contains a user-scoped remote branch');
   if (serialized.includes('janicduplessis')) {
     throw new Error('benchmark export contains a local username');
   }
 }
 
-function exportBenchmark(stageDir, outputPath, proofDir) {
+export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
   const absoluteStageDir = resolve(stageDir);
   const stage = basename(absoluteStageDir);
   const resultsRoot = dirname(absoluteStageDir);
   const coordinatorRoot = dirname(resultsRoot);
   const proofCopies = [];
-  const runs = readdirSync(absoluteStageDir)
+  const runDirs = readdirSync(absoluteStageDir)
+    .toSorted()
     .map((name) => join(absoluteStageDir, name))
-    .filter((runDir) => existsSync(join(runDir, 'run.json')) && existsSync(join(runDir, 'meta.json')))
-    .map((runDir) => {
-      const record = readJson(join(runDir, 'run.json'));
+    .filter((runDir) => existsSync(join(runDir, 'run.json')) && existsSync(join(runDir, 'meta.json')));
+  const records = runDirs.map((runDir) => ({ runDir, record: readJson(join(runDir, 'run.json')) }));
+  if (records.length === 0) throw new Error(`no benchmark runs found in ${absoluteStageDir}`);
+  const validCounts = new Map();
+  for (const { record } of records) {
+    if (!record.valid) continue;
+    const base = publicRunId(record);
+    validCounts.set(base, (validCounts.get(base) ?? 0) + 1);
+  }
+  const attemptCounts = new Map();
+  const environment = benchmarkEnvironment(readJson(join(runDirs[0], 'meta.json')), machine);
+  const runs = records
+    .map(({ runDir, record }) => {
       const meta = readJson(join(runDir, 'meta.json'));
       const appAlive = existsSync(join(runDir, 'app-alive.json')) ? readJson(join(runDir, 'app-alive.json')) : null;
-      const id = publicRunId(record);
+      const baseId = publicRunId(record);
+      const attemptKind = record.valid ? 'valid' : 'invalid';
+      const countKey = `${baseId}-${attemptKind}`;
+      const attempt = (attemptCounts.get(countKey) ?? 0) + 1;
+      attemptCounts.set(countKey, attempt);
+      const id = record.valid && validCounts.get(baseId) === 1 ? baseId : `${baseId}-${attemptKind}-${attempt}`;
       const replacements = [
         [runDir, `results/${stage}/${id}`],
         [absoluteStageDir, `results/${stage}`],
@@ -191,19 +338,25 @@ function exportBenchmark(stageDir, outputPath, proofDir) {
         relativeSeconds(meta.finishedAt, meta.dispatchAt),
       );
       const events = eventsFor(runDir, meta.dispatchAt, replacements);
+      const usage = record.usage ?? {
+        input_tokens: 0,
+        cached_input_tokens: 0,
+        output_tokens: 0,
+        reasoning_output_tokens: 0,
+      };
       return {
         id,
         model: record.model,
         variant: record.variant,
         arm: record.arm,
         valid: record.valid,
-        invalidReasons: record.invalidReasons,
+        invalidReasons: (record.invalidReasons ?? []).map((reason) => sanitizeBenchmarkText(reason, replacements)),
         settingsReadySeconds: record.dispatchToScreenReadySeconds,
         appAliveSeconds: record.dispatchToAppAliveSeconds,
         totalSeconds,
         commandCount: record.commandCount,
-        usage: record.usage,
-        estimatedTokenCostUsd: estimateTokenCost(record.usage, record.model),
+        usage,
+        estimatedTokenCostUsd: record.reportedCostUsd ?? estimateTokenCost(usage, record.model),
         messages: events.messages,
         commands: events.commands,
         markers: [
@@ -236,7 +389,6 @@ function exportBenchmark(stageDir, outputPath, proofDir) {
         ['stim', 'control'].indexOf(a.arm) - ['stim', 'control'].indexOf(b.arm),
     );
 
-  if (runs.length === 0) throw new Error(`no benchmark runs found in ${absoluteStageDir}`);
   const model = runs[0].model;
   const recordedOn = readdirSync(absoluteStageDir)
     .map((name) => join(absoluteStageDir, name, 'meta.json'))
@@ -260,6 +412,7 @@ function exportBenchmark(stageDir, outputPath, proofDir) {
             'API-equivalent token estimate from aggregate counters. It excludes long-context multipliers, cache-write premiums, tool fees, and subscription pricing.',
         }
       : null,
+    environment,
     runs,
   };
   assertPortable(payload);
@@ -271,10 +424,12 @@ function exportBenchmark(stageDir, outputPath, proofDir) {
 }
 
 if (resolve(process.argv[1] ?? '') === fileURLToPath(import.meta.url)) {
-  const [, , stageDir, outputPath, proofDir] = process.argv;
+  const [, , stageDir, outputPath, proofDir, machinePath] = process.argv;
   if (!stageDir || !outputPath || !proofDir) {
-    throw new Error('usage: node scripts/export-benchmark-viewer.mjs <stage-dir> <output-json> <proof-dir>');
+    throw new Error(
+      'usage: node scripts/export-benchmark-viewer.mjs <stage-dir> <output-json> <proof-dir> [machine-json]',
+    );
   }
-  const payload = exportBenchmark(stageDir, outputPath, proofDir);
+  const payload = exportBenchmark(stageDir, outputPath, proofDir, machinePath ? readJson(resolve(machinePath)) : {});
   process.stdout.write(`${relative(process.cwd(), outputPath)} (${payload.runs.length} sanitized runs)\n`);
 }

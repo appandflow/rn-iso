@@ -157,11 +157,19 @@ Export a completed block into the website with:
 node scripts/export-benchmark-viewer.mjs \
   /path/to/results/<stage> \
   website/src/data/benchmarks/<stage>.json \
-  website/static/benchmarks/<stage>
+  website/static/benchmarks/<stage> \
+  /path/to/sanitized-machine.json
 ```
 
+The optional machine JSON contains only `model`, `chip`, and `memory`. The
+exporter combines those fields with the recorded macOS, Xcode, Node, simulator
+model, and simulator runtime. Never include a hostname, serial number, hardware
+UUID, username, device UDID, or path in that file.
+
 The exporter refuses data that still contains a local username or an absolute
-home, volume, temporary, or simulator path. Review the generated diff before
+home, volume, temporary, or simulator path. It omits machine-global process,
+device, storage, and branch listings, plus interactive shell transcripts whose
+cursor-control output cannot be made portable. Review the generated diff before
 publishing because command output can contain other project-specific data.
 
 Invalid attempts are immutable audit records. Fix only a coordinator defect or

@@ -1,0 +1,1822 @@
+{
+  "schemaVersion": 1,
+  "stage": "opus-rc12",
+  "title": "Opus rc.12",
+  "protocolVersion": 4,
+  "recordedOn": "2026-09-03",
+  "primaryMetric": "Dispatch to validated Settings screenshot",
+  "pricing": null,
+  "environment": {
+    "machine": {
+      "model": "Mac mini (Mac16,10)",
+      "chip": "Apple M4",
+      "memory": "16 GB"
+    },
+    "macos": "macOS 26.5.2 (25F84)",
+    "xcode": "Xcode 26.6 (17F113)",
+    "node": "Node 26.7.0",
+    "simulator": "iPhone 17 / iOS 26.5"
+  },
+  "runs": [
+    {
+      "id": "javascript-stim",
+      "model": "opus",
+      "variant": "javascript",
+      "arm": "stim",
+      "valid": true,
+      "invalidReasons": [],
+      "settingsReadySeconds": 125.773,
+      "appAliveSeconds": 89.724,
+      "totalSeconds": 139.323,
+      "commandCount": 11,
+      "usage": {
+        "input_tokens": 352594,
+        "cached_input_tokens": 335369,
+        "cache_creation_input_tokens": 17195,
+        "output_tokens": 2979,
+        "reasoning_output_tokens": 63
+      },
+      "estimatedTokenCostUsd": 0.4158494999999999,
+      "messages": [
+        {
+          "id": "27d0307e-f4b5-43ed-899c-4c8a3c712bbe-0",
+          "atSeconds": 33.958,
+          "text": "I'll start by invoking the Stim skill guidance and creating the worktree."
+        },
+        {
+          "id": "9c2f4b49-84a2-4bc7-9d8c-bc8eeb6a61a1-0",
+          "atSeconds": 52.221,
+          "text": "Worktree ready. Now let me find the settings subtitle string."
+        },
+        {
+          "id": "c65a846d-cd34-4d24-8e0e-faca984f6099-0",
+          "atSeconds": 62.541,
+          "text": "Now start Metro in the worktree."
+        },
+        {
+          "id": "776a7ea0-ad57-4b84-b961-8d886d02b289-0",
+          "atSeconds": 106.234,
+          "text": "Simulator adopted, app launched. Now driving the app with agent-device."
+        },
+        {
+          "id": "7336c240-6884-4f89-9c94-c41aec534b05-0",
+          "atSeconds": 117.665,
+          "text": "No onboarding shown — the app is at the Trails tab. Navigating to Settings."
+        },
+        {
+          "id": "919eaa0b-7dc0-4c5d-8817-2b90eb531a5a-0",
+          "atSeconds": 122.247,
+          "text": "The new subtitle is visible. Now the required wait and screenshot."
+        },
+        {
+          "id": "0f99865f-8337-40b9-acdc-b0b16f422ced-0",
+          "atSeconds": 129.217,
+          "text": "The screenshot shows the updated subtitle. Copying it to the proof directory."
+        },
+        {
+          "id": "949987b7-80e1-48e8-a087-347c1d04e8f1-0",
+          "atSeconds": 139.033,
+          "text": "Done.\n\n- Edited `app/(tabs)/settings.tsx:112` — offline-map subtitle is now \"Keep saved trail maps available offline\".\n- `stim ios` reported `stim-98652d33-bench-opus-rc12-opus-javascri (iPhone 17 26.5) (<simulator-udid-prefix>) adopted` and launched the app on UDID `<simulator-udid>` with Metro on port 8082 (still running).\n- `agent-device wait text \"Keep saved trail maps available offline\"` succeeded on the Settings tab; the screenshot confirms the new copy.\n\nPaths:\n- Worktree: `worktree/bench+javascript-stim`\n- Screenshot: `results/opus-rc12/javascript-stim/proof/settings.png` (copied from `tmp/javascript-stim-settings.png`)"
+        }
+      ],
+      "commands": [
+        {
+          "id": "toolu_0161X2SFcU5PXViChKaRauyY",
+          "startSeconds": 35.781,
+          "endSeconds": 50.478,
+          "command": "stim worktree create bench/javascript-stim --dir worktree/project --carry-ignored",
+          "output": "  branch      worktree-bench/javascript-stim from HEAD (63fe92c)\n  carry       node_modules, Pods, native build output (APFS clone)\n  ready       worktree/bench+javascript-stim\nworktree/bench+javascript-stim",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_012uszmwm3X6BUrPrp22pz2C",
+          "startSeconds": 53.608,
+          "endSeconds": 53.663,
+          "command": "cd worktree/bench+javascript-stim && grep -rn \"Keep map tiles for saved trails on device\" --include=*.ts --include=*.tsx --include=*.js --include=*.jsx --include=*.json . | grep -v node_modules",
+          "output": "(eval):1: no matches found: --include=*.ts",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01Vibr7i8HRLMXM9Fdt9PePP",
+          "startSeconds": 56.052,
+          "endSeconds": 56.113,
+          "command": "cd worktree/bench+javascript-stim && grep -rn \"Keep map tiles\" . --exclude-dir=node_modules --exclude-dir=ios --exclude-dir=android --exclude-dir=.git",
+          "output": "app/(tabs)/settings.tsx:112:            subtitle=\"Keep map tiles for saved trails on device\"\nShell cwd was reset to workspace/trailhead-v3",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01AYBYDtU5nikTbeXavrvZqo",
+          "startSeconds": 63.265,
+          "endSeconds": 65.106,
+          "command": "cd worktree/bench+javascript-stim && stim start",
+          "output": "  metro       starting on port 8082 (expo-child, supervisor pid 47379)\nOK: dev server on port 8082, supervisor pid 47379 (expo-child) (1.7s)\n  logs        results/opus-rc12/javascript-stim/stim-home/workspaces/bench-opus-rc12-opus-javascript-stim-17884695828--4a06f54d61bc6610/logs\nShell cwd was reset to workspace/trailhead-v3",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_0136ED5hiitmYyo2NmZfZ6HU",
+          "startSeconds": 67.233,
+          "endSeconds": 104.1,
+          "command": "cd worktree/bench+javascript-stim && stim ios",
+          "output": "  device      booting stim-98652d33-bench-opus-rc12-opus-javascri (iPhone 17 26.5) (<simulator-udid>)\n  fingerprint b1232a.. hit (3.6s)\n  device      resetting privacy grants and the keychain on <simulator-udid>\n  device      stim-98652d33-bench-opus-rc12-opus-javascri (iPhone 17 26.5) (<simulator-udid-prefix>) adopted (14.6s)\n  install     removed <agent-device-helper>, left by the previous workspace\n  install     Trailhead.app -> stim-98652d33-bench-opus-rc12-opus-javascri (iPhone 17 26.5) (<simulator-udid-prefix>) (4.6s)\n  install     dev client prepared (756ms)\n  launch      com.appandflow.trailhead (422ms)\n  verify      bundle loaded, process alive, stable for 3s -- the first screen may still be rendering (14.5s total)\nOK: com.appandflow.trailhead on stim-98652d33-bench-opus-rc12-opus-javascri (iPhone 17 26.5) (<simulator-udid-prefix>), Metro port 8082 (from cache, 36.6s)\n  device      stim-98652d33-bench-opus-rc12-opus-javascri (iPhone 17 26.5) (<simulator-udid>)\n  app         com.appandflow.trailhead\n  metro       running on port 8082\n  cache       from cache\n  compilation cache not run; artifact cache supplied the app\n  logs        results/opus-rc12/javascript-stim/stim-home/workspaces/bench-opus-rc12-opus-javascript-stim-17884695828--4a06f54d61bc6610/logs\nShell cwd was reset to workspace/trailhead-v3",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01YLkDWBTNpvwUVXWzpaqw3T",
+          "startSeconds": 106.832,
+          "endSeconds": 116.024,
+          "command": "agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
+          "output": "Opened: com.appandflow.trailhead\nSession state: workspace/cwd_474765e6f86c294c_default\nPage: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 32 visible nodes\n@e1 [application] \"Trailhead\"\n@e2 [other] \"\"\n@e3 [other] \"Trails\"\n@e4 [text-field] \"Search trails\" [editable]\n@e5 [scroll-area] \"All regions\" [scrollable]\n  [content below scroll-area hidden]\n@e6 [other] \"All regions\"\n@e7 [button] \"All regions\" [selected]\n@e8 [button] \"Adirondacks\"\n@e9 [button] \"Bas-Saint-Laurent\"\n@e10 [button] \"Charlevoix\"\n@e11 [scroll-area] \"Any level\" [scrollable]\n  [content below scroll-area hidden]\n@e12 [other] \"Any level\"\n@e13 [button] \"Any level\" [selected]\n@e14 [button] \"Easy\"\n@e15 [button] \"Moderate\"\n@e16 [button] \"Hard\"\n@e17 [button] \"Expert\"\n@e18 [text] \"200 trails\"\n@e19 [button] \"Sort by name\" [selected]\n@e20 [button] \"Sort by distance\"\n@e21 [button] \"Sort by rating\"\n@e22 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\" [scrollable]\n  [content below scroll-area hidden]\n@e23 [other] [same label as parent]\n@e24 [button] [same label as parent]\n@e25 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n@e26 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n@e27 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n@e28 [other] \"Trails, tab, 1 of 4\"\n@e29 [button] \"Trails, tab, 1 of 4\" [selected]\n@e30 [button] \"Record, tab, 2 of 4\"\n@e31 [button] \"History, tab, 3 of 4\"\n@e32 [button] \"Settings, tab, 4 of 4\"",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_017hJ9yDfmZHEGoJxigpoD2Z",
+          "startSeconds": 118.166,
+          "endSeconds": 120.743,
+          "command": "agent-device click @e32 --settle",
+          "output": "Tapped @e32 (352, 816)\nsettled after 1729ms: +29 -28 (~4 unchanged)\n- @e2 [other] \"\"\n- @e3 [other] \"Trails\"\n- @e4 [text-field] \"Search trails\"\n- @e5 [scroll-area] \"All regions\"\n- @e6 [other] \"All regions\"\n- @e7 [button] \"All regions\"\n- @e8 [button] \"Adirondacks\"\n- @e9 [button] \"Bas-Saint-Laurent\"\n- @e10 [button] \"Charlevoix\"\n- @e11 [scroll-area] \"Any level\"\n- @e12 [other] \"Any level\"\n- @e13 [button] \"Any level\"\n- @e14 [button] \"Easy\"\n- @e15 [button] \"Moderate\"\n- @e16 [button] \"Hard\"\n- @e17 [button] \"Expert\"\n- @e18 [text] \"200 trails\"\n- @e19 [button] \"Sort by name\"\n- @e20 [button] \"Sort by distance\"\n- @e21 [button] \"Sort by rating\"\n- @e22 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e23 [other] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e24 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e25 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n- @e26 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n- @e27 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n+ @e2~s178710 [other] \"Settings\"\n+ @e3~s178710 [scroll-area] \"UNITS\"\n+ @e4~s178710 [other] \"UNITS\"\n+ @e5~s178710 [cell] \"Distance\"\n+ @e6~s178710 [text] \"\"\n+ @e7~s178710 [button] \"Metric units\"\n+ @e8~s178710 [button] \"Imperial units\"\n+ @e9~s178710 [text] \"Used across the whole app\"\n+ @e10~s178710 [text] \"PREFERENCES\"\n+ @e11~s178710 [other] \"Hike reminders\"\n+ @e12~s178710 [switch] \"Hike reminders\"\n+ @e13~s178710 [text] \"\"\n+ @e14~s178710 [text] \"Nudge me when I have not hiked in a while\"\n+ @e15~s178710 [text] \"Offline maps\"\n+ @e16~s178710 [switch] \"Offline maps\"\n+ @e17~s178710 [text] \"\"\n+ @e18~s178710 [text] \"Keep saved trail maps available offline\"\n+ @e19~s178710 [text] \"STORAGE\"\n+ @e20~s178710 [cell] \"Recorded hikes\"\n+ @e21~s178710 [text] \"\"\n+ @e22~s178710 [text] \"48\"\n+ @e23~s178710 [text] \"Stored in a local database\"\n+ @e24~s178710 [button] \"Reset sample data\"\n+ @e25~s178710 [text] \"ABOUT\"\n+ @e26~s178710 [cell] \"\"\n+ @e27~s178710 [text] \"Version\"\n+ @e28~s178710 [text] \"1.0.0\"\n- @e29 [button] \"Trails, tab, 1 of 4\"\n+ @e30~s178710 [button] \"Trails, tab, 1 of 4\"\n- @e32 [button] \"Settings, tab, 4 of 4\"\n+ @e33~s178710 [button] \"Settings, tab, 4 of 4\"",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01Qs8bsDN8z7G1gVCVbL6D3Z",
+          "startSeconds": 122.942,
+          "endSeconds": 123.115,
+          "command": "agent-device wait text \"Keep saved trail maps available offline\"",
+          "output": "(Bash completed with no output)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01F376q4NDKydc1T4fEfG5Sx",
+          "startSeconds": 125.332,
+          "endSeconds": 125.773,
+          "command": "agent-device screenshot tmp/javascript-stim-settings.png",
+          "output": "tmp/javascript-stim-settings.png (402x874 @1x)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_018SUMeYJGbwAhNWJyWBZ8F7",
+          "startSeconds": 131.063,
+          "endSeconds": 131.105,
+          "command": "cp tmp/javascript-stim-settings.png results/opus-rc12/javascript-stim/proof/settings.png && ls -l results/opus-rc12/javascript-stim/proof/settings.png",
+          "output": "-rw-r--r--@ 1 <local-user>  staff  69865 Sep  3 17:08 results/opus-rc12/javascript-stim/proof/settings.png",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01BdMbQysaafcC2UWV7DKEti",
+          "startSeconds": 132.864,
+          "endSeconds": 132.994,
+          "command": "agent-device close",
+          "output": "Closed: default",
+          "exitCode": 0
+        }
+      ],
+      "markers": [
+        {
+          "id": "app-alive",
+          "kind": "appAlive",
+          "label": "App process alive",
+          "atSeconds": 89.724
+        },
+        {
+          "id": "settings-ready",
+          "kind": "settingsReady",
+          "label": "Settings proof ready",
+          "atSeconds": 125.773
+        }
+      ],
+      "proof": {
+        "src": "benchmarks/opus-rc12/javascript-stim.png",
+        "expected": "Keep saved trail maps available offline",
+        "width": 402,
+        "height": 874
+      }
+    },
+    {
+      "id": "javascript-control",
+      "model": "opus",
+      "variant": "javascript",
+      "arm": "control",
+      "valid": true,
+      "invalidReasons": [],
+      "settingsReadySeconds": 395.725,
+      "appAliveSeconds": 357.805,
+      "totalSeconds": 414.72,
+      "commandCount": 45,
+      "usage": {
+        "input_tokens": 1338543,
+        "cached_input_tokens": 1307861,
+        "cache_creation_input_tokens": 30594,
+        "output_tokens": 10074,
+        "reasoning_output_tokens": 2207
+      },
+      "estimatedTokenCostUsd": 1.2138974999999994,
+      "messages": [
+        {
+          "id": "cde9d9fa-48ae-440a-ab5b-a95aff24f6d0-0",
+          "atSeconds": 33.643,
+          "text": "I'll start by exploring the project structure and setting up the worktree."
+        },
+        {
+          "id": "7713ec3d-1ce0-425e-a073-c855ca6a90df-0",
+          "atSeconds": 45.18,
+          "text": "Now let me create the worktree."
+        },
+        {
+          "id": "7186e82d-f897-475b-bf47-4ad7786ed064-0",
+          "atSeconds": 78.209,
+          "text": "Worktree is set up with dependencies and native outputs. Now the edit:"
+        },
+        {
+          "id": "75aca6dd-5653-41ad-ae67-12366aa74602-0",
+          "atSeconds": 82.806,
+          "text": "Now create the new simulator with the exact required name:"
+        },
+        {
+          "id": "f2fd8773-e751-400f-9f5d-960ba394fb5c-0",
+          "atSeconds": 92.498,
+          "text": "Now start Metro detached from the worktree:"
+        },
+        {
+          "id": "a5d9ac37-e923-4451-afa8-df3cac39b6ee-0",
+          "atSeconds": 111.604,
+          "text": "Now start the native build/install/launch as a background shell process:"
+        },
+        {
+          "id": "97ac1f3f-e2ca-481e-8533-c07343fa1024-0",
+          "atSeconds": 163.031,
+          "text": "Pods installed; Xcode build starting."
+        },
+        {
+          "id": "4b16728f-9b4d-455f-98c1-bb1a89f3972e-0",
+          "atSeconds": 339.479,
+          "text": "Getting close — now compiling the app target."
+        },
+        {
+          "id": "c51d48b3-b011-4c52-a9fa-f18924a7a9ed-0",
+          "atSeconds": 365.716,
+          "text": "Build succeeded and the app launched on simulator UDID `<simulator-udid>`. Now the agent-device proof:"
+        },
+        {
+          "id": "3424f18b-6da5-416a-abc7-39b834d0cc34-0",
+          "atSeconds": 387.794,
+          "text": "The app is on the Trails tab. Navigating to Settings:"
+        },
+        {
+          "id": "52e3d902-355e-42dc-a295-c007a6f4f34f-0",
+          "atSeconds": 392.419,
+          "text": "The new subtitle is visible. Running the required verification and capture:"
+        },
+        {
+          "id": "1e8e82c1-eb40-431b-88d7-3351f007904a-0",
+          "atSeconds": 399.553,
+          "text": "The screenshot shows the updated copy. Copying to the proof directory and closing the session:"
+        },
+        {
+          "id": "9ee44684-95df-40e1-97c5-7adc6e55e0f0-0",
+          "atSeconds": 414.437,
+          "text": "Done. Metro (PID 53146) and the app are still running on the booted simulator.\n\n**What was done:**\n- Created worktree for `bench/javascript-control`, carrying over `node_modules`, `ios/Pods`, `ios/build`, and `.expo` via APFS clone copies.\n- Changed the Settings offline-map subtitle in `app/(tabs)/settings.tsx:112` to `\"Keep saved trail maps available offline\"`.\n- Created a fresh simulator named exactly `Trailhead javascript-control` (iPhone 17, iOS 26.5, UDID `<simulator-udid>`).\n- Started Metro detached (`tmp/opus-rc12-metro.log`), then ran `npx expo run:ios --device <simulator-udid-prefix>-…` as a background process (PID 53450, log `tmp/opus-rc12-build.log`), polled to completion: **Build Succeeded**, 0 errors, installed and launched.\n- agent-device proof: opened session on the run UDID, dismissed the Expo dev-menu onboarding, tapped the Settings tab, `wait text \"Keep saved trail maps available offline\"` succeeded, captured and copied the screenshot, closed the session.\n\n**Paths:**\n- Worktree: `worktree/javascript-control`\n- Screenshot: `results/opus-rc12/javascript-control/proof/settings.png`"
+        }
+      ],
+      "commands": [
+        {
+          "id": "toolu_01M8Rc5wydnCNqLgy1s5N8yF",
+          "startSeconds": 35.066,
+          "endSeconds": 35.442,
+          "command": "ls -la && cat package.json",
+          "output": "total 1096\ndrwxr-xr-x@  27 <local-user>  staff     864 Sep  3 01:30 .\ndrwxr-xr-x@  16 <local-user>  staff     512 Sep  3 10:25 ..\n-rw-r--r--@   1 <local-user>  staff     103 Sep  2 23:24 .env.example\ndrwxr-xr-x@   3 <local-user>  staff      96 Sep  2 23:49 .expo\n-rw-r--r--@   1 <local-user>  staff      62 Sep  3 00:27 .fingerprintignore\ndrwxr-xr-x@  14 <local-user>  staff     448 Sep  3 17:09 .git\n-rw-r--r--@   1 <local-user>  staff     482 Sep  2 23:24 .gitignore\nsrw-------@   1 <local-user>  staff       0 Sep  3 01:30 .m1788412929627.sock\ndrwxr-xr-x@   2 <local-user>  staff      64 Sep  3 01:05 .worktrees\n-rw-r--r--@   1 <local-user>  staff    2349 Sep  2 23:35 AGENTS.md\n-rw-r--r--@   1 <local-user>  staff      11 Sep  2 23:24 CLAUDE.md\n-rw-r--r--@   1 <local-user>  staff    1067 Sep  2 23:24 LICENSE\n-rw-r--r--@   1 <local-user>  staff    2424 Sep  2 23:24 README.md\ndrwxr-xr-x@  10 <local-user>  staff     320 Sep  2 23:24 android\ndrwxr-xr-x@   7 <local-user>  staff     224 Sep  2 23:24 app\n-rw-r--r--@   1 <local-user>  staff    1959 Sep  2 23:24 app.json\ndrwxr-xr-x@   4 <local-user>  staff     128 Sep  2 23:24 assets\ndrwxr-xr-x@   5 <local-user>  staff     160 Sep  2 23:24 bench\ndrwxr-xr-x@   3 <local-user>  staff      96 Sep  2 23:24 docs\n-rw-r--r--@   1 <local-user>  staff     237 Sep  2 23:24 eslint.config.js\ndrwxr-xr-x@  13 <local-user>  staff     416 Sep  2 23:37 ios\ndrwxr-xr-x@ 590 <local-user>  staff   18880 Sep  2 23:36 node_modules\n-rw-r--r--@   1 <local-user>  staff  515348 Sep  2 23:36 package-lock.json\n-rw-r--r--@   1 <local-user>  staff    2628 Sep  2 23:24 package.json\ndrwxr-xr-x@   3 <local-user>  staff      96 Sep  2 23:24 scripts\ndrwxr-xr-x@   9 <local-user>  staff     288 Sep  2 23:24 src\n-rw-r--r--@   1 <local-user>  staff     242 Sep  2 23:24 tsconfig.json\n{\n  \"name\": \"trailhead\",\n  \"description\": \"Reference Expo app for local stim-cli iOS and Android testing\",\n  \"license\": \"MIT\",\n  \"repository\": \"https://github.com/appandflow/trailhead\",\n  \"main\": \"expo-router/entry\",\n  \"version\": \"1.0.0\",\n  \"scripts\": {\n    \"start\": \"expo start\",\n    \"android\": \"expo run:android\",\n    \"ios\": \"expo run:ios\",\n    \"web\": \"expo start --web\",\n    \"lint\": \"expo lint\",\n    \"typecheck\": \"tsc --noEmit\",\n    \"bench\": \"node bench/bench.mjs\"\n  },\n  \"dependencies\": {\n    \"@expo/vector-icons\": \"^15.0.2\",\n    \"@react-navigation/bottom-tabs\": \"^7.3.10\",\n    \"@react-navigation/elements\": \"^2.3.8\",\n    \"@react-navigation/native\": \"^7.1.6\",\n    \"@shopify/flash-list\": \"2.0.2\",\n    \"@shopify/react-native-skia\": \"2.6.2\",\n    \"@tanstack/react-query\": \"^5.101.4\",\n    \"date-fns\": \"^4.4.0\",\n    \"drizzle-orm\": \"^0.45.2\",\n    \"expo\": \"~57.0.18\",\n    \"expo-asset\": \"~57.0.15\",\n    \"expo-blur\": \"~57.0.2\",\n    \"expo-constants\": \"~57.0.16\",\n    \"expo-crypto\": \"~57.0.2\",\n    \"expo-dev-client\": \"~57.0.16\",\n    \"expo-device\": \"~57.0.1\",\n    \"expo-file-system\": \"~57.0.6\",\n    \"expo-font\": \"~57.0.2\",\n    \"expo-haptics\": \"~57.0.2\",\n    \"expo-image\": \"~57.0.3\",\n    \"expo-linear-gradient\": \"~57.0.1\",\n    \"expo-linking\": \"~57.0.8\",\n    \"expo-location\": \"~57.0.14\",\n    \"expo-network\": \"~57.0.1\",\n    \"expo-notifications\": \"~57.0.15\",\n    \"expo-router\": \"~57.0.17\",\n    \"expo-secure-store\": \"~57.0.2\",\n    \"expo-sharing\": \"~57.0.16\",\n    \"expo-splash-screen\": \"~57.0.8\",\n    \"expo-sqlite\": \"~57.0.2\",\n    \"expo-status-bar\": \"~57.0.1\",\n    \"expo-symbols\": \"~57.0.2\",\n    \"expo-system-ui\": \"~57.0.3\",\n    \"expo-task-manager\": \"~57.0.14\",\n    \"expo-video\": \"~57.0.3\",\n    \"expo-web-browser\": \"~57.0.2\",\n    \"lottie-react-native\": \"~7.3.8\",\n    \"react\": \"19.2.3\",\n    \"react-dom\": \"19.2.3\",\n    \"react-native\": \"0.86.3\",\n    \"react-native-gesture-handler\": \"~2.32.0\",\n    \"react-native-maps\": \"1.27.2\",\n    \"react-native-mmkv\": \"^4.3.2\",\n    \"react-native-nitro-modules\": \"^0.36.5\",\n    \"react-native-reanimated\": \"4.5.1\",\n    \"react-native-safe-area-context\": \"~5.7.0\",\n    \"react-native-screens\": \"~4.26.0\",\n    \"react-native-svg\": \"15.15.4\",\n    \"react-native-web\": \"^0.21.2\",\n    \"react-native-webview\": \"13.16.1\",\n    \"react-native-worklets\": \"0.10.1\",\n    \"zod\": \"^4.4.3\",\n    \"zustand\": \"^5.0.15\"\n  },\n  \"devDependencies\": {\n    \"@types/react\": \"~19.2.0\",\n    \"drizzle-kit\": \"^0.31.10\",\n    \"eslint\": \"^9.25.0\",\n    \"eslint-config-expo\": \"~57.0.2\",\n    \"typescript\": \"~6.0.3\"\n  },\n  \"expo\": {\n    \"doctor\": {\n      \"appConfigFieldsNotSyncedCheck\": {\n        \"enabled\": false\n      }\n    }\n  },\n  \"private\": true\n}",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01Tmy2w53mPeZRakhndoNBeQ",
+          "startSeconds": 35.55,
+          "endSeconds": 35.596,
+          "command": "git worktree list && git branch -a | head -50",
+          "output": "<branch inventory omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_019zTVjgLgRCLZpdwy2MRe3A",
+          "startSeconds": 38.526,
+          "endSeconds": 38.584,
+          "command": "cat AGENTS.md CLAUDE.md; grep -rn \"Keep map tiles for saved trails on device\" --include=*.ts --include=*.tsx . 2>/dev/null | grep -v node_modules",
+          "output": "# Trailhead\n\nA hike recording and trail browsing app. Expo SDK 57, React Native 0.86,\nTypeScript, expo-router.\n\n## Layout\n\n```\napp/                    expo-router routes\n  _layout.tsx           providers: gesture handler, safe area, react-query, db init\n  (tabs)/               Trails, Record, History, Settings\n  trail/[id].tsx        trail detail\n  hike/[id].tsx         recorded hike detail\nsrc/\n  theme/                useTheme(), palettes, spacing, radius\n  data/trails.ts        200 seed trails with route geometry (trails.json)\n  db/                   expo-sqlite + drizzle: schema, client, seed\n  lib/                  geo math (haversine, gain, splits) and unit formatting\n  store/                zustand stores (settings, in-progress recording)\n  components/           shared presentational components\n  features/             screen-specific hooks and pieces\nbench/                  benchmark harness (npm run bench)\nios/  android/          committed native projects\n```\n\n## Conventions\n\n- `@/` resolves to the repository root.\n- Colors come from `useTheme()`. Every screen supports light and dark mode.\n- Units come from `useSettingsStore().units` and are rendered through `src/lib/format`.\n- Trail data is static and bundled. Hike data is in SQLite and seeded on first launch.\n\n## Native setup\n\nThis project is in the bare workflow: `ios/` and `android/` are committed and\n`expo prebuild` is **not** part of the build. Native configuration is changed by\nediting the native projects directly, or by changing `app.json` and re-running\nprebuild deliberately — which will overwrite local native edits, so check what is\nalready in the native projects first.\n\nAndroid map tiles need a Google Maps API key in `.env` as\n`GOOGLE_MAPS_API_KEY`. Copy `.env.example` to `.env` to supply one.\n`android/app/build.gradle` reads the environment variable first, then the\nrepo-root `.env`. The app builds without a key and shows blank map tiles.\n\n## Running\n\n```bash\nnpm install\nnpx expo run:ios       # or: npx expo run:android\n```\n\nThis public test app does not contain EAS configuration. Use local commands for\nbuilds and simulator sessions.\n\nNote that `-derivedDataPath ios/build` collides with React Native's codegen output\nin `ios/build/generated`. Use a derived data path outside `ios/build`, and re-run\n`pod install` after deleting `ios/build`.\n@AGENTS.md\n(eval):1: no matches found: --include=*.ts",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01PWGATgvChEAVYXmYrx1KYV",
+          "startSeconds": 39.319,
+          "endSeconds": 39.444,
+          "command": "ls ios; ls .worktrees; xcrun simctl list runtimes | grep -i \"26\"",
+          "output": "Podfile\nPodfile.lock\nPodfile.properties.json\nPods\nTrailhead\nTrailhead.xcodeproj\nTrailhead.xcworkspace\nbuild\niOS 26.5 (26.5 - 23F77) - com.apple.CoreSimulator.SimRuntime.iOS-26-5",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_017DkhW7qqbkfNYwJAoy8FBJ",
+          "startSeconds": 42.068,
+          "endSeconds": 42.132,
+          "command": "grep -rn \"Keep map tiles for saved trails on device\" app src 2>/dev/null",
+          "output": "app/(tabs)/settings.tsx:112:            subtitle=\"Keep map tiles for saved trails on device\"",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01C6Qk6xJQFzwGV75pNjk8yU",
+          "startSeconds": 42.821,
+          "endSeconds": 43.882,
+          "command": "du -sh ios/Pods ios/build node_modules 2>/dev/null; ls ios/build 2>/dev/null | head",
+          "output": "1.2G\tios/Pods\n1.1M\tios/build\n2.5G\tnode_modules\ngenerated",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01DoD4Ch5A8VEC2ty7stmWTg",
+          "startSeconds": 47.262,
+          "endSeconds": 47.41,
+          "command": "git worktree add -b bench/javascript-control worktree/javascript-control 2>&1 | tail -5",
+          "output": "Preparing worktree (new branch 'bench/javascript-control')\nHEAD is now at 63fe92c test: stabilize benchmark native fingerprint",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01ES8NYXgsPMh15r5vyTmJt8",
+          "startSeconds": 54.739,
+          "endSeconds": 62.903,
+          "command": "time cp -Rc node_modules worktree/javascript-control/node_modules 2>&1 | tail -3",
+          "output": "cp -Rc node_modules  2>&1  0.07s user 6.49s system 80% cpu 8.129 total\ntail -3  0.00s user 0.00s system 0% cpu 8.129 total",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01WfdJvHAoJ1LCP3NHxPzfRU",
+          "startSeconds": 65.967,
+          "endSeconds": 69.499,
+          "command": "W=worktree/javascript-control; cp -Rc ios/Pods $W/ios/Pods && cp -Rc ios/build $W/ios/build && [ -f .env ] && cp .env $W/.env; [ -d .expo ] && cp -Rc .expo $W/.expo; ls $W; ls $W/ios",
+          "output": "AGENTS.md\nCLAUDE.md\nLICENSE\nREADME.md\nandroid\napp\napp.json\nassets\nbench\ndocs\neslint.config.js\nios\nnode_modules\npackage-lock.json\npackage.json\nscripts\nsrc\ntsconfig.json\nPodfile\nPodfile.lock\nPodfile.properties.json\nPods\nTrailhead\nTrailhead.xcodeproj\nTrailhead.xcworkspace\nbuild",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01QRjdKrJ7jPzWfLRnqYA9J9",
+          "startSeconds": 75.209,
+          "endSeconds": 76.476,
+          "command": "W=worktree/javascript-control; ls -a $W | head -20; du -sh $W/ios/Pods $W/node_modules",
+          "output": ".\n..\n.env.example\n.expo\n.fingerprintignore\n.git\n.gitignore\nAGENTS.md\nCLAUDE.md\nLICENSE\nREADME.md\nandroid\napp\napp.json\nassets\nbench\ndocs\neslint.config.js\nios\nnode_modules\n1.2G\tworktree/javascript-control/ios/Pods\n2.5G\tworktree/javascript-control/node_modules",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01A4Gbat2RmYHkz5e6mLLAAP",
+          "startSeconds": 75.957,
+          "endSeconds": 76.498,
+          "command": "sed -n '100,125p' \"worktree/javascript-control/app(tabs)/settings.tsx\"",
+          "output": "          <Switch\n            value={hikeReminders}\n            onValueChange={setHikeReminders}\n            accessibilityLabel=\"Hike reminders\"\n            trackColor={{ true: colors.primary, false: colors.border }}\n          />\n        </View>\n        <Divider />\n        <View style={styles.rowInner}>\n          <RowLabel\n            icon=\"cloud-offline-outline\"\n            title=\"Offline maps\"\n            subtitle=\"Keep map tiles for saved trails on device\"\n          />\n          <Switch\n            value={offlineMaps}\n            onValueChange={setOfflineMaps}\n            accessibilityLabel=\"Offline maps\"\n            trackColor={{ true: colors.primary, false: colors.border }}\n          />\n        </View>\n      </Section>\n\n      <Section title=\"Storage\">\n        <View style={styles.rowInner}>\n          <RowLabel icon=\"server-outline\" title=\"Recorded hikes\" subtitle=\"Stored in a local database\" />",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01GU1WLSUwPCtUmU9qzCkdyT",
+          "startSeconds": 83.591,
+          "endSeconds": 83.714,
+          "command": "xcrun simctl list devicetypes | grep -i \"iPhone 17\"",
+          "output": "iPhone 17 Pro (com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro)\niPhone 17 Pro Max (com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro-Max)\niPhone 17e (com.apple.CoreSimulator.SimDeviceType.iPhone-17e)\niPhone 17 (com.apple.CoreSimulator.SimDeviceType.iPhone-17)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01GcAghmp1GWAP2Tzv6hADws",
+          "startSeconds": 84.503,
+          "endSeconds": 84.632,
+          "command": "xcrun simctl list devices | grep -i \"Trailhead opus-rc12\" ; echo \"---none above means clean---\"",
+          "output": "<device inventory omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01Ss1RmGooYXTWgHmecHkpFU",
+          "startSeconds": 86.735,
+          "endSeconds": 86.965,
+          "command": "xcrun simctl create \"Trailhead javascript-control\" com.apple.CoreSimulator.SimDeviceType.iPhone-17 com.apple.CoreSimulator.SimRuntime.iOS-26-5",
+          "output": "<simulator-udid>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01XY7ZuzWGG1kpSh6u65ioQV",
+          "startSeconds": 90.082,
+          "endSeconds": 90.951,
+          "command": "xcrun simctl boot <simulator-udid> 2>&1; open -a Simulator --args -CurrentDeviceUDID <simulator-udid>; xcrun simctl list devices | grep <simulator-udid-prefix>",
+          "output": "<device inventory omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01TCv7kc7jw4ogE9oa4bMiUs",
+          "startSeconds": 94.8,
+          "endSeconds": 95.855,
+          "command": "cd worktree/javascript-control && nohup npx expo start --port 8081 > tmp/opus-rc12-metro.log 2>&1 & echo $! > tmp/opus-rc12-metro.pid; sleep 1; cat tmp/opus-rc12-metro.pid",
+          "output": "53146\nShell cwd was reset to workspace/trailhead-v3",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01Vq8L8kbma4kt7SjM2RWvJL",
+          "startSeconds": 97.761,
+          "endSeconds": 105.848,
+          "command": "sleep 8; tail -20 tmp/opus-rc12-metro.log; ps -p 53146 -o pid,stat= 2>/dev/null",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01K8vT4XuCsSENZnsV4tML7P",
+          "startSeconds": 113.179,
+          "endSeconds": 115.263,
+          "command": "cd worktree/javascript-control && nohup npx expo run:ios --device <simulator-udid> > tmp/opus-rc12-build.log 2>&1 & echo $! > tmp/opus-rc12-build.pid; sleep 2; cat tmp/opus-rc12-build.pid",
+          "output": "53450\nShell cwd was reset to workspace/trailhead-v3",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01FyZPEzAePsfuj4i8TRhZBZ",
+          "startSeconds": 117.184,
+          "endSeconds": 117.222,
+          "command": "sleep 25; ps -p 53450 -o pid,stat= 2>/dev/null; echo \"---\"; tail -20 tmp/opus-rc12-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 1
+        },
+        {
+          "id": "toolu_01G1i4tfWJn3daiNKPsxX23y",
+          "startSeconds": 121.777,
+          "endSeconds": 121.919,
+          "command": "ps -p 53450 -o pid,stat= 2>/dev/null; echo \"---\"; tail -15 tmp/opus-rc12-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_017ecR46spuK1bvi7Cgyr7sD",
+          "startSeconds": 129.474,
+          "endSeconds": 129.545,
+          "command": "ps -p 53450 -o pid,stat= 2>/dev/null; echo \"---\"; wc -l tmp/opus-rc12-build.log; tail -5 tmp/opus-rc12-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01RLsnAXViSQ3CwMUYrQvHbB",
+          "startSeconds": 131.642,
+          "endSeconds": 131.753,
+          "command": "ps -p 53450 -o pid,stat= 2>/dev/null; echo \"---\"; tail -5 tmp/opus-rc12-build.log; echo \"=== xcodebuild running? ===\"; pgrep -fl \"xcodebuild|pod \" | head -5",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01Uj8CNgYM28NiA6gSYobMc8",
+          "startSeconds": 136.041,
+          "endSeconds": 136.123,
+          "command": "ps -p 53450 -o pid,stat= 2>/dev/null; echo \"---\"; tail -3 tmp/opus-rc12-build.log; pgrep -fl \"xcodebuild|pod install\" | head -3",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01A6zHcK19Nf3YfdfspYdHm2",
+          "startSeconds": 137.942,
+          "endSeconds": 138,
+          "command": "ps -p 53450 -o pid,stat= 2>/dev/null; echo \"---\"; tail -3 tmp/opus-rc12-build.log; pgrep -fl \"xcodebuild|pod install\" | head -3",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_016yhUS5NchbtodXcFScsc46",
+          "startSeconds": 144.482,
+          "endSeconds": 159.579,
+          "command": "sleep 15; ps -p 53450 -o stat= ; tail -3 tmp/opus-rc12-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01Xv877YhthyCJbXwT64QgSe",
+          "startSeconds": 163.3,
+          "endSeconds": 183.394,
+          "command": "sleep 20; ps -p 53450 -o stat= ; tail -4 tmp/opus-rc12-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_0185bUi1Sqv6CuTdp2sUFgnX",
+          "startSeconds": 184.965,
+          "endSeconds": 184.968,
+          "command": "sleep 30; ps -p 53450 -o stat= ; tail -3 tmp/opus-rc12-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 1
+        },
+        {
+          "id": "toolu_01XZzxG9RL61ZMYLFGtMNby2",
+          "startSeconds": 186.691,
+          "endSeconds": 206.759,
+          "command": "sleep 20; ps -p 53450 -o stat= ; tail -3 tmp/opus-rc12-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_013CMdtB3pZLPwkatu4dtbJo",
+          "startSeconds": 208.471,
+          "endSeconds": 228.637,
+          "command": "sleep 20; ps -p 53450 -o stat= ; tail -3 tmp/opus-rc12-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_014RNoqXJ73A5r7SyB628tGP",
+          "startSeconds": 230.279,
+          "endSeconds": 250.363,
+          "command": "sleep 20; ps -p 53450 -o stat= ; tail -3 tmp/opus-rc12-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01Rp5t1zzkKSwiydCmovfAMH",
+          "startSeconds": 252.056,
+          "endSeconds": 272.145,
+          "command": "sleep 20; ps -p 53450 -o stat= ; tail -3 tmp/opus-rc12-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_019B2aBCyGFgK7bRKmCptL1m",
+          "startSeconds": 273.788,
+          "endSeconds": 293.832,
+          "command": "sleep 20; ps -p 53450 -o stat= ; tail -3 tmp/opus-rc12-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01MiEkwbMUxh266ATfasz9qo",
+          "startSeconds": 295.681,
+          "endSeconds": 315.787,
+          "command": "sleep 20; ps -p 53450 -o stat= ; tail -3 tmp/opus-rc12-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01QFx4RKaEDmr7pq5u43P5NE",
+          "startSeconds": 317.463,
+          "endSeconds": 337.595,
+          "command": "sleep 20; ps -p 53450 -o stat= ; tail -3 tmp/opus-rc12-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01Y6iM6HTToXVnn3RqvMMc2w",
+          "startSeconds": 339.665,
+          "endSeconds": 359.719,
+          "command": "sleep 20; ps -p 53450 -o stat= ; tail -4 tmp/opus-rc12-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_015vD3Tvkhz4KLgHiEfdsvUL",
+          "startSeconds": 363.994,
+          "endSeconds": 364.343,
+          "command": "ps -p 53450 -o stat= 2>/dev/null || echo \"EXITED\"; echo \"--- tail ---\"; tail -12 tmp/opus-rc12-build.log; echo \"--- launched app ---\"; xcrun simctl listapps <simulator-udid> 2>/dev/null | grep -c \"com.appandflow.trailhead\"",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_011KSraPyAtbzTUNE5aJkTuD",
+          "startSeconds": 366.729,
+          "endSeconds": 377.921,
+          "command": "agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
+          "output": "Opened: com.appandflow.trailhead\nSession state: workspace/cwd_474765e6f86c294c_default\nPage: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 24 visible nodes (26 total)\n@e1 [application] \"Trailhead\"\n@e2 [other] \"Trailhead\"\n@e3 [text] \"Runtime version: exposdk:57.0.0\"\n@e4 [button] \"Close\"\n@e5 [scroll-area] \"Reload\" [scrollable]\n  [content below scroll-area hidden]\n@e6 [other] \"Reload\"\n@e7 [button] \"Reload\"\n@e8 [button] \"Go home\"\n@e9 [text] \"TOOLS\"\n@e10 [button] \"Source code explorer\"\n@e11 [button] \"Toggle performance monitor\"\n@e12 [button] \"Toggle element inspector\"\n@e13 [button] \"Open DevTools\"\n@e14 [image] \"Running\"\n@e15 [text] \"Fast refresh\"\n@e16 [switch] \"1\"\n@e17 [switch] \"1\"\n@e20 [scroll-area] \"dev-tools\" [scrollable]\n  [content below scroll-area hidden]\n@e21 [other] \"dev-tools\"\n@e22 [image] \"dev-tools\"\n@e23 [text] \"This is the developer menu. It gives you access to useful tools in development builds.\"\n@e24 [text] \"You can open it at any time by pressing the blue button with the gear icon, or with the ⌃ + d keyboard shortcut.\"\n@e25 [text] \"(Connect Hardware Keyboard must be enabled on your simulator to use this shortcut, you can toggle it with ⌘ + shift + K.)\"\n@e26 [button] \"Continue\"",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_014SYz1jeqC46u3UYeHEcSAy",
+          "startSeconds": 379.84,
+          "endSeconds": 381.485,
+          "command": "agent-device press @e26 --settle",
+          "output": "Tapped @e26 (201, 798)\nsettled after 716ms: +0 -7 (~19 unchanged)\n- @e20 [scroll-area] \"dev-tools\"\n- @e21 [other] \"dev-tools\"\n- @e22 [image] \"dev-tools\"\n- @e23 [text] \"This is the developer menu. It gives you access to useful tools in development builds.\"\n- @e24 [text] \"You can open it at any time by pressing the blue button with the gear icon, or with the ⌃ + d keyboard shortcut.\"\n- @e25 [text] \"(Connect Hardware Keyboard must be enabled on your simulator to use this shortcut, you can toggle it with ⌘ + shift + K.)\"\n- @e26 [button] \"Continue\"\nunchanged interactive (18):\n= @e2~s338909 [other] \"Trailhead\"\n= @e3~s338909 [text] \"Runtime version: exposdk:57.0.0\"\n= @e4~s338909 [button] \"Close\"\n= @e5~s338909 [scroll-area] \"Reload\"\n= @e6~s338909 [other] \"Reload\"\n= @e7~s338909 [button] \"Reload\"\n= @e8~s338909 [button] \"Go home\"\n= @e9~s338909 [text] \"TOOLS\"\n= @e10~s338909 [button] \"Source code explorer\"\n= @e11~s338909 [button] \"Toggle performance monitor\"\n= @e12~s338909 [button] \"Toggle element inspector\"\n= @e13~s338909 [button] \"Open DevTools\"\n= @e14~s338909 [image] \"Running\"\n= @e15~s338909 [text] \"Fast refresh\"\n= @e16~s338909 [switch] \"1\"\n= @e17~s338909 [switch] \"1\"\n= @e18~s338909 [switch] \"1\"\n= @e19~s338909 [switch] \"1\"",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01M56UJ61hccAaB1LUuX8doi",
+          "startSeconds": 383.209,
+          "endSeconds": 386.121,
+          "command": "agent-device press @e4~s338909 --settle",
+          "output": "Tapped @e4 (361, 419)\nsettled after 2165ms: +34 -18 (~1 unchanged)\n- @e2 [other] \"Trailhead\"\n- @e3 [text] \"Runtime version: exposdk:57.0.0\"\n- @e4 [button] \"Close\"\n- @e5 [scroll-area] \"Reload\"\n- @e6 [other] \"Reload\"\n- @e7 [button] \"Reload\"\n- @e8 [button] \"Go home\"\n- @e9 [text] \"TOOLS\"\n- @e10 [button] \"Source code explorer\"\n- @e11 [button] \"Toggle performance monitor\"\n- @e12 [button] \"Toggle element inspector\"\n- @e13 [button] \"Open DevTools\"\n- @e14 [image] \"Running\"\n- @e15 [text] \"Fast refresh\"\n- @e16 [switch] \"1\"\n- @e17 [switch] \"1\"\n- @e18 [switch] \"1\"\n- @e19 [switch] \"1\"\n+ @e2~s338915 [other] \"gearshape.fill\"\n+ @e3~s338915 [image] \"gearshape.fill\"\n+ @e4~s338915 [text] \"Tools\"\n+ @e5~s338915 [other] \"\"\n+ @e6~s338915 [other] \"Trails\"\n+ @e7~s338915 [text-field] \"Search trails\"\n+ @e8~s338915 [scroll-area] \"All regions\"\n+ @e9~s338915 [other] \"All regions\"\n+ @e10~s338915 [button] \"All regions\"\n+ @e11~s338915 [button] \"Adirondacks\"\n+ @e12~s338915 [button] \"Bas-Saint-Laurent\"\n+ @e13~s338915 [button] \"Charlevoix\"\n+ @e14~s338915 [scroll-area] \"Any level\"\n+ @e15~s338915 [other] \"Any level\"\n+ @e16~s338915 [button] \"Any level\"\n+ @e17~s338915 [button] \"Easy\"\n+ @e18~s338915 [button] \"Moderate\"\n+ @e19~s338915 [button] \"Hard\"\n+ @e20~s338915 [button] \"Expert\"\n+ @e21~s338915 [text] \"200 trails\"\n+ @e22~s338915 [button] \"Sort by name\"\n+ @e23~s338915 [button] \"Sort by distance\"\n+ @e24~s338915 [button] \"Sort by rating\"\n+ @e25~s338915 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n+ @e26~s338915 [other] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n+ @e27~s338915 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n+ @e28~s338915 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n+ @e29~s338915 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n+ @e30~s338915 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n+ @e31~s338915 [other] \"Trails, tab, 1 of 4\"\n+ @e32~s338915 [button] \"Trails, tab, 1 of 4\"\n+ @e33~s338915 [button] \"Record, tab, 2 of 4\"\n+ @e34~s338915 [button] \"History, tab, 3 of 4\"\n+ @e35~s338915 [button] \"Settings, tab, 4 of 4\"",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01Cq5jv3LBEVoKkTLM2mNW1a",
+          "startSeconds": 388.339,
+          "endSeconds": 390.733,
+          "command": "agent-device press @e35~s338915 --settle",
+          "output": "Tapped @e35 (352, 816)\nsettled after 1743ms: +29 -28 (~7 unchanged)\n- @e5 [other] \"\"\n- @e6 [other] \"Trails\"\n- @e7 [text-field] \"Search trails\"\n- @e8 [scroll-area] \"All regions\"\n- @e9 [other] \"All regions\"\n- @e10 [button] \"All regions\"\n- @e11 [button] \"Adirondacks\"\n- @e12 [button] \"Bas-Saint-Laurent\"\n- @e13 [button] \"Charlevoix\"\n- @e14 [scroll-area] \"Any level\"\n- @e15 [other] \"Any level\"\n- @e16 [button] \"Any level\"\n- @e17 [button] \"Easy\"\n- @e18 [button] \"Moderate\"\n- @e19 [button] \"Hard\"\n- @e20 [button] \"Expert\"\n- @e21 [text] \"200 trails\"\n- @e22 [button] \"Sort by name\"\n- @e23 [button] \"Sort by distance\"\n- @e24 [button] \"Sort by rating\"\n- @e25 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e26 [other] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e27 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e28 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n- @e29 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n- @e30 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n+ @e5~s338920 [other] \"Settings\"\n+ @e6~s338920 [scroll-area] \"UNITS\"\n+ @e7~s338920 [other] \"UNITS\"\n+ @e8~s338920 [cell] \"Distance\"\n+ @e9~s338920 [text] \"\"\n+ @e10~s338920 [button] \"Metric units\"\n+ @e11~s338920 [button] \"Imperial units\"\n+ @e12~s338920 [text] \"Used across the whole app\"\n+ @e13~s338920 [text] \"PREFERENCES\"\n+ @e14~s338920 [other] \"Hike reminders\"\n+ @e15~s338920 [switch] \"Hike reminders\"\n+ @e16~s338920 [text] \"\"\n+ @e17~s338920 [text] \"Nudge me when I have not hiked in a while\"\n+ @e18~s338920 [text] \"Offline maps\"\n+ @e19~s338920 [switch] \"Offline maps\"\n+ @e20~s338920 [text] \"\"\n+ @e21~s338920 [text] \"Keep saved trail maps available offline\"\n+ @e22~s338920 [text] \"STORAGE\"\n+ @e23~s338920 [cell] \"Recorded hikes\"\n+ @e24~s338920 [text] \"\"\n+ @e25~s338920 [text] \"48\"\n+ @e26~s338920 [text] \"Stored in a local database\"\n+ @e27~s338920 [button] \"Reset sample data\"\n+ @e28~s338920 [text] \"ABOUT\"\n+ @e29~s338920 [cell] \"\"\n+ @e30~s338920 [text] \"Version\"\n+ @e31~s338920 [text] \"1.0.0\"\n- @e32 [button] \"Trails, tab, 1 of 4\"\n+ @e33~s338920 [button] \"Trails, tab, 1 of 4\"\n- @e35 [button] \"Settings, tab, 4 of 4\"\n+ @e36~s338920 [button] \"Settings, tab, 4 of 4\"",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01JcqzQ9WdNZfQpAN1f9QLde",
+          "startSeconds": 392.809,
+          "endSeconds": 392.993,
+          "command": "agent-device wait text \"Keep saved trail maps available offline\"",
+          "output": "(Bash completed with no output)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01RYUBm9qCgwqoYecNuNa4by",
+          "startSeconds": 394.907,
+          "endSeconds": 395.725,
+          "command": "agent-device screenshot tmp/javascript-control-settings.png",
+          "output": "tmp/javascript-control-settings.png (402x874 @1x)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01WE3WfdN5fDyKx4vquuJLkJ",
+          "startSeconds": 401.893,
+          "endSeconds": 401.965,
+          "command": "mkdir -p results/opus-rc12/javascript-control/proof && cp tmp/javascript-control-settings.png results/opus-rc12/javascript-control/proof/settings.png && ls -l results/opus-rc12/javascript-control/proof/settings.png",
+          "output": "-rw-r--r--@ 1 <local-user>  staff  76507 Sep  3 17:20 results/opus-rc12/javascript-control/proof/settings.png",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_018bvBjLuK3EgpnTfY78hSKE",
+          "startSeconds": 403.442,
+          "endSeconds": 403.573,
+          "command": "agent-device close",
+          "output": "Closed: default",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01ERcA5XFdr8GWP16KXz1y8r",
+          "startSeconds": 406.661,
+          "endSeconds": 407.224,
+          "command": "ps -p 53146 -o pid,command= | head -2; xcrun simctl list devices | grep <simulator-udid-prefix>; xcrun simctl spawn <simulator-udid> launchctl list 2>/dev/null | grep -i trailhead | head -2",
+          "output": "<device inventory omitted from public artifact>",
+          "exitCode": 0
+        }
+      ],
+      "markers": [
+        {
+          "id": "app-alive",
+          "kind": "appAlive",
+          "label": "App process alive",
+          "atSeconds": 357.805
+        },
+        {
+          "id": "settings-ready",
+          "kind": "settingsReady",
+          "label": "Settings proof ready",
+          "atSeconds": 395.725
+        }
+      ],
+      "proof": {
+        "src": "benchmarks/opus-rc12/javascript-control.png",
+        "expected": "Keep saved trail maps available offline",
+        "width": 402,
+        "height": 874
+      }
+    },
+    {
+      "id": "native-stim",
+      "model": "opus",
+      "variant": "native",
+      "arm": "stim",
+      "valid": true,
+      "invalidReasons": [],
+      "settingsReadySeconds": 229.681,
+      "appAliveSeconds": 195.473,
+      "totalSeconds": 244.1,
+      "commandCount": 9,
+      "usage": {
+        "input_tokens": 314862,
+        "cached_input_tokens": 302894,
+        "cache_creation_input_tokens": 11942,
+        "output_tokens": 2527,
+        "reasoning_output_tokens": 88
+      },
+      "estimatedTokenCostUsd": 0.33580000000000004,
+      "messages": [
+        {
+          "id": "0979c689-9a07-49c1-8f82-fd9b99ca738a-0",
+          "atSeconds": 33.827,
+          "text": "I'll start by creating the worktree."
+        },
+        {
+          "id": "c0b903a9-16fd-47fe-940a-a5b24ccce5e1-0",
+          "atSeconds": 57.083,
+          "text": "Now starting Metro in the worktree."
+        },
+        {
+          "id": "0852e55f-a133-45b1-9a1f-d90735468e1d-0",
+          "atSeconds": 210.017,
+          "text": "Stim adopted the parked simulator. Now starting the agent-device session."
+        },
+        {
+          "id": "5edf044e-8bdd-4d3d-944b-5c60ba5a321d-0",
+          "atSeconds": 221.868,
+          "text": "App is up with the window identifier visible, no onboarding shown. Navigating to Settings."
+        },
+        {
+          "id": "795b0f66-8ea3-4319-99b5-d499e8ed11fc-0",
+          "atSeconds": 243.68,
+          "text": "Done. The Settings screen rendered with \"Offline maps\" visible, and the window accessibility identifier `Trailhead native-stim` appeared as `@e2 [window]` in the first snapshot, confirming the native edit was in the build.\n\n- Worktree: `worktree/bench+native-stim`\n- Screenshot: `results/opus-rc12/native-stim/proof/settings.png` (copied from `tmp/native-stim-settings.png`, 70047 bytes)\n\nStim reported `stim-32fe72ce-bench-opus-rc12-opus-native-s (iPhone 17 26.5) (<simulator-udid-prefix>) adopted`; the run UDID `<simulator-udid>` was used for the agent-device session. Metro is still running on port 8082 and the worktree is left in place for coordinator verification and cleanup."
+        }
+      ],
+      "commands": [
+        {
+          "id": "toolu_017sRyoQY13YarBobxc7n18v",
+          "startSeconds": 35.494,
+          "endSeconds": 49.973,
+          "command": "stim worktree create bench/native-stim --dir worktree/project --carry-ignored",
+          "output": "  branch      worktree-bench/native-stim from HEAD (63fe92c)\n  carry       node_modules, Pods, native build output (APFS clone)\n  ready       worktree/bench+native-stim\nworktree/bench+native-stim",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01Ps7A8RzEdjQN1PvyPUG2pZ",
+          "startSeconds": 57.785,
+          "endSeconds": 59.56,
+          "command": "cd worktree/bench+native-stim && stim start",
+          "output": "  metro       starting on port 8082 (expo-child, supervisor pid 63674)\nOK: dev server on port 8082, supervisor pid 63674 (expo-child) (1.7s)\n  logs        results/opus-rc12/native-stim/stim-home/workspaces/bench-native-stim--e62d0a39ada44c59/logs\nShell cwd was reset to workspace/trailhead-v3",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_017jbRXnc47MRRSTzZHcPG2F",
+          "startSeconds": 61.857,
+          "endSeconds": 206.9,
+          "command": "cd worktree/bench+native-stim && stim ios",
+          "output": "  device      booting stim-32fe72ce-bench-opus-rc12-opus-native-s (iPhone 17 26.5) (<simulator-udid>)\n  fingerprint 07b1c1.. miss (5.2s)\n  build       compiling Debug with xcodebuild\n  cache       compilation cache on (CAS at results/opus-rc12/native-stim/stim-home/compilation-cache)\n  device      resetting privacy grants and the keychain on <simulator-udid>\n  build       still compiling (30s of ~4m15s)\n  build       still compiling (1m00s of ~4m15s)\n  build       still compiling (1m30s of ~4m15s)\n  build       still compiling (2m00s of ~4m15s)\n  cache       compilation cache 1394/1394 hits (100%)\n  build       ok (2m02s)\n  device      stim-32fe72ce-bench-opus-rc12-opus-native-s (iPhone 17 26.5) (<simulator-udid-prefix>) adopted (26.4s)\n  install     removed <agent-device-helper>, left by the previous workspace\n  install     Trailhead.app -> stim-32fe72ce-bench-opus-rc12-opus-native-s (iPhone 17 26.5) (<simulator-udid-prefix>) (3.4s)\n  install     dev client prepared (704ms)\n  launch      com.appandflow.trailhead (431ms)\n  verify      bundle loaded, process alive, stable for 3s -- the first screen may still be rendering (11.5s total)\nOK: com.appandflow.trailhead on stim-32fe72ce-bench-opus-rc12-opus-native-s (iPhone 17 26.5) (<simulator-udid-prefix>), Metro port 8082 (built, 2m25s)\n  device      stim-32fe72ce-bench-opus-rc12-opus-native-s (iPhone 17 26.5) (<simulator-udid>)\n  app         com.appandflow.trailhead\n  metro       running on port 8082\n  cache       built\n  compilation cache 1394/1394 hits (100%)\n  logs        results/opus-rc12/native-stim/stim-home/workspaces/bench-native-stim--e62d0a39ada44c59/logs\nShell cwd was reset to workspace/trailhead-v3",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01FK7E4qfZbtpLDn3MKK4CUw",
+          "startSeconds": 210.453,
+          "endSeconds": 219.399,
+          "command": "agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
+          "output": "Opened: com.appandflow.trailhead\nSession state: workspace/cwd_474765e6f86c294c_default\nPage: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 33 visible nodes\n@e1 [application] \"Trailhead\"\n@e2 [window] \"Trailhead native-stim\"\n@e3 [other] \"\"\n@e4 [other] \"Trails\"\n@e5 [text-field] \"Search trails\" [editable]\n@e6 [scroll-area] \"All regions\" [scrollable]\n  [content below scroll-area hidden]\n@e7 [other] \"All regions\"\n@e8 [button] \"All regions\" [selected]\n@e9 [button] \"Adirondacks\"\n@e10 [button] \"Bas-Saint-Laurent\"\n@e11 [button] \"Charlevoix\"\n@e12 [scroll-area] \"Any level\" [scrollable]\n  [content below scroll-area hidden]\n@e13 [other] \"Any level\"\n@e14 [button] \"Any level\" [selected]\n@e15 [button] \"Easy\"\n@e16 [button] \"Moderate\"\n@e17 [button] \"Hard\"\n@e18 [button] \"Expert\"\n@e19 [text] \"200 trails\"\n@e20 [button] \"Sort by name\" [selected]\n@e21 [button] \"Sort by distance\"\n@e22 [button] \"Sort by rating\"\n@e23 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\" [scrollable]\n  [content below scroll-area hidden]\n@e24 [other] [same label as parent]\n@e25 [button] [same label as parent]\n@e26 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n@e27 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n@e28 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n@e29 [other] \"Trails, tab, 1 of 4\"\n@e30 [button] \"Trails, tab, 1 of 4\" [selected]\n@e31 [button] \"Record, tab, 2 of 4\"\n@e32 [button] \"History, tab, 3 of 4\"\n@e33 [button] \"Settings, tab, 4 of 4\"",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01F3ioczu9Zx3z1dLuveTKvH",
+          "startSeconds": 222.313,
+          "endSeconds": 224.869,
+          "command": "agent-device click @e33 --settle",
+          "output": "Tapped @e33 (352, 816)\nsettled after 1724ms: +29 -28 (~5 unchanged)\n- @e3 [other] \"\"\n- @e4 [other] \"Trails\"\n- @e5 [text-field] \"Search trails\"\n- @e6 [scroll-area] \"All regions\"\n- @e7 [other] \"All regions\"\n- @e8 [button] \"All regions\"\n- @e9 [button] \"Adirondacks\"\n- @e10 [button] \"Bas-Saint-Laurent\"\n- @e11 [button] \"Charlevoix\"\n- @e12 [scroll-area] \"Any level\"\n- @e13 [other] \"Any level\"\n- @e14 [button] \"Any level\"\n- @e15 [button] \"Easy\"\n- @e16 [button] \"Moderate\"\n- @e17 [button] \"Hard\"\n- @e18 [button] \"Expert\"\n- @e19 [text] \"200 trails\"\n- @e20 [button] \"Sort by name\"\n- @e21 [button] \"Sort by distance\"\n- @e22 [button] \"Sort by rating\"\n- @e23 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e24 [other] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e25 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e26 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n- @e27 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n- @e28 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n+ @e3~s162348 [other] \"Settings\"\n+ @e4~s162348 [scroll-area] \"UNITS\"\n+ @e5~s162348 [other] \"UNITS\"\n+ @e6~s162348 [cell] \"Distance\"\n+ @e7~s162348 [text] \"\"\n+ @e8~s162348 [button] \"Metric units\"\n+ @e9~s162348 [button] \"Imperial units\"\n+ @e10~s162348 [text] \"Used across the whole app\"\n+ @e11~s162348 [text] \"PREFERENCES\"\n+ @e12~s162348 [other] \"Hike reminders\"\n+ @e13~s162348 [switch] \"Hike reminders\"\n+ @e14~s162348 [text] \"\"\n+ @e15~s162348 [text] \"Nudge me when I have not hiked in a while\"\n+ @e16~s162348 [text] \"Offline maps\"\n+ @e17~s162348 [switch] \"Offline maps\"\n+ @e18~s162348 [text] \"\"\n+ @e19~s162348 [text] \"Keep map tiles for saved trails on device\"\n+ @e20~s162348 [text] \"STORAGE\"\n+ @e21~s162348 [cell] \"Recorded hikes\"\n+ @e22~s162348 [text] \"\"\n+ @e23~s162348 [text] \"48\"\n+ @e24~s162348 [text] \"Stored in a local database\"\n+ @e25~s162348 [button] \"Reset sample data\"\n+ @e26~s162348 [text] \"ABOUT\"\n+ @e27~s162348 [cell] \"\"\n+ @e28~s162348 [text] \"Version\"\n+ @e29~s162348 [text] \"1.0.0\"\n- @e30 [button] \"Trails, tab, 1 of 4\"\n+ @e31~s162348 [button] \"Trails, tab, 1 of 4\"\n- @e33 [button] \"Settings, tab, 4 of 4\"\n+ @e34~s162348 [button] \"Settings, tab, 4 of 4\"",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01MyaLv6iML7dwBEcJap8dY9",
+          "startSeconds": 226.928,
+          "endSeconds": 227.097,
+          "command": "agent-device wait text \"Offline maps\"",
+          "output": "(Bash completed with no output)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01U9BXQcmmeZW9qZvc869GUi",
+          "startSeconds": 229.193,
+          "endSeconds": 229.681,
+          "command": "agent-device screenshot tmp/native-stim-settings.png",
+          "output": "tmp/native-stim-settings.png (402x874 @1x)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01X8368wH8LaeLnQnfZCY3BD",
+          "startSeconds": 234.567,
+          "endSeconds": 234.632,
+          "command": "cp tmp/native-stim-settings.png results/opus-rc12/native-stim/proof/settings.png && ls -l results/opus-rc12/native-stim/proof/settings.png",
+          "output": "-rw-r--r--@ 1 <local-user>  staff  70047 Sep  3 17:29 results/opus-rc12/native-stim/proof/settings.png",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01QKzPLHdzFVZ89Q3Bwv5Nub",
+          "startSeconds": 236.471,
+          "endSeconds": 236.598,
+          "command": "agent-device close",
+          "output": "Closed: default",
+          "exitCode": 0
+        }
+      ],
+      "markers": [
+        {
+          "id": "app-alive",
+          "kind": "appAlive",
+          "label": "App process alive",
+          "atSeconds": 195.473
+        },
+        {
+          "id": "settings-ready",
+          "kind": "settingsReady",
+          "label": "Settings proof ready",
+          "atSeconds": 229.681
+        }
+      ],
+      "proof": {
+        "src": "benchmarks/opus-rc12/native-stim.png",
+        "expected": "Offline maps",
+        "width": 402,
+        "height": 874
+      }
+    },
+    {
+      "id": "native-control",
+      "model": "opus",
+      "variant": "native",
+      "arm": "control",
+      "valid": true,
+      "invalidReasons": [],
+      "settingsReadySeconds": 389.444,
+      "appAliveSeconds": 354.727,
+      "totalSeconds": 409.35,
+      "commandCount": 113,
+      "usage": {
+        "input_tokens": 5195620,
+        "cached_input_tokens": 5137920,
+        "cache_creation_input_tokens": 57474,
+        "output_tokens": 26899,
+        "reasoning_output_tokens": 2573
+      },
+      "estimatedTokenCostUsd": 3.8191059999999983,
+      "messages": [
+        {
+          "id": "4b74c5b6-7313-4ea9-96fe-519e369f2713-0",
+          "atSeconds": 33.844,
+          "text": "I'll start by exploring the repo structure and setting up the worktree."
+        },
+        {
+          "id": "e40af8dd-5f53-4a12-89f3-5a0676df4ad8-0",
+          "atSeconds": 77.777,
+          "text": "Now the AppDelegate edit:"
+        },
+        {
+          "id": "6ceaaf46-9c69-4b64-86dd-493da431b6c3-0",
+          "atSeconds": 81.146,
+          "text": "Now create the dedicated simulator:"
+        },
+        {
+          "id": "864abed7-61ca-427e-82f8-9188dbaf4e1d-0",
+          "atSeconds": 148.399,
+          "text": "Pods installed; now the Xcode build starts."
+        },
+        {
+          "id": "c73837d0-ffd5-404c-b319-a3f7975ac1d4-0",
+          "atSeconds": 163.291,
+          "text": "Compiling now. Continuing to poll."
+        },
+        {
+          "id": "24005bf6-9689-4a0b-b0de-0c1dc5f1dc67-0",
+          "atSeconds": 193.2,
+          "text": "Compiling actively (210 log lines now). Continuing."
+        },
+        {
+          "id": "3a311222-e8b9-41f2-b515-d3e351892c3d-0",
+          "atSeconds": 301.387,
+          "text": "Pods are linking now; the app target follows."
+        },
+        {
+          "id": "b6b2602f-6605-4c65-9de6-c91720f59d68-0",
+          "atSeconds": 334.031,
+          "text": "The app target is building now."
+        },
+        {
+          "id": "ba9dc5d6-7af0-4847-8a80-118549ddb2af-0",
+          "atSeconds": 341.419,
+          "text": "Build finishing; that warning is benign."
+        },
+        {
+          "id": "80877e02-bac7-4064-a758-6d710d1549bb-0",
+          "atSeconds": 348.951,
+          "text": "Build succeeded. Now installing and launching."
+        },
+        {
+          "id": "6f0acfde-5bb5-47b9-b2de-6d1b3a12e720-0",
+          "atSeconds": 357.625,
+          "text": "App launched successfully. Now the agent-device proof."
+        },
+        {
+          "id": "d6ab5702-4892-4c93-a9d0-9012b1508eeb-0",
+          "atSeconds": 381.605,
+          "text": "The app is up and the window carries the expected identifier. Navigating to Settings:"
+        },
+        {
+          "id": "2932d26a-9d15-4e6b-a164-63d92ab06a5d-0",
+          "atSeconds": 396.613,
+          "text": "The Settings screen is captured. Closing the agent-device session (the app stays running):"
+        },
+        {
+          "id": "5c7cb3d9-454a-4964-8b3c-0e187c2429b0-0",
+          "atSeconds": 408.926,
+          "text": "Done. The full sequence completed and verified.\n\n**Worktree:** `worktree/native-control` (branch `bench/native-control`)\n\n**Screenshot:** `results/opus-rc12/native-control/proof/settings.png` (copied from `tmp/native-control-settings.png`)\n\nWhat happened:\n\n- Created the worktree and carried `node_modules`, `ios/Pods`, `ios/build`, `.expo`, and `ios/.<local-host>` from the main checkout using APFS clone copies.\n- Edited `ios/Trailhead/AppDelegate.swift:25` to set `window?.accessibilityIdentifier` immediately after the window assignment.\n- Created a fresh simulator named `Trailhead native-control`, UDID `<simulator-udid>`, iPhone 17 / iOS 26.5.\n- Ran `npx expo run:ios --device <simulator-udid-prefix>-...` as background PID 72157, log `tmp/native-control-run.log`, polled with foreground `ps`/`tail`. Build succeeded (0 errors, 1 benign duplicate-`-lc++` warning), installed and launched on that simulator.\n- agent-device proof: opened the session on the explicit UDID, dismissed the Expo dev-menu onboarding (Continue, then Close), and the snapshot showed `[window] \"Trailhead native-control\"` — confirming the native edit is in the running binary. Tapped the Settings tab, `agent-device wait text \"Offline maps\"` succeeded, captured and copied the screenshot, then `agent-device close`.\n\nThe app and Metro (PID 72157) are still running on the simulator."
+        }
+      ],
+      "commands": [
+        {
+          "id": "toolu_01P7YK26WuZ8kaQ1VdwzR49D",
+          "startSeconds": 35.226,
+          "endSeconds": 35.602,
+          "command": "ls -la && cat package.json",
+          "output": "total 1096\ndrwxr-xr-x@  27 <local-user>  staff     864 Sep  3 01:30 .\ndrwxr-xr-x@  16 <local-user>  staff     512 Sep  3 10:25 ..\n-rw-r--r--@   1 <local-user>  staff     103 Sep  2 23:24 .env.example\ndrwxr-xr-x@   3 <local-user>  staff      96 Sep  2 23:49 .expo\n-rw-r--r--@   1 <local-user>  staff      62 Sep  3 00:27 .fingerprintignore\ndrwxr-xr-x@  14 <local-user>  staff     448 Sep  3 17:30 .git\n-rw-r--r--@   1 <local-user>  staff     482 Sep  2 23:24 .gitignore\nsrw-------@   1 <local-user>  staff       0 Sep  3 01:30 .m1788412929627.sock\ndrwxr-xr-x@   2 <local-user>  staff      64 Sep  3 01:05 .worktrees\n-rw-r--r--@   1 <local-user>  staff    2349 Sep  2 23:35 AGENTS.md\n-rw-r--r--@   1 <local-user>  staff      11 Sep  2 23:24 CLAUDE.md\n-rw-r--r--@   1 <local-user>  staff    1067 Sep  2 23:24 LICENSE\n-rw-r--r--@   1 <local-user>  staff    2424 Sep  2 23:24 README.md\ndrwxr-xr-x@  10 <local-user>  staff     320 Sep  2 23:24 android\ndrwxr-xr-x@   7 <local-user>  staff     224 Sep  2 23:24 app\n-rw-r--r--@   1 <local-user>  staff    1959 Sep  2 23:24 app.json\ndrwxr-xr-x@   4 <local-user>  staff     128 Sep  2 23:24 assets\ndrwxr-xr-x@   5 <local-user>  staff     160 Sep  2 23:24 bench\ndrwxr-xr-x@   3 <local-user>  staff      96 Sep  2 23:24 docs\n-rw-r--r--@   1 <local-user>  staff     237 Sep  2 23:24 eslint.config.js\ndrwxr-xr-x@  13 <local-user>  staff     416 Sep  2 23:37 ios\ndrwxr-xr-x@ 590 <local-user>  staff   18880 Sep  2 23:36 node_modules\n-rw-r--r--@   1 <local-user>  staff  515348 Sep  2 23:36 package-lock.json\n-rw-r--r--@   1 <local-user>  staff    2628 Sep  2 23:24 package.json\ndrwxr-xr-x@   3 <local-user>  staff      96 Sep  2 23:24 scripts\ndrwxr-xr-x@   9 <local-user>  staff     288 Sep  2 23:24 src\n-rw-r--r--@   1 <local-user>  staff     242 Sep  2 23:24 tsconfig.json\n{\n  \"name\": \"trailhead\",\n  \"description\": \"Reference Expo app for local stim-cli iOS and Android testing\",\n  \"license\": \"MIT\",\n  \"repository\": \"https://github.com/appandflow/trailhead\",\n  \"main\": \"expo-router/entry\",\n  \"version\": \"1.0.0\",\n  \"scripts\": {\n    \"start\": \"expo start\",\n    \"android\": \"expo run:android\",\n    \"ios\": \"expo run:ios\",\n    \"web\": \"expo start --web\",\n    \"lint\": \"expo lint\",\n    \"typecheck\": \"tsc --noEmit\",\n    \"bench\": \"node bench/bench.mjs\"\n  },\n  \"dependencies\": {\n    \"@expo/vector-icons\": \"^15.0.2\",\n    \"@react-navigation/bottom-tabs\": \"^7.3.10\",\n    \"@react-navigation/elements\": \"^2.3.8\",\n    \"@react-navigation/native\": \"^7.1.6\",\n    \"@shopify/flash-list\": \"2.0.2\",\n    \"@shopify/react-native-skia\": \"2.6.2\",\n    \"@tanstack/react-query\": \"^5.101.4\",\n    \"date-fns\": \"^4.4.0\",\n    \"drizzle-orm\": \"^0.45.2\",\n    \"expo\": \"~57.0.18\",\n    \"expo-asset\": \"~57.0.15\",\n    \"expo-blur\": \"~57.0.2\",\n    \"expo-constants\": \"~57.0.16\",\n    \"expo-crypto\": \"~57.0.2\",\n    \"expo-dev-client\": \"~57.0.16\",\n    \"expo-device\": \"~57.0.1\",\n    \"expo-file-system\": \"~57.0.6\",\n    \"expo-font\": \"~57.0.2\",\n    \"expo-haptics\": \"~57.0.2\",\n    \"expo-image\": \"~57.0.3\",\n    \"expo-linear-gradient\": \"~57.0.1\",\n    \"expo-linking\": \"~57.0.8\",\n    \"expo-location\": \"~57.0.14\",\n    \"expo-network\": \"~57.0.1\",\n    \"expo-notifications\": \"~57.0.15\",\n    \"expo-router\": \"~57.0.17\",\n    \"expo-secure-store\": \"~57.0.2\",\n    \"expo-sharing\": \"~57.0.16\",\n    \"expo-splash-screen\": \"~57.0.8\",\n    \"expo-sqlite\": \"~57.0.2\",\n    \"expo-status-bar\": \"~57.0.1\",\n    \"expo-symbols\": \"~57.0.2\",\n    \"expo-system-ui\": \"~57.0.3\",\n    \"expo-task-manager\": \"~57.0.14\",\n    \"expo-video\": \"~57.0.3\",\n    \"expo-web-browser\": \"~57.0.2\",\n    \"lottie-react-native\": \"~7.3.8\",\n    \"react\": \"19.2.3\",\n    \"react-dom\": \"19.2.3\",\n    \"react-native\": \"0.86.3\",\n    \"react-native-gesture-handler\": \"~2.32.0\",\n    \"react-native-maps\": \"1.27.2\",\n    \"react-native-mmkv\": \"^4.3.2\",\n    \"react-native-nitro-modules\": \"^0.36.5\",\n    \"react-native-reanimated\": \"4.5.1\",\n    \"react-native-safe-area-context\": \"~5.7.0\",\n    \"react-native-screens\": \"~4.26.0\",\n    \"react-native-svg\": \"15.15.4\",\n    \"react-native-web\": \"^0.21.2\",\n    \"react-native-webview\": \"13.16.1\",\n    \"react-native-worklets\": \"0.10.1\",\n    \"zod\": \"^4.4.3\",\n    \"zustand\": \"^5.0.15\"\n  },\n  \"devDependencies\": {\n    \"@types/react\": \"~19.2.0\",\n    \"drizzle-kit\": \"^0.31.10\",\n    \"eslint\": \"^9.25.0\",\n    \"eslint-config-expo\": \"~57.0.2\",\n    \"typescript\": \"~6.0.3\"\n  },\n  \"expo\": {\n    \"doctor\": {\n      \"appConfigFieldsNotSyncedCheck\": {\n        \"enabled\": false\n      }\n    }\n  },\n  \"private\": true\n}",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01HGzAfmadAaBsBqFzAwWY3t",
+          "startSeconds": 35.872,
+          "endSeconds": 35.938,
+          "command": "git worktree list && ls ios 2>/dev/null | head -50",
+          "output": "workspace/trailhead-v3                                                      63fe92c [benchmark/v3-fixture]\nworktree/repro+derived_data-plus-fix  63fe92c [worktree-repro/derived_data-plus-fix]\nworktree/repro@derived-data-at-fix    63fe92c [worktree-repro/derived-data-at-fix]\nPodfile\nPodfile.lock\nPodfile.properties.json\nPods\nTrailhead\nTrailhead.xcodeproj\nTrailhead.xcworkspace\nbuild",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_0167j7UVHFceP3RAoitQmkqt",
+          "startSeconds": 38.467,
+          "endSeconds": 39.898,
+          "command": "cat AGENTS.md; echo ---; cat CLAUDE.md; echo ---; ls ios/build 2>/dev/null | head; echo ---; du -sh node_modules ios/Pods ios/build 2>/dev/null",
+          "output": "# Trailhead\n\nA hike recording and trail browsing app. Expo SDK 57, React Native 0.86,\nTypeScript, expo-router.\n\n## Layout\n\n```\napp/                    expo-router routes\n  _layout.tsx           providers: gesture handler, safe area, react-query, db init\n  (tabs)/               Trails, Record, History, Settings\n  trail/[id].tsx        trail detail\n  hike/[id].tsx         recorded hike detail\nsrc/\n  theme/                useTheme(), palettes, spacing, radius\n  data/trails.ts        200 seed trails with route geometry (trails.json)\n  db/                   expo-sqlite + drizzle: schema, client, seed\n  lib/                  geo math (haversine, gain, splits) and unit formatting\n  store/                zustand stores (settings, in-progress recording)\n  components/           shared presentational components\n  features/             screen-specific hooks and pieces\nbench/                  benchmark harness (npm run bench)\nios/  android/          committed native projects\n```\n\n## Conventions\n\n- `@/` resolves to the repository root.\n- Colors come from `useTheme()`. Every screen supports light and dark mode.\n- Units come from `useSettingsStore().units` and are rendered through `src/lib/format`.\n- Trail data is static and bundled. Hike data is in SQLite and seeded on first launch.\n\n## Native setup\n\nThis project is in the bare workflow: `ios/` and `android/` are committed and\n`expo prebuild` is **not** part of the build. Native configuration is changed by\nediting the native projects directly, or by changing `app.json` and re-running\nprebuild deliberately — which will overwrite local native edits, so check what is\nalready in the native projects first.\n\nAndroid map tiles need a Google Maps API key in `.env` as\n`GOOGLE_MAPS_API_KEY`. Copy `.env.example` to `.env` to supply one.\n`android/app/build.gradle` reads the environment variable first, then the\nrepo-root `.env`. The app builds without a key and shows blank map tiles.\n\n## Running\n\n```bash\nnpm install\nnpx expo run:ios       # or: npx expo run:android\n```\n\nThis public test app does not contain EAS configuration. Use local commands for\nbuilds and simulator sessions.\n\nNote that `-derivedDataPath ios/build` collides with React Native's codegen output\nin `ios/build/generated`. Use a derived data path outside `ios/build`, and re-run\n`pod install` after deleting `ios/build`.\n---\n@AGENTS.md\n---\ngenerated\n---\n2.5G\tnode_modules\n1.2G\tios/Pods\n1.1M\tios/build",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01RRiyJhhsVfNN3LXaBX3qPc",
+          "startSeconds": 39.599,
+          "endSeconds": 40.054,
+          "command": "xcrun simctl list runtimes | grep -i ios; echo ---; xcrun simctl list devicetypes | grep -i \"iPhone 17\"",
+          "output": "iOS 26.5 (26.5 - 23F77) - com.apple.CoreSimulator.SimRuntime.iOS-26-5\n---\niPhone 17 Pro (com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro)\niPhone 17 Pro Max (com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro-Max)\niPhone 17e (com.apple.CoreSimulator.SimDeviceType.iPhone-17e)\niPhone 17 (com.apple.CoreSimulator.SimDeviceType.iPhone-17)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01ANT5XYPuZAduqm5fZGTjno",
+          "startSeconds": 45.616,
+          "endSeconds": 45.709,
+          "command": "git worktree add -b bench/native-control worktree/native-control 2>&1 | tail -5",
+          "output": "Preparing worktree (new branch 'bench/native-control')\nHEAD is now at 63fe92c test: stabilize benchmark native fingerprint",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01VcpGWo4NgPm4gGtwBcKkxy",
+          "startSeconds": 49.355,
+          "endSeconds": 57.414,
+          "command": "time cp -Rc node_modules worktree/native-control/node_modules 2>&1 | tail -5",
+          "output": "cp -Rc node_modules  2>&1  0.07s user 6.60s system 83% cpu 8.024 total\ntail -5  0.00s user 0.00s system 0% cpu 8.024 total",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_019ZW3fHFv3c4h6XyhKhuM2k",
+          "startSeconds": 61.191,
+          "endSeconds": 64.718,
+          "command": "W=worktree/native-control\ntime cp -Rc ios/Pods \"$W/ios/Pods\"\ntime cp -Rc ios/build \"$W/ios/build\"\n[ -d .expo ] && cp -Rc .expo \"$W/.expo\"\n[ -f .env ] && cp .env \"$W/.env\"\n[ -d ios/Trailhead.xcworkspace ] && echo \"workspace present in git\"\nls \"$W/ios\"",
+          "output": "cp -Rc ios/Pods \"$W/ios/Pods\"  0.05s user 2.74s system 81% cpu 3.444 total\ncp -Rc ios/build \"$W/ios/build\"  0.00s user 0.02s system 83% cpu 0.019 total\nworkspace present in git\nPodfile\nPodfile.lock\nPodfile.properties.json\nPods\nTrailhead\nTrailhead.xcodeproj\nTrailhead.xcworkspace\nbuild",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01VWtXbswJ2Zk58YUqvqVX2W",
+          "startSeconds": 70.122,
+          "endSeconds": 71.485,
+          "command": "git status --porcelain --ignored=no; echo \"--- untracked ignored top-level:\"; git status --porcelain --ignored | grep '^!!' | head -20",
+          "output": "--- untracked ignored top-level:\n!! .expo/\n!! ios/.<local-host>\n!! ios/Pods/\n!! ios/build/\n!! node_modules/",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_011jSqxyRYaZQdZTFKNpjEdc",
+          "startSeconds": 76.236,
+          "endSeconds": 76.28,
+          "command": "W=worktree/native-control\ncp ios/.<local-host> \"$W/ios/.<local-host>\" && cat \"$W/ios/.<local-host>\"",
+          "output": "export NODE_BINARY=/opt/homebrew/Cellar/node/26.7.0/bin/node",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01Mj9T23DyMd8c5hEX7EZFPU",
+          "startSeconds": 83.019,
+          "endSeconds": 83.993,
+          "command": "UDID=$(xcrun simctl create \"Trailhead native-control\" com.apple.CoreSimulator.SimDeviceType.iPhone-17 com.apple.CoreSimulator.SimRuntime.iOS-26-5)\necho \"UDID=$UDID\"\necho \"$UDID\" > tmp/opus-rc12-sim-udid.txt\nxcrun simctl boot \"$UDID\" 2>&1 | tail -2\nxcrun simctl list devices | grep -i \"native-control\"",
+          "output": "<device inventory omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01EpAZ9mLjTQ4PeEKrDi3BLi",
+          "startSeconds": 91.538,
+          "endSeconds": 91.583,
+          "command": "cd worktree/native-control && grep -rn \"derivedDataPath\" node_modules/@expo/cli/build/src/run/ios/ 2>/dev/null | head -20",
+          "output": "Shell cwd was reset to workspace/trailhead-v3",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01WE553VtwtTEA78PYNUZQwu",
+          "startSeconds": 92.59,
+          "endSeconds": 93.361,
+          "command": "cd worktree/native-control && npx expo run:ios --help 2>&1 | head -40",
+          "output": "  Info\n    Run the iOS app binary locally\n\n  Usage\n    $ npx expo run:ios\n\n  Options\n    --no-build-cache                 Clear the native derived data before building\n    --no-install                     Skip installing dependencies\n    --no-bundler                     Skip starting the Metro bundler\n    --scheme [scheme]                Scheme to build\n    --binary <path>                  Path to existing .app or .ipa to install.\n    --configuration <configuration>  Xcode configuration to use. Debug or Release. Default: Debug\n    -d, --device [device]            Device name, UDID, or \"generic\" for build-only\n    -o, --output <path>              Directory to output the built app binary\n    -p, --port <port>                Port to start the Metro bundler on. Default: 8081\n    -h, --help                       Usage info\n\n  Build for production (unsigned) with the Release configuration:\n    $ npx expo run:ios --configuration Release\n\n  Build for simulator without installing (build-only):\n    $ npx expo run:ios --configuration Release --device generic --output ./build\nShell cwd was reset to workspace/trailhead-v3",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01Rr3QBaJipDAdVja32mG6jy",
+          "startSeconds": 106.705,
+          "endSeconds": 108.781,
+          "command": "W=worktree/native-control\nUDID=$(cat tmp/opus-rc12-sim-udid.txt)\nLOG=tmp/native-control-run.log\n: > \"$LOG\"\ncd \"$W\" && nohup npx expo run:ios --device \"$UDID\" > \"$LOG\" 2>&1 &\necho $! > tmp/opus-rc12-run.pid\nsleep 2\necho \"PID=$(cat tmp/opus-rc12-run.pid) UDID=$UDID LOG=$LOG\"",
+          "output": "PID=72157 UDID=<simulator-udid> LOG=tmp/native-control-run.log\nShell cwd was reset to workspace/trailhead-v3",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_015xbNseFMP698Bxbofgj7zX",
+          "startSeconds": 111.431,
+          "endSeconds": 111.438,
+          "command": "sleep 25; ps -p $(cat tmp/opus-rc12-run.pid) -o pid=,stat=,etime= ; tail -20 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 1
+        },
+        {
+          "id": "toolu_018C8pdPyPDe68Udpzs63EJd",
+          "startSeconds": 117.312,
+          "endSeconds": 117.41,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o pid=,stat=,etime= ; echo \"--- log:\"; tail -20 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01AxHsJWJFBoZndeNShSnQfK",
+          "startSeconds": 119.562,
+          "endSeconds": 119.64,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o pid=,stat=,etime= ; echo \"--- log:\"; tail -20 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01Kkc9kGpLyKQhhCgQ76p8to",
+          "startSeconds": 128.414,
+          "endSeconds": 128.543,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o pid=,stat=,etime= ; echo \"--- log:\"; tail -c 1200 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01BtymZJNhbW1WLRsEPXcWfG",
+          "startSeconds": 131.039,
+          "endSeconds": 131.12,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o pid=,stat=,etime= ; echo \"--- log:\"; tail -c 1200 tmp/native-control-run.log; echo \"--- children:\"; pgrep -P $(cat tmp/opus-rc12-run.pid) | head",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01LJhTk41K18fy48LjoHtFt8",
+          "startSeconds": 135.812,
+          "endSeconds": 135.875,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o pid=,stat=,etime=; echo \"--- log:\"; tail -c 1500 tmp/native-control-run.log; echo \"--- ps tree:\"; ps -ax -o pid=,ppid=,command= | grep -E \"72157|pod |xcodebuild\" | grep -v grep | head",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01NqcXbTgjo3NuPAGXaiqPHz",
+          "startSeconds": 137.988,
+          "endSeconds": 138.038,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; echo \"--- log:\"; tail -c 1500 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_0137BdwszKVqiodW2mvZoj2z",
+          "startSeconds": 140.179,
+          "endSeconds": 140.214,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; echo \"--- log:\"; tail -c 1500 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01Jc6neotZaNez1fsTEBaQaQ",
+          "startSeconds": 142.315,
+          "endSeconds": 142.344,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; echo \"--- log:\"; tail -c 1500 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_0135i1v46fDufGyBe1PdfXvy",
+          "startSeconds": 144.352,
+          "endSeconds": 144.395,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; echo \"--- log:\"; tail -c 1500 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_017EFJ9gPrTAVkrqyQ1fBAPL",
+          "startSeconds": 146.706,
+          "endSeconds": 146.748,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; echo \"--- log:\"; tail -c 2000 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01BxFdPq9F3a53tW6zemfnDM",
+          "startSeconds": 149.358,
+          "endSeconds": 149.396,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; echo \"--- log:\"; tail -c 2000 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_012ewMTUDtR9JebWUtqQdJ2m",
+          "startSeconds": 152.181,
+          "endSeconds": 152.246,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; echo \"--- log:\"; tail -c 2000 tmp/native-control-run.log; echo \"--- xcodebuild:\"; pgrep -fl xcodebuild | head -3",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_017ZnCRWuXw3dkQona32V6w8",
+          "startSeconds": 157.182,
+          "endSeconds": 157.24,
+          "command": "mkdir -p results/opus-rc12/native-control/proof && ls -la results/opus-rc12/native-control/; echo \"--- log:\"; tail -c 600 tmp/native-control-run.log",
+          "output": "total 72\ndrwxr-xr-x@ 12 <local-user>  staff    384 Sep  3 17:34 .\ndrwxr-xr-x@  6 <local-user>  staff    192 Sep  3 17:33 ..\n-rw-r--r--@  1 <local-user>  staff   6018 Sep  3 17:34 meta.json\n-rw-r--r--@  1 <local-user>  staff  12615 Sep  3 17:34 prompt-input.json\n-rw-r--r--@  1 <local-user>  staff   2825 Sep  3 17:33 prompt.txt\ndrwxr-xr-x@  2 <local-user>  staff     64 Sep  3 17:33 proof\ndrwxr-xr-x@  2 <local-user>  staff     64 Sep  3 17:33 raw\n-rw-r--r--@  1 <local-user>  staff   1644 Sep  3 17:34 runner-guidance.md\ndrwxr-xr-x@  3 <local-user>  staff     96 Sep  3 17:33 runner-home\n-rw-r--r--@  1 <local-user>  staff    129 Sep  3 17:33 simulators-before.json\ndrwxr-xr-x@  2 <local-user>  staff     64 Sep  3 17:33 stim-home\ndrwxr-xr-x@ 18 <local-user>  staff    576 Sep  3 17:36 tmp\n--- log:\n- Installing CocoaPods...\n✔ Installed CocoaPods\n› Using --device <simulator-udid>\n› Planning build",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01SeVNWZKkugEJayZJTwUXXW",
+          "startSeconds": 159.405,
+          "endSeconds": 159.456,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; echo \"--- log:\"; tail -c 800 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01EBBsqQ4nVsPeuHjx7Cy8Pc",
+          "startSeconds": 161.614,
+          "endSeconds": 161.712,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; echo \"--- log:\"; tail -c 800 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_016aKm5kRqzeoD1GRDuoLaBo",
+          "startSeconds": 164.106,
+          "endSeconds": 164.202,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; echo \"--- log:\"; tail -c 500 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_019w3cMSjzL5D1YoLpH4wiSV",
+          "startSeconds": 166.375,
+          "endSeconds": 166.457,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; echo \"--- log:\"; tail -c 500 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_019JYy92DHBR2UNgibZyscHJ",
+          "startSeconds": 168.584,
+          "endSeconds": 168.641,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; echo \"--- log:\"; tail -c 400 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_016a4uNvHAsE3zDmLwzb2kgU",
+          "startSeconds": 171.873,
+          "endSeconds": 171.959,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; echo \"--- lines:\"; wc -l < tmp/native-control-run.log; tail -c 300 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01TdNgHqhUMjfgA3yRagQcyu",
+          "startSeconds": 174.424,
+          "endSeconds": 174.483,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 300 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01LFcA8pRaDZ21fMcHUVMBH7",
+          "startSeconds": 176.679,
+          "endSeconds": 176.743,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 300 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01GXNGDFGeLnXrNKj7KTppP4",
+          "startSeconds": 179.274,
+          "endSeconds": 179.335,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 300 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_014ki8iTt7FXxSttfWhcAugj",
+          "startSeconds": 181.692,
+          "endSeconds": 181.763,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 300 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01EtyK4RsDqNrCuFJiBpFwRx",
+          "startSeconds": 184.141,
+          "endSeconds": 184.217,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 300 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01RxX1cXand6XS1KJ5UA4qjg",
+          "startSeconds": 187.352,
+          "endSeconds": 187.407,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 300 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_016QQ8VsctFkJ8emTbVr9VDz",
+          "startSeconds": 191.512,
+          "endSeconds": 191.656,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; ps -ax -o pcpu=,command= | sort -rn | head -5 | cut -c1-140",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_016bdioSMTRg6em32TD79khc",
+          "startSeconds": 194.302,
+          "endSeconds": 194.38,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_011NQvU8HseyBR8HPzurP8A9",
+          "startSeconds": 197.078,
+          "endSeconds": 197.143,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_017pCcS4uSepxc3oSVW7LxdD",
+          "startSeconds": 199.647,
+          "endSeconds": 199.801,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01E2oQdmZ651t2wU7YdJeAgE",
+          "startSeconds": 202.244,
+          "endSeconds": 202.427,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01FeC1c7Y6RRNgQ6DjACyRiy",
+          "startSeconds": 204.552,
+          "endSeconds": 204.657,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01F4fYAsmriLWkpmXrM5MQmt",
+          "startSeconds": 206.919,
+          "endSeconds": 207.018,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01FrvqMBXWjVyG16wY6xEVmP",
+          "startSeconds": 209.354,
+          "endSeconds": 209.426,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01Jn1Jx9YoJchGryN2kMxSRL",
+          "startSeconds": 211.736,
+          "endSeconds": 211.8,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01HqfV7w3cJwj5ARnEccwoHX",
+          "startSeconds": 214.408,
+          "endSeconds": 214.473,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01VYgo9wndkdZmZt8zmouDjp",
+          "startSeconds": 216.754,
+          "endSeconds": 216.881,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01V6udX2cDCQbS4Gs2n76eQG",
+          "startSeconds": 219.157,
+          "endSeconds": 219.23,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01CBdVD5i3Fkv2NViTEZtGJv",
+          "startSeconds": 221.79,
+          "endSeconds": 221.883,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01TGU7RGTj9wJTKfN79p9EoD",
+          "startSeconds": 224.126,
+          "endSeconds": 224.191,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01TumSQmLwojHmtNrbe62MTK",
+          "startSeconds": 226.751,
+          "endSeconds": 226.849,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01UVSeDG3QetXGCiGXc9MSXB",
+          "startSeconds": 229.724,
+          "endSeconds": 229.787,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_018nhWz9F5rG2bASbSgqYETA",
+          "startSeconds": 232.1,
+          "endSeconds": 232.283,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_019CVusnwJk24bqnMUzHZmqW",
+          "startSeconds": 234.654,
+          "endSeconds": 234.769,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01NLspyraFAEiND1CWykvH5J",
+          "startSeconds": 237.064,
+          "endSeconds": 237.131,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01FqZWGKSSrsmVrT2zwuiKmX",
+          "startSeconds": 239.366,
+          "endSeconds": 239.443,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_012wcVnhLVYyY4XuXNjEJFD1",
+          "startSeconds": 241.779,
+          "endSeconds": 241.833,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_014HHQGCeVf2HctMBMdkNeGw",
+          "startSeconds": 244.485,
+          "endSeconds": 244.54,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01Urc5fEbBnFRm42VbYBXbE5",
+          "startSeconds": 246.691,
+          "endSeconds": 246.83,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01MitcsCrZm7XPZnW7bXSycf",
+          "startSeconds": 249.158,
+          "endSeconds": 249.22,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01AnNywKBVugXHetXayeRHjs",
+          "startSeconds": 251.409,
+          "endSeconds": 251.477,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_017fscAshhL8MHDqxUcXq4Xj",
+          "startSeconds": 254.48,
+          "endSeconds": 254.534,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01SAw4RHarzMNTyCqwfSiRZh",
+          "startSeconds": 256.736,
+          "endSeconds": 256.788,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01XxX5cSTAVK8HBrWuGExbSM",
+          "startSeconds": 259.069,
+          "endSeconds": 259.184,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01QDf8QwKzTpUUsVx5GHTKz1",
+          "startSeconds": 261.51,
+          "endSeconds": 261.601,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01AAiBwYC9W1eDWdzXh1cdFp",
+          "startSeconds": 264.067,
+          "endSeconds": 264.125,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_013MDRAs7HvsocxA2gFghoDq",
+          "startSeconds": 266.605,
+          "endSeconds": 266.748,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01Ub4gxmG1wLueLkDbTwVajq",
+          "startSeconds": 269.037,
+          "endSeconds": 269.111,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01492nQzHFBXBY5TQKnm6rZP",
+          "startSeconds": 271.4,
+          "endSeconds": 271.463,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01KJZyJFNjbeXiwB2a4xa6zE",
+          "startSeconds": 274.698,
+          "endSeconds": 274.753,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_015jnuTLGixGSQ31E6FWfx4j",
+          "startSeconds": 277.129,
+          "endSeconds": 277.23,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_0134qCzHRUWs1qYcCzSWA7XH",
+          "startSeconds": 279.535,
+          "endSeconds": 279.657,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01HviDzFKqwyq5n6PfcSYPTY",
+          "startSeconds": 281.921,
+          "endSeconds": 281.975,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_018byMoxPAVTcWCNrCVyBS4E",
+          "startSeconds": 284.426,
+          "endSeconds": 284.512,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01JxZwMkTVtLexhyd7PcupAR",
+          "startSeconds": 286.856,
+          "endSeconds": 286.987,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01SS6RLk7FUgg6eidqa32MTQ",
+          "startSeconds": 289.302,
+          "endSeconds": 289.374,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01DTBb6ThDqGs3763xi4CNyf",
+          "startSeconds": 291.944,
+          "endSeconds": 292.036,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01AQUjoujdUsww8iGpzfqXWY",
+          "startSeconds": 294.268,
+          "endSeconds": 294.323,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_015kPg7zih23pz3NG6buGcw9",
+          "startSeconds": 296.713,
+          "endSeconds": 296.777,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01BArBdYHyn1t91iLrNDZ9ya",
+          "startSeconds": 299.486,
+          "endSeconds": 299.58,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01CwpS2mRgXLsGAE5guumgrJ",
+          "startSeconds": 302.475,
+          "endSeconds": 302.636,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01Wy8MZS9yJiQkNtVU1Wgn5b",
+          "startSeconds": 305.054,
+          "endSeconds": 305.118,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01PqkPtVzTLJBeGUwi4AEc7N",
+          "startSeconds": 307.83,
+          "endSeconds": 307.861,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01H1n9VTfmKquaGAhncGbF4M",
+          "startSeconds": 310.283,
+          "endSeconds": 310.316,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01CHcxDXB7HSzs1ZCSwhYBd8",
+          "startSeconds": 312.846,
+          "endSeconds": 312.931,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_019wq4QypEHRhR3YsaH7adiJ",
+          "startSeconds": 315.452,
+          "endSeconds": 315.549,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01SbvLyFby2pQR1VcKDVBXGz",
+          "startSeconds": 317.92,
+          "endSeconds": 317.984,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01JBpEM4ZhfNRbtFc67kv1KD",
+          "startSeconds": 320.4,
+          "endSeconds": 320.458,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_013kyQWvWkNXkGS1GWgCyafQ",
+          "startSeconds": 322.884,
+          "endSeconds": 322.961,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01TdTRS23AbnE2SaXMkw22kh",
+          "startSeconds": 325.344,
+          "endSeconds": 325.444,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01BxMTsXSRArSQ1b1xUbvkiR",
+          "startSeconds": 327.649,
+          "endSeconds": 327.678,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01GqsY1uqmroTmXpw9JrSnoC",
+          "startSeconds": 329.901,
+          "endSeconds": 329.941,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01Jy8rmrNq9moeq1QDfmGTGX",
+          "startSeconds": 332.281,
+          "endSeconds": 332.312,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 250 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01SrypTbB5x6KVY2sTDDMK1A",
+          "startSeconds": 334.897,
+          "endSeconds": 334.944,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 300 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01YVLNtbGmmhU53g5nQJ29g4",
+          "startSeconds": 337.355,
+          "endSeconds": 337.387,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 300 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01PZ5HHabHwBa8nz6Uc3tjqZ",
+          "startSeconds": 339.629,
+          "endSeconds": 339.66,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 300 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_015ftFn6gPgxh2qiQjTrspy3",
+          "startSeconds": 342.449,
+          "endSeconds": 342.481,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 500 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_018BDM8WF4MWKhvXosnRwoCV",
+          "startSeconds": 344.8,
+          "endSeconds": 344.832,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 400 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_019VLGcnJDvTNNLyKEjU8age",
+          "startSeconds": 347.205,
+          "endSeconds": 347.236,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; wc -l < tmp/native-control-run.log; tail -c 400 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_014uYmzg3WAkpjA31ReLPFXs",
+          "startSeconds": 349.602,
+          "endSeconds": 349.631,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; tail -c 600 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01HmiNV92KpGkgzoevNzMpA4",
+          "startSeconds": 352.214,
+          "endSeconds": 352.271,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; tail -c 600 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_015k7oi2k4VTyUX5fa95ScVs",
+          "startSeconds": 354.485,
+          "endSeconds": 354.521,
+          "command": "ps -p $(cat tmp/opus-rc12-run.pid) -o etime=; tail -c 400 tmp/native-control-run.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01Tnsh6R1GMHAgDJRjsKRMZU",
+          "startSeconds": 358.679,
+          "endSeconds": 368.917,
+          "command": "agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
+          "output": "Opened: com.appandflow.trailhead\nSession state: workspace/cwd_474765e6f86c294c_default\nPage: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 24 visible nodes (26 total)\n@e1 [application] \"Trailhead\"\n@e2 [other] \"Trailhead\"\n@e3 [text] \"Runtime version: exposdk:57.0.0\"\n@e4 [button] \"Close\"\n@e5 [scroll-area] \"Reload\" [scrollable]\n  [content below scroll-area hidden]\n@e6 [other] \"Reload\"\n@e7 [button] \"Reload\"\n@e8 [button] \"Go home\"\n@e9 [text] \"TOOLS\"\n@e10 [button] \"Source code explorer\"\n@e11 [button] \"Toggle performance monitor\"\n@e12 [button] \"Toggle element inspector\"\n@e13 [button] \"Open DevTools\"\n@e14 [image] \"Running\"\n@e15 [text] \"Fast refresh\"\n@e16 [switch] \"1\"\n@e17 [switch] \"1\"\n@e20 [scroll-area] \"dev-tools\" [scrollable]\n  [content below scroll-area hidden]\n@e21 [other] \"dev-tools\"\n@e22 [image] \"dev-tools\"\n@e23 [text] \"This is the developer menu. It gives you access to useful tools in development builds.\"\n@e24 [text] \"You can open it at any time by pressing the blue button with the gear icon, or with the ⌃ + d keyboard shortcut.\"\n@e25 [text] \"(Connect Hardware Keyboard must be enabled on your simulator to use this shortcut, you can toggle it with ⌘ + shift + K.)\"\n@e26 [button] \"Continue\"",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01DZsFdQwNyRNW5yBdg1Y3fx",
+          "startSeconds": 371.661,
+          "endSeconds": 373.753,
+          "command": "agent-device press @e26 --settle",
+          "output": "Tapped @e26 (201, 798)\nsettled after 1127ms: +0 -7 (~19 unchanged)\n- @e20 [scroll-area] \"dev-tools\"\n- @e21 [other] \"dev-tools\"\n- @e22 [image] \"dev-tools\"\n- @e23 [text] \"This is the developer menu. It gives you access to useful tools in development builds.\"\n- @e24 [text] \"You can open it at any time by pressing the blue button with the gear icon, or with the ⌃ + d keyboard shortcut.\"\n- @e25 [text] \"(Connect Hardware Keyboard must be enabled on your simulator to use this shortcut, you can toggle it with ⌘ + shift + K.)\"\n- @e26 [button] \"Continue\"\nunchanged interactive (18):\n= @e2~s250457 [other] \"Trailhead\"\n= @e3~s250457 [text] \"Runtime version: exposdk:57.0.0\"\n= @e4~s250457 [button] \"Close\"\n= @e5~s250457 [scroll-area] \"Reload\"\n= @e6~s250457 [other] \"Reload\"\n= @e7~s250457 [button] \"Reload\"\n= @e8~s250457 [button] \"Go home\"\n= @e9~s250457 [text] \"TOOLS\"\n= @e10~s250457 [button] \"Source code explorer\"\n= @e11~s250457 [button] \"Toggle performance monitor\"\n= @e12~s250457 [button] \"Toggle element inspector\"\n= @e13~s250457 [button] \"Open DevTools\"\n= @e14~s250457 [image] \"Running\"\n= @e15~s250457 [text] \"Fast refresh\"\n= @e16~s250457 [switch] \"1\"\n= @e17~s250457 [switch] \"1\"\n= @e18~s250457 [switch] \"1\"\n= @e19~s250457 [switch] \"1\"",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01CSqXAwrzJKPqHZqvDbPj7o",
+          "startSeconds": 375.824,
+          "endSeconds": 378.713,
+          "command": "agent-device press @e4~s250457 --settle",
+          "output": "Tapped @e4 (361, 419)\nsettled after 2185ms: +35 -18 (~1 unchanged)\n- @e2 [other] \"Trailhead\"\n- @e3 [text] \"Runtime version: exposdk:57.0.0\"\n- @e4 [button] \"Close\"\n- @e5 [scroll-area] \"Reload\"\n- @e6 [other] \"Reload\"\n- @e7 [button] \"Reload\"\n- @e8 [button] \"Go home\"\n- @e9 [text] \"TOOLS\"\n- @e10 [button] \"Source code explorer\"\n- @e11 [button] \"Toggle performance monitor\"\n- @e12 [button] \"Toggle element inspector\"\n- @e13 [button] \"Open DevTools\"\n- @e14 [image] \"Running\"\n- @e15 [text] \"Fast refresh\"\n- @e16 [switch] \"1\"\n- @e17 [switch] \"1\"\n- @e18 [switch] \"1\"\n- @e19 [switch] \"1\"\n+ @e2~s250463 [other] \"gearshape.fill\"\n+ @e3~s250463 [image] \"gearshape.fill\"\n+ @e4~s250463 [text] \"Tools\"\n+ @e5~s250463 [window] \"Trailhead native-control\"\n+ @e6~s250463 [other] \"\"\n+ @e7~s250463 [other] \"Trails\"\n+ @e8~s250463 [text-field] \"Search trails\"\n+ @e9~s250463 [scroll-area] \"All regions\"\n+ @e10~s250463 [other] \"All regions\"\n+ @e11~s250463 [button] \"All regions\"\n+ @e12~s250463 [button] \"Adirondacks\"\n+ @e13~s250463 [button] \"Bas-Saint-Laurent\"\n+ @e14~s250463 [button] \"Charlevoix\"\n+ @e15~s250463 [scroll-area] \"Any level\"\n+ @e16~s250463 [other] \"Any level\"\n+ @e17~s250463 [button] \"Any level\"\n+ @e18~s250463 [button] \"Easy\"\n+ @e19~s250463 [button] \"Moderate\"\n+ @e20~s250463 [button] \"Hard\"\n+ @e21~s250463 [button] \"Expert\"\n+ @e22~s250463 [text] \"200 trails\"\n+ @e23~s250463 [button] \"Sort by name\"\n+ @e24~s250463 [button] \"Sort by distance\"\n+ @e25~s250463 [button] \"Sort by rating\"\n+ @e26~s250463 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n+ @e27~s250463 [other] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n+ @e28~s250463 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n+ @e29~s250463 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n+ @e30~s250463 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n+ @e31~s250463 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n+ @e32~s250463 [other] \"Trails, tab, 1 of 4\"\n+ @e33~s250463 [button] \"Trails, tab, 1 of 4\"\n+ @e34~s250463 [button] \"Record, tab, 2 of 4\"\n+ @e35~s250463 [button] \"History, tab, 3 of 4\"\n+ @e36~s250463 [button] \"Settings, tab, 4 of 4\"",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01VKPVe7hvYaeDo5XLC4S612",
+          "startSeconds": 381.987,
+          "endSeconds": 384.404,
+          "command": "agent-device press @e36~s250463 --settle",
+          "output": "Tapped @e36 (352, 816)\nsettled after 1756ms: +29 -28 (~8 unchanged)\n- @e6 [other] \"\"\n- @e7 [other] \"Trails\"\n- @e8 [text-field] \"Search trails\"\n- @e9 [scroll-area] \"All regions\"\n- @e10 [other] \"All regions\"\n- @e11 [button] \"All regions\"\n- @e12 [button] \"Adirondacks\"\n- @e13 [button] \"Bas-Saint-Laurent\"\n- @e14 [button] \"Charlevoix\"\n- @e15 [scroll-area] \"Any level\"\n- @e16 [other] \"Any level\"\n- @e17 [button] \"Any level\"\n- @e18 [button] \"Easy\"\n- @e19 [button] \"Moderate\"\n- @e20 [button] \"Hard\"\n- @e21 [button] \"Expert\"\n- @e22 [text] \"200 trails\"\n- @e23 [button] \"Sort by name\"\n- @e24 [button] \"Sort by distance\"\n- @e25 [button] \"Sort by rating\"\n- @e26 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e27 [other] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e28 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e29 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n- @e30 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n- @e31 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n+ @e6~s250468 [other] \"Settings\"\n+ @e7~s250468 [scroll-area] \"UNITS\"\n+ @e8~s250468 [other] \"UNITS\"\n+ @e9~s250468 [cell] \"Distance\"\n+ @e10~s250468 [text] \"\"\n+ @e11~s250468 [button] \"Metric units\"\n+ @e12~s250468 [button] \"Imperial units\"\n+ @e13~s250468 [text] \"Used across the whole app\"\n+ @e14~s250468 [text] \"PREFERENCES\"\n+ @e15~s250468 [other] \"Hike reminders\"\n+ @e16~s250468 [switch] \"Hike reminders\"\n+ @e17~s250468 [text] \"\"\n+ @e18~s250468 [text] \"Nudge me when I have not hiked in a while\"\n+ @e19~s250468 [text] \"Offline maps\"\n+ @e20~s250468 [switch] \"Offline maps\"\n+ @e21~s250468 [text] \"\"\n+ @e22~s250468 [text] \"Keep map tiles for saved trails on device\"\n+ @e23~s250468 [text] \"STORAGE\"\n+ @e24~s250468 [cell] \"Recorded hikes\"\n+ @e25~s250468 [text] \"\"\n+ @e26~s250468 [text] \"48\"\n+ @e27~s250468 [text] \"Stored in a local database\"\n+ @e28~s250468 [button] \"Reset sample data\"\n+ @e29~s250468 [text] \"ABOUT\"\n+ @e30~s250468 [cell] \"\"\n+ @e31~s250468 [text] \"Version\"\n+ @e32~s250468 [text] \"1.0.0\"\n- @e33 [button] \"Trails, tab, 1 of 4\"\n+ @e34~s250468 [button] \"Trails, tab, 1 of 4\"\n- @e36 [button] \"Settings, tab, 4 of 4\"\n+ @e37~s250468 [button] \"Settings, tab, 4 of 4\"",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_016fXEkNLTx8eg7mNMCLaPrD",
+          "startSeconds": 386.359,
+          "endSeconds": 386.507,
+          "command": "agent-device wait text \"Offline maps\"",
+          "output": "(Bash completed with no output)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01P5qU7G1MGkAEnvSiKE8rPU",
+          "startSeconds": 388.921,
+          "endSeconds": 389.444,
+          "command": "agent-device screenshot tmp/native-control-settings.png",
+          "output": "tmp/native-control-settings.png (402x874 @1x)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01BVsWsMEnFAhDgqGSegmYo5",
+          "startSeconds": 392.756,
+          "endSeconds": 392.824,
+          "command": "cp tmp/native-control-settings.png results/opus-rc12/native-control/proof/settings.png && ls -l results/opus-rc12/native-control/proof/settings.png",
+          "output": "-rw-r--r--@ 1 <local-user>  staff  76688 Sep  3 17:40 results/opus-rc12/native-control/proof/settings.png",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01VmPWYUnLipPZmoDwSuqjFD",
+          "startSeconds": 399.906,
+          "endSeconds": 400.158,
+          "command": "agent-device close; echo \"---\"; ps -p $(cat tmp/opus-rc12-run.pid) -o pid=,etime= ; xcrun simctl listapps <simulator-udid> >/dev/null 2>&1 && echo \"sim alive\"",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        }
+      ],
+      "markers": [
+        {
+          "id": "app-alive",
+          "kind": "appAlive",
+          "label": "App process alive",
+          "atSeconds": 354.727
+        },
+        {
+          "id": "settings-ready",
+          "kind": "settingsReady",
+          "label": "Settings proof ready",
+          "atSeconds": 389.444
+        }
+      ],
+      "proof": {
+        "src": "benchmarks/opus-rc12/native-control.png",
+        "expected": "Offline maps",
+        "width": 402,
+        "height": 874
+      }
+    }
+  ]
+}

@@ -59,6 +59,101 @@
   font-variant-numeric: tabular-nums;
 }
 
+.breakdown {
+  margin-bottom: 1rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--bench-line);
+  border-radius: 0.8rem;
+  background: var(--bench-surface);
+}
+
+.breakdownBar {
+  display: flex;
+  height: 0.65rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--ifm-color-emphasis-200);
+}
+
+.agentTime {
+  background: #7c3aed;
+}
+
+.shellTime {
+  background: var(--ifm-color-primary);
+}
+
+.breakdownLegend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.2rem;
+  margin-top: 0.75rem;
+  color: var(--bench-muted);
+  font-size: 0.78rem;
+}
+
+.breakdownLegend span {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.breakdownLegend strong {
+  color: var(--ifm-font-color-base);
+  font-variant-numeric: tabular-nums;
+}
+
+.breakdownLegend i {
+  display: inline-block;
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 50%;
+}
+
+.agentKey {
+  background: #7c3aed;
+}
+
+.shellKey {
+  background: var(--ifm-color-primary);
+}
+
+.breakdown > small {
+  display: block;
+  margin-top: 0.65rem;
+  color: var(--bench-muted);
+  font-size: 0.7rem;
+}
+
+.playbackControls {
+  display: grid;
+  grid-template-columns: auto auto minmax(8rem, 1fr) auto auto;
+  gap: 0.6rem;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.playbackControls button,
+.playbackControls select {
+  padding: 0.45rem 0.7rem;
+  border: 1px solid var(--bench-line);
+  border-radius: 0.5rem;
+  background: var(--bench-surface);
+  color: var(--ifm-font-color-base);
+  cursor: pointer;
+}
+
+.playbackControls label,
+.playbackControls input {
+  width: 100%;
+}
+
+.playbackControls strong {
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .valid::before,
 .invalid::before {
   display: inline-block;
@@ -110,6 +205,18 @@
 
 .axis {
   position: relative;
+}
+
+.playhead {
+  position: absolute;
+  z-index: 4;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #dc2626;
+  box-shadow: 0 0 0 1px color-mix(in srgb, #dc2626 15%, transparent);
+  pointer-events: none;
+  transform: translateX(-1px);
 }
 
 .axis span {
@@ -169,6 +276,7 @@
 }
 
 .shellTracks {
+  position: relative;
   display: grid;
   grid-template-rows: repeat(var(--lane-count), 2.65rem);
   gap: 0.35rem;
@@ -410,6 +518,26 @@
 
   .stats {
     grid-template-columns: 1fr;
+  }
+
+  .playbackControls {
+    grid-template-columns: auto auto 1fr auto;
+  }
+
+  .playbackControls label {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .playbackControls strong {
+    grid-column: 3;
+    grid-row: 1;
+    text-align: right;
+  }
+
+  .playbackControls select {
+    grid-column: 4;
+    grid-row: 1;
   }
 
   .terminalBar {

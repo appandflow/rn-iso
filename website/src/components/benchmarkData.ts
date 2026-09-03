@@ -66,7 +66,20 @@ export type BenchmarkData = {
     source: string;
     estimateNote: string;
   } | null;
+  environment: BenchmarkEnvironment;
   runs: BenchmarkRun[];
+};
+
+export type BenchmarkEnvironment = {
+  machine: {
+    model: string;
+    chip: string;
+    memory: string;
+  };
+  macos: string;
+  xcode: string;
+  node: string;
+  simulator: string;
 };
 
 export type BenchmarkAuditSelection =
@@ -74,7 +87,34 @@ export type BenchmarkAuditSelection =
   | { kind: 'message'; event: BenchmarkMessage }
   | { kind: 'marker'; event: BenchmarkMarker };
 
+export type BenchmarkTimeBreakdown = {
+  shellActiveSeconds: number;
+  agentOtherSeconds: number;
+  summedCommandSeconds: number;
+  peakConcurrency: number;
+};
+
+export type PlaybackCommand = {
+  command: BenchmarkCommand;
+  state: 'running' | 'complete';
+};
+
 export type CommandWithLane = BenchmarkCommand & { lane: number };
+
+export type BenchmarkComparison = {
+  label: string;
+  tone: 'gain' | 'loss' | 'neutral';
+};
+
+function orderedCopy<T>(values: T[], compare: (a: T, b: T) => number): T[] {
+  const result: T[] = [];
+  for (const value of values) {
+    const index = result.findIndex((candidate) => compare(candidate, value) > 0);
+    if (index === -1) result.push(value);
+    else result.splice(index, 0, value);
+  }
+  return result;
+}
 
 export function assignCommandLanes(commands: BenchmarkCommand[]): {
   commands: CommandWithLane[];
@@ -114,6 +154,23 @@ export function comparableRuns(runs: BenchmarkRun[]): Array<BenchmarkRun & { set
   );
 }
 
+export function comparisonOutcome(
+  stimSeconds: number | null | undefined,
+  controlSeconds: number | null | undefined,
+): BenchmarkComparison {
+  if (stimSeconds == null || controlSeconds == null || controlSeconds <= 0) {
+    return { label: 'Matched run unavailable', tone: 'neutral' };
+  }
+  const signedPercent = Math.round((1 - stimSeconds / controlSeconds) * 100);
+  if (signedPercent > 0) {
+    return { label: `Stim reached Settings ${signedPercent}% sooner`, tone: 'gain' };
+  }
+  if (signedPercent < 0) {
+    return { label: `Stim reached Settings ${Math.abs(signedPercent)}% slower`, tone: 'loss' };
+  }
+  return { label: 'Stim and control reached Settings in the same time', tone: 'neutral' };
+}
+
 export function initialAuditSelection(run: BenchmarkRun): BenchmarkAuditSelection | null {
   const longestCommand = run.commands.reduce<BenchmarkCommand | undefined>(
     (longest, command) =>
@@ -125,6 +182,71 @@ export function initialAuditSelection(run: BenchmarkRun): BenchmarkAuditSelectio
   if (longestCommand) return { kind: 'command', event: longestCommand };
   if (run.markers[0]) return { kind: 'marker', event: run.markers[0] };
   if (run.messages[0]) return { kind: 'message', event: run.messages[0] };
+  return null;
+}
+
+export function timeBreakdown(run: BenchmarkRun): BenchmarkTimeBreakdown {
+  const total = Math.max(0, run.totalSeconds);
+  const intervals = orderedCopy(
+    run.commands
+      .map((command) => ({
+        start: Math.min(total, Math.max(0, command.startSeconds)),
+        end: Math.min(total, Math.max(0, command.endSeconds)),
+      }))
+      .filter((interval) => interval.end > interval.start),
+    (a, b) => a.start - b.start || a.end - b.end,
+  );
+
+  let shellActiveSeconds = 0;
+  let currentStart: number | null = null;
+  let currentEnd = 0;
+  for (const interval of intervals) {
+    if (currentStart === null) {
+      currentStart = interval.start;
+      currentEnd = interval.end;
+    } else if (interval.start <= currentEnd) {
+      currentEnd = Math.max(currentEnd, interval.end);
+    } else {
+      shellActiveSeconds += currentEnd - currentStart;
+      currentStart = interval.start;
+      currentEnd = interval.end;
+    }
+  }
+  if (currentStart !== null) shellActiveSeconds += currentEnd - currentStart;
+
+  const concurrencyEvents = orderedCopy(
+    intervals.flatMap((interval) => [
+      { at: interval.start, delta: 1 },
+      { at: interval.end, delta: -1 },
+    ]),
+    (a, b) => a.at - b.at || a.delta - b.delta,
+  );
+  let concurrency = 0;
+  let peakConcurrency = 0;
+  for (const event of concurrencyEvents) {
+    concurrency += event.delta;
+    peakConcurrency = Math.max(peakConcurrency, concurrency);
+  }
+
+  return {
+    shellActiveSeconds,
+    agentOtherSeconds: Math.max(0, total - shellActiveSeconds),
+    summedCommandSeconds: intervals.reduce((sum, interval) => sum + interval.end - interval.start, 0),
+    peakConcurrency,
+  };
+}
+
+export function commandAtCursor(commands: BenchmarkCommand[], cursorSeconds: number): PlaybackCommand | null {
+  const active = orderedCopy(
+    commands.filter((command) => command.startSeconds <= cursorSeconds && command.endSeconds > cursorSeconds),
+    (a, b) => b.startSeconds - a.startSeconds || b.endSeconds - a.endSeconds,
+  )[0];
+  if (active) return { command: active, state: 'running' };
+  const completed = orderedCopy(
+    commands.filter((command) => command.endSeconds <= cursorSeconds),
+    (a, b) => b.endSeconds - a.endSeconds || b.startSeconds - a.startSeconds,
+  )[0];
+  if (completed) return { command: completed, state: 'complete' };
   return null;
 }
 
