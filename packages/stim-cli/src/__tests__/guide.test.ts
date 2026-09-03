@@ -7,7 +7,7 @@ import { topicNames, renderTopic, renderIndex } from '../commands/guide.ts';
 import { carriedChangesLine, carryConflictWarning } from '../commands/worktree.ts';
 import { ANDROID_AVD_CONFIG_HELP } from '../settings.ts';
 import { CONSOLE_ENV, deviceConsoleArgs } from '../collector/ios-device.ts';
-import { HEARTBEAT_INTERVAL_MS } from '../engine/xcode.ts';
+import { HEARTBEAT_INTERVAL_MS, heartbeatLine } from '../engine/xcode.ts';
 
 test('every advertised topic renders non-empty content', () => {
   for (const name of topicNames()) {
@@ -313,13 +313,36 @@ test('the guide documents the progress cadence the heartbeat actually uses', () 
   expect(HEARTBEAT_INTERVAL_MS).toBe(30_000);
   expect(lifecycle).toMatch(/PROGRESS ON A LONG RUN/);
   expect(lifecycle).toMatch(/every 30 seconds, on the 30-second\s+grid/);
-  expect(lifecycle).toMatch(/still running \(1m30s\)/);
+  expect(lifecycle).toMatch(/build {7}still compiling \(1m00s of ~3m10s\)/);
+  expect(lifecycle).toMatch(/build {7}still compiling \(4m00s, usually ~3m10s\)/);
+  expect(lifecycle).toMatch(/build {7}still compiling \(1m00s\)/);
+  expect(lifecycle).toMatch(/pods {8}still installing \(1m30s of ~1m40s\)/);
+  expect(lifecycle).not.toMatch(/still (?:compiling|running|installing) \([^)]*\):/);
+  expect(heartbeatLine(60_000, 'build', 190_000)).toBe('  build       still compiling (1m00s of ~3m10s)');
+  expect(heartbeatLine(240_000, 'build', 190_000)).toBe('  build       still compiling (4m00s, usually ~3m10s)');
+  expect(heartbeatLine(60_000, 'build')).toBe('  build       still compiling (1m00s)');
+  expect(heartbeatLine(90_000, 'pods', 100_000)).toBe('  pods        still installing (1m30s of ~1m40s)');
   expect(lifecycle).toMatch(/GAP BETWEEN HEARTBEATS IS NOT A HANG/);
   expect(lifecycle).toMatch(/device\s+stim-app-412 \(BF2A\.\.\) created \(2m14s\)/);
   for (const command of ['ios', 'android']) {
     const src = readFileSync(new URL(`../commands/${command}.ts`, import.meta.url), 'utf-8');
     expect(src.includes('SLOW_STEP_MS')).toBeTruthy();
   }
+});
+
+test('the guide states once where the heartbeat estimate comes from', () => {
+  const facts = renderTopic('facts');
+  assert(facts);
+  expect(facts).toMatch(/lastColdBuildMs/);
+  expect(facts).toMatch(/lastPodsMs/);
+  expect(facts).toMatch(/THAT IS\s+WHERE THE HEARTBEAT ESTIMATE COMES FROM/);
+  expect(facts).toMatch(/THIS PROJECT'S LAST COLD BUILD/);
+  expect(facts).toMatch(/never a mean/);
+  expect(facts).toMatch(/read takes no lock/);
+  expect(facts).toMatch(/build {7}still compiling \(1m00s of ~3m10s\)/);
+  const lifecycle = renderTopic('lifecycle');
+  assert(lifecycle);
+  expect(lifecycle).toMatch(/`guide facts` says where the\s+number comes from/);
 });
 
 test('the guide documents scoped iOS dev-client preapproval', () => {

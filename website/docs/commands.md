@@ -240,9 +240,11 @@ machine section prints. There is no reset flag: delete that file to start over.
 `project` is `null` outside a project, and a platform with no run yet is
 `null`. A bucket carries `runs`, `failed`, `hits`, `misses`, `coldRuns`,
 `coldRunMs`, `hitRuns`, `hitRunMs`, `timeSavedMs`, `firstRunAt` and
-`lastRunAt`. The saved figure is an estimate: each cache hit is credited this
-project's mean cold run at that moment, minus its own duration, floored at
-zero.
+`lastRunAt`, plus `lastColdBuildMs` and `lastPodsMs` once the project has
+compiled or installed pods; those two size the progress line a long build
+prints (`build       still compiling (1m00s of ~3m10s)`). The saved figure is
+an estimate: each cache hit is credited this project's mean cold run at that
+moment, minus its own duration, floored at zero.
 
 ## `worktree create`
 

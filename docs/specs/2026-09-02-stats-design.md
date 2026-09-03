@@ -60,6 +60,21 @@ is never a placeholder):
       "lastRunAt": "..."
     }
 
+### Amendment, 2026-09-02 (issue #265)
+
+Two optional fields join a bucket:
+
+    "lastColdBuildMs": 190000,
+    "lastPodsMs": 100000
+
+`lastColdBuildMs` is the duration of the BUILD PHASE of the last cache miss
+that compiled, and `lastPodsMs` the duration of the last `pod install`. Each
+is absent until the project has done that thing once. This is still
+aggregate-only: two numbers per bucket, the last value each, not a log. They
+size the heartbeat of the next run (`build       still compiling (1m00s of
+~3m10s)`), which is why the last value beats the mean -- a project's build
+time drifts with its size, so the most recent one is the best single guess.
+
 Milliseconds are integers. Durations come from the run's injected clock
 (`d.now` on iOS, the `now` option on Android) and timestamps from
 `new Date(now()).toISOString()`, so the pure update function and its tests
@@ -95,6 +110,27 @@ sides and cancels in the mean; no second definition of duration exists.
    With no cold run recorded for the project and platform, a hit credits
    nothing, even when the machine bucket has cold runs: compile times differ
    per project.
+
+### Amendment, 2026-09-02 (issue #265)
+
+5. A run that supplies a build-phase duration (a miss that compiled) sets
+   `lastColdBuildMs`, and one that supplies a `pod install` duration sets
+   `lastPodsMs`; a run that did neither leaves both exactly as they were. The
+   machine bucket takes them in lockstep, like every other field. Both are
+   written by the same recorder, in the same call, under the same lock.
+6. A run that compiled and then failed -- an install, a boot, or a launch that
+   went wrong after the compile -- still sets `lastColdBuildMs`. Rule 3's
+   "nothing else" governs the COUNTERS: a failed run is not a cold run and
+   adds nothing to `coldRunMs`, so it changes no mean and no credit. The
+   compile itself was a real cold build of this project, and it is the best
+   estimate the next run has. A phase that did not finish never supplies a
+   duration at all.
+
+Reading them is not part of the update rule: before its build, and before
+`pod install`, a run reads the PROJECT bucket for its platform (the same key
+rule) with a plain read and no lock, once per run and reused by both phases. A file that is missing, unreadable, from
+a newer version, or has no entry for this project yields no estimate and no
+message; a statistics read never affects the run.
 
 The machine bucket receives every increment and the same credit, so
 `machine.timeSavedMs` is the sum of per-project credits and is not derivable

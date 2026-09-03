@@ -217,7 +217,6 @@ export async function swapJsBundle({
   const stopHeartbeat = startBuildHeartbeat({
     intervalMs: heartbeatMs,
     elapsed,
-    lastLine: () => transcript.at(-1) ?? '',
     emit: onHeartbeat,
     label: 'swap',
   });

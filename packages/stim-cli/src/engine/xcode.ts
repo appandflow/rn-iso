@@ -395,13 +395,18 @@ export function tailLines(lines: unknown, count = 5): string[] {
 
 export const HEARTBEAT_INTERVAL_MS = 30_000;
 
-const HEARTBEAT_HINT_LENGTH = 80;
+const HEARTBEAT_ACTIVITY: Record<string, string> = { build: 'compiling', pods: 'installing' };
 
-export function heartbeatLine(elapsedMs: number, lastLine: string, label = 'build'): string {
-  const hint =
-    lastLine.length > HEARTBEAT_HINT_LENGTH ? `${lastLine.slice(0, HEARTBEAT_HINT_LENGTH - 3)}...` : lastLine;
-  const activity = hint.trim() === '' ? '' : `: ${hint}`;
-  return phaseLine(label, `still running (${formatElapsed(elapsedMs)})${activity}`);
+export function heartbeatLine(elapsedMs: number, label = 'build', estimateMs: number | null = null): string {
+  const activity = HEARTBEAT_ACTIVITY[label] ?? 'running';
+  const elapsed = formatElapsed(elapsedMs);
+  const inside =
+    estimateMs && estimateMs > 0
+      ? elapsedMs > estimateMs
+        ? `${elapsed}, usually ~${formatElapsed(estimateMs)}`
+        : `${elapsed} of ~${formatElapsed(estimateMs)}`
+      : elapsed;
+  return phaseLine(label, `still ${activity} (${inside})`);
 }
 
 export type HeartbeatSchedule = (run: () => void, delayMs: number) => () => void;
@@ -415,16 +420,16 @@ const defaultSchedule: HeartbeatSchedule = (run, delayMs) => {
 export function startBuildHeartbeat({
   intervalMs,
   elapsed,
-  lastLine,
   emit,
   label = 'build',
+  estimateMs = null,
   schedule = defaultSchedule,
 }: {
   intervalMs: number;
   elapsed: () => number;
-  lastLine: () => string;
   emit: (line: string) => void;
   label?: string;
+  estimateMs?: number | null;
   schedule?: HeartbeatSchedule;
 }): () => void {
   if (!(intervalMs > 0)) return () => {};
@@ -437,7 +442,7 @@ export function startBuildHeartbeat({
     const beat = Math.floor(ms / intervalMs) * intervalMs;
     if (beat > lastBeat) {
       lastBeat = beat;
-      emit(heartbeatLine(beat, lastLine(), label));
+      emit(heartbeatLine(beat, label, estimateMs));
     }
     cancel = schedule(tick, intervalMs - (ms % intervalMs));
   }
@@ -543,6 +548,7 @@ export async function buildIos({
   now = () => Date.now(),
   exec = null,
   heartbeatMs = HEARTBEAT_INTERVAL_MS,
+  estimateMs = null,
   onHeartbeat = (line: string) => console.error(line),
   onNote = (line: string) => console.error(line),
 }: {
@@ -560,6 +566,7 @@ export async function buildIos({
   now?: () => number;
   exec?: Executor | null;
   heartbeatMs?: number;
+  estimateMs?: number | null;
   onHeartbeat?: (line: string) => void;
   onNote?: (line: string) => void;
 }): Promise<BuildIosResult> {
@@ -639,12 +646,10 @@ export async function buildIos({
 
   const transcript: string[] = [];
   let compilationCacheActivity: CompilationCacheActivity = COMPILATION_CACHE_UNAVAILABLE;
-  let lastTranscriptLine = '';
   const onLine = (line: unknown) => {
     const msg = cleanLine(line);
     transcript.push(msg);
     if (msg.trim() === '') return;
-    lastTranscriptLine = msg;
     logWriter.write({ src: 'build', level: 'debug', msg });
     const activity = parseCompilationCacheActivity(msg);
     if (activity) {
@@ -693,8 +698,8 @@ export async function buildIos({
   const stopHeartbeat = startBuildHeartbeat({
     intervalMs: heartbeatMs,
     elapsed,
-    lastLine: () => lastTranscriptLine,
     emit: onHeartbeat,
+    estimateMs,
   });
 
   const outcome = await new Promise<{ code?: number | null; signal?: NodeJS.Signals | null; error?: Error }>(

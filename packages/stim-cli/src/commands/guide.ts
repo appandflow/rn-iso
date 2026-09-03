@@ -299,7 +299,9 @@ line by design (see \`guide logs\`), not this single-payload contract.
 
   \`project\` is null outside a project; a platform with no run yet is null.
   A bucket carries runs, failed, hits, misses, coldRuns, coldRunMs, hitRuns,
-  hitRunMs, timeSavedMs, firstRunAt and lastRunAt. Milliseconds are integers.
+  hitRunMs, timeSavedMs, firstRunAt and lastRunAt, plus lastColdBuildMs and
+  lastPodsMs once the project has compiled or installed pods. Milliseconds are
+  integers.
 
 HOW A RUN IS COUNTED (\`stats\`)
   Every \`ios\` or \`android\` invocation that got as far as computing a
@@ -319,6 +321,24 @@ HOW A RUN IS COUNTED (\`stats\`)
   nothing to compare against, so it credits nothing either. The saved figure
   is therefore an ESTIMATE and is printed as one. Nothing per run is stored;
   the file is $STIM_HOME/stats.json (see \`guide lifecycle\`).
+
+  A run also keeps the duration of its own two long phases in that bucket:
+  the build phase of a miss that compiled (lastColdBuildMs) and the last
+  \`pod install\` (lastPodsMs). The last value only, not a series. THAT IS
+  WHERE THE HEARTBEAT ESTIMATE COMES FROM. A later run reads this project's
+  bucket before it compiles, and prints:
+
+    build       still compiling (1m00s of ~3m10s)
+    pods        still installing (1m30s of ~1m40s)
+
+  The \`~\` value is THIS PROJECT'S LAST COLD BUILD, or its last
+  \`pod install\`, and never a mean: a project's build time drifts with its
+  size, so the most recent run is the best single guess. Past the estimate
+  the line reads \`(4m00s, usually ~3m10s)\`, because a slower machine is not
+  a hang. A project with no record yet gets \`(1m00s)\`, the elapsed alone,
+  and a warm run has no long phase to size. That read takes no lock and
+  ignores what it cannot read, so nothing about statistics can change a
+  run's outcome.
 
 ON FAILURE
   \`start\`, \`ios\` and \`android\` all print the error contract instead,
@@ -1551,10 +1571,19 @@ PROGRESS ON A LONG RUN
 
   A step that is still running heartbeats every 30 seconds, on the 30-second
   grid, so the values read 30s, 1m00s, 1m30s and never repeat. A heartbeat
-  reuses its phase's label and column:
+  reuses its phase's label and column and names what the phase is doing, never
+  the build tool's own last line -- that transcript is in the build log
+  (\`logs --source build\`):
 
-    build       still running (1m30s): > Task :app:compileDebugKotlin
+    build       still compiling (1m00s of ~3m10s)
+    build       still compiling (4m00s, usually ~3m10s)
+    build       still compiling (1m00s)
+    pods        still installing (1m30s of ~1m40s)
     build       waiting on /w/app-411 (pid 41233, 1m30s elapsed)
+
+  The \`~\` value is an estimate, never a countdown; the third line is a
+  project with no record to estimate from yet. \`guide facts\` says where the
+  number comes from.
 
   The lifecycle commands use the same column. \`worktree create\` keeps the
   created path alone on stdout and reports itself on stderr:

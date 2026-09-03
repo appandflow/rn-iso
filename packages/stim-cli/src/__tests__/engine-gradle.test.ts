@@ -682,7 +682,7 @@ describe('buildAndroid', () => {
     child.stdout.emit('data', '> Task :app:compileDebugKotlin\n');
     await new Promise((r) => setTimeout(r, 80));
     expect(beats.length).toBeGreaterThanOrEqual(1);
-    expect(beats[0]).toMatch(/^ {2}build {6} still running \(\d+s\): > Task :app:compileDebugKotlin$/);
+    expect(beats[0]).toMatch(/^ {2}build {6} still compiling \(\d+s\)$/);
     writeApk();
     child.emit('exit', 0, null);
     const result = await promise;
