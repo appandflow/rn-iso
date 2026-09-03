@@ -2,7 +2,7 @@ import { existsSync, readdirSync, realpathSync } from 'fs';
 import { basename, dirname, resolve } from 'path';
 import chalk from 'chalk';
 import { type Command, InvalidArgumentError } from 'commander';
-import { clockTime, phaseLine, plural } from '../command-output.ts';
+import { phaseLine, plural, releasedLeaseFact } from '../command-output.ts';
 import { resolveSettings, SETTING_SHAPE_REMEDY, settingShapeErrors, unknownSettingKeys } from '../settings.ts';
 import { getProject, isPathPrefix, loadConfig, removeProject, upsertProject } from '../config.ts';
 import type { ReleasedLease } from '../engine/device-lease.ts';
@@ -531,7 +531,7 @@ export function removalBlockers({ dirty, unpushed }: { dirty: boolean | null; un
   }
   if (dirty) blockers.push('uncommitted changes or untracked files');
   if (unpushed && unpushed.length) {
-    blockers.push(`${unpushed.length} commit(s) not on any remote or any other local branch`);
+    blockers.push(`${plural(unpushed.length, 'commit')} not on any remote or any other local branch`);
   }
   return blockers;
 }
@@ -549,11 +549,6 @@ interface RetainedResource extends SkippedDevice {
 
 function describeKeptDevice(s: SkippedDevice): string {
   return s.udid && s.udid !== s.name ? `${s.name} (${s.udid})` : s.name;
-}
-
-function releasedLeaseFact(lease: ReleasedLease): string {
-  const device = lease.deviceName ? `${lease.deviceName} (${lease.id})` : lease.id;
-  return `released the ${lease.platform} lease on ${device} (it ran until ${clockTime(lease.expiresAt)})`;
 }
 
 interface ReclaimAllResult {
@@ -714,7 +709,7 @@ async function reclaimEnvironment(root: string, why: string): Promise<void> {
         return;
       }
       for (const s of result.skippedDevices) {
-        console.error(chalk.yellow(phaseLine('device', `kept ${describeKeptDevice(s)}: ${s.reason}`)));
+        console.error(chalk.yellow(phaseLine('device', `kept ${describeKeptDevice(s)} (${s.reason})`)));
       }
       console.error(chalk.green(`Reclaimed the environment; the working tree stays (${why}).`));
     }),
@@ -815,17 +810,7 @@ function printRemovalCleanup(result: ReclaimAllResult, failed: boolean): void {
   for (const skipped of result.skippedDevices) {
     console.error(
       (failed ? chalk.dim : chalk.yellow)(
-        phaseLine('device', `kept ${describeKeptDevice(skipped)}: ${skipped.reason}`),
-      ),
-    );
-  }
-  for (const kept of result.keptEntries) {
-    console.error(
-      (failed ? chalk.dim : chalk.yellow)(
-        phaseLine(
-          'workspace',
-          `${kept} still tracked -- environment cleanup failed; re-run \`stim gc --delete\` once the cause is fixed`,
-        ),
+        phaseLine('device', `kept ${describeKeptDevice(skipped)} (${skipped.reason})`),
       ),
     );
   }
@@ -939,7 +924,7 @@ async function runRemove(target: string | undefined, opts: RemoveOptions = {}): 
       : inspection.unpushed === null
         ? 'Stim could not verify whether it has unique commits'
         : inspection.unpushed.length > 0
-          ? `it has ${inspection.unpushed.length} unique commit(s)`
+          ? `it has ${plural(inspection.unpushed.length, 'unique commit')}`
           : null;
   const branchDeleteCwd = worktrees.find((candidate) => isMainWorkingTree(candidate.path))?.path;
 

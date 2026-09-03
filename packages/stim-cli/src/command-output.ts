@@ -43,6 +43,17 @@ export function clockTime(iso: string): string {
   return [at.getHours(), at.getMinutes(), at.getSeconds()].map((n) => String(n).padStart(2, '0')).join(':');
 }
 
+/** The fields `stop` and `worktree remove` need to report a released device lease. */
+export interface ReleasedLeaseFact {
+  platform: string;
+  id: string;
+  expiresAt: string;
+}
+
+export function releasedLeaseFact(lease: ReleasedLeaseFact): string {
+  return `released the ${lease.platform} lease on ${lease.id} (it ran until ${clockTime(lease.expiresAt)})`;
+}
+
 export function phaseLine(label: unknown, text: string): string {
   return `  ${String(label).padEnd(LABEL_WIDTH)} ${text}`;
 }

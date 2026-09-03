@@ -621,6 +621,7 @@ test('action: on success, prints only the label-column vocabulary on stderr and 
   });
   ensureWorkspaceStorage(wtDir);
   writeFileSync(join(workspaceDir(wtDir), 'state.json'), '{}');
+  expect(takeLease({ root: wtDir, platform: 'android', id: 'R5CT', kind: 'run' }).status).toBe('taken');
   const exec = makeExecutor({
     worktrees: porcelain([
       { path: mainDir, branch: 'main' },
@@ -650,6 +651,9 @@ test('action: on success, prints only the label-column vocabulary on stderr and 
   expect(errs.some((line) => /^\s*device\s+deleted stim-x$/.test(line))).toBe(true);
   expect(errs.some((line) => /^\s*workspace\s+removed /.test(line))).toBe(true);
   expect(errs.some((line) => /^\s*branch\s+deleted worktree-feat-x$/.test(line))).toBe(true);
+  expect(
+    errs.some((line) => /^\s*lease\s+released the android lease on R5CT \(it ran until \d{2}:\d{2}:\d{2}\)/.test(line)),
+  ).toBe(true);
   expect(errs.some((line) => new RegExp(`^\\s*removed\\s+${wtDir}$`).test(line))).toBe(true);
 });
 

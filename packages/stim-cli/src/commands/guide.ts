@@ -1609,13 +1609,13 @@ PROGRESS ON A LONG RUN
 
     branch      deleted worktree-e2e-1
     device      deleted stim-e2e-1
-    lease       released the ios lease on iPhone-15 Pro (F6D2..) (it ran until 14:32:10)
+    lease       released the ios lease on 00008101-000A10913C89001E (it ran until 14:32:10)
     workspace   removed /w/.stim/workspaces/3f9c2a
     removed     /w/worktree-e2e-1
 
   A branch \`worktree remove\` did not create, or one with unique commits, is
   kept and named instead: \`branch      kept worktree-e2e-1 (it has 2 unique
-  commit(s))\`. On the main checkout, \`worktree remove\` reclaims only the
+  commits)\`. On the main checkout, \`worktree remove\` reclaims only the
   environment -- the same \`device\`, \`lease\` and \`workspace\` lines, ending
   with a sentence instead of a \`removed\` line, because the checkout itself
   is never touched: \`Reclaimed the environment; the working tree stays (it
