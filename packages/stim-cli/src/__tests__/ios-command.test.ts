@@ -439,11 +439,57 @@ describe('the Metro gate', () => {
   });
 });
 
+function tick() {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 describe('the simulator boot gate', () => {
-  test('waits for a new simulator to boot before fingerprinting and building', async () => {
+  test('the fingerprint starts with the boot, and each line reports its own wall time', async () => {
     reserve();
-    let booted = false;
-    const { exitCode, calls } = await run(
+    let clock = 1_000_000;
+    const events: string[] = [];
+    let bootStartedAt = 0;
+    let fingerprintStartedAt = 0;
+    const { exitCode, errs } = await run(
+      {},
+      {
+        now: () => clock,
+        ensureOwnedDevice: async () => ({
+          deviceUdid: UDID,
+          deviceName: 'stim-fixture',
+          owned: true,
+          created: true,
+        }),
+        ensureBooted: async () => {
+          bootStartedAt = clock;
+          events.push('boot start');
+          await tick();
+          await tick();
+          clock += 30_000;
+          events.push('boot end');
+          return { ok: true, udid: UDID };
+        },
+        fingerprintProject: async () => {
+          fingerprintStartedAt = clock;
+          events.push('fingerprint start');
+          await tick();
+          clock += 3_000;
+          events.push('fingerprint end');
+          return { hash: FINGERPRINT, sources: [] };
+        },
+      },
+    );
+    expect(exitCode).toBe(null);
+    expect(events).toEqual(['boot start', 'fingerprint start', 'fingerprint end', 'boot end']);
+    expect(bootStartedAt).toBe(fingerprintStartedAt);
+    const out = errs.join('\n');
+    expect(out).toMatch(/fingerprint a3f9b1\.\. miss \(3s\)/);
+    expect(out).toMatch(/booted \(33s\)/);
+  });
+
+  test('a created sim that fails to boot refuses before the install, not after it', async () => {
+    reserve();
+    const { exitCode, errs, calls } = await run(
       {},
       {
         ensureOwnedDevice: async () => ({
@@ -452,19 +498,27 @@ describe('the simulator boot gate', () => {
           owned: true,
           created: true,
         }),
-        ensureBooted: async () => {
-          await new Promise((resolve) => setTimeout(resolve, 0));
-          booted = true;
-          return { ok: true, udid: UDID };
-        },
-        fingerprintProject: async () => {
-          expect(booted).toBe(true);
-          return { hash: FINGERPRINT, sources: [] };
-        },
+        ensureBooted: async () => ({
+          failed: true,
+          reason: 'Could not boot simulator BF2A: CoreLocationMigrator failed',
+        }),
       },
     );
-    expect(exitCode).toBe(null);
-    expect(calls.order.includes('buildIos')).toBe(true);
+    expect(exitCode).toBe(1);
+    expect(calls.order.includes('installIosApp')).toBe(false);
+    expect(calls.order.includes('launchIosApp')).toBe(false);
+    const out = errs.join('\n');
+    expect(out).toMatch(/STIM_NO_DEVICE/);
+    expect(out).toMatch(/CoreLocationMigrator failed/);
+  });
+
+  test('a fingerprint that cannot be computed still refuses before the device is used', async () => {
+    reserve();
+    const { exitCode, errs, calls } = await run({}, { fingerprintProject: async () => null });
+    expect(exitCode).toBe(1);
+    expect(calls.order.includes('buildIos')).toBe(false);
+    expect(calls.order.includes('installIosApp')).toBe(false);
+    expect(errs.join('\n')).toMatch(/STIM_NO_FINGERPRINT/);
   });
 });
 
@@ -502,7 +556,7 @@ describe('the boot this run performed', () => {
           deviceName: 'stim-fixture',
           owned: true,
           created: true,
-          bootedUdid: UDID,
+          booting: { udid: UDID, done: Promise.resolve() },
         }),
       },
     );

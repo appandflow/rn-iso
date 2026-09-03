@@ -156,6 +156,15 @@ export function makeChildProcess(overrides: Partial<ChildProcess> = {}): ChildPr
   return Object.assign(stub, overrides) as unknown as ChildProcess;
 }
 
+export function makeExitingChild(code = 0, stderr = ''): ChildProcess {
+  const child = makeChildProcess();
+  setImmediate(() => {
+    if (stderr) child.stderr?.emit('data', Buffer.from(stderr));
+    child.emit('exit', code, null);
+  });
+  return child;
+}
+
 export function asRequire(fn: (id: string) => unknown): NodeJS.Require {
   return fn as unknown as NodeJS.Require;
 }

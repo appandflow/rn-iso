@@ -15,6 +15,7 @@ import {
   bootIosSim,
 } from '../sim/ios.ts';
 import assert from 'node:assert';
+import { makeChildProcess, makeExitingChild } from './_factories.ts';
 
 let tmpHome: string;
 
@@ -345,12 +346,6 @@ test('ownedSimName does not double the ownership prefix', () => {
   expect(ownedSimName('Stim').startsWith('stim-')).toBeTruthy();
 });
 
-function timedOut(): Error {
-  const e = new Error('spawnSync /bin/sh ETIMEDOUT') as Error & { code?: string };
-  e.code = 'ETIMEDOUT';
-  return e;
-}
-
 function bootSimList(state: string) {
   return JSON.stringify({
     devices: {
@@ -359,126 +354,81 @@ function bootSimList(state: string) {
   });
 }
 
-test('bootIosSim re-enters bootstatus after a timed-out attempt while the sim is still Booting', () => {
+type BootstatusOutcome = 'hang' | { exitCode: number; stderr?: string };
+
+function bootstatusExecutor(outcomes: BootstatusOutcome[], list: () => string) {
+  const spawned: string[] = [];
   const quiet: string[] = [];
-  let bootstatusCalls = 0;
   setExecutor({
-    run: (cmd) => {
-      if (cmd.includes('bootstatus')) {
-        bootstatusCalls += 1;
-        if (bootstatusCalls === 1) throw timedOut();
-        return '';
-      }
-      if (cmd.includes('list devices')) return bootSimList('Booting');
+    run: (cmd: string) => {
+      if (cmd.includes('list devices')) return list();
       return '';
     },
-    runQuiet: (cmd) => {
+    runQuiet: (cmd: string) => {
       quiet.push(cmd);
       return '';
     },
     runFile: () => '',
-    spawn: () => null,
+    spawn: (cmd: string, args: readonly string[] = []) => {
+      spawned.push([cmd, ...args].join(' '));
+      const outcome = outcomes[spawned.length - 1] ?? outcomes[outcomes.length - 1] ?? 'hang';
+      if (outcome === 'hang') return makeChildProcess();
+      return makeExitingChild(outcome.exitCode, outcome.stderr);
+    },
   });
-  bootIosSim('UDID-A');
-  expect(bootstatusCalls).toBe(2);
+  return { spawned, quiet };
+}
+
+test('bootIosSim waits on `simctl bootstatus -b` as a child process, so the caller can work meanwhile', async () => {
+  const { spawned, quiet } = bootstatusExecutor([{ exitCode: 0 }], () => bootSimList('Booted'));
+  await bootIosSim('UDID-A');
+  expect(spawned).toEqual(['xcrun simctl bootstatus UDID-A -b']);
   expect(quiet).toContain('open -a Simulator');
 });
 
-test('bootIosSim treats a timed-out attempt as success when the sim reports Booted', () => {
-  let bootstatusCalls = 0;
-  setExecutor({
-    run: (cmd) => {
-      if (cmd.includes('bootstatus')) {
-        bootstatusCalls += 1;
-        throw timedOut();
-      }
-      if (cmd.includes('list devices')) return bootSimList('Booted');
-      return '';
-    },
-    runQuiet: () => '',
-    runFile: () => '',
-    spawn: () => null,
-  });
-  bootIosSim('UDID-A');
-  expect(bootstatusCalls).toBe(1);
+test('bootIosSim re-enters bootstatus after a timed-out attempt while the sim is still Booting', async () => {
+  const { spawned, quiet } = bootstatusExecutor(['hang', { exitCode: 0 }], () => bootSimList('Booting'));
+  await bootIosSim('UDID-A', { attemptMs: 20 });
+  expect(spawned.length).toBe(2);
+  expect(quiet).toContain('open -a Simulator');
 });
 
-function sleepSync(ms: number): void {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
-test('bootIosSim names the udid and the wait when the deadline expires while Booting', () => {
-  setExecutor({
-    run: (cmd) => {
-      if (cmd.includes('bootstatus')) {
-        sleepSync(300);
-        throw timedOut();
-      }
-      if (cmd.includes('list devices')) return bootSimList('Booting');
-      return '';
-    },
-    runQuiet: () => '',
-    runFile: () => '',
-    spawn: () => null,
-  });
-  expect(() => bootIosSim('UDID-A', { timeoutMs: 1200 })).toThrow(/UDID-A did not finish booting within 1s/);
+test('bootIosSim treats a timed-out attempt as success when the sim reports Booted', async () => {
+  const { spawned } = bootstatusExecutor(['hang'], () => bootSimList('Booted'));
+  await bootIosSim('UDID-A', { attemptMs: 20 });
+  expect(spawned.length).toBe(1);
 });
 
-test('bootIosSim reports a sim that vanished from the device list', () => {
-  setExecutor({
-    run: (cmd) => {
-      if (cmd.includes('bootstatus')) throw timedOut();
-      if (cmd.includes('list devices')) return JSON.stringify({ devices: {} });
-      return '';
-    },
-    runQuiet: () => '',
-    runFile: () => '',
-    spawn: () => null,
-  });
-  expect(() => bootIosSim('UDID-A')).toThrow(/UDID-A reports "missing"/);
+test('bootIosSim names the udid and the wait when the deadline expires while Booting', async () => {
+  bootstatusExecutor(['hang'], () => bootSimList('Booting'));
+  await expect(bootIosSim('UDID-A', { timeoutMs: 1200, attemptMs: 300 })).rejects.toThrow(
+    /UDID-A did not finish booting within 1s/,
+  );
 });
 
-test('bootIosSim keeps waiting through a failing device list and still hits the deadline', () => {
-  setExecutor({
-    run: (cmd) => {
-      if (cmd.includes('bootstatus')) {
-        sleepSync(300);
-        throw timedOut();
-      }
-      if (cmd.includes('list devices')) throw new Error('CoreSimulatorService connection interrupted');
-      return '';
-    },
-    runQuiet: () => '',
-    runFile: () => '',
-    spawn: () => null,
-  });
-  expect(() => bootIosSim('UDID-A', { timeoutMs: 1200 })).toThrow(/UDID-A did not finish booting within 1s/);
+test('bootIosSim reports a sim that vanished from the device list', async () => {
+  bootstatusExecutor(['hang'], () => JSON.stringify({ devices: {} }));
+  await expect(bootIosSim('UDID-A', { attemptMs: 20 })).rejects.toThrow(/UDID-A reports "missing"/);
 });
 
-test('bootIosSim reports a sim that left the boot path instead of retrying forever', () => {
-  setExecutor({
-    run: (cmd) => {
-      if (cmd.includes('bootstatus')) throw timedOut();
-      if (cmd.includes('list devices')) return bootSimList('Shutdown');
-      return '';
-    },
-    runQuiet: () => '',
-    runFile: () => '',
-    spawn: () => null,
+test('bootIosSim keeps waiting through a failing device list and still hits the deadline', async () => {
+  bootstatusExecutor(['hang'], () => {
+    throw new Error('CoreSimulatorService connection interrupted');
   });
-  expect(() => bootIosSim('UDID-A')).toThrow(/UDID-A reports "Shutdown"/);
+  await expect(bootIosSim('UDID-A', { timeoutMs: 1200, attemptMs: 300 })).rejects.toThrow(
+    /UDID-A did not finish booting within 1s/,
+  );
 });
 
-test('bootIosSim rethrows a bootstatus failure that is not a timeout', () => {
-  setExecutor({
-    run: (cmd) => {
-      if (cmd.includes('bootstatus')) throw new Error('CoreLocationMigrator failed');
-      if (cmd.includes('list devices')) return bootSimList('Booting');
-      return '';
-    },
-    runQuiet: () => '',
-    runFile: () => '',
-    spawn: () => null,
-  });
-  expect(() => bootIosSim('UDID-A')).toThrow(/CoreLocationMigrator failed/);
+test('bootIosSim reports a sim that left the boot path instead of retrying forever', async () => {
+  bootstatusExecutor(['hang'], () => bootSimList('Shutdown'));
+  await expect(bootIosSim('UDID-A', { attemptMs: 20 })).rejects.toThrow(/UDID-A reports "Shutdown"/);
+});
+
+test('bootIosSim rethrows a bootstatus failure that is not a timeout', async () => {
+  const { spawned } = bootstatusExecutor([{ exitCode: 1, stderr: 'CoreLocationMigrator failed' }], () =>
+    bootSimList('Booting'),
+  );
+  await expect(bootIosSim('UDID-A')).rejects.toThrow(/CoreLocationMigrator failed/);
+  expect(spawned.length).toBe(1);
 });

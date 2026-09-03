@@ -1565,9 +1565,17 @@ PROGRESS ON A LONG RUN
   artifact name is in the \`--json\` payload.
 
   A step that costs real time is named and timed, including the step that
-  creates or reconciles the owned device before anything is fingerprinted:
+  creates or reconciles the owned device:
 
     device      stim-app-412 (BF2A..) created (2m14s)
+
+  On iOS that step does not wait the boot out. It creates the simulator, asks
+  it to boot, and hands the wait back, so the run fingerprints the native
+  inputs and resolves the build cache while \`simctl bootstatus\` is still
+  running; it joins the boot before it installs anything. The
+  \`device ... booted\` and \`fingerprint ...\` lines each report their own
+  elapsed time, and those two overlap -- adding every line up overstates the
+  run.
 
   A step that is still running heartbeats every 30 seconds, on the 30-second
   grid, so the values read 30s, 1m00s, 1m30s and never repeat. A heartbeat
