@@ -74,13 +74,24 @@
   background: #dc2626;
 }
 
-.timeline {
-  display: grid;
-  grid-template-columns: 7rem minmax(0, 1fr);
+.timelineScroller {
   overflow-x: auto;
   margin-bottom: 1.25rem;
   border-top: 1px solid var(--bench-line);
   border-bottom: 1px solid var(--bench-line);
+  overscroll-behavior-inline: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.timelineScroller:focus-visible {
+  outline: 2px solid var(--ifm-color-primary);
+  outline-offset: 2px;
+}
+
+.timeline {
+  display: grid;
+  min-width: 52rem;
+  grid-template-columns: 7rem minmax(44rem, 1fr);
 }
 
 .axisLabel,
@@ -379,7 +390,8 @@
   }
 
   .timeline {
-    grid-template-columns: 5.5rem minmax(44rem, 1fr);
+    min-width: 49.5rem;
+    grid-template-columns: 5.5rem 44rem;
   }
 
   .proof {

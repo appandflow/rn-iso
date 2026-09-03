@@ -117,74 +117,76 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
         <span>Agent turn {formatSeconds(run.totalSeconds)}</span>
       </div>
 
-      <div className={styles.timeline}>
-        <div className={styles.axisLabel} />
-        <div className={styles.axis}>
-          {ticks.map((tick) => (
-            <span key={tick} style={{ left: `${tick * 100}%` }}>
-              {formatSeconds(run.totalSeconds * tick)}
-            </span>
-          ))}
-        </div>
+      <div className={styles.timelineScroller} tabIndex={0} aria-label="Benchmark command timeline">
+        <div className={styles.timeline}>
+          <div className={styles.axisLabel} />
+          <div className={styles.axis}>
+            {ticks.map((tick) => (
+              <span key={tick} style={{ left: `${tick * 100}%` }}>
+                {formatSeconds(run.totalSeconds * tick)}
+              </span>
+            ))}
+          </div>
 
-        <div className={styles.laneLabel}>Agent</div>
-        <div className={styles.dotTrack}>
-          {run.messages.map((message) => (
-            <button
-              key={message.id}
-              type="button"
-              className={styles.agentDot}
-              style={{ left: position(message.atSeconds, run.totalSeconds) }}
-              aria-label={`Agent note at ${formatSeconds(message.atSeconds)}`}
-              onClick={() => setSelected({ kind: 'message', event: message })}
-            />
-          ))}
-        </div>
+          <div className={styles.laneLabel}>Agent</div>
+          <div className={styles.dotTrack}>
+            {run.messages.map((message) => (
+              <button
+                key={message.id}
+                type="button"
+                className={styles.agentDot}
+                style={{ left: position(message.atSeconds, run.totalSeconds) }}
+                aria-label={`Agent note at ${formatSeconds(message.atSeconds)}`}
+                onClick={() => setSelected({ kind: 'message', event: message })}
+              />
+            ))}
+          </div>
 
-        <div className={styles.laneLabel}>Shell</div>
-        <div className={styles.shellTracks} style={{ '--lane-count': laneCount } as CSSProperties}>
-          {Array.from({ length: laneCount }, (_, lane) => (
-            <div className={styles.shellTrack} key={lane}>
-              {commands
-                .filter((command) => command.lane === lane)
-                .map((command) => (
-                  <button
-                    key={command.id}
-                    type="button"
-                    className={`${styles.commandBar} ${command.exitCode === 0 ? '' : styles.commandFailed} ${
-                      selected.kind === 'command' && selected.event.id === command.id ? styles.commandSelected : ''
-                    }`}
-                    style={{
-                      left: position(command.startSeconds, run.totalSeconds),
-                      width: `${Math.max(
-                        0.7,
-                        ((command.endSeconds - command.startSeconds) / run.totalSeconds) * 100,
-                      )}%`,
-                    }}
-                    aria-label={`${shortCommand(command.command)}, ${formatSeconds(
-                      command.endSeconds - command.startSeconds,
-                    )}, exit ${command.exitCode ?? 'unknown'}`}
-                    onClick={() => setSelected({ kind: 'command', event: command })}
-                  >
-                    {shortCommand(command.command)}
-                  </button>
-                ))}
-            </div>
-          ))}
-        </div>
+          <div className={styles.laneLabel}>Shell</div>
+          <div className={styles.shellTracks} style={{ '--lane-count': laneCount } as CSSProperties}>
+            {Array.from({ length: laneCount }, (_, lane) => (
+              <div className={styles.shellTrack} key={lane}>
+                {commands
+                  .filter((command) => command.lane === lane)
+                  .map((command) => (
+                    <button
+                      key={command.id}
+                      type="button"
+                      className={`${styles.commandBar} ${command.exitCode === 0 ? '' : styles.commandFailed} ${
+                        selected.kind === 'command' && selected.event.id === command.id ? styles.commandSelected : ''
+                      }`}
+                      style={{
+                        left: position(command.startSeconds, run.totalSeconds),
+                        width: `${Math.max(
+                          0.7,
+                          ((command.endSeconds - command.startSeconds) / run.totalSeconds) * 100,
+                        )}%`,
+                      }}
+                      aria-label={`${shortCommand(command.command)}, ${formatSeconds(
+                        command.endSeconds - command.startSeconds,
+                      )}, exit ${command.exitCode ?? 'unknown'}`}
+                      onClick={() => setSelected({ kind: 'command', event: command })}
+                    >
+                      {shortCommand(command.command)}
+                    </button>
+                  ))}
+              </div>
+            ))}
+          </div>
 
-        <div className={styles.laneLabel}>App/device</div>
-        <div className={styles.dotTrack}>
-          {run.markers.map((marker) => (
-            <button
-              key={marker.id}
-              type="button"
-              className={`${styles.deviceDot} ${marker.kind === 'settingsReady' ? styles.readyDot : ''}`}
-              style={{ left: position(marker.atSeconds, run.totalSeconds) }}
-              aria-label={`${marker.label} at ${formatSeconds(marker.atSeconds)}`}
-              onClick={() => setSelected({ kind: 'marker', event: marker })}
-            />
-          ))}
+          <div className={styles.laneLabel}>App/device</div>
+          <div className={styles.dotTrack}>
+            {run.markers.map((marker) => (
+              <button
+                key={marker.id}
+                type="button"
+                className={`${styles.deviceDot} ${marker.kind === 'settingsReady' ? styles.readyDot : ''}`}
+                style={{ left: position(marker.atSeconds, run.totalSeconds) }}
+                aria-label={`${marker.label} at ${formatSeconds(marker.atSeconds)}`}
+                onClick={() => setSelected({ kind: 'marker', event: marker })}
+              />
+            ))}
+          </div>
         </div>
       </div>
 

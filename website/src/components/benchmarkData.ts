@@ -110,6 +110,10 @@ export function formatTokens(value: number): string {
 }
 
 export function formatSeconds(value: number): string {
+  if (value >= 60) {
+    const rounded = Math.round(value);
+    return `${Math.floor(rounded / 60)}m ${rounded % 60}s`;
+  }
   return `${value.toFixed(value < 10 ? 1 : 0)}s`;
 }
 

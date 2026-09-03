@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assignCommandLanes, type BenchmarkCommand } from './benchmarkData';
+import { assignCommandLanes, formatSeconds, type BenchmarkCommand } from './benchmarkData';
 
 function command(id: string, startSeconds: number, endSeconds: number): BenchmarkCommand {
   return { id, startSeconds, endSeconds, command: id, output: '', exitCode: 0 };
@@ -15,5 +15,17 @@ describe('assignCommandLanes', () => {
       ['concurrent', 1],
       ['later', 1],
     ]);
+  });
+});
+
+describe('formatSeconds', () => {
+  it('formats longer durations as minutes and seconds', () => {
+    expect(formatSeconds(133.857)).toBe('2m 14s');
+    expect(formatSeconds(479.412)).toBe('7m 59s');
+  });
+
+  it('keeps short command durations in seconds', () => {
+    expect(formatSeconds(2.55)).toBe('2.5s');
+    expect(formatSeconds(30)).toBe('30s');
   });
 });
