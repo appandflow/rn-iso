@@ -302,7 +302,7 @@ export async function swapApkBundle({
     elapsed,
     lastLine: () => transcript.at(-1) ?? '',
     emit: onHeartbeat,
-    label: 'apk swap',
+    label: 'swap',
   });
   let outcome: Awaited<ReturnType<typeof waitForChild>>;
   try {

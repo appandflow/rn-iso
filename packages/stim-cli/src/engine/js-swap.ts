@@ -219,7 +219,7 @@ export async function swapJsBundle({
     elapsed,
     lastLine: () => transcript.at(-1) ?? '',
     emit: onHeartbeat,
-    label: 'js swap',
+    label: 'swap',
   });
   let outcome: Awaited<ReturnType<typeof waitForChild>>;
   try {

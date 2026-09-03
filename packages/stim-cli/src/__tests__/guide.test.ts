@@ -2,6 +2,7 @@ import assert from 'node:assert';
 import { readdirSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_FINGERPRINT_IGNORES } from '../build-cache.ts';
+import { OUTPUT_LABELS } from '../command-output.ts';
 import { topicNames, renderTopic, renderIndex } from '../commands/guide.ts';
 import { ANDROID_AVD_CONFIG_HELP } from '../settings.ts';
 import { CONSOLE_ENV, deviceConsoleArgs } from '../collector/ios-device.ts';
@@ -25,9 +26,39 @@ test('the facts topic pins how an owned emulator gets its console port', () => {
 test('the lifecycle topic separates an iOS install proof from dev-client preparation', () => {
   const body = renderTopic('lifecycle');
   assert(body);
-  expect(body).toMatch(/install\s+unchanged; .*already holds this app; proof/);
-  expect(body).toMatch(/dev client\s+prepared/);
+  expect(body).toMatch(/install\s+unchanged \(stim-app already has this build\)/);
+  expect(body).toMatch(/install\s+dev client prepared/);
   expect(body).toMatch(/slow simulator command is never charged\s+to an install that did not run/);
+});
+
+const SUMMARY_ONLY_LABELS = ['app', 'compilation cache'];
+
+test('the lifecycle topic grids every label the output vocabulary allows, and no others', () => {
+  const body = renderTopic('lifecycle');
+  assert(body);
+  const start = body.indexOf('The labels are a closed set');
+  expect(start).toBeGreaterThan(-1);
+  const grid = body.slice(body.indexOf('column:', start) + 'column:'.length, body.indexOf('`app` and', start));
+  expect(
+    grid
+      .trim()
+      .split('\n')
+      .filter((line) => line.trim() !== ''),
+  ).toHaveLength(6);
+  expect(grid.trim().split(/\s+/).toSorted()).toEqual(
+    OUTPUT_LABELS.filter((label) => label !== '' && !SUMMARY_ONLY_LABELS.includes(label)).toSorted(),
+  );
+  expect(body.slice(start)).toMatch(/`app` and `compilation cache` join them in the stdout block/);
+});
+
+test('the errors topic names the two device fallbacks under the label that prints them', () => {
+  const body = renderTopic('errors');
+  assert(body);
+  expect(body).toMatch(/both print a `cache` note and\s+build fresh/);
+  expect(body).toMatch(/cache\s+a cached Release device app carries its builder's JS/);
+  expect(body).not.toMatch(/^ *device app {2}/m);
+  const src = readFileSync(new URL('../commands/ios.ts', import.meta.url), 'utf-8');
+  expect(src.includes("'device app'")).toBe(false);
 });
 
 test('an unknown topic renders nothing rather than throwing', () => {

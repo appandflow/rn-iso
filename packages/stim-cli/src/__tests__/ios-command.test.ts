@@ -610,6 +610,48 @@ describe('launch verification', () => {
     );
   });
 
+  test('a verified launch counts the device log instead of printing it', async () => {
+    reserve();
+    const { errs } = await run(
+      {},
+      {
+        verifyLaunch: async () => ({
+          verified: true,
+          waitedMs: 2500,
+          errors: [
+            { src: 'device', proc: 'Fixture', msg: 'Failed to send CA Event for app launch measurements' },
+            { src: 'device', proc: 'Fixture', msg: 'NSBundle (null) initWithPath failed' },
+            { src: 'client', msg: 'a redbox from the app' },
+          ],
+        }),
+      },
+    );
+    const text = errs.join('\n');
+    expect(text).toMatch(
+      /^  launch {6}2 error-level records in the device log during launch \(logs --errors --source device\)$/m,
+    );
+    expect(text).toMatch(/^  launch {6}a redbox from the app$/m);
+    expect(text).not.toMatch(/Failed to send CA Event/);
+    expect(text).not.toMatch(/NSBundle/);
+  });
+
+  test('a launch that does not verify still prints every error it collected', async () => {
+    reserve();
+    const { errs, exitCode } = await run(
+      {},
+      {
+        verifyLaunch: async () => ({
+          fatal: true,
+          waitedMs: 2500,
+          processAlive: false,
+          errors: [{ src: 'device', proc: 'SpringBoard', msg: 'attention client lost event tag' }],
+        }),
+      },
+    );
+    expect(exitCode).toBe(1);
+    expect(errs.join('\n')).toMatch(/attention client lost event tag/);
+  });
+
   test('the picker: an unverified launch is launched: "unverified", exit 0, and a loud warning', async () => {
     reserve();
     const { logs, errs, exitCode } = await run(
@@ -1642,7 +1684,7 @@ describe('success output', () => {
     expect(text).toMatch(/^  fingerprint a3f9b1\.\. miss \(\d+ms\)$/m);
     expect(text).toMatch(/^  build {7}compiling Debug with xcodebuild$/m);
     expect(text).toMatch(/^  build {7}ok \(2m41s\)$/m);
-    expect(text).toMatch(/^  install {5}-> stim-fixture \(BF2A\.\.\) \(\d+ms\)$/m);
+    expect(text).toMatch(/^  install {5}Fixture\.app -> stim-fixture \(BF2A\.\.\) \(\d+ms\)$/m);
     expect(text).toMatch(/^  launch {6}com\.example\.app \(\d+ms\)$/m);
   });
 
@@ -2725,7 +2767,7 @@ describe('the release cache key and the JS swap', () => {
     expect(calls.args.swapJsBundle.cachedAppPath).toBe(cached);
     expect(calls.args.installIosApp.appPath).toBe(join(root, 'js-swap', 'Fixture.app'));
     expect(calls.args.readBundleId).toBe(join(root, 'js-swap', 'Fixture.app'));
-    expect(errs.join('\n')).toMatch(/js swap/);
+    expect(errs.join('\n')).toMatch(/^  swap {8}/m);
   });
 
   test('a debug cache hit never swaps', async () => {
@@ -2746,7 +2788,7 @@ describe('the release cache key and the JS swap', () => {
       },
     );
     expect(exitCode).toBe(null);
-    expect(errs.join('\n')).toMatch(/js swap/);
+    expect(errs.join('\n')).toMatch(/^  swap {8}/m);
     expect(errs.join('\n')).toMatch(/building fresh instead/);
     expect(calls.order.includes('buildIos')).toBeTruthy();
     expect(calls.args.installIosApp.appPath).toBe(appPath);
@@ -2847,7 +2889,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
     const shift = errs.find((line) => /^  fingerprint\s+\S+ -> /.test(line));
     assert(shift, 'expected a fingerprint shift line on stderr');
     expect(shift).toMatch(/aaaaaa\.\. -> bbbbbb\.\./);
-    expect(shift).toMatch(/prebuild \+ pod install/);
+    expect(shift).toMatch(/\(after prebuild, pod install\)$/);
 
     const facts = parseFirst(logs);
     expect(facts.fingerprint).toBe(WARM);
@@ -2874,7 +2916,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
     expect(calls.order.includes('buildIos')).toBe(false);
     expect(calls.order.includes('storeBuild')).toBe(false);
     expect(calls.args.installIosApp.appPath).toBe(cachedApp);
-    expect(errs.join('\n')).toMatch(/hit under the post-prebuild key \(this tree was cold/);
+    expect(errs.join('\n')).toMatch(/^  cache {7}hit bbbbbb\.\. \(post-prebuild key\)$/m);
 
     const facts = parseFirst(logs);
     expect(facts.cacheHit).toBe('local');
@@ -3370,8 +3412,8 @@ describe('an app the simulator already holds', () => {
       },
     );
 
-    expect(stderr).toMatch(/install\s+unchanged; .*already holds this app; proof \(45\.6s\)/);
-    expect(stderr).toMatch(/dev client\s+prepared \(1\.2s\)/);
+    expect(stderr).toMatch(/^  install {5}unchanged \(stim-fixture already has this build\) \(45\.6s\)$/m);
+    expect(stderr).toMatch(/^  install {5}dev client prepared \(1\.2s\)$/m);
     expect(parseFirst(logs).installSkipped).toBe(true);
   });
 
@@ -3594,6 +3636,15 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     expect(facts.udid).toBe(PHONE);
     expect(facts.launched).toBe(true);
     expect(facts.cacheKey).toBe(`${FINGERPRINT}-debug-device`);
+  });
+
+  test('the phone launch line is the shared shape plus the pid that proves it', async () => {
+    reserve();
+    const { errs } = await run({ device: true }, connected());
+    const text = errs.join('\n');
+    expect(text).toMatch(new RegExp(`^  launch {6}com\\.example\\.app pid ${DEVICE_PID} \\(\\d+m?s?\\)$`, 'm'));
+    expect(text).not.toMatch(/on the phone/);
+    expect(text).not.toMatch(/opened on the dev-client URL/);
   });
 
   test('the collector is the launch: it carries --physical and the run reads the device pid', async () => {

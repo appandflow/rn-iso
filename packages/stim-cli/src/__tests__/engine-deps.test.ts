@@ -192,7 +192,7 @@ describe('runPodInstall', () => {
     });
     expect(result.ok).toBe(true);
     expect(beats.length >= 1).toBe(true);
-    expect(beats[0]).toMatch(/^pods\s+still running \(/);
+    expect(beats[0]).toMatch(/^ {2}pods\s+still running \(/);
     expect(beats[0]).toMatch(/Installing FlipperKit/);
   });
 
@@ -390,7 +390,7 @@ describe('runPodInstall through bundler (#137)', () => {
     });
     expect(result.ok).toBe(true);
     expect(calls[1]?.opts.cwd).toBe(root);
-    expect(beats[0]).toMatch(/^gems\s+still running \(/);
+    expect(beats[0]).toMatch(/^ {2}gems\s+still running \(/);
     expect(beats[0]).toMatch(/Fetching cocoapods/);
   });
 

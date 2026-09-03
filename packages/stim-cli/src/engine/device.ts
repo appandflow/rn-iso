@@ -1,4 +1,5 @@
 import chalk from 'chalk';
+import { phaseLine } from '../command-output.ts';
 import {
   allConsolePortsAndSerials,
   clearDevice,
@@ -193,7 +194,7 @@ async function ensureOwnedIosDevice({
           );
         }
         if (sim.state !== 'Booted') {
-          out(chalk.dim(`Booting owned sim ${sim.name} (${sim.udid})...`));
+          out(chalk.dim(phaseLine('device', `booting ${sim.name} (${sim.udid})`)));
           bootIosSim(sim.udid);
         }
         const updated = {
@@ -238,7 +239,6 @@ async function ensureOwnedIosDevice({
     deviceType: flags.deviceType || settings.ios?.deviceType,
     runtime: flags.runtime || settings.ios?.runtime,
   });
-  out(chalk.dim(`Created owned sim ${created.name} (${created.udid})`));
   const newRecord = { deviceUdid: created.udid, owned: true, deviceName: created.name };
   setDevice(projectPath, 'ios', newRecord);
   bootIosSim(created.udid);
@@ -265,8 +265,9 @@ async function configureOwnedIosSim({
   out: Notify;
   reconcileIosSimulator: typeof reconcileSimSlim;
 }): Promise<OwnedDeviceRecord> {
-  if (profile) out(chalk.dim(`Applying the configured SimSlim profile to ${record.deviceUdid}...`));
-  else if (record.simslimManaged) out(chalk.dim(`Restoring stock simulator services on ${record.deviceUdid}...`));
+  if (profile) out(chalk.dim(phaseLine('device', `applying the SimSlim profile to ${record.deviceUdid}`)));
+  else if (record.simslimManaged)
+    out(chalk.dim(phaseLine('device', `restoring stock simulator services on ${record.deviceUdid}`)));
 
   const previouslyManaged = Boolean(record.simslimManaged);
   if (profile && !record.simslimManaged) {
@@ -423,7 +424,7 @@ async function ensureOwnedAndroidDevice({
         );
       }
       created = { avdName, systemImage: ownedAvdSystemImage(avdName) };
-      out(chalk.dim(`Recovered existing owned AVD ${avdName} (unrecorded from a prior run)`));
+      out(chalk.dim(phaseLine('device', `recovered ${avdName} (unrecorded from a prior run)`)));
     } else {
       throw e;
     }
@@ -453,7 +454,6 @@ async function ensureOwnedAndroidDevice({
       );
     }
   }
-  out(chalk.dim(`Created owned AVD ${created.avdName}`));
   return {
     ...(await bootOwnedAvdOnFreshPort({
       avdName: created.avdName,
@@ -463,6 +463,7 @@ async function ensureOwnedAndroidDevice({
       logFile,
       alive,
     })),
+    created: true,
     systemImage: created.systemImage,
   };
 }
@@ -535,7 +536,7 @@ async function bootOwnedAvdOnFreshPort({
   const serial = `emulator-${claim.consolePort}`;
   try {
     const pid = bootAndroidEmulator(avdName, claim.consolePort, { logFile });
-    out(chalk.dim(`Waiting for ${serial} to finish booting...`));
+    out(chalk.dim(phaseLine('device', `waiting for ${serial} to finish booting`)));
     const result = await waitForBoot(serial, 120000, { aborted: emulatorGone(pid, alive) });
     if (!result.ok) {
       throw new Error(
@@ -807,7 +808,7 @@ async function ensureIosBooted({
   const sim = resolved.sim as SimRecord;
   if (sim.state === 'Booted') return { ok: true, udid };
 
-  out(chalk.dim(`Booting sim ${sim.name} (${udid})...`));
+  out(chalk.dim(phaseLine('device', `booting ${sim.name} (${udid})`)));
   const bootDeadline = Date.now() + timeoutMs;
   try {
     bootIosSim(udid, { timeoutMs });
@@ -882,7 +883,7 @@ async function ensureAndroidBooted({
   }
 
   const serial = `emulator-${pickConsolePort(device.consolePort)}`;
-  out(chalk.dim(`Booting owned AVD ${device.avdName} as ${serial}...`));
+  out(chalk.dim(phaseLine('device', `booting ${device.avdName} as ${serial}`)));
   let pid: number | null = null;
   try {
     pid = bootAndroidEmulator(device.avdName, Number(serial.replace(/^emulator-/, '')), { logFile });

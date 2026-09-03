@@ -969,7 +969,7 @@ describe('a cache hit', () => {
     expect(result.facts.cacheHit).toBe('local');
     expect(result.facts.appPath).toBe(cached);
     expect(labelled(h.stderr, 'fingerprint')[0]).toMatch(/a3f9b1\.\. hit/);
-    expect(labelled(h.stderr, 'install')[0]).toMatch(/from local cache/);
+    expect(labelled(h.stderr, 'install')[0]).toMatch(/^  install {5}app-debug\.apk -> emulator-5584 /);
     expect(labelled(h.stderr, 'build').length).toBe(0);
   });
 
@@ -983,7 +983,7 @@ describe('a cache hit', () => {
     expect(labelled(h.stderr, 'logs')[0]).toMatch(/collector pid 9001/);
     expect(labelled(h.stderr, 'fingerprint')[0]).toMatch(/\(\d+m?\d*s\)$/);
     expect(labelled(h.stderr, 'device')[0]).toMatch(/booted \(\d+m?\d*s\)$/);
-    expect(labelled(h.stderr, 'install')[0]).toMatch(/from local cache \(\d+m?\d*s\)$/);
+    expect(labelled(h.stderr, 'install')[0]).toMatch(/app-debug\.apk -> emulator-5584 \(\d+m?\d*s\)$/);
     expect(labelled(h.stderr, 'launch')[0]).toMatch(/\(\d+m?\d*s\)$/);
     expect(h.stdout.length).toBe(1);
     expect(h.stdout[0]).toMatch(/OK: com\.example\.app launched on emulator-5584/);
@@ -1048,7 +1048,7 @@ describe('a cache miss', () => {
     expect(h.calls.install[0]?.apkPath).toBe(h.calls.storeCached[0]?.[2]);
     expect(labelled(h.stderr, 'fingerprint')[0]).toMatch(/miss/);
     expect(labelled(h.stderr, 'build')[0]).toMatch(/compiling debug with Gradle/);
-    expect(labelled(h.stderr, 'build')[1]).toMatch(/app-debug\.apk \(2m41s\)/);
+    expect(labelled(h.stderr, 'build')[1]).toMatch(/^  build {7}ok \(2m41s\)$/);
     assert(result.facts);
     expect(result.facts.cacheHit).toBe(false);
   });
@@ -2461,6 +2461,26 @@ describe('launch verification', () => {
     ).toBeTruthy();
   });
 
+  test('a verified launch counts the device log on Android too', async () => {
+    const h = harness({
+      verifyLaunched: async () => ({
+        verified: true,
+        waitedMs: 2500,
+        errors: [
+          { src: 'device', proc: 'ReactNativeJS(1234)', msg: 'a native framework error' },
+          { src: 'client', msg: 'a redbox from the app' },
+        ],
+      }),
+    });
+    await h.run();
+    const text = h.stderr.join('\n');
+    expect(text).toMatch(
+      /^  launch {6}1 error-level record in the device log during launch \(logs --errors --source device\)$/m,
+    );
+    expect(text).toMatch(/^  launch {6}a redbox from the app$/m);
+    expect(text).not.toMatch(/a native framework error/);
+  });
+
   test('the picker: no bundle request makes it launched: "unverified", still exit ok', async () => {
     const h = harness({ verifyLaunched: async () => ({ verified: false, timedOut: true, waitedMs: 20000 }) });
     const result = await h.run();
@@ -2497,11 +2517,43 @@ describe('the workspace directory is gitignored first', () => {
   });
 });
 
+describe('the owned emulator reports creation and slow preparation', () => {
+  test('a fresh AVD says created, however fast it was', async () => {
+    const h = harness({
+      ensureDevice: async () => ({ avdName: 'stim-app-412', consolePort: 5584, owned: true, created: true }),
+    });
+    await h.run();
+    expect(labelled(h.stderr, 'device')[0]).toMatch(/^  device {6}stim-app-412 created \(\d+m?s?\)$/);
+    expect(h.stderr.some((l) => /Created owned AVD/.test(l))).toBe(false);
+  });
+
+  test('an existing AVD says prepared only when the reconcile cost real time', async () => {
+    for (const [label, elapsedMs, expected] of [
+      ['a fast reconcile', 500, false],
+      ['a slow reconcile', 2000, true],
+    ] as const) {
+      let clock = 0;
+      const h = harness({
+        now: () => {
+          const at = clock;
+          clock += elapsedMs;
+          return at;
+        },
+      });
+      await h.run();
+      expect({ label, prepared: labelled(h.stderr, 'device').some((l) => / prepared \(/.test(l)) }).toEqual({
+        label,
+        prepared: expected,
+      });
+    }
+  });
+});
+
 describe('the port wiring is reported', () => {
   test('a successful debug_http_host write is a phase line and two facts', async () => {
     const h = harness();
     const result = await h.run();
-    expect(labelled(h.stderr, 'wired')[0]).toMatch(
+    expect(labelled(h.stderr, 'metro').at(-1)).toMatch(
       /debug_http_host 10\.0\.2\.2:8082 \+ adb reverse tcp:8082->tcp:8082/,
     );
     assert(result.facts);
@@ -2521,7 +2573,7 @@ describe('the port wiring is reported', () => {
     });
     const result = await h.run();
     expect(result.ok).toBe(true);
-    const wired = labelled(h.stderr, 'wired')[0];
+    const wired = labelled(h.stderr, 'metro').at(-1);
     expect(wired).toMatch(/not debuggable/);
     expect(wired).toMatch(/adb reverse tcp:8081->tcp:8082/);
     assert(result.facts);
@@ -2558,7 +2610,7 @@ describe('the dev-client deep link', () => {
       launch: () => ({ ok: true, mode: 'deep-link', devClientUrl: url, reversed: [], debugHttpHost: '10.0.2.2:8082' }),
     });
     const result = await h.run();
-    expect(labelled(h.stderr, 'launch')[0]).toMatch(/expo-dev-client deep link/);
+    expect(labelled(h.stderr, 'launch')[0]).toMatch(/^  launch {6}com\.example\.app \(\d+m?s?\)$/);
     assert(result.facts);
     expect(result.facts.devClientUrl).toBe(url);
   });
@@ -2577,7 +2629,7 @@ describe('the dev-client deep link', () => {
     });
     const result = await h.run();
     expect(result.ok).toBe(true);
-    expect(labelled(h.stderr, 'wired').some((l) => /unable to resolve Intent/.test(l))).toBeTruthy();
+    expect(labelled(h.stderr, 'metro').some((l) => /unable to resolve Intent/.test(l))).toBeTruthy();
     const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'build-android.ndjson'), 'utf-8'));
     expect(records.find((r) => r.event === 'dev_client_link_failed')).toBeTruthy();
   });
@@ -2995,7 +3047,7 @@ describe('the release APK swap', () => {
     assert(result.facts);
     expect(result.facts.appPath).toBe(join(root, 'apk-swap', 'app-production-release.apk'));
     expect(result.facts.cacheHit).toBe('local');
-    expect(labelled(h.stderr, 'apk swap')[1]).toMatch(/hermes bytecode repacked \(store\), zipaligned and re-signed/);
+    expect(labelled(h.stderr, 'swap')[1]).toMatch(/hermes bytecode repacked \(store\), zipaligned and re-signed/);
     expect(existsSync(join(root, 'apk-swap'))).toBe(false);
   });
 
@@ -3062,7 +3114,7 @@ describe('the release APK swap', () => {
     const result = await h.run();
     expect(result.ok).toBe(true);
     const errs = h.stderr.join('\n');
-    expect(errs).toMatch(/apk swap/);
+    expect(errs).toMatch(/^  swap {8}/m);
     expect(errs).toMatch(/changed drawable-mdpi\/logo\.png/);
     expect(errs).toMatch(/building fresh instead/);
     expect(errs).toMatch(/an APK cannot be made to carry an asset AAPT did not package/);
@@ -3252,7 +3304,7 @@ describe('re-fingerprint after prebuild', () => {
     expect(result.ok).toBe(true);
     expect(h.calls.prebuild.length).toBe(1);
     expect(h.calls.install[0]?.apkPath).toBe(cachedApk);
-    expect(h.stderr.some((l) => /hit under the post-prebuild key \(this tree was cold/.test(l))).toBe(true);
+    expect(h.stderr.some((l) => /^  cache {7}hit wwwwww\.\. \(post-prebuild key\)$/.test(l))).toBe(true);
     expect(result.facts?.cacheHit).toBe('local');
     expect(result.facts?.fingerprint).toBe(WARM);
     expect(result.facts?.cacheKey).toBe(`${WARM}-debug-sim`);
@@ -3962,7 +4014,7 @@ test('the wired line reports the reverses that were actually registered', async 
     }),
   });
   await h.run();
-  const wired = labelled(h.stderr, 'wired').join(' ');
+  const wired = labelled(h.stderr, 'metro').join(' ');
   expect(wired).toContain('tcp:8082->tcp:8082');
   expect(wired).not.toContain('tcp:8081');
 });
@@ -3977,7 +4029,7 @@ describe('an APK the device already holds', () => {
     const result = await h.run();
 
     expect(result.ok).toBe(true);
-    expect(labelled(h.stderr, 'install')[0]).toMatch(/skipped; emulator-5584 already holds this APK/);
+    expect(labelled(h.stderr, 'install')[0]).toMatch(/unchanged \(emulator-5584 already has this build\)/);
     assert(result.facts);
     expect(result.facts.installSkipped).toBe(true);
   });

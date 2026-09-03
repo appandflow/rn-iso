@@ -6,7 +6,7 @@ import { register } from '../cache-manifest.ts';
 import { getExecutor, type Executor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { sharedCompilationCache, workspaceDerivedData } from '../paths.ts';
-import { formatElapsed } from '../command-output.ts';
+import { formatElapsed, phaseLine } from '../command-output.ts';
 import { createLineReader } from '../process-output.ts';
 import { capDiagnostics, describeDiagnostic, type Diagnostic, extractXcodeDiagnostics } from './errors-xcode.ts';
 import { cleanLine } from '../supervisor/server-expo.ts';
@@ -254,11 +254,7 @@ function resolveCompilationCacheSettings({
       prune: 'atomic',
       note: 'shared Xcode compilation cache',
     });
-    onNote(
-      chalk.dim(
-        `compilation cache on for this build: CAS at ${casPath} (Stim sets it on its own xcodebuild; the Podfile is not touched)`,
-      ),
-    );
+    onNote(chalk.dim(phaseLine('cache', `compilation cache on (CAS at ${casPath})`)));
   }
   return settings;
 }
@@ -376,7 +372,7 @@ export function heartbeatLine(elapsedMs: number, lastLine: string, label = 'buil
   const hint =
     lastLine.length > HEARTBEAT_HINT_LENGTH ? `${lastLine.slice(0, HEARTBEAT_HINT_LENGTH - 3)}...` : lastLine;
   const activity = hint.trim() === '' ? '' : `: ${hint}`;
-  return `${label.padEnd(11)} still running (${formatElapsed(elapsedMs)})${activity}`;
+  return phaseLine(label, `still running (${formatElapsed(elapsedMs)})${activity}`);
 }
 
 export type HeartbeatSchedule = (run: () => void, delayMs: number) => () => void;
@@ -633,7 +629,7 @@ export async function buildIos({
         cacheableTasks: activity.cacheableTasks,
         hitRatePercent: activity.hitRatePercent,
       });
-      onNote(`compilation cache ${compilationCacheActivityLine(activity)}`);
+      onNote(phaseLine('cache', `compilation cache ${compilationCacheActivityLine(activity)}`));
     }
   };
 

@@ -1,4 +1,14 @@
-import { formatDuration, formatElapsed, formatLongDuration, phaseLine, shortHash } from '../command-output.ts';
+import { readFileSync } from 'node:fs';
+import {
+  formatDuration,
+  formatElapsed,
+  formatLongDuration,
+  isOutputLabel,
+  launchErrorReport,
+  OUTPUT_LABELS,
+  phaseLine,
+  shortHash,
+} from '../command-output.ts';
 
 test('formatDuration uses one format for every command', () => {
   expect(formatDuration(0)).toBe('0ms');
@@ -47,4 +57,52 @@ test('shortHash keeps short values and abbreviates long values', () => {
   expect(shortHash('12345678')).toBe('12345678');
   expect(shortHash('123456789')).toBe('123456..');
   expect(shortHash(null)).toBe('');
+});
+
+test('the label set is closed, sorted, and free of duplicates', () => {
+  expect(OUTPUT_LABELS).toEqual(OUTPUT_LABELS.toSorted());
+  expect(new Set(OUTPUT_LABELS).size).toBe(OUTPUT_LABELS.length);
+  expect(isOutputLabel('install')).toBe(true);
+  expect(isOutputLabel('launch err')).toBe(false);
+  expect(isOutputLabel('js swap')).toBe(false);
+  expect(isOutputLabel('wired')).toBe(false);
+});
+
+test('every label ios.ts and android.ts print comes from that one set', () => {
+  for (const command of ['ios', 'android']) {
+    const src = readFileSync(new URL(`../commands/${command}.ts`, import.meta.url), 'utf-8');
+    const labels = new Set<string>();
+    for (const match of src.matchAll(/\bphase(?:Line)?\(\s*'((?:[^'\\]|\\.)*)'/g)) labels.add(match[1]!);
+    expect(labels.size).toBeGreaterThan(10);
+    for (const label of labels) {
+      expect({ command, label, known: isOutputLabel(label) }).toEqual({ command, label, known: true });
+    }
+  }
+});
+
+test("a verified launch counts the device log and still prints the app's own errors", () => {
+  const records = [
+    { src: 'device', proc: 'Trailhead', msg: 'Failed to send CA Event for app launch measurements' },
+    { src: 'device', proc: 'Trailhead', msg: 'TCP Conn 0x106f86d00 Failed : error 0:61 [61]' },
+    { src: 'device', proc: 'Trailhead', msg: 'NSBundle (null) initWithPath failed' },
+    { src: 'client', msg: 'a redbox' },
+    { src: 'metro', msg: 'a bundler error' },
+  ];
+  const report = launchErrorReport(records);
+  expect(report.summary).toBe('3 error-level records in the device log during launch (logs --errors --source device)');
+  expect(report.lines).toEqual(['a redbox', 'a bundler error']);
+});
+
+test('the count never depends on the process a record names', () => {
+  const named = launchErrorReport([{ src: 'device', proc: 'Trailhead', msg: 'x' }]);
+  const unnamed = launchErrorReport([{ src: 'device', msg: 'x' }]);
+  expect(named.summary).toBe(unnamed.summary);
+  expect(named.summary).toBe('1 error-level record in the device log during launch (logs --errors --source device)');
+  expect(named.lines).toEqual([]);
+});
+
+test('no device record means no count line at all', () => {
+  const quiet = launchErrorReport([{ src: 'client', msg: 'x' }]);
+  expect(quiet.summary).toBe(null);
+  expect(quiet.lines).toEqual(['x']);
 });

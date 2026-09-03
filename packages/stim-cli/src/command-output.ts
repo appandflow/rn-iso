@@ -41,3 +41,71 @@ export function shortHash(hash: unknown): string {
   const text = String(hash ?? '');
   return text.length > 8 ? `${text.slice(0, 6)}..` : text;
 }
+
+/**
+ * Every label Stim prints in the phase-line column. `''` is the continuation
+ * label for a wrapped fact. `app` and `compilation cache` appear only in the
+ * stdout summary block a successful run ends with.
+ */
+export const OUTPUT_LABELS: readonly string[] = [
+  '',
+  'app',
+  'branch',
+  'build',
+  'cache',
+  'carry',
+  'compilation cache',
+  'device',
+  'error',
+  'failed',
+  'fingerprint',
+  'gems',
+  'install',
+  'ip.txt',
+  'lan',
+  'launch',
+  'lease',
+  'log',
+  'logs',
+  'metro',
+  'pods',
+  'port',
+  'prebuild',
+  'ready',
+  'remedy',
+  'setting',
+  'state',
+  'stats',
+  'stop',
+  'swap',
+  'verify',
+];
+
+export function isOutputLabel(label: unknown): boolean {
+  return OUTPUT_LABELS.includes(String(label));
+}
+
+/** The two fields a launch report reads off a collector's NDJSON record. */
+export interface LaunchErrorRecord {
+  src?: unknown;
+  msg?: unknown;
+  [key: string]: unknown;
+}
+
+/**
+ * Splits the error-level records a verified launch collected into the device
+ * log the run counts and the records it still prints one by one.
+ */
+export function launchErrorReport(records: readonly LaunchErrorRecord[]): { summary: string | null; lines: string[] } {
+  const fromDevice = records.filter((record) => record.src === 'device');
+  const lines = records
+    .filter((record) => record.src !== 'device')
+    .map((record) => (record.msg === undefined || record.msg === null ? '' : String(record.msg)))
+    .filter((msg) => msg !== '');
+  const noun = fromDevice.length === 1 ? 'record' : 'records';
+  const summary =
+    fromDevice.length === 0
+      ? null
+      : `${fromDevice.length} error-level ${noun} in the device log during launch (logs --errors --source device)`;
+  return { summary, lines };
+}
