@@ -78,7 +78,7 @@ machine's `$STIM_HOME/config.json`, overridden by `STIM_POOL_IOS_PARKED_MAX`
 (and the Android twin). Absent means 3. `0` disables parking and adoption:
 `worktree remove` deletes the simulator as today, `ios` never adopts, and an
 existing pool stays where it is until `gc --delete`. A value that is not a
-whole number is `STIM_BAD_ARG` in `worktree remove` and `ios`, and a warning
+non-negative integer is `STIM_BAD_ARG` in `worktree remove` and `ios`, and a warning
 in `status`, `gc`, and `doctor`.
 
 When `STIM_HOME` is set in the environment, parking and adoption are off
@@ -130,9 +130,10 @@ point takes the project path and bundle id; `reclaimOwnedDevices` passes
 them.
 
 1. Shut the simulator down if booted.
-2. Clear the app's data on disk: find its data container by reading
-   `MCMMetadataIdentifier` from each
-   `<devices>/<udid>/data/Containers/Data/Application/*/.com.apple.mobile_container_manager.metadata.plist`
+2. Clear the app's data on disk: under the device's `dataPath` (reported
+   per device by `simctl list devices --json`; `parseSimctlList` keeps it),
+   find the data container by reading `MCMMetadataIdentifier` from each
+   `Containers/Data/Application/*/.com.apple.mobile_container_manager.metadata.plist`
    (`plutil -extract ... raw`), then empty the contents of `Documents`,
    `Library`, `tmp`, and `SystemData` (39 ms measured). This removes
    `NSUserDefaults`, AsyncStorage, SQLite, and the dev-menu keys stim wrote in
@@ -157,9 +158,10 @@ giving the workspace up.
 Park removes the previous workspace's app data, and adoption removes its
 privacy grants, the keychain, and its other apps. A parked simulator keeps
 its system state: pasteboard, Safari cookies and website data, photos,
-contacts and calendars, installed profiles, Simulator settings, and
-device-level defaults such as the scheme approvals stim rewrites on every
-install. A project that needs a clean system image sets the maximum to 0; an
+contacts and calendars, installed profiles, Simulator settings, app-group
+containers (`Containers/Shared/AppGroup`, which the metadata cannot map to
+one app), and device-level defaults such as the scheme approvals stim
+rewrites on every install. A project that needs a clean system image sets the maximum to 0; an
 erase-and-prewarm option is deferred.
 
 ## Adopt
@@ -178,7 +180,8 @@ When `ensureOwnedIosDevice` finds no owned simulator for the workspace:
    asymmetry is unchanged here.)
 2. Under the config lock, take the oldest matching parked record; remove it
    from the pool and record it as this workspace's owned device in the same
-   write, carrying `simslimManaged` and `adopted: true`.
+   write, carrying `simslimManaged`, `adopted: true`, and
+   `adoptionPending: true`.
 3. `simctl rename <udid> "stim-<label> (<model> <runtime>)"`.
 4. Boot as today, then, still inside the boot the run already waits on
    (#269 overlaps it with the fingerprint): `simctl privacy <udid> reset all`
@@ -187,16 +190,29 @@ When `ensureOwnedIosDevice` finds no owned simulator for the workspace:
    `reconcileSimSlim` with the carried `simslimManaged` as `previouslyManaged`
    turns SimSlim off when this workspace has no profile and on when it has
    one, exactly as reuse does. The `device` phase line reads
-   `  device      <full name> (<udid short>) adopted (<time>)`.
-5. At install, before the existing proof: `simctl listapps`, and uninstall
-   every `ApplicationType == User` app whose bundle id is not this run's.
-   Then as today: when the run's cache key equals the parked record's and
-   the installed-container proof passes, the install is skipped
-   (`install     unchanged`); otherwise the cached app is installed over the
+   `  device      <full name> (<udid short>) adopted (<time>)`; its time
+   includes the two resets, so it runs longer than a plain `booted`.
+5. On the adoption run only, at install, before the existing proof:
+   `simctl listapps`, and uninstall every `ApplicationType == User` app
+   whose bundle id is not this run's. Completing this step clears
+   `adoptionPending`. Then as today: the parked record's cache key is
+   checked first so the proof's hashing is skipped when it cannot match, and
+   the installed-container proof decides; a pass skips the install
+   (`install     unchanged`), otherwise the cached app is installed over the
    parked one, an upgrade install onto cleared data.
 
-A parked simulator whose `simctl list` state is missing or unavailable is
-dropped from the pool and reported; adoption then falls through to creation.
+While `adoptionPending` is set, the reuse path runs steps 4 and 5 too, so a
+crash, a boot failure, or a build failure between the record write and the
+end of the install cannot leave the next run booting with the previous
+workspace's grants, keychain, or apps. A run on a simulator without the
+marker never lists or uninstalls apps: what a workspace installs by hand on
+its own simulator is not stim's to remove.
+
+A parked record whose simulator `simctl list` does not report, or reports
+unavailable (its runtime removed), is deleted (`simctl delete` accepts an
+unavailable device) and its record dropped, with a line saying so: a listed
+record proves the simulator is Stim's, and dropping the record alone would
+hide 2.5 GB from every sweep. Adoption then falls through to creation.
 No match creates a new simulator as today; the pool is never a reason to
 boot a different model than requested, and the new simulator is parked
 normally when its workspace is removed.
@@ -208,9 +224,12 @@ normally when its workspace is removed.
     Parked simulators (2, 5.1 GB):
       ios stim-parked (iPhone 17 26.5) a1f3 (A7A4..) iPhone 17 26.5 parked 3d ago 2.6 GB
 
-with the `--delete` effect line the other sections carry; size comes from
-`directorySize` over the simulator's data directory. `gc --delete` deletes
-every parked simulator and clears the list. Orphaned `stim-parked` simulators
+with the `--delete` effect line the other sections carry; size is the
+`dataPathSize` the same listing reports. `gc --delete` deletes every parked
+simulator and clears the list, even when `STIM_HOME` is set: the sweep for
+unlisted `stim-` devices stays refused under `STIM_HOME` as today, because a
+scoped config cannot prove an unlisted device stale, but a parked record in
+this config proves that simulator is Stim's and parked by this home. Orphaned `stim-parked` simulators
 appear under `Orphaned devices`, as today. `status` prints one line per
 platform whenever the pool is not empty: `pool: 2 parked iOS simulators
 (max 3)`, or `pool: 2 parked iOS simulators (parking off; gc --delete
@@ -222,13 +241,16 @@ an eviction.
 
 ## Hermetic suites
 
-The native e2e harness asserts a device-free machine at `verifyCleanup`
-(the end of each row). It redirects `STIM_HOME`, so parking is off under the
-rule above, and it sets `STIM_POOL_IOS_PARKED_MAX=0` (and the Android twin)
-explicitly so the rule is not the only thing keeping rows hermetic. The pool
-is exercised by its own e2e row, which sets the variable to 1: create,
-remove, assert `parked`, create again, assert `adopted`, remove a second
-workspace, assert `pool over 1`.
+The native e2e harness asserts at `verifyCleanup` (the end of each row)
+that no `stim-` device remains. It redirects `STIM_HOME`, so parking is off
+under the rule above, and it sets `STIM_POOL_IOS_PARKED_MAX=0` (and the
+Android twin) explicitly so the rule is not the only thing keeping rows
+hermetic. The pool is exercised by its own e2e row, which sets the variable
+to 1: create two workspaces and run `ios` in both (the pool is empty, both
+create); remove the first, assert `parked`; remove the second, assert
+`parked` and `deleted ... (pool over 1)`; create a third, assert `adopted`;
+remove it, assert `parked`; `gc --delete`, assert the pool is empty and no
+`stim-` device remains.
 
 ## Guidance deltas
 
@@ -246,9 +268,10 @@ the pool record, and deleted only by eviction or `gc --delete`." Invariant
 
 Every site that quotes or reconstructs `stim-<label>` changes to the new
 shape: AGENTS.md invariant 2 (line 145), `skill/SKILL.md` (line 99),
-`commands/guide.ts` (lines 240 and 359), `doctor.ts` (line 516, EAS
-sessions excepted), and Android's "already exists" recovery
-(`engine/device.ts` line 409, `sim/android.ts` line 204). Prefix checks
+`commands/guide.ts` (lines 240 and 359), and `doctor.ts` (line 516, EAS
+sessions excepted) in phase 1. AVD names change in phase 2, together with
+Android's "already exists" recovery (`engine/device.ts` line 409,
+`sim/android.ts` line 204). Prefix checks
 (`resolveOwnedIosSim`, `resolveOwnedAvdSerial`, `deleteIosSim`,
 `deleteAvd`, `findOrphanedDevices`, `liveOwnedDeviceCount`, the harness
 `/stim-/` greps) survive unchanged.
@@ -271,8 +294,11 @@ sessions excepted), and Android's "already exists" recovery
 - Command tests with `STIM_HOME` redirected and the variable set explicitly:
   `worktree remove` parks and evicts (delete outside the lock); `ios` adopts,
   renames, and prints `adopted`; the idempotent rename on reuse; `gc` reports
-  and `--delete` empties; `status` lines; parking disabled by `0` with a
-  non-empty pool; `gc --delete` never parks.
+  and `--delete` empties, including under `STIM_HOME`; `status` lines;
+  parking disabled by `0` with a non-empty pool; `gc --delete` never parks;
+  an adoption that crashes after the record write, where the next run
+  finishes the resets and the uninstall and clears `adoptionPending`; an
+  unavailable parked simulator deleted and dropped.
 - The e2e pool row above.
 - Field check: a cache-hit run in a fresh worktree with a parked match is
   expected at 20-30 s against the 72.6 s baseline (runs B/E measured
@@ -282,13 +308,13 @@ sessions excepted), and Android's "already exists" recovery
 
 ## Decisions
 
-| Question         | Decision                                                                                                       | Why                                                                                                         |
-| ---------------- | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| Erase on park    | No; keep the app installed, clear its data on disk at park, reset grants, keychain, and other apps at adoption | Erase costs a 12 s boot penalty; the on-disk clear is 39 ms; only `rename` works on a shut-down simulator   |
-| Bound            | Configurable, default 3, oldest evicted                                                                        | Bounded disk (about 2.5 GB per parked simulator)                                                            |
-| Where park lives | `teardown.ts`, `worktree remove` only                                                                          | Invariant 4; `gc --delete` must not park what it is deleting                                                |
-| Booted pool      | Not now                                                                                                        | 2.6 GB RAM per booted simulator; a later setting                                                            |
-| Match rule       | Model and runtime identifiers, exact                                                                           | A ticket that asks for an iPad must never get an iPhone                                                     |
-| Suites           | Pool off under a redirected `STIM_HOME` unless the variable is explicit                                        | Rows stay device-free and hermetic without every harness opting out                                         |
-| System state     | Kept on a parked simulator; erase-and-prewarm deferred                                                         | Isolation of app data, grants, keychain, and apps is what agents need; a clean image costs the boot penalty |
-| Names            | `stim-<label> (<model> <runtime>)`, 60 characters, label shortened first                                       | Readable in simctl and the Simulator app; identity stays the udid                                           |
+| Question         | Decision                                                                                                       | Why                                                                                                                                   |
+| ---------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Erase on park    | No; keep the app installed, clear its data on disk at park, reset grants, keychain, and other apps at adoption | Erase costs a 12 s boot penalty; the on-disk clear is 39 ms; of the cleaning subcommands only `rename` works on a shut-down simulator |
+| Bound            | Configurable, default 3, oldest evicted                                                                        | Bounded disk (about 2.5 GB per parked simulator)                                                                                      |
+| Where park lives | `teardown.ts`, `worktree remove` only                                                                          | Invariant 4; `gc --delete` must not park what it is deleting                                                                          |
+| Booted pool      | Not now                                                                                                        | 2.6 GB RAM per booted simulator; a later setting                                                                                      |
+| Match rule       | Model and runtime identifiers, exact                                                                           | A ticket that asks for an iPad must never get an iPhone                                                                               |
+| Suites           | Pool off under a redirected `STIM_HOME` unless the variable is explicit                                        | Rows stay device-free and hermetic without every harness opting out                                                                   |
+| System state     | Kept on a parked simulator; erase-and-prewarm deferred                                                         | Isolation of app data, grants, keychain, and apps is what agents need; a clean image costs the boot penalty                           |
+| Names            | `stim-<label> (<model> <runtime>)`, 60 characters, label shortened first                                       | Readable in simctl and the Simulator app; identity stays the udid                                                                     |
