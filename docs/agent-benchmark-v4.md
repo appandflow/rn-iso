@@ -32,7 +32,7 @@ Pin the exact published `stim-cli` version and package integrity, fixture
 commit, Codex version, model, reasoning effort, service tier, `agent-device`
 version and executable hash, Node.js, CocoaPods, macOS, Xcode, iPhone model,
 and iOS runtime before preparing the block. The Luna pilot uses published
-`stim-cli@1.0.0-rc.11`, iPhone 17, and iOS 26.5.
+`stim-cli@1.0.0-rc.12`, iPhone 17, and iOS 26.5.
 
 Preparation runs outside the timer. It creates one Stim-owned simulator, warms
 the fixed fixture, removes its seed worktree, and verifies that cleanup parked
@@ -143,11 +143,26 @@ fields, worktree and simulator evidence, cache and adoption/build output, and
 invalid-attempt reasons.
 
 The coordinator timestamps every runner event and reconstructs every command's
-start, end, duration, exit status, and output. A generated interactive HTML
-timeline provides per-run tabs, agent messages, command bars, Stim phases,
-app-alive and screen-ready milestones, output drill-down, and the proof image.
-The Markdown report is the machine-readable summary; the timeline is an audit
-view and does not redefine metrics.
+start, end, duration, exit status, and output. The website's interactive
+benchmark viewer provides per-run tabs, agent messages, non-overlapping command
+lanes, app-alive and screen-ready milestones, terminal output drill-down, token
+usage, estimated token cost, and the proof image. Exported website data uses
+relative paths and redacted device identifiers. The Markdown report is the
+machine-readable summary; the viewer is an audit view and does not redefine
+metrics.
+
+Export a completed block into the website with:
+
+```bash
+node scripts/export-benchmark-viewer.mjs \
+  /path/to/results/<stage> \
+  website/src/data/benchmarks/<stage>.json \
+  website/static/benchmarks/<stage>
+```
+
+The exporter refuses data that still contains a local username or an absolute
+home, volume, temporary, or simulator path. Review the generated diff before
+publishing because command output can contain other project-specific data.
 
 Invalid attempts are immutable audit records. Fix only a coordinator defect or
 environmental prerequisite, then reschedule the same cell under a new run id.
