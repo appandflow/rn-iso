@@ -67,7 +67,7 @@ export function isValidWorktreeName(name: string): boolean {
 }
 
 export function worktreePath({ worktreeDir, name }: { worktreeDir: string; name: string }): string {
-  return join(worktreeDir, encodeURIComponent(name));
+  return join(worktreeDir, name.replaceAll('/', '+'));
 }
 
 export function defaultWorktreeLabel(name: string): string {

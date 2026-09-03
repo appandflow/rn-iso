@@ -160,7 +160,7 @@ test('create action: slash name keeps the Git hierarchy in one worktree director
 
     const { logs } = await runCreateInRepo(repo, 'bench/run-1', {});
 
-    const expected = join(defaultWorktreeDir(repo), 'bench%2Frun-1');
+    const expected = join(defaultWorktreeDir(repo), 'bench+run-1');
     expect(logs).toEqual([expected]);
     expect(realpathSync(expected)).toBe(expected);
     expect(execSync('git branch --show-current', { cwd: expected, encoding: 'utf-8' })).toBe('worktree-bench/run-1\n');

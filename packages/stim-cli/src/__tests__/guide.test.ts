@@ -68,7 +68,7 @@ test('the lifecycle topic documents slash-separated worktree names', () => {
   assert(body);
   expect(body).toMatch(/worktree create app\/412/);
   expect(body).toMatch(/worktree-app\/412/);
-  expect(body).toMatch(/encoded directory directly under worktreeDir/);
+  expect(body).toMatch(/flat \+ separated directory directly under worktreeDir/);
   expect(body).toMatch(/device labels include a stable hash/);
 });
 

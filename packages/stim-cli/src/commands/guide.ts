@@ -1503,8 +1503,8 @@ STIM_CONFIG_CORRUPT  ("Stim config at <path> is not valid JSON")
   cd "$(stim worktree create app/412 --carry-ignored)"
 
   # Slash-separated names create branches such as worktree-app/412 while the
-  # checkout remains one encoded directory directly under worktreeDir. Their
-  # default device labels include a stable hash so flat names cannot collide.
+  # checkout remains one flat + separated directory directly under worktreeDir.
+  # Default device labels include a stable hash so flat names cannot collide.
 
   # 2. The dev server, under a detached supervisor. Blocks until it is
   #    verifiably THIS project's, then hands your shell back.
