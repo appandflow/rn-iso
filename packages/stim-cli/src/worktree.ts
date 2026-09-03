@@ -11,6 +11,7 @@ import {
 } from 'fs';
 import { tmpdir } from 'os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
+import { createHash } from 'node:crypto';
 import { getExecutor } from './exec.ts';
 
 const CARRY_SKIP_BASENAMES = new Set(['.DerivedData']);
@@ -59,8 +60,20 @@ export function defaultWorktreeDir(root: string): string {
   return join(dirname(root), `${basename(root)}-worktrees`);
 }
 
+export function isValidWorktreeName(name: string): boolean {
+  if (!/^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/.test(name)) return false;
+  if (name.includes('..') || name.endsWith('.')) return false;
+  return name.split('/').every((segment) => !segment.startsWith('.') && !segment.endsWith('.lock'));
+}
+
 export function worktreePath({ worktreeDir, name }: { worktreeDir: string; name: string }): string {
-  return join(worktreeDir, name);
+  return join(worktreeDir, encodeURIComponent(name));
+}
+
+export function defaultWorktreeLabel(name: string): string {
+  if (!name.includes('/')) return name;
+  const digest = createHash('sha256').update(name).digest('hex').slice(0, 8);
+  return `${digest}-${name.replaceAll('/', '-')}`;
 }
 
 export function matchesInclude(path: string, patterns: string[] | null | undefined): boolean {
