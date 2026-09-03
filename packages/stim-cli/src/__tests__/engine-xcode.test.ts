@@ -639,6 +639,14 @@ describe('the heartbeat line', () => {
     expect(heartbeatLine(90_000, 'pods', 100_000)).toBe('  pods        still installing (1m30s of ~1m40s)');
   });
 
+  test('both numbers are the same clock, so a whole minute and an hour read alike', () => {
+    expect(heartbeatLine(60_000, 'build', 240_000)).toBe('  build       still compiling (1m00s of ~4m00s)');
+    expect(heartbeatLine(3_600_000, 'build', 3_900_000)).toBe('  build       still compiling (60m00s of ~65m00s)');
+    expect(heartbeatLine(4_200_000, 'build', 3_900_000)).toBe(
+      '  build       still compiling (70m00s, usually ~65m00s)',
+    );
+  });
+
   test('past the estimate the line says usually, so a slow machine does not read as a hang', () => {
     expect(heartbeatLine(240_000, 'build', 190_000)).toBe('  build       still compiling (4m00s, usually ~3m10s)');
     expect(heartbeatLine(190_000, 'build', 190_000)).toBe('  build       still compiling (3m10s of ~3m10s)');

@@ -6,7 +6,7 @@ import { register } from '../cache-manifest.ts';
 import { getExecutor, type Executor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { sharedCompilationCache, workspaceDerivedData } from '../paths.ts';
-import { formatElapsed, formatLongDuration, phaseLine } from '../command-output.ts';
+import { formatElapsed, phaseLine } from '../command-output.ts';
 import { createLineReader } from '../process-output.ts';
 import { capDiagnostics, describeDiagnostic, type Diagnostic, extractXcodeDiagnostics } from './errors-xcode.ts';
 import { cleanLine } from '../supervisor/server-expo.ts';
@@ -374,8 +374,8 @@ export function heartbeatLine(elapsedMs: number, label = 'build', estimateMs: nu
   const inside =
     estimateMs && estimateMs > 0
       ? elapsedMs > estimateMs
-        ? `${elapsed}, usually ~${formatLongDuration(estimateMs)}`
-        : `${elapsed} of ~${formatLongDuration(estimateMs)}`
+        ? `${elapsed}, usually ~${formatElapsed(estimateMs)}`
+        : `${elapsed} of ~${formatElapsed(estimateMs)}`
       : elapsed;
   return phaseLine(label, `still ${activity} (${inside})`);
 }

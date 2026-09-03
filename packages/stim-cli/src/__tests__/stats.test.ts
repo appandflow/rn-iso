@@ -210,6 +210,18 @@ describe('the update rule', () => {
     expect(record.machine.ios?.lastPodsMs).toBe(100_000);
   });
 
+  test('a run that compiled and then failed still records the cold build it paid for', () => {
+    const record = updateStats(emptyStats(), run({ failed: true, durationMs: 200_000, coldBuildMs: 190_000 }), T0);
+    const bucket = bucketOf(record, '/repo/app');
+
+    expect(bucket.lastColdBuildMs).toBe(190_000);
+    expect(record.machine.ios?.lastColdBuildMs).toBe(190_000);
+    expect(bucket.failed).toBe(1);
+    expect(bucket.coldRuns).toBe(0);
+    expect(bucket.coldRunMs).toBe(0);
+    expect(bucket.misses).toBe(0);
+  });
+
   test('the last value wins: a later cold build replaces the one before it', () => {
     let record = updateStats(emptyStats(), run({ durationMs: 240_000, coldBuildMs: 190_000, podsMs: 100_000 }), T0);
     record = updateStats(record, run({ durationMs: 300_000, coldBuildMs: 250_000 }), T1);

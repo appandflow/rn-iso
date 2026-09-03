@@ -4647,10 +4647,14 @@ describe('run statistics', () => {
   test("the heartbeat is sized by this project's last cold build and last pod install", async () => {
     reserve();
     const seen: { build: unknown; pods: unknown } = { build: null, pods: null };
+    let reads = 0;
     const { exitCode } = await run(
       {},
       {
-        readEstimates: () => ({ coldBuildMs: 190_000, podsMs: 100_000 }),
+        readEstimates: () => {
+          reads += 1;
+          return { coldBuildMs: 190_000, podsMs: 100_000 };
+        },
         readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'B' }),
         runPodInstall: async (_root, _writer, options) => {
           seen.pods = options?.estimateMs;
@@ -4671,6 +4675,7 @@ describe('run statistics', () => {
     expect(exitCode).toBe(null);
     expect(seen.build).toBe(190_000);
     expect(seen.pods).toBe(100_000);
+    expect(reads).toBe(1);
   });
 
   test('a stats file this Stim cannot read costs the run nothing: it builds with no estimate', async () => {

@@ -118,10 +118,17 @@ sides and cancels in the mean; no second definition of duration exists.
    `lastPodsMs`; a run that did neither leaves both exactly as they were. The
    machine bucket takes them in lockstep, like every other field. Both are
    written by the same recorder, in the same call, under the same lock.
+6. A run that compiled and then failed -- an install, a boot, or a launch that
+   went wrong after the compile -- still sets `lastColdBuildMs`. Rule 3's
+   "nothing else" governs the COUNTERS: a failed run is not a cold run and
+   adds nothing to `coldRunMs`, so it changes no mean and no credit. The
+   compile itself was a real cold build of this project, and it is the best
+   estimate the next run has. A phase that did not finish never supplies a
+   duration at all.
 
 Reading them is not part of the update rule: before its build, and before
 `pod install`, a run reads the PROJECT bucket for its platform (the same key
-rule) with a plain read and no lock. A file that is missing, unreadable, from
+rule) with a plain read and no lock, once per run and reused by both phases. A file that is missing, unreadable, from
 a newer version, or has no entry for this project yields no estimate and no
 message; a statistics read never affects the run.
 
