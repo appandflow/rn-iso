@@ -262,7 +262,14 @@ function makeExecutor({
 }
 
 function simctlJson(sims: unknown[]) {
-  return JSON.stringify({ devices: { 'com.apple.CoreSimulator.SimRuntime.iOS-17-0': sims } });
+  return JSON.stringify({
+    devices: {
+      'com.apple.CoreSimulator.SimRuntime.iOS-17-0': sims.map((sim) => ({
+        deviceTypeIdentifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-15',
+        ...(sim as object),
+      })),
+    },
+  });
 }
 
 let tmpHome: string, mainDir: string, wtDir: string;

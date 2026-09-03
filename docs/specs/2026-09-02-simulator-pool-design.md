@@ -10,9 +10,11 @@ down, clear the app's data on disk while keeping the app installed, rename,
 record. When a workspace needs a simulator, Stim adopts a parked one of the
 same model and runtime before creating a new one, and finishes cleaning it
 after the boot it pays anyway: privacy grants, keychain, and every app that
-is not this workspace's. The pool holds at most a configured number of
-simulators (default 3); beyond that the oldest parked one is deleted. `gc`
-reports the pool and `gc --delete` empties it.
+is not this workspace's. The pool targets a configured number of simulators
+(default 3); beyond that the oldest parked one is deleted. A failed or
+unverifiable deletion keeps its ownership record and can temporarily leave
+the pool above that target. `gc` reports the pool, and `gc --delete` empties
+every entry it can re-verify and delete.
 
 ## Motivation
 
@@ -137,8 +139,10 @@ them.
    (`plutil -extract ... raw`), then empty the contents of `Documents`,
    `Library`, `tmp`, and `SystemData` (39 ms measured). This removes
    `NSUserDefaults`, AsyncStorage, SQLite, and the dev-menu keys stim wrote in
-   the app's domain. No bundle id recorded, or no container found, is not a
-   failure: there is nothing to clear.
+   the app's domain. No bundle id recorded, or a proven absent container root
+   or matching container, is not a failure: there is nothing to clear.
+   Unreadable directories, metadata, or container contents fail parking so
+   teardown falls back to ownership-checked deletion.
 3. `simctl rename <udid> "stim-parked (<model> <runtime>) <4 hex>"`.
 4. Under the config lock: append the record, clear the workspace's
    `platforms.ios` device record, and identify overflow by the oldest
@@ -231,8 +235,9 @@ normally when its workspace is removed.
       ios stim-parked (iPhone 17 26.5) a1f3 (A7A4..) iPhone 17 26.5 parked 3d ago 2.6 GB
 
 with the `--delete` effect line the other sections carry; size is the
-`dataPathSize` the same listing reports. `gc --delete` deletes every parked
-simulator and clears the list, even when `STIM_HOME` is set: the sweep for
+`dataPathSize` the same listing reports. `gc --delete` attempts every parked
+simulator, removes only records whose absence or deletion it can prove, and
+reports retained failures. This also works when `STIM_HOME` is set: the sweep for
 unlisted `stim-` devices stays refused under `STIM_HOME` as today, because a
 scoped config cannot prove an unlisted device stale, but a parked record in
 this config proves that simulator is Stim's and parked by this home. Orphaned `stim-parked` simulators
@@ -298,9 +303,10 @@ Android's "already exists" recovery (`engine/device.ts` line 409,
   boot time after the recipe goes in the PR (expected about 9 s; the probe
   measured 8.9 s).
 - Command tests with `STIM_HOME` redirected and the variable set explicitly:
-  `worktree remove` parks and evicts (delete outside the lock); `ios` adopts,
+  `worktree remove` parks and attempts overflow eviction; `ios` adopts,
   renames, and prints `adopted`; the idempotent rename on reuse; `gc` reports
-  and `--delete` empties, including under `STIM_HOME`; `status` lines;
+  and `--delete` removes verified entries while retaining failures, including
+  under `STIM_HOME`; `status` lines;
   parking disabled by `0` with a non-empty pool; `gc --delete` never parks;
   an adoption that crashes after the record write, where the next run
   finishes the resets and the uninstall and clears `adoptionPending`; an

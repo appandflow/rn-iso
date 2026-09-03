@@ -23,7 +23,13 @@ beforeEach(() => {
   const listJson = JSON.stringify({
     devices: {
       'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
-        { udid: 'UDID-ABC', name: 'stim-projA', state: 'Shutdown', isAvailable: true },
+        {
+          udid: 'UDID-ABC',
+          name: 'stim-projA',
+          state: 'Shutdown',
+          isAvailable: true,
+          deviceTypeIdentifier: 'iphone-17',
+        },
       ],
     },
   });

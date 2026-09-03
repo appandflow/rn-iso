@@ -79,7 +79,13 @@ test('reclaimProject keeps the config entry when an owned device delete fails', 
   const listJson = JSON.stringify({
     devices: {
       'com.apple.CoreSimulator.SimRuntime.iOS-17-4': [
-        { udid: 'U1', name: 'stim-proj', state: 'Shutdown', isAvailable: true },
+        {
+          udid: 'U1',
+          name: 'stim-proj',
+          state: 'Shutdown',
+          isAvailable: true,
+          deviceTypeIdentifier: 'iphone-15',
+        },
       ],
     },
   });
@@ -106,7 +112,13 @@ test('reclaimProject removes the entry when the owned device really is deleted',
   const listJson = JSON.stringify({
     devices: {
       'com.apple.CoreSimulator.SimRuntime.iOS-17-4': [
-        { udid: 'U1', name: 'stim-proj', state: 'Shutdown', isAvailable: true },
+        {
+          udid: 'U1',
+          name: 'stim-proj',
+          state: 'Shutdown',
+          isAvailable: true,
+          deviceTypeIdentifier: 'iphone-15',
+        },
       ],
     },
   });

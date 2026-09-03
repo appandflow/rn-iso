@@ -56,7 +56,14 @@ afterEach(() => {
 });
 
 function simList(devices: SimEntry[]) {
-  return JSON.stringify({ devices: { 'com.apple.CoreSimulator.SimRuntime.iOS-26-2': devices } });
+  return JSON.stringify({
+    devices: {
+      'com.apple.CoreSimulator.SimRuntime.iOS-26-2': devices.map((device) => ({
+        deviceTypeIdentifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-16',
+        ...device,
+      })),
+    },
+  });
 }
 
 describe('ensureBooted: ios', () => {

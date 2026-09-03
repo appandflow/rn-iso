@@ -1893,6 +1893,7 @@ function iosListJson(devices: DeviceSpec[]) {
         name: d.name,
         state: d.state || 'Shutdown',
         isAvailable: true,
+        deviceTypeIdentifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-15',
       })),
     },
   });

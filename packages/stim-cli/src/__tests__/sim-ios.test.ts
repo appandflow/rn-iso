@@ -39,12 +39,36 @@ afterEach(() => {
 const SIMCTL_OUTPUT = JSON.stringify({
   devices: {
     'com.apple.CoreSimulator.SimRuntime.iOS-17-2': [
-      { udid: 'UDID-A', name: 'iPhone 15', state: 'Booted', isAvailable: true },
-      { udid: 'UDID-B', name: 'iPhone 15 Pro', state: 'Shutdown', isAvailable: true },
-      { udid: 'UDID-C', name: 'iPhone 14', state: 'Booted', isAvailable: true },
+      {
+        udid: 'UDID-A',
+        name: 'iPhone 15',
+        state: 'Booted',
+        isAvailable: true,
+        deviceTypeIdentifier: 'iphone-15',
+      },
+      {
+        udid: 'UDID-B',
+        name: 'iPhone 15 Pro',
+        state: 'Shutdown',
+        isAvailable: true,
+        deviceTypeIdentifier: 'iphone-15-pro',
+      },
+      {
+        udid: 'UDID-C',
+        name: 'iPhone 14',
+        state: 'Booted',
+        isAvailable: true,
+        deviceTypeIdentifier: 'iphone-14',
+      },
     ],
     'com.apple.CoreSimulator.SimRuntime.iOS-16-0': [
-      { udid: 'UDID-OLD', name: 'iPhone 13', state: 'Shutdown', isAvailable: false },
+      {
+        udid: 'UDID-OLD',
+        name: 'iPhone 13',
+        state: 'Shutdown',
+        isAvailable: false,
+        deviceTypeIdentifier: 'iphone-13',
+      },
     ],
   },
 });
@@ -60,6 +84,31 @@ test('parseSimctlList rejects structurally invalid successful output', () => {
     expect(() => parseSimctlList(output)).toThrow(/devices object/);
   }
   expect(() => parseSimctlList('{"devices":{"ios":{}}}')).toThrow(/to be an array/);
+});
+
+test('parseSimctlList rejects incomplete or mistyped iOS device records', () => {
+  const runtime = 'com.apple.CoreSimulator.SimRuntime.iOS-26-5';
+  const valid = {
+    udid: 'U1',
+    name: 'stim-app',
+    state: 'Shutdown',
+    isAvailable: true,
+    deviceTypeIdentifier: 'iphone-17',
+  };
+  for (const bad of [
+    { ...valid, udid: undefined },
+    { ...valid, name: 42 },
+    { ...valid, state: '' },
+    { ...valid, deviceTypeIdentifier: null },
+    { ...valid, isAvailable: 'yes' },
+    { ...valid, dataPath: 42 },
+    { ...valid, dataPathSize: Number.NaN },
+  ]) {
+    expect(() =>
+      parseSimctlList(JSON.stringify({ devices: { [runtime]: [bad] } }), { includeUnavailable: true }),
+    ).toThrow(/Expected simctl device field/);
+  }
+  expect(() => parseSimctlList(JSON.stringify({ devices: { [runtime]: ['corrupt'] } }))).toThrow(/every simctl device/);
 });
 
 test('parseSimctlList includes runtime in each entry', () => {
@@ -134,7 +183,13 @@ test('parseSimctlList drops non-iOS runtimes (watchOS, tvOS, visionOS)', () => {
   const out = JSON.stringify({
     devices: {
       'com.apple.CoreSimulator.SimRuntime.iOS-26-2': [
-        { udid: 'IOS-1', name: 'iPhone 17', state: 'Booted', isAvailable: true },
+        {
+          udid: 'IOS-1',
+          name: 'iPhone 17',
+          state: 'Booted',
+          isAvailable: true,
+          deviceTypeIdentifier: 'iphone-17',
+        },
       ],
       'com.apple.CoreSimulator.SimRuntime.watchOS-11-0': [
         { udid: 'WATCH-1', name: 'Apple Watch S10', state: 'Booted', isAvailable: true },
@@ -269,7 +324,13 @@ test('deleteIosSim refuses to delete a sim not owned by Stim', () => {
       JSON.stringify({
         devices: {
           'com.apple.CoreSimulator.SimRuntime.iOS-17-2': [
-            { udid: 'UDID-A', name: 'iPhone 15', state: 'Shutdown', isAvailable: true },
+            {
+              udid: 'UDID-A',
+              name: 'iPhone 15',
+              state: 'Shutdown',
+              isAvailable: true,
+              deviceTypeIdentifier: 'iphone-15',
+            },
           ],
         },
       }),
@@ -284,7 +345,13 @@ test('deleteIosSim refuses to delete a sim not owned by Stim', () => {
 const OWNED_SIM_LIST = JSON.stringify({
   devices: {
     'com.apple.CoreSimulator.SimRuntime.iOS-17-2': [
-      { udid: 'UDID-B', name: 'stim-my-project', state: 'Shutdown', isAvailable: true },
+      {
+        udid: 'UDID-B',
+        name: 'stim-my-project',
+        state: 'Shutdown',
+        isAvailable: true,
+        deviceTypeIdentifier: 'iphone-15',
+      },
     ],
   },
 });
@@ -351,7 +418,13 @@ test('occupyingApps reports a shut-down device free without probing', async () =
   const devices = JSON.stringify({
     devices: {
       'com.apple.CoreSimulator.SimRuntime.iOS-26-2': [
-        { udid: 'UDID-X', name: 'stim-x', state: 'Shutdown', isAvailable: true },
+        {
+          udid: 'UDID-X',
+          name: 'stim-x',
+          state: 'Shutdown',
+          isAvailable: true,
+          deviceTypeIdentifier: 'iphone-17',
+        },
       ],
     },
   });
@@ -373,7 +446,13 @@ test('occupyingApps still returns null (doubt) for a booted device whose probe c
   const devices = JSON.stringify({
     devices: {
       'com.apple.CoreSimulator.SimRuntime.iOS-26-2': [
-        { udid: 'UDID-X', name: 'stim-x', state: 'Booted', isAvailable: true },
+        {
+          udid: 'UDID-X',
+          name: 'stim-x',
+          state: 'Booted',
+          isAvailable: true,
+          deviceTypeIdentifier: 'iphone-17',
+        },
       ],
     },
   });
@@ -413,6 +492,11 @@ test('parseUserApps keeps only user applications', () => {
   ).toEqual(['com.example.one', 'com.example.two']);
   expect(() => parseUserApps('not json')).toThrow(/JSON/);
   expect(() => parseUserApps('[]')).toThrow(/JSON object/);
+  expect(() => parseUserApps(JSON.stringify({ 'com.example.old': 'corrupt' }))).toThrow(/to be an object/);
+  expect(() => parseUserApps(JSON.stringify({ 'com.example.old': {} }))).toThrow(/known ApplicationType/);
+  expect(() => parseUserApps(JSON.stringify({ 'com.example.old': { ApplicationType: 'Unknown' } }))).toThrow(
+    /known ApplicationType/,
+  );
 });
 
 test('listUserApps passes the udid as one argv element and converts the property list', () => {
@@ -460,6 +544,61 @@ test('the parked app data lookup reads metadata and clearing preserves the conta
   }
 });
 
+test('parked app data cleanup fails closed on unreadable metadata and invalid container directories', () => {
+  const dataPath = join(tmpHome, 'bad-device-data');
+  const app = join(dataPath, 'Containers', 'Data', 'Application', 'APP-UUID');
+  mkdirSync(app, { recursive: true });
+  setExecutor({
+    run: () => '',
+    runFile() {
+      throw new Error('metadata unreadable');
+    },
+    runQuiet: () => null,
+    spawn: () => null,
+  });
+  expect(() => findAppDataContainer(dataPath, 'com.example.app')).toThrow(/metadata unreadable/);
+
+  const container = join(tmpHome, 'bad-container');
+  mkdirSync(container, { recursive: true });
+  writeFileSync(join(container, 'Library'), 'not a directory');
+  expect(() => clearAppDataContainer(container)).toThrow(/to be a directory/);
+});
+
+test('deleteParkedIosSim bounds ownership revalidation and deletion', () => {
+  const calls: Array<{ kind: 'run' | 'runFile'; timeoutMs?: number }> = [];
+  setExecutor({
+    run(_cmd, options) {
+      calls.push({ kind: 'run', timeoutMs: options?.timeoutMs });
+      return JSON.stringify({
+        devices: {
+          'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
+            {
+              udid: 'U1',
+              name: 'stim-parked (iPhone 17 26.5) u1',
+              state: 'Shutdown',
+              isAvailable: true,
+              deviceTypeIdentifier: 'iphone-17',
+            },
+          ],
+        },
+      });
+    },
+    runFile(_file, _args, options) {
+      calls.push({ kind: 'runFile', timeoutMs: options?.timeoutMs });
+      return '';
+    },
+    runQuiet: () => null,
+    spawn: () => null,
+  });
+
+  deleteParkedIosSim('U1');
+
+  expect(calls).toEqual([
+    { kind: 'run', timeoutMs: 30000 },
+    { kind: 'runFile', timeoutMs: 30000 },
+  ]);
+});
+
 test('deleteParkedIosSim re-resolves the name before deletion', () => {
   const calls: string[][] = [];
   setExecutor({
@@ -491,7 +630,9 @@ test('deleteParkedIosSim re-resolves the name before deletion', () => {
 function bootSimList(state: string) {
   return JSON.stringify({
     devices: {
-      'com.apple.CoreSimulator.SimRuntime.iOS-17-2': [{ udid: 'UDID-A', name: 'stim-app', state, isAvailable: true }],
+      'com.apple.CoreSimulator.SimRuntime.iOS-17-2': [
+        { udid: 'UDID-A', name: 'stim-app', state, isAvailable: true, deviceTypeIdentifier: 'iphone-15' },
+      ],
     },
   });
 }

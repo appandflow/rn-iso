@@ -1681,7 +1681,7 @@ PROGRESS ON A LONG RUN
 
     Parked simulators (2, 5.1 GB):
       ios stim-parked (iPhone 17 26.5) 9c1f (9C1F..) iPhone 17 26.5 parked 3d ago 2.6 GB
-                  --delete deletes every parked simulator and empties the pool.
+                  --delete attempts every parked simulator and keeps failures.
 
   If simulator listing or deletion fails, \`gc --delete\` reports the failure
   and keeps that entry. It never turns an unverified absence into a dropped
@@ -2283,7 +2283,7 @@ WHAT RECLAIMS AN OWNED DEVICE
   stim worktree remove    parks the owned simulator (\`guide lifecycle\`) and
                             deletes every other owned device under the worktree
   stim gc --delete        sweeps stim-* devices no project references, and
-                            empties the pool of parked simulators
+                            clears verified parked simulators
   stim gc --delete --older-than <days>
                             also reaps the device of a project nothing has
                             touched in that long, even though the project is

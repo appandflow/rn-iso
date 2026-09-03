@@ -629,7 +629,13 @@ function simctlClock(step: number) {
         return JSON.stringify({
           devices: {
             'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
-              { udid: UDID, name: 'stim-fixture', state: 'Booted', isAvailable: true },
+              {
+                udid: UDID,
+                name: 'stim-fixture',
+                state: 'Booted',
+                isAvailable: true,
+                deviceTypeIdentifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-17',
+              },
             ],
           },
         });

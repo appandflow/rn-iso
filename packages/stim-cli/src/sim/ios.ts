@@ -46,20 +46,7 @@ export function parseSimctlList(
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error('Expected simctl list to return a JSON object with a devices object.');
   }
-  const data = parsed as {
-    devices?: Record<
-      string,
-      Array<{
-        udid: string;
-        name: string;
-        state: string;
-        deviceTypeIdentifier: string;
-        isAvailable?: boolean;
-        dataPath?: string;
-        dataPathSize?: number;
-      }>
-    >;
-  };
+  const data = parsed as { devices?: Record<string, unknown> };
   if (data.devices === null || typeof data.devices !== 'object' || Array.isArray(data.devices)) {
     throw new Error('Expected simctl list to return a JSON object with a devices object.');
   }
@@ -68,17 +55,47 @@ export function parseSimctlList(
     if (!Array.isArray(devices)) throw new Error(`Expected simctl devices for ${runtime} to be an array.`);
     if (!/\.iOS-/.test(runtime)) continue;
     for (const dev of devices) {
-      const available = Boolean(dev.isAvailable);
+      if (dev === null || typeof dev !== 'object' || Array.isArray(dev)) {
+        throw new Error(`Expected every simctl device for ${runtime} to be an object.`);
+      }
+      const record = dev as Record<string, unknown>;
+      for (const field of ['udid', 'name', 'state', 'deviceTypeIdentifier'] as const) {
+        if (typeof record[field] !== 'string' || record[field].length === 0) {
+          throw new Error(`Expected simctl device field ${field} for ${runtime} to be a non-empty string.`);
+        }
+      }
+      if (record.isAvailable !== undefined && typeof record.isAvailable !== 'boolean') {
+        throw new Error(`Expected simctl device field isAvailable for ${runtime} to be a boolean.`);
+      }
+      if (record.dataPath !== undefined && typeof record.dataPath !== 'string') {
+        throw new Error(`Expected simctl device field dataPath for ${runtime} to be a string.`);
+      }
+      if (
+        record.dataPathSize !== undefined &&
+        (typeof record.dataPathSize !== 'number' || !Number.isFinite(record.dataPathSize))
+      ) {
+        throw new Error(`Expected simctl device field dataPathSize for ${runtime} to be a finite number.`);
+      }
+      const typed = record as unknown as {
+        udid: string;
+        name: string;
+        state: string;
+        deviceTypeIdentifier: string;
+        isAvailable?: boolean;
+        dataPath?: string;
+        dataPathSize?: number;
+      };
+      const available = Boolean(typed.isAvailable);
       if (!available && !includeUnavailable) continue;
       sims.push({
-        udid: dev.udid,
-        name: dev.name,
-        state: dev.state,
+        udid: typed.udid,
+        name: typed.name,
+        state: typed.state,
         runtime,
-        deviceTypeIdentifier: dev.deviceTypeIdentifier,
+        deviceTypeIdentifier: typed.deviceTypeIdentifier,
         available,
-        ...(typeof dev.dataPath === 'string' ? { dataPath: dev.dataPath } : {}),
-        ...(typeof dev.dataPathSize === 'number' ? { dataPathSize: dev.dataPathSize } : {}),
+        ...(typed.dataPath !== undefined ? { dataPath: typed.dataPath } : {}),
+        ...(typed.dataPathSize !== undefined ? { dataPathSize: typed.dataPathSize } : {}),
       });
     }
   }
@@ -364,18 +381,23 @@ export function uninstallIosApp(udid: string, bundleId: string): void {
   getExecutor().runFile('xcrun', ['simctl', 'uninstall', udid, bundleId]);
 }
 
-interface ListedApp {
-  ApplicationType?: unknown;
-}
-
 export function parseUserApps(jsonOutput: string): string[] {
   const data: unknown = JSON.parse(jsonOutput);
   if (data === null || typeof data !== 'object' || Array.isArray(data)) {
     throw new Error('Expected simctl listapps to convert to a JSON object.');
   }
-  return Object.entries(data as Record<string, ListedApp>)
-    .filter(([, app]) => app !== null && typeof app === 'object' && app.ApplicationType === 'User')
-    .map(([bundleId]) => bundleId);
+  const userApps: string[] = [];
+  for (const [bundleId, app] of Object.entries(data as Record<string, unknown>)) {
+    if (app === null || typeof app !== 'object' || Array.isArray(app)) {
+      throw new Error(`Expected simctl listapps entry ${JSON.stringify(bundleId)} to be an object.`);
+    }
+    const applicationType = (app as Record<string, unknown>).ApplicationType;
+    if (applicationType !== 'User' && applicationType !== 'System') {
+      throw new Error(`Expected simctl listapps entry ${JSON.stringify(bundleId)} to name a known ApplicationType.`);
+    }
+    if (applicationType === 'User') userApps.push(bundleId);
+  }
+  return userApps;
 }
 
 const LISTAPPS_TIMEOUT_MS = 60000;
@@ -401,20 +423,18 @@ export function findAppDataContainer(dataPath: string, bundleId: string): string
   let entries: string[];
   try {
     entries = readdirSync(root);
-  } catch {
-    return null;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
+    throw error;
   }
   const exec = getExecutor();
   for (const entry of entries) {
     const dir = join(root, entry);
-    let identifier: string | null;
-    try {
-      identifier = exec.runFile('plutil', ['-extract', 'MCMMetadataIdentifier', 'raw', join(dir, CONTAINER_METADATA)], {
-        timeoutMs: PLUTIL_TIMEOUT_MS,
-      });
-    } catch {
-      continue;
-    }
+    const identifier = exec.runFile(
+      'plutil',
+      ['-extract', 'MCMMetadataIdentifier', 'raw', join(dir, CONTAINER_METADATA)],
+      { timeoutMs: PLUTIL_TIMEOUT_MS },
+    );
     if (identifier.trim() === bundleId) return dir;
   }
   return null;
@@ -425,10 +445,11 @@ export function clearAppDataContainer(container: string): void {
     const dir = join(container, name);
     let children: string[];
     try {
-      if (!statSync(dir).isDirectory()) continue;
+      if (!statSync(dir).isDirectory()) throw new Error(`Expected app data path ${dir} to be a directory.`);
       children = readdirSync(dir);
-    } catch {
-      continue;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') continue;
+      throw error;
     }
     for (const child of children) rmSync(join(dir, child), { recursive: true, force: true });
   }
@@ -452,13 +473,17 @@ export function deleteIosSim(udid: string): void {
   getExecutor().run(`xcrun simctl delete ${udid}`);
 }
 
+const PARKED_DELETE_TIMEOUT_MS = 30000;
+
 export function deleteParkedIosSim(udid: string): void {
-  const sim = listAllIosSims({ includeUnavailable: true }).find((entry) => entry.udid === udid);
+  const sim = listAllIosSims({ includeUnavailable: true, timeoutMs: PARKED_DELETE_TIMEOUT_MS }).find(
+    (entry) => entry.udid === udid,
+  );
   if (!sim) return;
   if (!sim.name.startsWith('stim-')) {
     throw new Error(`Simulator ${udid} is now named "${sim.name}" and is not Stim-owned; refusing to delete it.`);
   }
-  getExecutor().runFile('xcrun', ['simctl', 'delete', udid]);
+  getExecutor().runFile('xcrun', ['simctl', 'delete', udid], { timeoutMs: PARKED_DELETE_TIMEOUT_MS });
 }
 
 export function listIosRuntimes(): IosRuntime[] {
