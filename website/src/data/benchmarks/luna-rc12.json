@@ -1,0 +1,1279 @@
+{
+  "schemaVersion": 1,
+  "stage": "luna-rc12",
+  "title": "Luna rc.12",
+  "protocolVersion": 4,
+  "recordedOn": "2026-09-03",
+  "primaryMetric": "Dispatch to validated Settings screenshot",
+  "pricing": {
+    "model": "gpt-5.6-luna",
+    "inputPerMillion": 0.2,
+    "cachedInputPerMillion": 0.02,
+    "outputPerMillion": 1.2,
+    "source": "https://developers.openai.com/api/docs/models/gpt-5.6-luna",
+    "estimateNote": "API-equivalent token estimate from aggregate counters. It excludes long-context multipliers, cache-write premiums, tool fees, and subscription pricing."
+  },
+  "runs": [
+    {
+      "id": "javascript-stim",
+      "model": "gpt-5.6-luna",
+      "variant": "javascript",
+      "arm": "stim",
+      "valid": true,
+      "invalidReasons": [],
+      "settingsReadySeconds": 133.857,
+      "appAliveSeconds": 79.984,
+      "totalSeconds": 159.853,
+      "commandCount": 14,
+      "usage": {
+        "input_tokens": 447299,
+        "cached_input_tokens": 392448,
+        "output_tokens": 3928,
+        "reasoning_output_tokens": 1171
+      },
+      "estimatedTokenCostUsd": 0.02353276,
+      "messages": [
+        {
+          "id": "item_0",
+          "atSeconds": 6.29,
+          "text": "I’m using the Stim skill to create and launch the isolated worktree/simulator, then the agent-device skill to drive Settings and capture the required proof screenshot. I’ll preserve the inherited `STIM_HOME` and follow the exact command strings you specified."
+        },
+        {
+          "id": "item_4",
+          "atSeconds": 20.989,
+          "text": "The iOS environment check is clean. I’m creating the requested worktree now; I’ll use only the absolute path emitted by that command for all subsequent project work."
+        },
+        {
+          "id": "item_8",
+          "atSeconds": 52.387,
+          "text": "The Settings subtitle is updated in the emitted worktree at `app/(tabs)/settings.tsx`. I’m starting Stim’s isolated Metro session there, then I’ll launch the iOS app and record the exact simulator UDID from Stim’s launch summary."
+        },
+        {
+          "id": "item_11",
+          "atSeconds": 76.929,
+          "text": "Stim has selected the prepared parked iPhone 17 simulator on iOS 26.5 and reported its run UDID as `<simulator-udid>`. The native launch is still progressing; Metro remains active."
+        },
+        {
+          "id": "item_12",
+          "atSeconds": 98.208,
+          "text": "Stim completed successfully: the app launched, Metro is running on port 8082, and the simulator was explicitly reported as adopted. I’m starting agent-device with the exact UDID now to handle any onboarding and navigate to Settings."
+        },
+        {
+          "id": "item_16",
+          "atSeconds": 131.543,
+          "text": "The Settings screen is visible and the exact required text wait succeeded. I’m capturing the screenshot to `/tmp` now, then copying it to the requested proof location and verifying the copied file before closing the agent-device session."
+        },
+        {
+          "id": "item_21",
+          "atSeconds": 159.568,
+          "text": "Completed.\n\n- Worktree: [trailhead-v4 worktree](<worktree/bench+javascript-stim>)\n- Screenshot: [settings.png](<results/luna-rc12/javascript-stim/proof/settings.png>)\n\nThe required wait succeeded, the screenshot was copied and verified, and Metro remains running."
+        }
+      ],
+      "commands": [
+        {
+          "id": "item_1",
+          "startSeconds": 9.77,
+          "endSeconds": 9.77,
+          "command": "sed -n '1,260p' results/luna-rc12/javascript-stim/runner-home/.codex/skills/agent-device/SKILL.md",
+          "output": "---\nname: agent-device\ndescription: Automates Apple-platform apps (iOS, tvOS, macOS), Android devices, and Amazon Vega OS TV apps in Vega Virtual Devices. Use when navigating apps, taking snapshots/screenshots where supported, driving TV remotes, tapping, typing, scrolling, extracting UI info, collecting evidence, or planning agent-device CLI commands.\n---\n\n# agent-device\n\nFor a normal app-driving task, start immediately. Do not probe first with `--help`, `--version`, `devices`, `appstate`, `snapshot`, or `screenshot`:\n\n```bash\nagent-device open <app> --foreground\n```\n\nThat starts the session and returns the initial interactive snapshot with `@refs`.\n\nLoop: act with `press|click|fill|longpress <target> ... --settle`, `scroll <direction> --settle`, or `back --settle`; continue from the printed diff, verify the named expectation (`wait text \"...\"`, `is`, `get`, or `find`), then run `agent-device close`.\n\nCopy refs byte-for-byte: `@e12`, `@e12~s4` — keep the `@` and any `~sN`. Prefer current refs, then `id`/`label`/`role` selectors; coordinates are a last resort. If snapshot reports sparse/AX-unavailable, its refs and selectors are invalid: run `agent-device screenshot`, inspect the image, use coordinates, then retry `snapshot -i` after navigating. Otherwise run `snapshot -i` only when the diff lacks the next target.\n\nError output includes corrective hints; follow them instead of re-planning. Only when the task is specialized (for example gestures, scripting, TV, macOS, remote, or debugging) or a command shape is unclear, run `agent-device help <topic>`. `agent-device --help` lists topics, but is not a startup step.\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_2",
+          "startSeconds": 9.77,
+          "endSeconds": 9.77,
+          "command": "sed -n '1,240p' results/luna-rc12/javascript-stim/runner-home/.codex/skills/stim/SKILL.md",
+          "output": "---\nname: stim\ndescription: The React Native / Expo CLI for AI agents. Use when an agent needs an isolated Metro server and simulator or emulator, must build and launch an app, inspect build or runtime errors, create a parallel worktree, or identify the correct device for UI interaction.\n---\n\n# Stim\n\nUse Stim to run React Native and Expo apps without sharing a Metro port or\ndevice with another workspace. Run it without installing:\n\n```bash\nnpx stim-cli <command>\n```\n\nOr install it once, which provides the same `stim` command:\n\n```bash\nnpm install --global stim-cli\n```\n\nDo not change the installation mode unless the user asks. Later examples use\n`stim`. If it is not installed globally, replace `stim` with the `npx` form above.\n\nStim requires Node 20.19.4+, or 22.12.0+ on Node 22. If `npx` returns E401 or\nE404 in a repo with a private registry, use:\n\n```bash\nnpx --registry=https://registry.npmjs.org stim-cli <command>\n```\n\nPrefer plain output: it streams each phase and ends with the facts the next step\nneeds. Use `--json` only when a script must parse a stable payload.\n\n## Normal workflow\n\nWork in the current checkout by default. When the agent creates an app worktree\nfor isolation or parallel work, carry its dependencies and native outputs.\n\nBefore a native worktree task, run `stim doctor --platform ios` (or `android`).\nIt checks the main checkout from a linked worktree. Fix relevant findings and\ninspect the upstream gap.\n\n```bash\nstim doctor --platform ios\n\n# In the main checkout, seed the shared build caches when more native\n# worktrees are coming; skip one-off or JavaScript-only work.\nstim start\nstim ios                    # or: stim android\nstim stop\n\n# Branches from HEAD. --carry-ignored carries installed dependencies and\n# native output: pass it on the first creation, never on a retry. It prints\n# the new absolute path.\nstim worktree create <name> --carry-ignored\ncd <printed-path>\n\nstim start\nstim ios                    # or: stim android\nstim logs --errors\n\n# Edit JavaScript or TypeScript. Fast Refresh applies the change.\nstim logs --since 30s --level error\n\nstim stop\n\nstim worktree remove\n```\n\nFollow these rules during the loop:\n\n- Run `start` before a debug `ios` or `android` build. If it returns\n  `STIM_NO_METRO`, run `stim start` and retry.\n- Run `ios` or `android` again after a native input changes. A JavaScript-only\n  change does not need one.\n- A cold native build can outlive a shell timeout. Run the same command again:\n  the second call joins the active build or returns its result.\n- `ios` and `android` install the app, launch it, and check its readiness. No\n  separate device tool is required. Trust the exact device, app, Metro, and\n  launch facts in Stim's final summary. Use the full reported device ID. Never\n  assume that a simulator named `booted` belongs to this workspace.\n- An `OK` summary with no launch qualifier proves the launch. `bundle requested,\nstill building` means Metro has not finished the bundle; wait and query the\n  logs. For `launch UNVERIFIED`, follow the printed remedy before you claim\n  success. JSON reports these as `true`, `\"bundling\"`, and `\"unverified\"` in\n  `launched`.\n- Exit code 0 from `logs --errors` is the pass condition. Human output can show\n  `No matching log records` on stderr. JSON mode prints zero bytes when no\n  records match. Do not read the NDJSON files directly.\n- Use `stim status` when resuming a workspace or recovering missing device,\n  port, server, or build facts; a normal `start` and platform run already print\n  them. Use `stim doctor` when a build is unexpectedly slow or the environment\n  looks incomplete.\n\n## Ownership and deletion\n\nStim creates, boots, and deletes only devices it created. Owned simulators use\nthe `stim-<label> (<model> <runtime>)` name. Never point Stim at a user-created\nemulator or simulator.\n\n`worktree remove` parks the workspace's simulator for a later one to adopt. A\nparked simulator is Stim-owned: never delete one by hand; `gc --delete` clears\nverified entries, keeps failures (`stim guide lifecycle`). First launch on a physical iPhone can need\none-time taps the remedy names.\n\n`stim android --device [serial]` and `stim ios --device [udid]` install on a\nconnected physical device. Stim never creates, boots, or deletes hardware, and\nrecords nothing about it, so `stop` and `gc` leave it alone.\n\nA `--device` run leases that device for the run. `stim device lock ios --for\n10m` holds it across runs; `stim device unlock` gives it back\n(`stim guide lifecycle`). Never delete another workspace's lease file under\n`~/.stim/device-locks`; `gc --delete` removes the expired ones.\n\nTreat a refusal as an ownership or state mismatch: read its code and remedy.\nNever reach for `--force` first.\n\nAsk the user before these actions:\n\n- `worktree remove`, because it deletes the worktree, its Stim-created branch\n  when it has no unique commits, and gives up its owned device.\n- `worktree remove --force`, because it also discards uncommitted and untracked\n  files.\n- `gc --delete`, because it deletes orphaned resources. `gc --delete --cache all`\n  empties the shared build caches instead; it inspects nothing else.\n- `stop` when the workspace owns an EAS session, because it irreversibly ends\n  that remote session. For a local device, `stop` shuts it down but does not\n  delete it. An explicit `stop` shuts down a Stim-owned simulator even when\n  another process uses it. It never shuts down an unowned simulator.\n\n## Under a sandbox\n\nAn agent harness that sandboxes shell commands usually permits writes inside\nthe project and little else. Three things Stim needs sit outside that\nboundary, and none of the failures names the sandbox: writes to `STIM_HOME`\n(`~/.stim` unless set) fail with `EPERM` on a directory the user can write, the\niOS simulator service looks dead, and the adb server looks unreachable. They\nare not a broken machine: compare that path against the harness's allowlist,\nand the conflict is visible before anything runs.\n\nDecide at the start of a session, not after the third failure: either run Stim\nwith the harness's sandbox disabled, or ask the user to allow those three.\n`stim guide errors` lists what to allow.\n\n## Load advanced guidance only when needed\n\nThe installed CLI is the source of truth for flags, payloads, settings, error\ncodes, remote devices, release builds, caches, and cleanup. Read the topic\nfirst:\n\n```bash\nstim guide             # list topics\nstim guide lifecycle   # full flow, flags, worktrees, builds, and capacity\nstim guide facts       # JSON payload fields\nstim guide metro       # supervisor, custom Metro, tunnels, and remote devices\nstim guide logs        # filters, record shape, and capture limits\nstim guide errors      # error codes and remedies\nstim guide cleanup     # destructive behavior and disk cleanup\nstim guide settings    # configuration files and supported keys\n```\n\nRun the guide before tasks involving any of these:\n\n- release configurations or Android variants;\n- remote proxy or EAS devices;\n- custom Metro processes or public tunnels;\n- cache bypasses, cache misses, or concurrent builds;\n- machine capacity limits;\n- cache hit rates or the time the cache saved, which `stim stats` reports;\n- worktree carry-over warnings;\n- fingerprint exclusions;\n- `gc`, `--force`, cleanup failures, or unfamiliar cleanup states and error\n  codes.\n\nOrdinary `stim stop` and an authorized clean `stim worktree remove` do not need\nthe cleanup guide.\n\nIf this skill and `stim guide` disagree, follow the guide: it comes from the\nbinary that is running.\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_3",
+          "startSeconds": 16.751,
+          "endSeconds": 17.732,
+          "command": "stim doctor --platform ios",
+          "output": "Nothing to flag.\nChecked: main-checkout dependencies, CocoaPods, iOS warm state, dev client, Metro cacheStores, Xcode compilation cache, ccache, build cache provider, iOS remote device and SimSlim profile, local upstream, EAS session, the type of every setting Stim reads and, on a checkout without installed dependencies, fingerprint parity.\nNothing to flag means nothing Stim cannot handle itself: it supplies the Metro transform store, the Xcode compilation cache and the Gradle build cache on its own command lines, so a project that configures none of them is clean here.\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_5",
+          "startSeconds": 24.228,
+          "endSeconds": 37.146,
+          "command": "stim worktree create bench/javascript-stim --dir worktree/project --carry-ignored",
+          "output": "  branch      worktree-bench/javascript-stim from HEAD (63fe92c)\n  carry       node_modules, Pods, native build output (APFS clone)\n  ready       worktree/bench+javascript-stim\nworktree/bench+javascript-stim\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_6",
+          "startSeconds": 41.178,
+          "endSeconds": 41.178,
+          "command": "rg -n --fixed-strings 'Keep map tiles for saved trails on device' .",
+          "output": "./app/(tabs)/settings.tsx:112:            subtitle=\"Keep map tiles for saved trails on device\"\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_9",
+          "startSeconds": 54.002,
+          "endSeconds": 56.481,
+          "command": "stim start",
+          "output": "  metro       starting on port 8082 (expo-child, supervisor pid 38796)\nOK: dev server on port 8082, supervisor pid 38796 (expo-child) (2.2s)\n  logs        results/luna-rc12/javascript-stim/stim-home/workspaces/bench-luna-rc12-gpt-5-6-luna-javascript-stim-178--c66d4b812513ab06/logs\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_10",
+          "startSeconds": 63.516,
+          "endSeconds": 93.856,
+          "command": "stim ios",
+          "output": "  device      booting stim-58bd14ac-bench-luna-rc12-gpt-5-6-luna- (iPhone 17 26.5) (<simulator-udid>)\n  fingerprint b1232a.. hit (4.3s)\n  device      resetting privacy grants and the keychain on <simulator-udid>\n  device      stim-58bd14ac-bench-luna-rc12-gpt-5-6-luna- (iPhone 17 26.5) (3372..) adopted (13.1s)\n  install     unchanged (stim-58bd14ac-bench-luna-rc12-gpt-5-6-luna- (iPhone 17 26.5) already has this build) (593ms)\n  install     dev client prepared (830ms)\n  launch      com.appandflow.trailhead (559ms)\n  verify      bundle loaded, process alive, stable for 3s -- the first screen may still be rendering (14.1s total)\nOK: com.appandflow.trailhead on stim-58bd14ac-bench-luna-rc12-gpt-5-6-luna- (iPhone 17 26.5) (3372..), Metro port 8082 (from cache, 30.2s)\n  device      stim-58bd14ac-bench-luna-rc12-gpt-5-6-luna- (iPhone 17 26.5) (<simulator-udid>)\n  app         com.appandflow.trailhead\n  metro       running on port 8082\n  cache       from cache\n  compilation cache not run; artifact cache supplied the app\n  logs        results/luna-rc12/javascript-stim/stim-home/workspaces/bench-luna-rc12-gpt-5-6-luna-javascript-stim-178--c66d4b812513ab06/logs\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_13",
+          "startSeconds": 100.394,
+          "endSeconds": 114.99,
+          "command": "agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
+          "output": "Opened: com.appandflow.trailhead\nSession state: workspace/cwd_c66d4b812513ab06_default\nPage: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 32 visible nodes\n@e1 [application] \"Trailhead\"\n@e2 [other] \"\"\n@e3 [other] \"Trails\"\n@e4 [text-field] \"Search trails\" [editable]\n@e5 [scroll-area] \"All regions\" [scrollable]\n  [content below scroll-area hidden]\n@e6 [other] \"All regions\"\n@e7 [button] \"All regions\" [selected]\n@e8 [button] \"Adirondacks\"\n@e9 [button] \"Bas-Saint-Laurent\"\n@e10 [button] \"Charlevoix\"\n@e11 [scroll-area] \"Any level\" [scrollable]\n  [content below scroll-area hidden]\n@e12 [other] \"Any level\"\n@e13 [button] \"Any level\" [selected]\n@e14 [button] \"Easy\"\n@e15 [button] \"Moderate\"\n@e16 [button] \"Hard\"\n@e17 [button] \"Expert\"\n@e18 [text] \"200 trails\"\n@e19 [button] \"Sort by name\" [selected]\n@e20 [button] \"Sort by distance\"\n@e21 [button] \"Sort by rating\"\n@e22 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\" [scrollable]\n  [content below scroll-area hidden]\n@e23 [other] [same label as parent]\n@e24 [button] [same label as parent]\n@e25 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n@e26 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n@e27 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n@e28 [other] \"Trails, tab, 1 of 4\"\n@e29 [button] \"Trails, tab, 1 of 4\" [selected]\n@e30 [button] \"Record, tab, 2 of 4\"\n@e31 [button] \"History, tab, 3 of 4\"\n@e32 [button] \"Settings, tab, 4 of 4\"\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_14",
+          "startSeconds": 118.326,
+          "endSeconds": 120.941,
+          "command": "agent-device click @e32 --settle",
+          "output": "Tapped @e32 (352, 816)\nsettled after 1747ms: +29 -28 (~4 unchanged)\n- @e2 [other] \"\"\n- @e3 [other] \"Trails\"\n- @e4 [text-field] \"Search trails\"\n- @e5 [scroll-area] \"All regions\"\n- @e6 [other] \"All regions\"\n- @e7 [button] \"All regions\"\n- @e8 [button] \"Adirondacks\"\n- @e9 [button] \"Bas-Saint-Laurent\"\n- @e10 [button] \"Charlevoix\"\n- @e11 [scroll-area] \"Any level\"\n- @e12 [other] \"Any level\"\n- @e13 [button] \"Any level\"\n- @e14 [button] \"Easy\"\n- @e15 [button] \"Moderate\"\n- @e16 [button] \"Hard\"\n- @e17 [button] \"Expert\"\n- @e18 [text] \"200 trails\"\n- @e19 [button] \"Sort by name\"\n- @e20 [button] \"Sort by distance\"\n- @e21 [button] \"Sort by rating\"\n- @e22 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e23 [other] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e24 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e25 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n- @e26 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n- @e27 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n+ @e2~s427383 [other] \"Settings\"\n+ @e3~s427383 [scroll-area] \"UNITS\"\n+ @e4~s427383 [other] \"UNITS\"\n+ @e5~s427383 [cell] \"Distance\"\n+ @e6~s427383 [text] \"\"\n+ @e7~s427383 [button] \"Metric units\"\n+ @e8~s427383 [button] \"Imperial units\"\n+ @e9~s427383 [text] \"Used across the whole app\"\n+ @e10~s427383 [text] \"PREFERENCES\"\n+ @e11~s427383 [other] \"Hike reminders\"\n+ @e12~s427383 [switch] \"Hike reminders\"\n+ @e13~s427383 [text] \"\"\n+ @e14~s427383 [text] \"Nudge me when I have not hiked in a while\"\n+ @e15~s427383 [text] \"Offline maps\"\n+ @e16~s427383 [switch] \"Offline maps\"\n+ @e17~s427383 [text] \"\"\n+ @e18~s427383 [text] \"Keep saved trail maps available offline\"\n+ @e19~s427383 [text] \"STORAGE\"\n+ @e20~s427383 [cell] \"Recorded hikes\"\n+ @e21~s427383 [text] \"\"\n+ @e22~s427383 [text] \"48\"\n+ @e23~s427383 [text] \"Stored in a local database\"\n+ @e24~s427383 [button] \"Reset sample data\"\n+ @e25~s427383 [text] \"ABOUT\"\n+ @e26~s427383 [cell] \"\"\n+ @e27~s427383 [text] \"Version\"\n+ @e28~s427383 [text] \"1.0.0\"\n- @e29 [button] \"Trails, tab, 1 of 4\"\n+ @e30~s427383 [button] \"Trails, tab, 1 of 4\"\n- @e32 [button] \"Settings, tab, 4 of 4\"\n+ @e33~s427383 [button] \"Settings, tab, 4 of 4\"\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_15",
+          "startSeconds": 127.673,
+          "endSeconds": 127.864,
+          "command": "agent-device wait text \"Keep saved trail maps available offline\"",
+          "output": "",
+          "exitCode": 0
+        },
+        {
+          "id": "item_17",
+          "startSeconds": 133.244,
+          "endSeconds": 133.857,
+          "command": "agent-device screenshot tmp/javascript-stim-settings.png",
+          "output": "tmp/javascript-stim-settings.png (402x874 @1x)\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_18",
+          "startSeconds": 138.869,
+          "endSeconds": 138.869,
+          "command": "cp tmp/javascript-stim-settings.png results/luna-rc12/javascript-stim/proof/settings.png",
+          "output": "",
+          "exitCode": 0
+        },
+        {
+          "id": "item_19",
+          "startSeconds": 146.326,
+          "endSeconds": 146.326,
+          "command": "test -s results/luna-rc12/javascript-stim/proof/settings.png && stat -f '%N %z bytes' results/luna-rc12/javascript-stim/proof/settings.png",
+          "output": "results/luna-rc12/javascript-stim/proof/settings.png 69595 bytes\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_20",
+          "startSeconds": 151.053,
+          "endSeconds": 151.229,
+          "command": "agent-device close",
+          "output": "Closed: default\n",
+          "exitCode": 0
+        }
+      ],
+      "markers": [
+        {
+          "id": "app-alive",
+          "kind": "appAlive",
+          "label": "App process alive",
+          "atSeconds": 79.984
+        },
+        {
+          "id": "settings-ready",
+          "kind": "settingsReady",
+          "label": "Settings proof ready",
+          "atSeconds": 133.857
+        }
+      ],
+      "proof": {
+        "src": "benchmarks/luna-rc12/javascript-stim.png",
+        "expected": "Keep saved trail maps available offline",
+        "width": 402,
+        "height": 874
+      }
+    },
+    {
+      "id": "javascript-control",
+      "model": "gpt-5.6-luna",
+      "variant": "javascript",
+      "arm": "control",
+      "valid": true,
+      "invalidReasons": [],
+      "settingsReadySeconds": 479.412,
+      "appAliveSeconds": 416.776,
+      "totalSeconds": 642.264,
+      "commandCount": 46,
+      "usage": {
+        "input_tokens": 2718053,
+        "cached_input_tokens": 2587136,
+        "output_tokens": 15973,
+        "reasoning_output_tokens": 7895
+      },
+      "estimatedTokenCostUsd": 0.09709372,
+      "messages": [
+        {
+          "id": "item_0",
+          "atSeconds": 5.135,
+          "text": "I’m using the `agent-device` skill because the task requires simulator control, semantic navigation, the exact wait/screenshot/close commands, and proof capture. I’ll create the requested worktree, carry over dependencies/native outputs, make the subtitle change there, then launch and verify the app on a newly created iPhone 17 simulator."
+        },
+        {
+          "id": "item_5",
+          "atSeconds": 20.749,
+          "text": "The main checkout is clean on `benchmark/v3-fixture`; the requested branch and target worktree do not exist. I found the subtitle in `app/(tabs)/settings.tsx`. I’m creating the worktree from the current checkout, then I’ll copy the existing dependency/native build artifacts into it before editing."
+        },
+        {
+          "id": "item_11",
+          "atSeconds": 78.803,
+          "text": "The worktree now has copied `node_modules`, `ios/Pods`, and the existing `ios/build` output from the main checkout. I’m applying the one-line Settings subtitle change in the worktree now."
+        },
+        {
+          "id": "item_16",
+          "atSeconds": 103.042,
+          "text": "iOS 26.5 and the `iPhone 17` device type are installed. I’m creating a fresh simulator with that exact device type/runtime, starting the project’s local Expo Metro detached, and then launching the iOS app against only that new simulator."
+        },
+        {
+          "id": "item_21",
+          "atSeconds": 154.922,
+          "text": "The new simulator is booted successfully. Expo has begun the local iOS build/install against its exact UDID `<simulator-udid>`; I’m waiting for the launch output and will use that reported simulator UDID for the required agent-device session."
+        },
+        {
+          "id": "item_22",
+          "atSeconds": 414.036,
+          "text": "The iOS build succeeded and the launch output reports the run simulator as `<simulator-udid>` (the new iPhone 17 on iOS 26.5). The app is open; I’m beginning the required `agent-device` session with that exact UDID."
+        },
+        {
+          "id": "item_30",
+          "atSeconds": 471.109,
+          "text": "The Expo developer onboarding was handled, and semantic navigation reached Settings. The new subtitle is visibly present in the live app. I’m running the required exact text wait now, then I’ll capture and copy the proof screenshot with the mandated commands."
+        },
+        {
+          "id": "item_35",
+          "atSeconds": 506.036,
+          "text": "The exact wait succeeded; the mandated screenshot was captured and copied, and `agent-device close` completed. I’m doing a final read-only check that the proof file exists, the worktree contains only the intended source edit, Metro is still detached, and the app remains running on the new simulator."
+        },
+        {
+          "id": "item_42",
+          "atSeconds": 531.199,
+          "text": "The proof check passed and the app process is still running on the requested simulator. The one build-time change to tracked `ios/Podfile.lock` is an incidental CocoaPods checksum update, so I’m restoring that file to the worktree’s original state while keeping the requested subtitle edit. I also found the first detached Metro wrapper had exited after Expo’s launch flow; I’m restarting Metro detached and verifying its listener before finishing."
+        },
+        {
+          "id": "item_51",
+          "atSeconds": 601.001,
+          "text": "The app remains running (`UIKitApplication:com.appandflow.trailhead`) and the proof file is present. I’m replacing the foreground Metro instance with a truly detached local Expo Metro process on the same port, so the final running app and Metro state meet the requested handoff."
+        },
+        {
+          "id": "item_59",
+          "atSeconds": 641.988,
+          "text": "Completed.\n\n- Worktree: [trailhead-v4-worktrees/javascript-control](worktree/javascript-control)\n- Screenshot: [proof/settings.png](results/luna-rc12/javascript-control/proof/settings.png)\n\nThe exact wait succeeded, Metro is detached and running, and the app remains running on the new iPhone 17 simulator (`<simulator-udid>`)."
+        }
+      ],
+      "commands": [
+        {
+          "id": "item_1",
+          "startSeconds": 6.74,
+          "endSeconds": 6.74,
+          "command": "sed -n '1,240p' results/luna-rc12/javascript-control/runner-home/.codex/skills/agent-device/SKILL.md",
+          "output": "---\nname: agent-device\ndescription: Automates Apple-platform apps (iOS, tvOS, macOS), Android devices, and Amazon Vega OS TV apps in Vega Virtual Devices. Use when navigating apps, taking snapshots/screenshots where supported, driving TV remotes, tapping, typing, scrolling, extracting UI info, collecting evidence, or planning agent-device CLI commands.\n---\n\n# agent-device\n\nFor a normal app-driving task, start immediately. Do not probe first with `--help`, `--version`, `devices`, `appstate`, `snapshot`, or `screenshot`:\n\n```bash\nagent-device open <app> --foreground\n```\n\nThat starts the session and returns the initial interactive snapshot with `@refs`.\n\nLoop: act with `press|click|fill|longpress <target> ... --settle`, `scroll <direction> --settle`, or `back --settle`; continue from the printed diff, verify the named expectation (`wait text \"...\"`, `is`, `get`, or `find`), then run `agent-device close`.\n\nCopy refs byte-for-byte: `@e12`, `@e12~s4` — keep the `@` and any `~sN`. Prefer current refs, then `id`/`label`/`role` selectors; coordinates are a last resort. If snapshot reports sparse/AX-unavailable, its refs and selectors are invalid: run `agent-device screenshot`, inspect the image, use coordinates, then retry `snapshot -i` after navigating. Otherwise run `snapshot -i` only when the diff lacks the next target.\n\nError output includes corrective hints; follow them instead of re-planning. Only when the task is specialized (for example gestures, scripting, TV, macOS, remote, or debugging) or a command shape is unclear, run `agent-device help <topic>`. `agent-device --help` lists topics, but is not a startup step.\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_2",
+          "startSeconds": 13.96,
+          "endSeconds": 13.96,
+          "command": "test -e worktree/javascript-control && echo TARGET_EXISTS || echo TARGET_MISSING; git branch --list 'bench/javascript-control'",
+          "output": "TARGET_MISSING\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_3",
+          "startSeconds": 13.964,
+          "endSeconds": 13.964,
+          "command": "git status --short --branch && git worktree list --porcelain",
+          "output": "## benchmark/v3-fixture\nworktree workspace/trailhead-v3\nHEAD 63fe92cb06e228fb0294344a67778180392f3008\nbranch refs/heads/benchmark/v3-fixture\n\nworktree worktree/repro+derived_data-plus-fix\nHEAD 63fe92cb06e228fb0294344a67778180392f3008\nbranch refs/heads/worktree-repro/derived_data-plus-fix\n\nworktree worktree/repro@derived-data-at-fix\nHEAD 63fe92cb06e228fb0294344a67778180392f3008\nbranch refs/heads/worktree-repro/derived-data-at-fix\n\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_4",
+          "startSeconds": 13.967,
+          "endSeconds": 13.967,
+          "command": "rg -n --fixed-strings 'Keep map tiles for saved trails on device' .",
+          "output": "./app/(tabs)/settings.tsx:112:            subtitle=\"Keep map tiles for saved trails on device\"\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_6",
+          "startSeconds": 22.059,
+          "endSeconds": 22.059,
+          "command": "git worktree add -b bench/javascript-control worktree/javascript-control HEAD",
+          "output": "Preparing worktree (new branch 'bench/javascript-control')\nHEAD is now at 63fe92c test: stabilize benchmark native fingerprint\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_7",
+          "startSeconds": 26.708,
+          "endSeconds": 27.787,
+          "command": "for p in node_modules ios/Pods ios/build android/.gradle android/app/build android/build; do if [ -e \"$p\" ]; then du -sh \"$p\"; else echo \"MISSING $p\"; fi; done",
+          "output": "2.5G\tnode_modules\n1.2G\tios/Pods\n1.1M\tios/build\nMISSING android/.gradle\nMISSING android/app/build\nMISSING android/build\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_10",
+          "startSeconds": 34.917,
+          "endSeconds": 34.917,
+          "command": "rsync -a workspace/build worktree/javascript-control/ios/build",
+          "output": "",
+          "exitCode": 0
+        },
+        {
+          "id": "item_9",
+          "startSeconds": 34.899,
+          "endSeconds": 51.886,
+          "command": "rsync -a workspace/Pods worktree/javascript-control/ios/Pods",
+          "output": "",
+          "exitCode": 0
+        },
+        {
+          "id": "item_8",
+          "startSeconds": 34.894,
+          "endSeconds": 77.162,
+          "command": "rsync -a workspace/node_modules worktree/javascript-control/node_modules",
+          "output": "",
+          "exitCode": 0
+        },
+        {
+          "id": "item_14",
+          "startSeconds": 90.03,
+          "endSeconds": 90.198,
+          "command": "xcrun simctl list runtimes | rg 'iOS 26\\\\.5'",
+          "output": "iOS 26.5 (26.5 - 23F77) - com.apple.CoreSimulator.SimRuntime.iOS-26-5\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_15",
+          "startSeconds": 90.03,
+          "endSeconds": 90.198,
+          "command": "xcrun simctl list devicetypes | rg 'iPhone 17'",
+          "output": "iPhone 17 Pro (com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro)\niPhone 17 Pro Max (com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro-Max)\niPhone 17e (com.apple.CoreSimulator.SimDeviceType.iPhone-17e)\niPhone 17 (com.apple.CoreSimulator.SimDeviceType.iPhone-17)\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_13",
+          "startSeconds": 90.028,
+          "endSeconds": 90.232,
+          "command": "rg -n --fixed-strings 'Keep saved trail maps available offline' 'app/(tabs)/settings.tsx' && git status --short --branch",
+          "output": "## bench/javascript-control\n M app/(tabs)/settings.tsx\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_17",
+          "startSeconds": 104.672,
+          "endSeconds": 104.88,
+          "command": "xcrun simctl create 'Trailhead Luna RC12 iPhone 17' com.apple.CoreSimulator.SimDeviceType.iPhone-17 com.apple.CoreSimulator.SimRuntime.iOS-26-5",
+          "output": "<simulator-udid>\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_18",
+          "startSeconds": 110.348,
+          "endSeconds": 110.398,
+          "command": "nohup ./node_modules/.bin/expo start --dev-client --localhost >/dev/null 2>&1 & echo $!",
+          "output": "47751\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_19",
+          "startSeconds": 122.208,
+          "endSeconds": 148.226,
+          "command": "xcrun simctl boot <simulator-udid> && xcrun simctl bootstatus <simulator-udid> -b",
+          "output": "Monitoring boot status for Trailhead Luna RC12 iPhone 17 (<simulator-udid>).\n[2026-09-03 15:55:56 +0000] Status=2, isTerminal=NO, Elapsed=00:01.\n\tWaiting on Data Migration\n\t\tReason:(null)\n\t\tMigration Elapsed:00:00 seconds\n\n[2026-09-03 15:56:12 +0000] Status=2, isTerminal=NO, Elapsed=00:17.\n\tWaiting on Data Migration\n\t\tReason:Running plugin com.apple.managedconfiguration.migrator (MCProfile.migrator, user-agnostic)\n\t\tMigration Elapsed:00:15 seconds\n\n[2026-09-03 15:56:12 +0000] Status=2, isTerminal=NO, Elapsed=00:17.\n\tWaiting on Data Migration\n\t\tReason:Running plugin com.apple.managedconfiguration.migrator (MCProfile.migrator, user-agnostic)\n\t\tMigration Elapsed:00:16 seconds\n\n[2026-09-03 15:56:13 +0000] Status=2, isTerminal=NO, Elapsed=00:18.\n\tWaiting on Data Migration\n\t\tReason:Running plugin com.apple.managedconfiguration.migrator (MCProfile.migrator, user-agnostic)\n\t\tMigration Elapsed:00:16 seconds\n\n[2026-09-03 15:56:14 +0000] Status=2, isTerminal=NO, Elapsed=00:19.\n\tWaiting on Data Migration\n\t\tReason:Running plugin com.apple.managedconfiguration.migrator (MCProfile.migrator, user-agnostic)\n\t\tMigration Elapsed:00:17 seconds\n\n[2026-09-03 15:56:16 +0000] Status=2, isTerminal=NO, Elapsed=00:20.\n\tWaiting on Data Migration\n\t\tReason:Running plugin com.apple.message.LegacyAccountsMigrator (LegacyMessageAccountsMigrator.migrator)\n\t\tMigration Elapsed:00:18 seconds\n\n[2026-09-03 15:56:16 +0000] Status=4, isTerminal=NO, Elapsed=00:21.\n\tWaiting on System App\n\n[2026-09-03 15:56:17 +0000] Status=4, isTerminal=NO, Elapsed=00:22.\n\tWaiting on System App\n\n[2026-09-03 15:56:19 +0000] Status=4, isTerminal=NO, Elapsed=00:24.\n\tWaiting on System App\n\n[2026-09-03 15:56:19 +0000] Status=4, isTerminal=NO, Elapsed=00:24.\n\tWaiting on System App\n\n[2026-09-03 15:56:20 +0000] Status=4294967295, isTerminal=YES, Elapsed=00:25.\n\tFinished\n\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_23",
+          "startSeconds": 415.875,
+          "endSeconds": 431.271,
+          "command": "agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
+          "output": "Opened: com.appandflow.trailhead\r\nSession state: workspace/cwd_32bb365fa922fbc2_default\r\nPage: com.appandflow.trailhead\r\nApp: com.appandflow.trailhead\r\nSnapshot: 17 visible nodes\r\n@e1 [application] \"Trailhead\"\r\n@e2 [other] \"Tab Bar\"\r\n@e3 [other] \"Trailhead\"\r\n@e4 [text] \"Development Build\"\r\n@e5 [button] \"user-icon\"\r\n@e6 [scroll-area] \"DEVELOPMENT SERVERS\" [scrollable]\r\n  [content below scroll-area hidden]\r\n@e7 [other] \"DEVELOPMENT SERVERS\"\r\n@e8 [button] \"INFO\"\r\n@e9 [other] \"Tlon, http://<local-ip>:8082\"\r\n@e10 [button] [same label as parent]\r\n@e11 [button] \"Trailhead, http://<local-ip>:8081\"\r\n@e12 [button] \"Enter URL manually\"\r\n@e13 [tab-bar] \"Tab Bar\"\r\n@e14 [other] \"Home\"\r\n@e15 [button] \"Home\" [selected]\r\n@e16 [button] \"Updates\"\r\n@e17 [button] \"Settings\"\r\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_24",
+          "startSeconds": 436.688,
+          "endSeconds": 442.207,
+          "command": "agent-device click @e11 --settle",
+          "output": "Tapped @e11 (201, 266)\r\nsettled after 4741ms: +24 -15 (~2 unchanged)\r\n- @e2 [other] \"Tab Bar\"\r\n- @e4 [text] \"Development Build\"\r\n- @e5 [button] \"user-icon\"\r\n- @e6 [scroll-area] \"DEVELOPMENT SERVERS\"\r\n- @e7 [other] \"DEVELOPMENT SERVERS\"\r\n- @e8 [button] \"INFO\"\r\n- @e9 [other] \"Tlon, http://<local-ip>:8082\"\r\n- @e10 [button] \"Tlon, http://<local-ip>:8082\"\r\n- @e11 [button] \"Trailhead, http://<local-ip>:8081\"\r\n- @e12 [button] \"Enter URL manually\"\r\n- @e13 [tab-bar] \"Tab Bar\"\r\n- @e14 [other] \"Home\"\r\n- @e15 [button] \"Home\"\r\n- @e16 [button] \"Updates\"\r\n- @e17 [button] \"Settings\"\r\n+ @e3~s595932 [text] \"Runtime version: exposdk:57.0.0\"\r\n+ @e4~s595932 [button] \"Close\"\r\n+ @e5~s595932 [scroll-area] \"Reload\"\r\n+ @e6~s595932 [other] \"Reload\"\r\n+ @e7~s595932 [button] \"Reload\"\r\n+ @e8~s595932 [button] \"Go home\"\r\n+ @e9~s595932 [text] \"TOOLS\"\r\n+ @e10~s595932 [button] \"Source code explorer\"\r\n+ @e11~s595932 [button] \"Toggle performance monitor\"\r\n+ @e12~s595932 [button] \"Toggle element inspector\"\r\n+ @e13~s595932 [button] \"Open DevTools\"\r\n+ @e14~s595932 [image] \"Running\"\r\n+ @e15~s595932 [text] \"Fast refresh\"\r\n+ @e16~s595932 [switch] \"1\"\r\n+ @e17~s595932 [switch] \"1\"\r\n+ @e18~s595932 [switch] \"1\"\r\n+ @e19~s595932 [switch] \"1\"\r\n+ @e20~s595932 [scroll-area] \"dev-tools\"\r\n+ @e21~s595932 [other] \"dev-tools\"\r\n+ @e22~s595932 [image] \"dev-tools\"\r\n+ @e23~s595932 [text] \"This is the developer menu. It gives you access to useful tools in development builds.\"\r\n+ @e24~s595932 [text] \"You can open it at any time by pressing the blue button with the gear icon, or with the ⌃ + d keyboard shortcut.\"\r\n+ @e25~s595932 [text] \"(Connect Hardware Keyboard must be enabled on your simulator to use this shortcut, you can toggle it with ⌘ + shift + K.)\"\r\n+ @e26~s595932 [button] \"Continue\"\r\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_25",
+          "startSeconds": 444.875,
+          "endSeconds": 445.017,
+          "command": "agent-device click @e26 --settle",
+          "output": "Error (COMMAND_FAILED): Ref @e26 needs a complete snapshot — the current frame only authorizes its emitted refs\r\nHint: Capture a fresh interactive snapshot (snapshot -i) or use a stable selector, then retry.\r\nDiagnostic ID: mtlpppr4-fde0b7a5\r\nDiagnostics Log: workspace/fbf5b375eb1824c2.ndjson\r\n",
+          "exitCode": 1
+        },
+        {
+          "id": "item_26",
+          "startSeconds": 449.989,
+          "endSeconds": 450.259,
+          "command": "agent-device snapshot -i",
+          "output": "Page: com.appandflow.trailhead\r\nApp: com.appandflow.trailhead\r\nSnapshot: 24 visible nodes (26 total)\r\n@e1 [application] \"Trailhead\"\r\n@e2 [other] \"Trailhead\"\r\n@e3 [text] \"Runtime version: exposdk:57.0.0\"\r\n@e4 [button] \"Close\"\r\n@e5 [scroll-area] \"Reload\" [scrollable]\r\n  [content below scroll-area hidden]\r\n@e6 [other] \"Reload\"\r\n@e7 [button] \"Reload\"\r\n@e8 [button] \"Go home\"\r\n@e9 [text] \"TOOLS\"\r\n@e10 [button] \"Source code explorer\"\r\n@e11 [button] \"Toggle performance monitor\"\r\n@e12 [button] \"Toggle element inspector\"\r\n@e13 [button] \"Open DevTools\"\r\n@e14 [image] \"Running\"\r\n@e15 [text] \"Fast refresh\"\r\n@e16 [switch] \"1\"\r\n@e17 [switch] \"1\"\r\n@e20 [scroll-area] \"dev-tools\" [scrollable]\r\n  [content below scroll-area hidden]\r\n@e21 [other] \"dev-tools\"\r\n@e22 [image] \"dev-tools\"\r\n@e23 [text] \"This is the developer menu. It gives you access to useful tools in development builds.\"\r\n@e24 [text] \"You can open it at any time by pressing the blue button with the gear icon, or with the ⌃ + d keyboard shortcut.\"\r\n@e25 [text] \"(Connect Hardware Keyboard must be enabled on your simulator to use this shortcut, you can toggle it with ⌘ + shift + K.)\"\r\n@e26 [button] \"Continue\"\r\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_27",
+          "startSeconds": 455.147,
+          "endSeconds": 457.051,
+          "command": "agent-device click @e26 --settle",
+          "output": "Tapped @e26 (201, 798)\r\nsettled after 1142ms: +0 -7 (~19 unchanged)\r\n- @e20 [scroll-area] \"dev-tools\"\r\n- @e21 [other] \"dev-tools\"\r\n- @e22 [image] \"dev-tools\"\r\n- @e23 [text] \"This is the developer menu. It gives you access to useful tools in development builds.\"\r\n- @e24 [text] \"You can open it at any time by pressing the blue button with the gear icon, or with the ⌃ + d keyboard shortcut.\"\r\n- @e25 [text] \"(Connect Hardware Keyboard must be enabled on your simulator to use this shortcut, you can toggle it with ⌘ + shift + K.)\"\r\n- @e26 [button] \"Continue\"\r\nunchanged interactive (18):\r\n= @e2~s595937 [other] \"Trailhead\"\r\n= @e3~s595937 [text] \"Runtime version: exposdk:57.0.0\"\r\n= @e4~s595937 [button] \"Close\"\r\n= @e5~s595937 [scroll-area] \"Reload\"\r\n= @e6~s595937 [other] \"Reload\"\r\n= @e7~s595937 [button] \"Reload\"\r\n= @e8~s595937 [button] \"Go home\"\r\n= @e9~s595937 [text] \"TOOLS\"\r\n= @e10~s595937 [button] \"Source code explorer\"\r\n= @e11~s595937 [button] \"Toggle performance monitor\"\r\n= @e12~s595937 [button] \"Toggle element inspector\"\r\n= @e13~s595937 [button] \"Open DevTools\"\r\n= @e14~s595937 [image] \"Running\"\r\n= @e15~s595937 [text] \"Fast refresh\"\r\n= @e16~s595937 [switch] \"1\"\r\n= @e17~s595937 [switch] \"1\"\r\n= @e18~s595937 [switch] \"1\"\r\n= @e19~s595937 [switch] \"1\"\r\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_28",
+          "startSeconds": 461.138,
+          "endSeconds": 464.043,
+          "command": "agent-device click @e4~s595937 --settle",
+          "output": "Tapped @e4 (361, 419)\r\nsettled after 2176ms: +34 -18 (~1 unchanged)\r\n- @e2 [other] \"Trailhead\"\r\n- @e3 [text] \"Runtime version: exposdk:57.0.0\"\r\n- @e4 [button] \"Close\"\r\n- @e5 [scroll-area] \"Reload\"\r\n- @e6 [other] \"Reload\"\r\n- @e7 [button] \"Reload\"\r\n- @e8 [button] \"Go home\"\r\n- @e9 [text] \"TOOLS\"\r\n- @e10 [button] \"Source code explorer\"\r\n- @e11 [button] \"Toggle performance monitor\"\r\n- @e12 [button] \"Toggle element inspector\"\r\n- @e13 [button] \"Open DevTools\"\r\n- @e14 [image] \"Running\"\r\n- @e15 [text] \"Fast refresh\"\r\n- @e16 [switch] \"1\"\r\n- @e17 [switch] \"1\"\r\n- @e18 [switch] \"1\"\r\n- @e19 [switch] \"1\"\r\n+ @e2~s595943 [other] \"gearshape.fill\"\r\n+ @e3~s595943 [image] \"gearshape.fill\"\r\n+ @e4~s595943 [text] \"Tools\"\r\n+ @e5~s595943 [other] \"\"\r\n+ @e6~s595943 [other] \"Trails\"\r\n+ @e7~s595943 [text-field] \"Search trails\"\r\n+ @e8~s595943 [scroll-area] \"All regions\"\r\n+ @e9~s595943 [other] \"All regions\"\r\n+ @e10~s595943 [button] \"All regions\"\r\n+ @e11~s595943 [button] \"Adirondacks\"\r\n+ @e12~s595943 [button] \"Bas-Saint-Laurent\"\r\n+ @e13~s595943 [button] \"Charlevoix\"\r\n+ @e14~s595943 [scroll-area] \"Any level\"\r\n+ @e15~s595943 [other] \"Any level\"\r\n+ @e16~s595943 [button] \"Any level\"\r\n+ @e17~s595943 [button] \"Easy\"\r\n+ @e18~s595943 [button] \"Moderate\"\r\n+ @e19~s595943 [button] \"Hard\"\r\n+ @e20~s595943 [button] \"Expert\"\r\n+ @e21~s595943 [text] \"200 trails\"\r\n+ @e22~s595943 [button] \"Sort by name\"\r\n+ @e23~s595943 [button] \"Sort by distance\"\r\n+ @e24~s595943 [button] \"Sort by rating\"\r\n+ @e25~s595943 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\r\n+ @e26~s595943 [other] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\r\n+ @e27~s595943 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\r\n+ @e28~s595943 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\r\n+ @e29~s595943 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\r\n+ @e30~s595943 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\r\n+ @e31~s595943 [other] \"Trails, tab, 1 of 4\"\r\n+ @e32~s595943 [button] \"Trails, tab, 1 of 4\"\r\n+ @e33~s595943 [button] \"Record, tab, 2 of 4\"\r\n+ @e34~s595943 [button] \"History, tab, 3 of 4\"\r\n+ @e35~s595943 [button] \"Settings, tab, 4 of 4\"\r\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_29",
+          "startSeconds": 466.629,
+          "endSeconds": 469.055,
+          "command": "agent-device click @e35~s595943 --settle",
+          "output": "Tapped @e35 (352, 816)\r\nsettled after 1747ms: +29 -28 (~7 unchanged)\r\n- @e5 [other] \"\"\r\n- @e6 [other] \"Trails\"\r\n- @e7 [text-field] \"Search trails\"\r\n- @e8 [scroll-area] \"All regions\"\r\n- @e9 [other] \"All regions\"\r\n- @e10 [button] \"All regions\"\r\n- @e11 [button] \"Adirondacks\"\r\n- @e12 [button] \"Bas-Saint-Laurent\"\r\n- @e13 [button] \"Charlevoix\"\r\n- @e14 [scroll-area] \"Any level\"\r\n- @e15 [other] \"Any level\"\r\n- @e16 [button] \"Any level\"\r\n- @e17 [button] \"Easy\"\r\n- @e18 [button] \"Moderate\"\r\n- @e19 [button] \"Hard\"\r\n- @e20 [button] \"Expert\"\r\n- @e21 [text] \"200 trails\"\r\n- @e22 [button] \"Sort by name\"\r\n- @e23 [button] \"Sort by distance\"\r\n- @e24 [button] \"Sort by rating\"\r\n- @e25 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\r\n- @e26 [other] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\r\n- @e27 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\r\n- @e28 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\r\n- @e29 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\r\n- @e30 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\r\n+ @e5~s595948 [other] \"Settings\"\r\n+ @e6~s595948 [scroll-area] \"UNITS\"\r\n+ @e7~s595948 [other] \"UNITS\"\r\n+ @e8~s595948 [cell] \"Distance\"\r\n+ @e9~s595948 [text] \"\"\r\n+ @e10~s595948 [button] \"Metric units\"\r\n+ @e11~s595948 [button] \"Imperial units\"\r\n+ @e12~s595948 [text] \"Used across the whole app\"\r\n+ @e13~s595948 [text] \"PREFERENCES\"\r\n+ @e14~s595948 [other] \"Hike reminders\"\r\n+ @e15~s595948 [switch] \"Hike reminders\"\r\n+ @e16~s595948 [text] \"\"\r\n+ @e17~s595948 [text] \"Nudge me when I have not hiked in a while\"\r\n+ @e18~s595948 [text] \"Offline maps\"\r\n+ @e19~s595948 [switch] \"Offline maps\"\r\n+ @e20~s595948 [text] \"\"\r\n+ @e21~s595948 [text] \"Keep saved trail maps available offline\"\r\n+ @e22~s595948 [text] \"STORAGE\"\r\n+ @e23~s595948 [cell] \"Recorded hikes\"\r\n+ @e24~s595948 [text] \"\"\r\n+ @e25~s595948 [text] \"48\"\r\n+ @e26~s595948 [text] \"Stored in a local database\"\r\r\n+ @e27~s595948 [button] \"Reset sample data\"\r\n+ @e28~s595948 [text] \"ABOUT\"\r\n+ @e29~s595948 [cell] \"\"\r\n+ @e30~s595948 [text] \"Version\"\r\n+ @e31~s595948 [text] \"1.0.0\"\r\n- @e32 [button] \"Trails, tab, 1 of 4\"\r\n+ @e33~s595948 [button] \"Trails, tab, 1 of 4\"\r\n- @e35 [button] \"Settings, tab, 4 of 4\"\r\n+ @e36~s595948 [button] \"Settings, tab, 4 of 4\"\r\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_31",
+          "startSeconds": 472.793,
+          "endSeconds": 473.031,
+          "command": "agent-device wait text \"Keep saved trail maps available offline\"",
+          "output": "",
+          "exitCode": 0
+        },
+        {
+          "id": "item_32",
+          "startSeconds": 478.126,
+          "endSeconds": 479.412,
+          "command": "agent-device screenshot tmp/javascript-control-settings.png",
+          "output": "tmp/javascript-control-settings.png (402x874 @1x)\r\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_33",
+          "startSeconds": 485.545,
+          "endSeconds": 485.545,
+          "command": "cp tmp/javascript-control-settings.png results/luna-rc12/javascript-control/proof/settings.png",
+          "output": "",
+          "exitCode": 0
+        },
+        {
+          "id": "item_34",
+          "startSeconds": 489.86,
+          "endSeconds": 490.111,
+          "command": "agent-device close",
+          "output": "Closed: default\r\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_20",
+          "startSeconds": 151.309,
+          "endSeconds": 504.102,
+          "command": "open -a Simulator && ./node_modules/.bin/expo run:ios --device <simulator-udid>",
+          "output": "\u001b[?25l\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[?25h\u001b[32m✔\u001b[39m Installed CocoaPods\r\n› Using --device <simulator-udid>\r\n› Planning build\r\n› Executing react-native Pods/hermes-engine » [CP-User] [Hermes] Replace Hermes for the right configuration, if needed\r\n› Executing react-native Pods/ReactNativeDependencies » [CP-User] [\n... output clipped for the viewer",
+          "exitCode": 1
+        },
+        {
+          "id": "item_39",
+          "startSeconds": 512.011,
+          "endSeconds": 512.011,
+          "command": "test -s results/luna-rc12/javascript-control/proof/settings.png && stat -f '%N %z bytes' results/luna-rc12/javascript-control/proof/settings.png",
+          "output": "results/luna-rc12/javascript-control/proof/settings.png 76379 bytes\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_36",
+          "startSeconds": 512.003,
+          "endSeconds": 512.127,
+          "command": "ps -p 47751 -o pid=,stat=,command=; lsof -nP -iTCP:8081 -sTCP:LISTEN",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 1
+        },
+        {
+          "id": "item_37",
+          "startSeconds": 512.009,
+          "endSeconds": 512.148,
+          "command": "git status --short --branch && git diff -- app/'(tabs)'/settings.tsx",
+          "output": "## bench/javascript-control\n M app/(tabs)/settings.tsx\n M ios/Podfile.lock\ndiff --git a/app/(tabs)/settings.tsx b/app/(tabs)/settings.tsx\nindex 2f3d8a7..3bdee54 100644\n--- a/app/(tabs)/settings.tsx\n+++ b/app/(tabs)/settings.tsx\n@@ -109,7 +109,7 @@ export default function SettingsScreen() {\n           <RowLabel\n             icon=\"cloud-offline-outline\"\n             title=\"Offline maps\"\n-            subtitle=\"Keep map tiles for saved trails on device\"\n+            subtitle=\"Keep saved trail maps available offline\"\n           />\n           <Switch\n             value={offlineMaps}\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_38",
+          "startSeconds": 512.01,
+          "endSeconds": 512.425,
+          "command": "xcrun simctl spawn <simulator-udid> launchctl list | rg -i 'trailhead|appandflow' || true",
+          "output": "56540\t0\tUIKitApplication:com.appandflow.trailhead[5d1f][rb-legacy]\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_40",
+          "startSeconds": 523.302,
+          "endSeconds": 523.302,
+          "command": "git diff -- ios/Podfile.lock",
+          "output": "diff --git a/ios/Podfile.lock b/ios/Podfile.lock\nindex 550994f..6c08f84 100644\n--- a/ios/Podfile.lock\n+++ b/ios/Podfile.lock\n@@ -3074,7 +3074,7 @@ SPEC CHECKSUMS:\n   ExpoLinking: b616f5d0c2e11db3a5cccd8ae6bff45294929fd2\n   ExpoLocation: cc81013b678d75014ae395cd4707c0136e88cfb1\n   ExpoLogBox: 80957303325cd4439137765c90a87d7f22aaf2ff\n-  ExpoModulesCore: fb834e52d821cbf0f133f3b1074fa0010279bfe4\n+  ExpoModulesCore: 7293306a15f8d382916c81408b6fc0b025946897\n   ExpoModulesJSI: 1529d4289b9a3647d8901a27b41f1af173598b45\n   ExpoModulesWorklets: 57a11e6ae984c2680e7967b785ded96199caed8c\n   ExpoModulesWorkletsAdapter: be52ecb2cbbed64febbb739971bd77d9c8e84569\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_41",
+          "startSeconds": 523.302,
+          "endSeconds": 523.302,
+          "command": "ps -axo pid=,ppid=,stat=,command= | rg '[e]xpo|[m]etro|[n]ode.*8081|[n]ode.*start' || true",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_44",
+          "startSeconds": 537.666,
+          "endSeconds": 537.72,
+          "command": "nohup ./node_modules/.bin/expo start --dev-client --localhost >/dev/null 2>&1 & echo $!",
+          "output": "58800\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_45",
+          "startSeconds": 544.018,
+          "endSeconds": 544.399,
+          "command": "ps -p 58800 -o pid=,ppid=,stat=,command=; lsof -nP -iTCP:8081 -sTCP:LISTEN; xcrun simctl spawn <simulator-udid> launchctl list | rg -i 'trailhead|appandflow' || true; test -s results/luna-rc12/javascript-control/proof/settings.png && echo PROOF_PRESENT; git status --short --branch",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_46",
+          "startSeconds": 552.269,
+          "endSeconds": 552.269,
+          "command": "ps -p 58800 -o pid=,ppid=,stat=,command=; lsof -nP -iTCP:8081 -sTCP:LISTEN",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 1
+        },
+        {
+          "id": "item_47",
+          "startSeconds": 560.362,
+          "endSeconds": 560.464,
+          "command": "nohup ./node_modules/.bin/expo start --dev-client --localhost > .metro.log 2>&1 & echo $!",
+          "output": "",
+          "exitCode": 0
+        },
+        {
+          "id": "item_48",
+          "startSeconds": 565.505,
+          "endSeconds": 565.505,
+          "command": "sed -n '1,160p' .metro.log; ps -p 59145 -o pid=,ppid=,stat=,command=; lsof -nP -iTCP:8081 -sTCP:LISTEN",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 1
+        },
+        {
+          "id": "item_50",
+          "startSeconds": 581.879,
+          "endSeconds": 581.879,
+          "command": "command -v setsid || true; ps -axo pid=,ppid=,stat=,command= | rg 'expo start|metro|react-native|node.*8081' || true; lsof -nP -iTCP:8081 -sTCP:LISTEN",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_49",
+          "startSeconds": 574.228,
+          "endSeconds": 601.662,
+          "command": "./node_modules/.bin/expo start --dev-client --localhost",
+          "output": "Starting project at worktree/javascript-control\nLogs: worktree/javascript-control/.expo/dev/logs/start.log\nReact Compiler enabled\nStarting Metro Bundler\n\nWaiting on http://localhost:8081\n\nAn update for expo is available: 57.0.18 → ~57.0.19\n12 other packages may need updating. Run npx expo install --check for details.\nLogs for your project will appear below.\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_52",
+          "startSeconds": 608.387,
+          "endSeconds": 608.387,
+          "command": "python3 -c 'import subprocess; p=subprocess.Popen([\\\"./node_modules/.bin/expo\\\", \\\"start\\\", \\\"--dev-client\\\", \\\"--localhost\\\"], cwd=\\\"worktree/javascript-control\\\", stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True); print(p.pid)'",
+          "output": "59596\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_53",
+          "startSeconds": 615.546,
+          "endSeconds": 617.98,
+          "command": "sleep 2; ps -p 59596 -o pid=,ppid=,stat=,command=; lsof -nP -iTCP:8081 -sTCP:LISTEN; xcrun simctl spawn <simulator-udid> launchctl list | rg -i 'trailhead|appandflow' || true; git status --short --branch",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_55",
+          "startSeconds": 634.883,
+          "endSeconds": 634.883,
+          "command": "test -s results/luna-rc12/javascript-control/proof/settings.png && stat -f '%N %z bytes' results/luna-rc12/javascript-control/proof/settings.png",
+          "output": "results/luna-rc12/javascript-control/proof/settings.png 76379 bytes\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_56",
+          "startSeconds": 634.898,
+          "endSeconds": 634.898,
+          "command": "git worktree list --porcelain | rg -A2 -B1 'trailhead-v4-worktrees/javascript-control'; test -d node_modules && test -d ios/Pods && test -d ios/build && echo NATIVE_AND_DEPS_PRESENT",
+          "output": "\nworktree worktree/javascript-control\nHEAD 63fe92cb06e228fb0294344a67778180392f3008\nbranch refs/heads/bench/javascript-control\nNATIVE_AND_DEPS_PRESENT\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_58",
+          "startSeconds": 634.916,
+          "endSeconds": 634.916,
+          "command": "git status --short --branch && git diff --check && git diff -- app/'(tabs)'/settings.tsx",
+          "output": "## bench/javascript-control\n M app/(tabs)/settings.tsx\ndiff --git a/app/(tabs)/settings.tsx b/app/(tabs)/settings.tsx\nindex 2f3d8a7..3bdee54 100644\n--- a/app/(tabs)/settings.tsx\n+++ b/app/(tabs)/settings.tsx\n@@ -109,7 +109,7 @@ export default function SettingsScreen() {\n           <RowLabel\n             icon=\"cloud-offline-outline\"\n             title=\"Offline maps\"\n-            subtitle=\"Keep map tiles for saved trails on device\"\n+            subtitle=\"Keep saved trail maps available offline\"\n           />\n           <Switch\n             value={offlineMaps}\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_57",
+          "startSeconds": 634.909,
+          "endSeconds": 635.287,
+          "command": "ps -p 59596 -o pid=,ppid=,stat=,command=; lsof -nP -iTCP:8081 -sTCP:LISTEN; xcrun simctl spawn <simulator-udid> launchctl list | rg -i 'trailhead|appandflow' || true",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        }
+      ],
+      "markers": [
+        {
+          "id": "app-alive",
+          "kind": "appAlive",
+          "label": "App process alive",
+          "atSeconds": 416.776
+        },
+        {
+          "id": "settings-ready",
+          "kind": "settingsReady",
+          "label": "Settings proof ready",
+          "atSeconds": 479.412
+        }
+      ],
+      "proof": {
+        "src": "benchmarks/luna-rc12/javascript-control.png",
+        "expected": "Keep saved trail maps available offline",
+        "width": 402,
+        "height": 874
+      }
+    },
+    {
+      "id": "native-stim",
+      "model": "gpt-5.6-luna",
+      "variant": "native",
+      "arm": "stim",
+      "valid": true,
+      "invalidReasons": [],
+      "settingsReadySeconds": 261.177,
+      "appAliveSeconds": 218.656,
+      "totalSeconds": 294.492,
+      "commandCount": 15,
+      "usage": {
+        "input_tokens": 530198,
+        "cached_input_tokens": 486400,
+        "output_tokens": 5421,
+        "reasoning_output_tokens": 2145
+      },
+      "estimatedTokenCostUsd": 0.0249928,
+      "messages": [
+        {
+          "id": "item_0",
+          "atSeconds": 5.207,
+          "text": "I’m using the Stim skill to create and launch the isolated iOS worktree, then the agent-device skill to drive Settings and capture the required proof screenshot. I’ll preserve the inherited `STIM_HOME` and follow the exact command sequence you specified."
+        },
+        {
+          "id": "item_4",
+          "atSeconds": 20.39,
+          "text": "Stim doctor is clean. I’m creating the requested worktree now; once Stim prints its absolute path, all remaining project inspection and edits will stay there."
+        },
+        {
+          "id": "item_10",
+          "atSeconds": 66.266,
+          "text": "The native edit is in place directly after the existing `window` assignment, with the exact requested accessibility identifier. I’m starting Metro and then the iOS run; I’ll use Stim’s reported launch UDID verbatim for agent-device."
+        },
+        {
+          "id": "item_13",
+          "atSeconds": 137.09,
+          "text": "Stim has adopted the parked simulator exactly as required: iPhone 17 running iOS 26.5, UDID `<simulator-udid>`. The native build is still compiling; Metro remains running on port 8082."
+        },
+        {
+          "id": "item_14",
+          "atSeconds": 232.357,
+          "text": "The iOS build and launch succeeded, and Stim explicitly reports the parked simulator was adopted. I’m starting agent-device now with the exact UDID from Stim’s launch output."
+        },
+        {
+          "id": "item_18",
+          "atSeconds": 259.209,
+          "text": "Settings is visible and the exact `agent-device wait text \"Offline maps\"` succeeded. I’m capturing to the required temporary path, copying it to the proof location, and then closing the agent-device session."
+        },
+        {
+          "id": "item_23",
+          "atSeconds": 294.143,
+          "text": "Completed successfully.\n\n- Worktree: `worktree/bench+native-stim`\n- Screenshot: [settings.png](results/luna-rc12/native-stim/proof/settings.png)\n\nStim adopted the iPhone 17 simulator, the wait succeeded, and Metro remains running."
+        }
+      ],
+      "commands": [
+        {
+          "id": "item_1",
+          "startSeconds": 7.798,
+          "endSeconds": 7.798,
+          "command": "sed -n '1,240p' results/luna-rc12/native-stim/runner-home/.codex/skills/stim/SKILL.md && sed -n '1,280p' results/luna-rc12/native-stim/runner-home/.codex/skills/agent-device/SKILL.md",
+          "output": "---\nname: stim\ndescription: The React Native / Expo CLI for AI agents. Use when an agent needs an isolated Metro server and simulator or emulator, must build and launch an app, inspect build or runtime errors, create a parallel worktree, or identify the correct device for UI interaction.\n---\n\n# Stim\n\nUse Stim to run React Native and Expo apps without sharing a Metro port or\ndevice with another workspace. Run it without installing:\n\n```bash\nnpx stim-cli <command>\n```\n\nOr install it once, which provides the same `stim` command:\n\n```bash\nnpm install --global stim-cli\n```\n\nDo not change the installation mode unless the user asks. Later examples use\n`stim`. If it is not installed globally, replace `stim` with the `npx` form above.\n\nStim requires Node 20.19.4+, or 22.12.0+ on Node 22. If `npx` returns E401 or\nE404 in a repo with a private registry, use:\n\n```bash\nnpx --registry=https://registry.npmjs.org stim-cli <command>\n```\n\nPrefer plain output: it streams each phase and ends with the facts the next step\nneeds. Use `--json` only when a script must parse a stable payload.\n\n## Normal workflow\n\nWork in the current checkout by default. When the agent creates an app worktree\nfor isolation or parallel work, carry its dependencies and native outputs.\n\nBefore a native worktree task, run `stim doctor --platform ios` (or `android`).\nIt checks the main checkout from a linked worktree. Fix relevant findings and\ninspect the upstream gap.\n\n```bash\nstim doctor --platform ios\n\n# In the main checkout, seed the shared build caches when more native\n# worktrees are coming; skip one-off or JavaScript-only work.\nstim start\nstim ios                    # or: stim android\nstim stop\n\n# Branches from HEAD. --carry-ignored carries installed dependencies and\n# native output: pass it on the first creation, never on a retry. It prints\n# the new absolute path.\nstim worktree create <name> --carry-ignored\ncd <printed-path>\n\nstim start\nstim ios                    # or: stim android\nstim logs --errors\n\n# Edit JavaScript or TypeScript. Fast Refresh applies the change.\nstim logs --since 30s --level error\n\nstim stop\n\nstim worktree remove\n```\n\nFollow these rules during the loop:\n\n- Run `start` before a debug `ios` or `android` build. If it returns\n  `STIM_NO_METRO`, run `stim start` and retry.\n- Run `ios` or `android` again after a native input changes. A JavaScript-only\n  change does not need one.\n- A cold native build can outlive a shell timeout. Run the same command again:\n  the second call joins the active build or returns its result.\n- `ios` and `android` install the app, launch it, and check its readiness. No\n  separate device tool is required. Trust the exact device, app, Metro, and\n  launch facts in Stim's final summary. Use the full reported device ID. Never\n  assume that a simulator named `booted` belongs to this workspace.\n- An `OK` summary with no launch qualifier proves the launch. `bundle requested,\nstill building` means Metro has not finished the bundle; wait and query the\n  logs. For `launch UNVERIFIED`, follow the printed remedy before you claim\n  success. JSON reports these as `true`, `\"bundling\"`, and `\"unverified\"` in\n  `launched`.\n- Exit code 0 from `logs --errors` is the pass condition. Human output can show\n  `No matching log records` on stderr. JSON mode prints zero bytes when no\n  records match. Do not read the NDJSON files directly.\n- Use `stim status` when resuming a workspace or recovering missing device,\n  port, server, or build facts; a normal `start` and platform run already print\n  them. Use `stim doctor` when a build is unexpectedly slow or the environment\n  looks incomplete.\n\n## Ownership and deletion\n\nStim creates, boots, and deletes only devices it created. Owned simulators use\nthe `stim-<label> (<model> <runtime>)` name. Never point Stim at a user-created\nemulator or simulator.\n\n`worktree remove` parks the workspace's simulator for a later one to adopt. A\nparked simulator is Stim-owned: never delete one by hand; `gc --delete` clears\nverified entries, keeps failures (`stim guide lifecycle`). First launch on a physical iPhone can need\none-time taps the remedy names.\n\n`stim android --device [serial]` and `stim ios --device [udid]` install on a\nconnected physical device. Stim never creates, boots, or deletes hardware, and\nrecords nothing about it, so `stop` and `gc` leave it alone.\n\nA `--device` run leases that device for the run. `stim device lock ios --for\n10m` holds it across runs; `stim device unlock` gives it back\n(`stim guide lifecycle`). Never delete another workspace's lease file under\n`~/.stim/device-locks`; `gc --delete` removes the expired ones.\n\nTreat a refusal as an ownership or state mismatch: read its code and remedy.\nNever reach for `--force` first.\n\nAsk the user before these actions:\n\n- `worktree remove`, because it deletes the worktree, its Stim-created branch\n  when it has no unique commits, and gives up its owned device.\n- `worktree remove --force`, because it also discards uncommitted and untracked\n  files.\n- `gc --delete`, because it deletes orphaned resources. `gc --delete --cache all`\n  empties the shared build caches instead; it inspects nothing else.\n- `stop` when the workspace owns an EAS session, because it irreversibly ends\n  that remote session. For a local device, `stop` shuts it down but does not\n  delete it. An explicit `stop` shuts down a Stim-owned simulator even when\n  another process uses it. It never shuts down an unowned simulator.\n\n## Under a sandbox\n\nAn agent harness that sandboxes shell commands usually permits writes inside\nthe project and little else. Three things Stim needs sit outside that\nboundary, and none of the failures names the sandbox: writes to `STIM_HOME`\n(`~/.stim` unless set) fail with `EPERM` on a directory the user can write, the\niOS simulator service looks dead, and the adb server looks unreachable. They\nare not a broken machine: compare that path against the harness's allowlist,\nand the conflict is visible before anything runs.\n\nDecide at the start of a session, not after the third failure: either run Stim\nwith the harness's sandbox disabled, or ask the user to allow those three.\n`stim guide errors` lists what to allow.\n\n## Load advanced guidance only when needed\n\nThe installed CLI is the source of truth for flags, payloads, settings, error\ncodes, remote devices, release builds, caches, and cleanup. Read the topic\nfirst:\n\n```bash\nstim guide             # list topics\nstim guide lifecycle   # full flow, flags, worktrees, builds, and capacity\nstim guide facts       # JSON payload fields\nstim guide metro       # supervisor, custom Metro, tunnels, and remote devices\nstim guide logs        # filters, record shape, and capture limits\nstim guide errors      # error codes and remedies\nstim guide cleanup     # destructive behavior and disk cleanup\nstim guide settings    # configuration files and supported keys\n```\n\nRun the guide before tasks involving any of these:\n\n- release configurations or Android variants;\n- remote proxy or EAS devices;\n- custom Metro processes or public tunnels;\n- cache bypasses, cache misses, or concurrent builds;\n- machine capacity limits;\n- cache hit rates or the time the cache saved, which `stim stats` reports;\n- worktree carry-over warnings;\n- fingerprint exclusions;\n- `gc`, `--force`, cleanup failures, or unfamiliar cleanup states and error\n  codes.\n\nOrdinary `stim stop` and an authorized clean `stim worktree remove` do not need\nthe cleanup guide.\n\nIf this skill and `stim guide` disagree, follow the guide: it comes from the\nbinary that is running.\n---\nname: agent-device\ndescription: Automates Apple-platform apps (iOS, tvOS, macOS), Android devices, and Amazon Vega OS TV apps in Vega Virtual Devices. Use when navigating apps, taking snapshots/screenshots where supported, driving TV remotes, tapping, typing, scrolling, extracting UI info, collecting evidence, or planning agent-device CLI commands.\n---\n\n# agent-device\n\nFor a normal app-driving task, start immediately. Do not probe first with `--help`, `--version`, `devices`, `appstate`, `snapshot`, or `screenshot`:\n\n```bash\nagent-device open <app> --foreground\n```\n\nThat starts the session and returns the initial interactive snapshot with `@refs`.\n\nLoop: act with `press|click|fill|longpress <target> ... --settle`, `scroll <direction> --settle`, or `back --settle`; continue from the printed diff, verify the named expectation (`wait text \"...\"`, `is`, `get`, or `find`), then run `agent-device close`.\n\nCopy refs byte-for-byte: `@e12`, `@e12~s4` — keep the `@` and any `~sN`. Prefer current refs, then `id`/`label`/`role` selectors; coordinates are a last resort. If snapshot reports sparse/AX-unavailable, its refs and selectors are invalid: run `agent-device screenshot`, inspect the image, use coordinates, then retry `snapshot -i` after navigating. Otherwise run `snapshot -i` only when the diff lacks the next target.\n\nError output includes corrective hints; follow them instead of re-planning. Only when the task is specialized (for example gestures, scripting, TV, macOS, remote, or debugging) or a command shape is unclear, run `agent-device help <topic>`. `agent-device --help` lists topics, but is not a startup step.\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_3",
+          "startSeconds": 17.693,
+          "endSeconds": 19.189,
+          "command": "stim doctor --platform ios",
+          "output": "Nothing to flag.\nChecked: main-checkout dependencies, CocoaPods, iOS warm state, dev client, Metro cacheStores, Xcode compilation cache, ccache, build cache provider, iOS remote device and SimSlim profile, local upstream, EAS session, the type of every setting Stim reads and, on a checkout without installed dependencies, fingerprint parity.\nNothing to flag means nothing Stim cannot handle itself: it supplies the Metro transform store, the Xcode compilation cache and the Gradle build cache on its own command lines, so a project that configures none of them is clean here.\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_5",
+          "startSeconds": 21.982,
+          "endSeconds": 35.335,
+          "command": "stim worktree create bench/native-stim --dir worktree/project --carry-ignored",
+          "output": "  branch      worktree-bench/native-stim from HEAD (63fe92c)\n  carry       node_modules, Pods, native build output (APFS clone)\n  ready       worktree/bench+native-stim\nworktree/bench+native-stim\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_6",
+          "startSeconds": 45.073,
+          "endSeconds": 45.244,
+          "command": "stim status",
+          "output": "\naea16a06-bench-native-stim [idle] (worktree/bench+native-stim)\n  worktree root (holds the label; the app registers its own entry)\n\npool: 1 parked iOS simulator (max 1)\n\nWorktrees with no environment (2):\n  worktree/repro+derived_data-plus-fix [worktree-repro/derived_data-plus-fix]\n  worktree/repro@derived-data-at-fix [worktree-repro/derived-data-at-fix]\n\n0 live environment(s), roughly 0.0 GB of 16.0 GB committed.\n29 GB free on /, 1.4 TB free on workspace/ExternalSSD.\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_7",
+          "startSeconds": 51.862,
+          "endSeconds": 51.862,
+          "command": "rg -n -C 8 \"window\" ios/Trailhead/AppDelegate.swift",
+          "output": "1-internal import Expo\n2-import React\n3-import ReactAppDependencyProvider\n4-\n5-@main\n6-class AppDelegate: ExpoAppDelegate {\n7:  var window: UIWindow?\n8-\n9-  var reactNativeDelegate: ExpoReactNativeFactoryDelegate?\n10-  var reactNativeFactory: RCTReactNativeFactory?\n11-\n12-  public override func application(\n13-    _ application: UIApplication,\n14-    didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil\n15-  ) -> Bool {\n16-    let delegate = ReactNativeDelegate()\n17-    let factory = ExpoReactNativeFactory(delegate: delegate)\n18-    delegate.dependencyProvider = RCTAppDependencyProvider()\n19-\n20-    reactNativeDelegate = delegate\n21-    reactNativeFactory = factory\n22-\n23-#if os(iOS) || os(tvOS)\n24:    window = UIWindow(frame: UIScreen.main.bounds)\n25-    factory.startReactNative(\n26-      withModuleName: \"main\",\n27:      in: window,\n28-      launchOptions: launchOptions)\n29-#endif\n30-\n31-    return super.application(application, didFinishLaunchingWithOptions: launchOptions)\n32-  }\n33-\n34-  // Linking API\n35-  public override func application(\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_9",
+          "startSeconds": 62.417,
+          "endSeconds": 62.417,
+          "command": "git diff -- ios/Trailhead/AppDelegate.swift",
+          "output": "diff --git a/ios/Trailhead/AppDelegate.swift b/ios/Trailhead/AppDelegate.swift\nindex 0dd14a1..724001d 100644\n--- a/ios/Trailhead/AppDelegate.swift\n+++ b/ios/Trailhead/AppDelegate.swift\n@@ -22,6 +22,7 @@ class AppDelegate: ExpoAppDelegate {\n \n #if os(iOS) || os(tvOS)\n     window = UIWindow(frame: UIScreen.main.bounds)\n+    window?.accessibilityIdentifier = \"Trailhead native-stim\"\n     factory.startReactNative(\n       withModuleName: \"main\",\n       in: window,\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_11",
+          "startSeconds": 67.517,
+          "endSeconds": 69.512,
+          "command": "stim start",
+          "output": "  metro       starting on port 8082 (expo-child, supervisor pid 63871)\nOK: dev server on port 8082, supervisor pid 63871 (expo-child) (1.7s)\n  logs        results/luna-rc12/native-stim/stim-home/workspaces/bench-luna-rc12-gpt-5-6-luna-native-stim-1788451--2d4669efce242aab/logs\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_12",
+          "startSeconds": 71.89,
+          "endSeconds": 230.141,
+          "command": "stim ios",
+          "output": "  device      booting stim-aea16a06-bench-luna-rc12-gpt-5-6-luna- (iPhone 17 26.5) (<simulator-udid>)\n  fingerprint 959dc4.. miss (5.7s)\n  build       compiling Debug with xcodebuild\n  cache       compilation cache on (CAS at results/luna-rc12/native-stim/stim-home/compilation-cache)\n  device      resetting privacy grants and the keychain on <simulator-udid>\n  build       still compiling (30s of ~4m15s)\n  build       still compiling (1m00s of ~4m15s)\n  build       still compiling (1m30s of ~4m15s)\n  build       still compiling (2m00s of ~4m15s)\n  cache       compilation cache 1394/1394 hits (100%)\n  build       ok (2m15s)\n  device      stim-aea16a06-bench-luna-rc12-gpt-5-6-luna- (iPhone 17 26.5) (3372..) adopted (40.4s)\n  install     removed <agent-device-helper>, left by the previous workspace\n  install     Trailhead.app -> stim-aea16a06-bench-luna-rc12-gpt-5-6-luna- (iPhone 17 26.5) (3372..) (2.9s)\n  install     dev client prepared (694ms)\n  launch      com.appandflow.trailhead (447ms)\n  verify      bundle loaded, process alive, stable for 3s -- the first screen may still be rendering (11.5s total)\nOK: com.appandflow.trailhead on stim-aea16a06-bench-luna-rc12-gpt-5-6-luna- (iPhone 17 26.5) (3372..), Metro port 8082 (built, 2m38s)\n  device      stim-aea16a06-bench-luna-rc12-gpt-5-6-luna- (iPhone 17 26.5) (<simulator-udid>)\n  app         com.appandflow.trailhead\n  metro       running on port 8082\n  cache       built\n  compilation cache 1394/1394 hits (100%)\n  logs        results/luna-rc12/native-stim/stim-home/workspaces/bench-luna-rc12-gpt-5-6-luna-native-stim-1788451--2d4669efce242aab/logs\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_15",
+          "startSeconds": 234.138,
+          "endSeconds": 243.427,
+          "command": "agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
+          "output": "Opened: com.appandflow.trailhead\nSession state: workspace/cwd_2d4669efce242aab_default\nPage: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 33 visible nodes\n@e1 [application] \"Trailhead\"\n@e2 [window] \"Trailhead native-stim\"\n@e3 [other] \"\"\n@e4 [other] \"Trails\"\n@e5 [text-field] \"Search trails\" [editable]\n@e6 [scroll-area] \"All regions\" [scrollable]\n  [content below scroll-area hidden]\n@e7 [other] \"All regions\"\n@e8 [button] \"All regions\" [selected]\n@e9 [button] \"Adirondacks\"\n@e10 [button] \"Bas-Saint-Laurent\"\n@e11 [button] \"Charlevoix\"\n@e12 [scroll-area] \"Any level\" [scrollable]\n  [content below scroll-area hidden]\n@e13 [other] \"Any level\"\n@e14 [button] \"Any level\" [selected]\n@e15 [button] \"Easy\"\n@e16 [button] \"Moderate\"\n@e17 [button] \"Hard\"\n@e18 [button] \"Expert\"\n@e19 [text] \"200 trails\"\n@e20 [button] \"Sort by name\" [selected]\n@e21 [button] \"Sort by distance\"\n@e22 [button] \"Sort by rating\"\n@e23 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\" [scrollable]\n  [content below scroll-area hidden]\n@e24 [other] [same label as parent]\n@e25 [button] [same label as parent]\n@e26 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n@e27 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n@e28 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n@e29 [other] \"Trails, tab, 1 of 4\"\n@e30 [button] \"Trails, tab, 1 of 4\" [selected]\n@e31 [button] \"Record, tab, 2 of 4\"\n@e32 [button] \"History, tab, 3 of 4\"\n@e33 [button] \"Settings, tab, 4 of 4\"\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_16",
+          "startSeconds": 246.257,
+          "endSeconds": 248.84,
+          "command": "agent-device click @e33 --settle",
+          "output": "Tapped @e33 (352, 816)\nsettled after 1756ms: +29 -28 (~5 unchanged)\n- @e3 [other] \"\"\n- @e4 [other] \"Trails\"\n- @e5 [text-field] \"Search trails\"\n- @e6 [scroll-area] \"All regions\"\n- @e7 [other] \"All regions\"\n- @e8 [button] \"All regions\"\n- @e9 [button] \"Adirondacks\"\n- @e10 [button] \"Bas-Saint-Laurent\"\n- @e11 [button] \"Charlevoix\"\n- @e12 [scroll-area] \"Any level\"\n- @e13 [other] \"Any level\"\n- @e14 [button] \"Any level\"\n- @e15 [button] \"Easy\"\n- @e16 [button] \"Moderate\"\n- @e17 [button] \"Hard\"\n- @e18 [button] \"Expert\"\n- @e19 [text] \"200 trails\"\n- @e20 [button] \"Sort by name\"\n- @e21 [button] \"Sort by distance\"\n- @e22 [button] \"Sort by rating\"\n- @e23 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e24 [other] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e25 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e26 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n- @e27 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n- @e28 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n+ @e3~s303814 [other] \"Settings\"\n+ @e4~s303814 [scroll-area] \"UNITS\"\n+ @e5~s303814 [other] \"UNITS\"\n+ @e6~s303814 [cell] \"Distance\"\n+ @e7~s303814 [text] \"\"\n+ @e8~s303814 [button] \"Metric units\"\n+ @e9~s303814 [button] \"Imperial units\"\n+ @e10~s303814 [text] \"Used across the whole app\"\n+ @e11~s303814 [text] \"PREFERENCES\"\n+ @e12~s303814 [other] \"Hike reminders\"\n+ @e13~s303814 [switch] \"Hike reminders\"\n+ @e14~s303814 [text] \"\"\n+ @e15~s303814 [text] \"Nudge me when I have not hiked in a while\"\n+ @e16~s303814 [text] \"Offline maps\"\n+ @e17~s303814 [switch] \"Offline maps\"\n+ @e18~s303814 [text] \"\"\n+ @e19~s303814 [text] \"Keep map tiles for saved trails on device\"\n+ @e20~s303814 [text] \"STORAGE\"\n+ @e21~s303814 [cell] \"Recorded hikes\"\n+ @e22~s303814 [text] \"\"\n+ @e23~s303814 [text] \"48\"\n+ @e24~s303814 [text] \"Stored in a local database\"\n+ @e25~s303814 [button] \"Reset sample data\"\n+ @e26~s303814 [text] \"ABOUT\"\n+ @e27~s303814 [cell] \"\"\n+ @e28~s303814 [text] \"Version\"\n+ @e29~s303814 [text] \"1.0.0\"\n- @e30 [button] \"Trails, tab, 1 of 4\"\n+ @e31~s303814 [button] \"Trails, tab, 1 of 4\"\n- @e33 [button] \"Settings, tab, 4 of 4\"\n+ @e34~s303814 [button] \"Settings, tab, 4 of 4\"\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_17",
+          "startSeconds": 252.499,
+          "endSeconds": 252.686,
+          "command": "agent-device wait text \"Offline maps\"",
+          "output": "",
+          "exitCode": 0
+        },
+        {
+          "id": "item_19",
+          "startSeconds": 260.597,
+          "endSeconds": 261.177,
+          "command": "agent-device screenshot tmp/native-stim-settings.png",
+          "output": "tmp/native-stim-settings.png (402x874 @1x)\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_20",
+          "startSeconds": 266.709,
+          "endSeconds": 266.709,
+          "command": "cp tmp/native-stim-settings.png results/luna-rc12/native-stim/proof/settings.png",
+          "output": "",
+          "exitCode": 0
+        },
+        {
+          "id": "item_21",
+          "startSeconds": 271.269,
+          "endSeconds": 271.436,
+          "command": "agent-device close",
+          "output": "Closed: default\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_22",
+          "startSeconds": 281.475,
+          "endSeconds": 281.475,
+          "command": "test -s results/luna-rc12/native-stim/proof/settings.png && stat -f '%z bytes %N' results/luna-rc12/native-stim/proof/settings.png",
+          "output": "69870 bytes results/luna-rc12/native-stim/proof/settings.png\n",
+          "exitCode": 0
+        }
+      ],
+      "markers": [
+        {
+          "id": "app-alive",
+          "kind": "appAlive",
+          "label": "App process alive",
+          "atSeconds": 218.656
+        },
+        {
+          "id": "settings-ready",
+          "kind": "settingsReady",
+          "label": "Settings proof ready",
+          "atSeconds": 261.177
+        }
+      ],
+      "proof": {
+        "src": "benchmarks/luna-rc12/native-stim.png",
+        "expected": "Offline maps",
+        "width": 402,
+        "height": 874
+      }
+    },
+    {
+      "id": "native-control",
+      "model": "gpt-5.6-luna",
+      "variant": "native",
+      "arm": "control",
+      "valid": true,
+      "invalidReasons": [],
+      "settingsReadySeconds": 503.032,
+      "appAliveSeconds": 425.973,
+      "totalSeconds": 554.281,
+      "commandCount": 38,
+      "usage": {
+        "input_tokens": 1883788,
+        "cached_input_tokens": 1797120,
+        "output_tokens": 10009,
+        "reasoning_output_tokens": 3000
+      },
+      "estimatedTokenCostUsd": 0.0652868,
+      "messages": [
+        {
+          "id": "item_0",
+          "atSeconds": 5.857,
+          "text": "I’m using the `agent-device` skill because the task requires simulator control, semantic navigation, and exact evidence commands after launch. I’ll create and configure the worktree first, then build/run on a newly created iPhone 17 simulator and collect the required screenshot."
+        },
+        {
+          "id": "item_6",
+          "atSeconds": 22.35,
+          "text": "The main checkout is clean on `benchmark/v3-fixture`, and it already has `node_modules`, `ios/Pods`, and `ios/build`. I’ll create the requested branch/worktree and carry those installed/native directories into it before editing."
+        },
+        {
+          "id": "item_10",
+          "atSeconds": 78.563,
+          "text": "The dependency/native-output carryover has completed. Next I’m checking the exact existing window assignment and will apply the one-line accessibility change in the new worktree."
+        },
+        {
+          "id": "item_17",
+          "atSeconds": 109.148,
+          "text": "The worktree now contains `node_modules` (2.5G), `ios/Pods` (1.2G), and `ios/build` (1.1M), and the Swift diff is exactly the requested assignment immediately after the window creation. I’m now checking the installed simulator runtime/device type and the project’s local run configuration so the launch targets a newly created iPhone 17 on iOS 26.5."
+        },
+        {
+          "id": "item_21",
+          "atSeconds": 125.204,
+          "text": "The installed toolchain includes the exact iOS 26.5 runtime and iPhone 17 device type. I created a fresh simulator named `Trailhead Luna RC12 iPhone 17` with UDID `<simulator-udid>`; I’m launching the worktree with its local Expo CLI against that UDID now."
+        },
+        {
+          "id": "item_23",
+          "atSeconds": 228.573,
+          "text": "The build is progressing normally through CocoaPods and React Native code generation for the new simulator. I’ll keep the launch process attached until Expo reports the simulator app is running, then use only the required `agent-device` flow for the UI evidence."
+        },
+        {
+          "id": "item_24",
+          "atSeconds": 423.544,
+          "text": "Expo reports a successful build and is opening `com.appandflow.trailhead` on the newly created `Trailhead Luna RC12 iPhone 17`. The launch output identified the run simulator UDID as `<simulator-udid>`; I’m starting the required foreground agent-device session with that exact value."
+        },
+        {
+          "id": "item_26",
+          "atSeconds": 442.557,
+          "text": "The required `agent-device open` command completed, but its initial snapshot was not emitted by the terminal wrapper. Because the session is now established and no UI state was returned, I’m retrieving the interactive snapshot to identify any onboarding and the Settings tab semantically."
+        },
+        {
+          "id": "item_38",
+          "atSeconds": 496.518,
+          "text": "Onboarding is handled, and the app is now visibly on the Settings tab with the semantic label `Offline maps` present. I’m running the required exact wait command now; after it succeeds I’ll take and copy the required screenshot, then close only the agent-device session while leaving the app launched."
+        },
+        {
+          "id": "item_43",
+          "atSeconds": 520.401,
+          "text": "The required wait succeeded, the exact screenshot was captured and copied, and the required exact `agent-device close` completed. I’m doing final read-only verification that the proof file exists, the worktree contains only the intended source change, and the new simulator remains booted with the app installed/running."
+        },
+        {
+          "id": "item_48",
+          "atSeconds": 537.356,
+          "text": "The app is confirmed booted and running on the newly created simulator, and the proof PNG exists. Expo’s automatic CocoaPods step changed one generated checksum in `ios/Podfile.lock`; since the requested source change is only `AppDelegate.swift`, I’m restoring that incidental lockfile line and then rechecking the final worktree state without touching the running app."
+        },
+        {
+          "id": "item_52",
+          "atSeconds": 553.987,
+          "text": "Completed.\n\n- Worktree: [trailhead-v4 worktree](worktree/native-control)\n- Screenshot: [settings.png](results/luna-rc12/native-control/proof/settings.png)\n- App remains running on the new iPhone 17 iOS 26.5 simulator."
+        }
+      ],
+      "commands": [
+        {
+          "id": "item_1",
+          "startSeconds": 7.477,
+          "endSeconds": 7.477,
+          "command": "sed -n '1,240p' results/luna-rc12/native-control/runner-home/.codex/skills/agent-device/SKILL.md",
+          "output": "---\nname: agent-device\ndescription: Automates Apple-platform apps (iOS, tvOS, macOS), Android devices, and Amazon Vega OS TV apps in Vega Virtual Devices. Use when navigating apps, taking snapshots/screenshots where supported, driving TV remotes, tapping, typing, scrolling, extracting UI info, collecting evidence, or planning agent-device CLI commands.\n---\n\n# agent-device\n\nFor a normal app-driving task, start immediately. Do not probe first with `--help`, `--version`, `devices`, `appstate`, `snapshot`, or `screenshot`:\n\n```bash\nagent-device open <app> --foreground\n```\n\nThat starts the session and returns the initial interactive snapshot with `@refs`.\n\nLoop: act with `press|click|fill|longpress <target> ... --settle`, `scroll <direction> --settle`, or `back --settle`; continue from the printed diff, verify the named expectation (`wait text \"...\"`, `is`, `get`, or `find`), then run `agent-device close`.\n\nCopy refs byte-for-byte: `@e12`, `@e12~s4` — keep the `@` and any `~sN`. Prefer current refs, then `id`/`label`/`role` selectors; coordinates are a last resort. If snapshot reports sparse/AX-unavailable, its refs and selectors are invalid: run `agent-device screenshot`, inspect the image, use coordinates, then retry `snapshot -i` after navigating. Otherwise run `snapshot -i` only when the diff lacks the next target.\n\nError output includes corrective hints; follow them instead of re-planning. Only when the task is specialized (for example gestures, scripting, TV, macOS, remote, or debugging) or a command shape is unclear, run `agent-device help <topic>`. `agent-device --help` lists topics, but is not a startup step.\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_3",
+          "startSeconds": 17.237,
+          "endSeconds": 17.237,
+          "command": "ls -ld node_modules ios/build ios/Pods 2>/dev/null || true; find ios -maxdepth 2 -type d \\\\( -name build -o -name Pods \\\\) -print 2>/dev/null",
+          "output": "drwxr-xr-x@   3 <local-user>  staff     96 Sep  2 23:37 ios/build\ndrwxr-xr-x@  22 <local-user>  staff    704 Sep  3 02:59 ios/Pods\ndrwxr-xr-x@ 590 <local-user>  staff  18880 Sep  2 23:36 node_modules\nios/Pods\nios/build\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_4",
+          "startSeconds": 17.239,
+          "endSeconds": 17.239,
+          "command": "git branch --list 'bench/native-control'; test -e worktree/native-control && echo TARGET_EXISTS || true",
+          "output": "",
+          "exitCode": 0
+        },
+        {
+          "id": "item_5",
+          "startSeconds": 17.249,
+          "endSeconds": 17.249,
+          "command": "git status --short --branch && git worktree list --porcelain",
+          "output": "## benchmark/v3-fixture\nworktree workspace/trailhead-v3\nHEAD 63fe92cb06e228fb0294344a67778180392f3008\nbranch refs/heads/benchmark/v3-fixture\n\nworktree worktree/repro+derived_data-plus-fix\nHEAD 63fe92cb06e228fb0294344a67778180392f3008\nbranch refs/heads/worktree-repro/derived_data-plus-fix\n\nworktree worktree/repro@derived-data-at-fix\nHEAD 63fe92cb06e228fb0294344a67778180392f3008\nbranch refs/heads/worktree-repro/derived-data-at-fix\n\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_7",
+          "startSeconds": 23.998,
+          "endSeconds": 23.998,
+          "command": "git worktree add -b bench/native-control worktree/native-control benchmark/v3-fixture",
+          "output": "Preparing worktree (new branch 'bench/native-control')\nHEAD is now at 63fe92c test: stabilize benchmark native fingerprint\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_8",
+          "startSeconds": 28.499,
+          "endSeconds": 29.882,
+          "command": "du -sh node_modules ios/Pods ios/build; ls -ld android/build android/.gradle 2>/dev/null || true",
+          "output": "2.5G\tnode_modules\n1.2G\tios/Pods\n1.1M\tios/build\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_11",
+          "startSeconds": 80.012,
+          "endSeconds": 80.844,
+          "command": "rg -n -C 4 'window|accessibility' ios/Trailhead/AppDelegate.swift; du -sh node_modules ios/Pods ios/build",
+          "output": "du: ios/Pods: No such file or directory\ndu: ios/build: No such file or directory\n2.5G\tnode_modules\n",
+          "exitCode": 1
+        },
+        {
+          "id": "item_12",
+          "startSeconds": 86.78,
+          "endSeconds": 86.78,
+          "command": "ls -ld ios ios/Pods ios/build 2>&1 || true; ls -ld workspace/Pods workspace/build 2>&1 || true; find ios -maxdepth 2 -type d -print | head -40",
+          "output": "ls: ios/build: No such file or directory\ndrwxr-xr-x@ 11 <local-user>  staff  352 Sep  3 12:21 ios\ndrwxr-xr-x@ 17 <local-user>  staff  544 Sep  3 12:21 ios/Pods\ndrwxr-xr-x@ 22 <local-user>  staff  704 Sep  3 02:59 workspace/Pods\ndrwxr-xr-x@  3 <local-user>  staff   96 Sep  2 23:37 workspace/build\nios\nios/Trailhead.xcworkspace\nios/Trailhead.xcodeproj\nios/Trailhead.xcodeproj/xcshareddata\nios/Pods\nios/Pods/ReactNativeDependencies-artifacts\nios/Pods/ExpoLocation\nios/Pods/Pods.xcodeproj\nios/Pods/ExpoVideo\nios/Pods/ExpoModulesWorklets\nios/Pods/Target Support Files\nios/Pods/hermes-engine-artifacts\nios/Pods/ExpoModulesCore\nios/Pods/ExpoImage\nios/Pods/Local Podspecs\nios/Pods/ExpoFileSystem\nios/Pods/ReactNativeCore-artifacts\nios/Pods/MMKVCore\nios/Pods/React-Core-prebuilt\nios/Trailhead\nios/Trailhead/Images.xcassets\nios/Trailhead/Supporting\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_13",
+          "startSeconds": 92.126,
+          "endSeconds": 92.263,
+          "command": "ls -la workspace/build; git status --short --branch; git diff -- ios/Trailhead/AppDelegate.swift",
+          "output": "## bench/native-control\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_9",
+          "startSeconds": 36.208,
+          "endSeconds": 92.529,
+          "command": "cp -a workspace/node_modules worktree/native-control && cp -a workspace/Pods worktree/native-control/ios && cp -a workspace/build worktree/native-control/ios",
+          "output": "",
+          "exitCode": 0
+        },
+        {
+          "id": "item_14",
+          "startSeconds": 98.731,
+          "endSeconds": 98.731,
+          "command": "cp -a workspace/build worktree/native-control/ios",
+          "output": "",
+          "exitCode": 0
+        },
+        {
+          "id": "item_16",
+          "startSeconds": 103.231,
+          "endSeconds": 103.656,
+          "command": "git status --short --branch; git diff --check; git diff -- ios/Trailhead/AppDelegate.swift; du -sh node_modules ios/Pods ios/build",
+          "output": "2.5G\tnode_modules\n1.2G\tios/Pods\n1.1M\tios/build\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_18",
+          "startSeconds": 112.333,
+          "endSeconds": 112.333,
+          "command": "node -e 'const p=require(\\\"./package.json\\\"); console.log(JSON.stringify({name:p.name,scripts:p.scripts},null,2))' && rg -n 'bundleIdentifier|ios|scheme|expo run' app.json package.json eas.json 2>/dev/null || true",
+          "output": "{\n  \"name\": \"trailhead\",\n  \"scripts\": {\n    \"start\": \"expo start\",\n    \"android\": \"expo run:android\",\n    \"ios\": \"expo run:ios\",\n    \"web\": \"expo start --web\",\n    \"lint\": \"expo lint\",\n    \"typecheck\": \"tsc --noEmit\",\n    \"bench\": \"node bench/bench.mjs\"\n  }\n}\napp.json:8:    \"scheme\": \"trailhead\",\napp.json:10:    \"ios\": {\napp.json:12:      \"bundleIdentifier\": \"com.appandflow.trailhead\",\npackage.json:10:    \"android\": \"expo run:android\",\npackage.json:11:    \"ios\": \"expo run:ios\",\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_19",
+          "startSeconds": 112.342,
+          "endSeconds": 112.522,
+          "command": "xcrun simctl list runtimes | rg 'iOS|26\\\\.5' || true; xcrun simctl list devicetypes | rg 'iPhone 17' || true",
+          "output": "iOS 26.5 (26.5 - 23F77) - com.apple.CoreSimulator.SimRuntime.iOS-26-5\niPhone 17 Pro (com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro)\niPhone 17 Pro Max (com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro-Max)\niPhone 17e (com.apple.CoreSimulator.SimDeviceType.iPhone-17e)\niPhone 17 (com.apple.CoreSimulator.SimDeviceType.iPhone-17)\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_20",
+          "startSeconds": 120.124,
+          "endSeconds": 120.319,
+          "command": "xcrun simctl create 'Trailhead Luna RC12 iPhone 17' com.apple.CoreSimulator.SimDeviceType.iPhone-17 com.apple.CoreSimulator.SimRuntime.iOS-26-5",
+          "output": "<simulator-udid>\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_25",
+          "startSeconds": 425.212,
+          "endSeconds": 436.449,
+          "command": "agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
+          "output": "Opened: com.appandflow.trailhead\r\nSession state: workspace/cwd_9db505142a7e5f74_default\r\nPage: com.appandflow.trailhead\r\nApp: com.appandflow.trailhead\r\nSnapshot: 18 visible nodes\r\n@e1 [application] \"Trailhead\"\r\n@e2 [window] \"Trailhead native-control\"\r\n@e3 [other] \"Tab Bar\"\r\n@e4 [other] \"Trailhead\"\r\n@e5 [text] \"Development Build\"\r\n@e6 [button] \"user-icon\"\r\n@e7 [scroll-area] \"DEVELOPMENT SERVERS\" [scrollable]\r\n  [content below scroll-area hidden]\r\n@e8 [other] \"DEVELOPMENT SERVERS\"\r\n@e9 [button] \"INFO\"\r\n@e10 [other] \"Tlon, http://<local-ip>:8082\"\r\n@e11 [button] [same label as parent]\r\n@e12 [button] \"Trailhead, http://<local-ip>:8081\"\r\n@e13 [button] \"Enter URL manually\"\r\n@e14 [tab-bar] \"Tab Bar\"\r\n@e15 [other] \"Home\"\r\n@e16 [button] \"Home\" [selected]\r\n@e17 [button] \"Updates\"\r\n@e18 [button] \"Settings\"\r\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_27",
+          "startSeconds": 443.774,
+          "endSeconds": 444.023,
+          "command": "agent-device snapshot -i",
+          "output": "Page: com.appandflow.trailhead\r\nApp: com.appandflow.trailhead\r\nSnapshot: 18 visible nodes\r\n@e1 [application] \"Trailhead\"\r\n@e2 [window] \"Trailhead native-control\"\r\n@e3 [other] \"Tab Bar\"\r\n@e4 [other] \"Trailhead\"\r\n@e5 [text] \"Development Build\"\r\n@e6 [button] \"user-icon\"\r\n@e7 [scroll-area] \"DEVELOPMENT SERVERS\" [scrollable]\r\n  [content below scroll-area hidden]\r\n@e8 [other] \"DEVELOPMENT SERVERS\"\r\n@e9 [button] \"INFO\"\r\n@e10 [other] \"Tlon, http://<local-ip>:8082\"\r\n@e11 [button] [same label as parent]\r\n@e12 [button] \"Trailhead, http://<local-ip>:8081\"\r\n@e13 [button] \"Enter URL manually\"\r\n@e14 [tab-bar] \"Tab Bar\"\r\n@e15 [other] \"Home\"\r\n@e16 [button] \"Home\" [selected]\r\n@e17 [button] \"Updates\"\r\n@e18 [button] \"Settings\"\r\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_28",
+          "startSeconds": 449.043,
+          "endSeconds": 453.369,
+          "command": "agent-device click @e12 --settle",
+          "output": "Tapped @e12 (201, 266)\r\nsettled after 3604ms: +2 -16 (~2 unchanged)\r\n+ @e2~s613300 [other] \"Bundling 32%…\"\r\n- @e3 [other] \"Tab Bar\"\r\n- @e4 [other] \"Trailhead\"\r\n- @e5 [text] \"Development Build\"\r\n- @e6 [button] \"user-icon\"\r\n- @e7 [scroll-area] \"DEVELOPMENT SERVERS\"\r\n- @e8 [other] \"DEVELOPMENT SERVERS\"\r\n- @e9 [button] \"INFO\"\r\n- @e10 [other] \"Tlon, http://<local-ip>:8082\"\r\n- @e11 [button] \"Tlon, http://<local-ip>:8082\"\r\n- @e12 [button] \"Trailhead, http://<local-ip>:8081\"\r\n- @e13 [button] \"Enter URL manually\"\r\n- @e14 [tab-bar] \"Tab Bar\"\r\n- @e15 [other] \"Home\"\r\n- @e16 [button] \"Home\"\r\n- @e17 [button] \"Updates\"\r\n- @e18 [button] \"Settings\"\r\n+ @e4~s613300 [image] \"SplashScreenLogo\"\r\nhint: Settled on a nearly-empty tree — the app may still be loading. Wait for specific content (wait text ...) before interacting.\r\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_29",
+          "startSeconds": 456.871,
+          "endSeconds": 458.296,
+          "command": "agent-device wait text \"Trails\"",
+          "output": "",
+          "exitCode": 0
+        },
+        {
+          "id": "item_30",
+          "startSeconds": 460.996,
+          "endSeconds": 461.25,
+          "command": "agent-device snapshot -i",
+          "output": "Page: com.appandflow.trailhead\r\nApp: com.appandflow.trailhead\r\nSnapshot: 24 visible nodes (26 total)\r\n@e1 [application] \"Trailhead\"\r\n@e2 [other] \"Trailhead\"\r\n@e3 [text] \"Runtime version: exposdk:57.0.0\"\r\n@e4 [button] \"Close\"\r\n@e5 [scroll-area] \"Reload\" [scrollable]\r\n  [content below scroll-area hidden]\r\n@e6 [other] \"Reload\"\r\n@e7 [button] \"Reload\"\r\n@e8 [button] \"Go home\"\r\n@e9 [text] \"TOOLS\"\r\n@e10 [button] \"Source code explorer\"\r\n@e11 [button] \"Toggle performance monitor\"\r\n@e12 [button] \"Toggle element inspector\"\r\n@e13 [button] \"Open DevTools\"\r\n@e14 [image] \"Running\"\r\n@e15 [text] \"Fast refresh\"\r\n@e16 [switch] \"1\"\r\n@e17 [switch] \"1\"\r\n@e20 [scroll-area] \"dev-tools\" [scrollable]\r\n  [content below scroll-area hidden]\r\n@e21 [other] \"dev-tools\"\r\n@e22 [image] \"dev-tools\"\r\n@e23 [text] \"This is the developer menu. It gives you access to useful tools in development builds.\"\r\n@e24 [text] \"You can open it at any time by pressing the blue button with the gear icon, or with the ⌃ + d keyboard shortcut.\"\r\n@e25 [text] \"(Connect Hardware Keyboard must be enabled on your simulator to use this shortcut, you can toggle it with ⌘ + shift + K.)\"\r\n@e26 [button] \"Continue\"\r\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_31",
+          "startSeconds": 464.768,
+          "endSeconds": 466.253,
+          "command": "agent-device click @e26 --settle",
+          "output": "Tapped @e26 (201, 798)\r\nsettled after 715ms: +0 -7 (~19 unchanged)\r\n- @e20 [scroll-area] \"dev-tools\"\r\n- @e21 [other] \"dev-tools\"\r\n- @e22 [image] \"dev-tools\"\r\n- @e23 [text] \"This is the developer menu. It gives you access to useful tools in development builds.\"\r\n- @e24 [text] \"You can open it at any time by pressing the blue button with the gear icon, or with the ⌃ + d keyboard shortcut.\"\r\n- @e25 [text] \"(Connect Hardware Keyboard must be enabled on your simulator to use this shortcut, you can toggle it with ⌘ + shift + K.)\"\r\n- @e26 [button] \"Continue\"\r\nunchanged interactive (18):\r\n= @e2~s613307 [other] \"Trailhead\"\r\n= @e3~s613307 [text] \"Runtime version: exposdk:57.0.0\"\r\n= @e4~s613307 [button] \"Close\"\r\n= @e5~s613307 [scroll-area] \"Reload\"\r\n= @e6~s613307 [other] \"Reload\"\r\n= @e7~s613307 [button] \"Reload\"\r\n= @e8~s613307 [button] \"Go home\"\r\n= @e9~s613307 [text] \"TOOLS\"\r\n= @e10~s613307 [button] \"Source code explorer\"\r\n= @e11~s613307 [button] \"Toggle performance monitor\"\r\n= @e12~s613307 [button] \"Toggle element inspector\"\r\n= @e13~s613307 [button] \"Open DevTools\"\r\n= @e14~s613307 [image] \"Running\"\r\n= @e15~s613307 [text] \"Fast refresh\"\r\n= @e16~s613307 [switch] \"1\"\r\n= @e17~s613307 [switch] \"1\"\r\n= @e18~s613307 [switch] \"1\"\r\n= @e19~s613307 [switch] \"1\"\r\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_32",
+          "startSeconds": 469.578,
+          "endSeconds": 469.699,
+          "command": "agent-device click @e4 --settle",
+          "output": "Error (COMMAND_FAILED): Ref @e4 needs a complete snapshot — the current frame only authorizes its emitted refs\r\nHint: Capture a fresh interactive snapshot (snapshot -i) or use a stable selector, then retry.\r\nDiagnostic ID: mtlqo06h-f2d1a2d3\r\nDiagnostics Log: workspace/51fb05d4ee38c7df.ndjson\r\n",
+          "exitCode": 1
+        },
+        {
+          "id": "item_33",
+          "startSeconds": 473.543,
+          "endSeconds": 473.805,
+          "command": "agent-device snapshot -i",
+          "output": "Page: com.appandflow.trailhead\r\nApp: com.appandflow.trailhead\r\nSnapshot: 17 visible nodes (19 total)\r\n@e1 [application] \"Trailhead\"\r\n@e2 [other] \"Trailhead\"\r\n@e3 [text] \"Runtime version: exposdk:57.0.0\"\r\n@e4 [button] \"Close\"\r\n@e5 [scroll-area] \"Reload\" [scrollable]\r\n  [content below scroll-area hidden]\r\n@e6 [other] \"Reload\"\r\n@e7 [button] \"Reload\"\r\n@e8 [button] \"Go home\"\r\n@e9 [text] \"TOOLS\"\r\n@e10 [button] \"Source code explorer\"\r\n@e11 [button] \"Toggle performance monitor\"\r\n@e12 [button] \"Toggle element inspector\"\r\n@e13 [button] \"Open DevTools\"\r\n@e14 [image] \"Running\"\r\n@e15 [text] \"Fast refresh\"\r\n@e16 [switch] \"1\"\r\n@e17 [switch] \"1\"\r\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_34",
+          "startSeconds": 477.387,
+          "endSeconds": 480.274,
+          "command": "agent-device click @e4 --settle",
+          "output": "Tapped @e4 (361, 419)\r\nsettled after 2166ms: +35 -18 (~1 unchanged)\r\n- @e2 [other] \"Trailhead\"\r\n- @e3 [text] \"Runtime version: exposdk:57.0.0\"\r\n- @e4 [button] \"Close\"\r\n- @e5 [scroll-area] \"Reload\"\r\n- @e6 [other] \"Reload\"\r\n- @e7 [button] \"Reload\"\r\n- @e8 [button] \"Go home\"\r\n- @e9 [text] \"TOOLS\"\r\n- @e10 [button] \"Source code explorer\"\r\n- @e11 [button] \"Toggle performance monitor\"\r\n- @e12 [button] \"Toggle element inspector\"\r\n- @e13 [button] \"Open DevTools\"\r\n- @e14 [image] \"Running\"\r\n- @e15 [text] \"Fast refresh\"\r\n- @e16 [switch] \"1\"\r\n- @e17 [switch] \"1\"\r\n- @e18 [switch] \"1\"\r\n- @e19 [switch] \"1\"\r\n+ @e2~s613314 [other] \"gearshape.fill\"\r\n+ @e3~s613314 [image] \"gearshape.fill\"\r\n+ @e4~s613314 [text] \"Tools\"\r\n+ @e5~s613314 [window] \"Trailhead native-control\"\r\n+ @e6~s613314 [other] \"\"\r\n+ @e7~s613314 [other] \"Trails\"\r\n+ @e8~s613314 [text-field] \"Search trails\"\r\n+ @e9~s613314 [scroll-area] \"All regions\"\r\n+ @e10~s613314 [other] \"All regions\"\r\n+ @e11~s613314 [button] \"All regions\"\r\n+ @e12~s613314 [button] \"Adirondacks\"\r\n+ @e13~s613314 [button] \"Bas-Saint-Laurent\"\r\n+ @e14~s613314 [button] \"Charlevoix\"\r\n+ @e15~s613314 [scroll-area] \"Any level\"\r\n+ @e16~s613314 [other] \"Any level\"\r\n+ @e17~s613314 [button] \"Any level\"\r\n+ @e18~s613314 [button] \"Easy\"\r\n+ @e19~s613314 [button] \"Moderate\"\r\n+ @e20~s613314 [button] \"Hard\"\r\n+ @e21~s613314 [button] \"Expert\"\r\n+ @e22~s613314 [text] \"200 trails\"\r\n+ @e23~s613314 [button] \"Sort by name\"\r\n+ @e24~s613314 [button] \"Sort by distance\"\r\n+ @e25~s613314 [button] \"Sort by rating\"\r\n+ @e26~s613314 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\r\n+ @e27~s613314 [other] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\r\n+ @e28~s613314 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\r\n+ @e29~s613314 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\r\n+ @e30~s613314 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\r\n+ @e31~s613314 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\r\n+ @e32~s613314 [other] \"Trails, tab, 1 of 4\"\r\n+ @e33~s613314 [button] \"Trails, tab, 1 of 4\"\r\n+ @e34~s613314 [button] \"Record, tab, 2 of 4\"\r\n+ @e35~s613314 [button] \"History, tab, 3 of 4\"\r\n+ @e36~s613314 [button] \"Settings, tab, 4 of 4\"\r\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_35",
+          "startSeconds": 482.415,
+          "endSeconds": 482.543,
+          "command": "agent-device click @e36 --settle",
+          "output": "Error (COMMAND_FAILED): Ref @e36 needs a complete snapshot — the current frame only authorizes its emitted refs\r\nHint: Capture a fresh interactive snapshot (snapshot -i) or use a stable selector, then retry.\r\nDiagnostic ID: mtlqoa3b-97b316d3\r\nDiagnostics Log: workspace/b9ba323d02fad366.ndjson\r\n",
+          "exitCode": 1
+        },
+        {
+          "id": "item_36",
+          "startSeconds": 486.921,
+          "endSeconds": 487.173,
+          "command": "agent-device snapshot -i",
+          "output": "Page: com.appandflow.trailhead\r\nApp: com.appandflow.trailhead\r\nSnapshot: 36 visible nodes\r\n@e1 [application] \"Trailhead\"\r\n@e2 [other] \"gearshape.fill\"\r\n@e3 [image] \"gearshape.fill\"\r\n@e4 [text] \"Tools\"\r\n@e5 [window] \"Trailhead native-control\"\r\n@e6 [other] \"\"\r\n@e7 [other] \"Trails\"\r\n@e8 [text-field] \"Search trails\" [editable]\r\n@e9 [scroll-area] \"All regions\" [scrollable]\r\n  [content below scroll-area hidden]\r\n@e10 [other] \"All regions\"\r\n@e11 [button] \"All regions\" [selected]\r\n@e12 [button] \"Adirondacks\"\r\n@e13 [button] \"Bas-Saint-Laurent\"\r\n@e14 [button] \"Charlevoix\"\r\n@e15 [scroll-area] \"Any level\" [scrollable]\r\n  [content below scroll-area hidden]\r\n@e16 [other] \"Any level\"\r\n@e17 [button] \"Any level\" [selected]\r\n@e18 [button] \"Easy\"\r\n@e19 [button] \"Moderate\"\r\n@e20 [button] \"Hard\"\r\n@e21 [button] \"Expert\"\r\n@e22 [text] \"200 trails\"\r\n@e23 [button] \"Sort by name\" [selected]\r\n@e24 [button] \"Sort by distance\"\r\n@e25 [button] \"Sort by rating\"\r\n@e26 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\" [scrollable]\r\n  [content below scroll-area hidden]\r\n@e27 [other] [same label as parent]\r\n@e28 [button] [same label as parent]\r\n@e29 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\r\n@e30 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\r\n@e31 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\r\n@e32 [other] \"Trails, tab, 1 of 4\"\r\n@e33 [button] \"Trails, tab, 1 of 4\" [selected]\r\n@e34 [button] \"Record, tab, 2 of 4\"\r\n@e35 [button] \"History, tab, 3 of 4\"\r\n@e36 [button] \"Settings, tab, 4 of 4\"\r\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_37",
+          "startSeconds": 491.133,
+          "endSeconds": 493.556,
+          "command": "agent-device click @e36 --settle",
+          "output": "Tapped @e36 (352, 816)\r\nsettled after 1751ms: +29 -29 (~7 unchanged)\r\n- @e4 [text] \"Tools\"\r\n- @e6 [other] \"\"\r\n- @e7 [other] \"Trails\"\r\n- @e8 [text-field] \"Search trails\"\r\n- @e9 [scroll-area] \"All regions\"\r\n- @e10 [other] \"All regions\"\r\n- @e11 [button] \"All regions\"\r\n- @e12 [button] \"Adirondacks\"\r\n- @e13 [button] \"Bas-Saint-Laurent\"\r\n- @e14 [button] \"Charlevoix\"\r\n- @e15 [scroll-area] \"Any level\"\r\n- @e16 [other] \"Any level\"\r\n- @e17 [button] \"Any level\"\r\n- @e18 [button] \"Easy\"\r\n- @e19 [button] \"Moderate\"\r\n- @e20 [button] \"Hard\"\r\n- @e21 [button] \"Expert\"\r\n- @e22 [text] \"200 trails\"\r\n- @e23 [button] \"Sort by name\"\r\n- @e24 [button] \"Sort by distance\"\r\n- @e25 [button] \"Sort by rating\"\r\n- @e26 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\r\n- @e27 [other] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\r\n- @e28 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\r\n- @e29 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\r\n- @e30 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\r\n- @e31 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\r\n+ @e5~s613320 [other] \"Settings\"\r\n+ @e6~s613320 [scroll-area] \"UNITS\"\r\n+ @e7~s613320 [other] \"UNITS\"\r\n+ @e8~s613320 [cell] \"Distance\"\r\n+ @e9~s613320 [text] \"\"\r\n+ @e10~s613320 [button] \"Metric units\"\r\n+ @e11~s613320 [button] \"Imperial units\"\r\n+ @e12~s613320 [text] \"Used across the whole app\"\r\n+ @e13~s613320 [text] \"PREFERENCES\"\r\n+ @e14~s613320 [other] \"Hike reminders\"\r\n+ @e15~s613320 [switch] \"Hike reminders\"\r\n+ @e16~s613320 [text] \"\"\r\n+ @e17~s613320 [text] \"Nudge me when I have not hiked in a while\"\r\n+ @e18~s613320 [text] \"Offline maps\"\r\n+ @e19~s613320 [switch] \"Offline maps\"\r\n+ @e20~s613320 [text] \"\"\r\n+ @e21~s613320 [text] \"Keep map tiles for saved trails on device\"\r\n+ @e22~s613320 [text] \"STORAGE\"\r\n+ @e23~s613320 [cell] \"Recorded hikes\"\r\n+ @e24~s613320 [text] \"\"\r\n+ @e25~s613320 [text] \"48\"\r\n+ @e26~s613320 [text] \"Stored in a local database\"\r\n+ @e27~s613320 [button] \"Reset sample data\"\r\n+ @e28~s613320 [text] \"ABOUT\"\r\n+ @e29~s613320 [cell] \"\"\r\n+ @e30~s613320 [text] \"Version\"\r\n+ @e31~s613320 [text] \"1.0.0\"\r\n- @e33 [button] \"Trails, tab, 1 of 4\"\r\n+ @e33~s613320 [button] \"Trails, tab, 1 of 4\"\r\n- @e36 [button] \"Settings, tab, 4 of 4\"\r\n+ @e36~s613320 [button] \"Settings, tab, 4 of 4\"\r\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_39",
+          "startSeconds": 497.75,
+          "endSeconds": 497.917,
+          "command": "agent-device wait text \"Offline maps\"",
+          "output": "",
+          "exitCode": 0
+        },
+        {
+          "id": "item_40",
+          "startSeconds": 502.208,
+          "endSeconds": 503.032,
+          "command": "agent-device screenshot tmp/native-control-settings.png",
+          "output": "tmp/native-control-settings.png (402x874 @1x)\r\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_41",
+          "startSeconds": 507.92,
+          "endSeconds": 507.921,
+          "command": "cp tmp/native-control-settings.png results/luna-rc12/native-control/proof/settings.png",
+          "output": "",
+          "exitCode": 0
+        },
+        {
+          "id": "item_22",
+          "startSeconds": 126.743,
+          "endSeconds": 509.801,
+          "command": "npx expo run:ios --device <simulator-udid>",
+          "output": "\u001b[?25l\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠋\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠙\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠹\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠸\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠼\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠴\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠦\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠧\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠇\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[36m⠏\u001b[39m Installing CocoaPods...\u001b[2K\u001b[1G\u001b[?25h\u001b[32m✔\u001b[39m Installed CocoaPods\r\n› Using --device <simulator-udid>\r\n› Planning build\r\n› Executing react-native Pods/hermes-engine » [CP-User] [Hermes] Replace Hermes for the right configuration, if needed\r\n› Executing react-native Pods/ReactNativeDependencies » [CP-User] [RNDeps] Replace React Native Dependencies for the right configuration, if needed\r\n› Executing react-native Pods/hermes-engine » [CP] Copy XCFrameworks\r\n› Executing react-native Pods/ReactNativeDependencies » [CP] Copy XCFrameworks\r\n› Preparing Pods/lottie-react-native-Lottie_React_Native_Privacy » ResourceBundle-Lottie_React_Native_Privacy-lottie-react-native-Info.plist\r\n› Copying   lottie-react-native/Lottie_React_Native_Privacy.bundle/PrivacyInfo.xcprivacy ➜ node_modules/lottie-react-native/ios/PrivacyInfo.xcprivacy\r\n› Preparing Pods/lottie-ios-LottiePrivacyInfo » ResourceBundle-LottiePrivacyInfo-lottie-ios-Info.plist\r\n› Copying   lottie-ios/LottiePrivacyInfo.bundle/PrivacyInfo.xcprivacy ➜ ios/Pods/lottie-ios/Sources/PrivacyInfo.xcprivacy\r\n› Preparing Pods/React-timing-React-timing_privacy » ResourceBundle-React-timing_privacy-React-timing-Info.plist\r\n› Copying   React-timing/React-timing_privacy.bundle/PrivacyInfo.xcprivacy ➜ node_modules/react-native/ReactCommon/react/timing/PrivacyInfo.xcprivacy\r\n› Creating  Pods/lottie-react-native-Lottie_React_Native_Privacy » Lottie_React_Native_Privacy.bundle\r\n› Creating  Pods/lottie-ios-LottiePrivacyInfo » LottiePrivacyInfo.bundle\r\n› Preparing Pods/React-cxxreact-React-cxxreact_privacy » ResourceBundle-React-cxxreact_privacy-React-cxxreact-Info.plist\r\n› Copying   React-cxxreact/React-cxxreact_privacy.bundle/PrivacyInfo.xcprivacy ➜ node_modules/react-native/ReactCommon/cxxreact/PrivacyInfo.xcprivacy\r\n› Preparing Pods/React-Core-React-Core_privacy » ResourceBundle-React-Core_privacy-React-Core-Info.plist\r\n› Copying   React-Core/React-Core_privacy.bundle/PrivacyInfo.xcprivacy ➜ node_modules/react-native/React/Resources/PrivacyInfo.xcprivacy\r\n› Creating  Pods/React-timing-React-timing_privacy » React-timing_privacy.bundle\r\n› Preparing Pods/RNSVG-RNSVGFilters » ResourceBundle-RNSVGFilters-RNSVG-Info.plist\r\n› Copying   RNSVG/RNSVGFilters.bundle/RNSVGCompositeXor.iphoneos.metallib ➜ node_modules/react-native-svg/apple/Filters/MetalCI/RNSVGCompositeXor.iphoneos.metallib\r\n› Copying   RNSVG/RNSVGFilters.bundle/RNSVGArithmeticFilter.iphoneos.metallib ➜ node_modules/react-native-svg/apple/Filters/MetalCI/RNSVGArithmeticFilter.iphoneos.metallib\r\n› Creating  Pods/React-cxxreact-React-cxxreact_privacy » React-cxxreact_privacy.bundle\r\n› Creating  Pods/React-Core-React-Core_privacy » React-Core_privacy.bundle\r\n› Creating  Pods/RNSVG-RNSVGFilters » RNSVGFilters.bundle\r\n› Preparing Pods/ExpoTaskManager-ExpoTaskManager_privacy » ResourceBundle-ExpoTaskManager_privacy-ExpoTaskManager-Info.plist\r\n› Copying   ExpoTaskManager/ExpoTaskManager_privacy.bundle/PrivacyInfo.xcprivacy ➜ node_modules/expo-task-manager/ios/PrivacyInfo.xcprivacy\r\n› Copying   ExpoSystemUI/ExpoSystemUI_privacy.bundle/PrivacyInfo.xcprivacy ➜ node_modules/expo-system-ui/ios/PrivacyInfo.xcprivacy\r\n› Preparing Pods/ExpoSystemUI-ExpoSystemUI_privacy » ResourceBundle-ExpoSystemUI_privacy-ExpoSystemUI-Info.plist\r\n› Preparing Pods/ExpoNotifications-ExpoNotifications_privacy » ResourceBundle-ExpoNotifications_privacy-ExpoNotifications-Info.plist\r\n› Copying   ExpoNotifications/ExpoNotifications_privacy.bundle/PrivacyInfo.xcprivacy ➜ node_modules/expo-notifications/ios/PrivacyInfo.xcprivacy\r\n› Creating  Pods/ExpoTaskManager-ExpoTaskManager_privacy » ExpoTaskManager_privacy.bundle\r\n› Creating  Pods/ExpoSystemUI-ExpoSystemUI_privacy » ExpoSystemUI_privacy.bundle\r\n› Preparing Pods/ExpoFileSystem-ExpoFileSystem_privacy » ResourceBundle-ExpoFileSystem_privacy-ExpoFileSystem-Info.plist\r\n› Creating  Pods/ExpoNotifications-ExpoNotifications_privacy » ExpoNotifications_privacy.bundle\r\n› Preparing Pods/ExpoDevice-ExpoDevice_privacy » ResourceBundle-ExpoDevice_privacy-ExpoDevice-Info.plist\r\n› Copying   ExpoDevice/ExpoDevice_privacy.bundle/PrivacyInfo.xcprivacy ➜ node_modules/expo-device/ios/PrivacyInfo.xcprivacy\r\n› Creating  Pods/ExpoFileSystem-ExpoFileSystem_privacy » ExpoFileSystem_privacy.bundle\r\n› Preparing Pods/EXConstants-ExpoConstants_privacy » ResourceBundle-ExpoConstants_privacy-EXConstants-Info.plist\r\n› Copying   EXConstants/ExpoConstants_privacy.bundle/PrivacyInfo.xcprivacy ➜ node_modules/expo-constants/ios/PrivacyInfo.xcprivacy\r\n› Preparing expo-constants Pods/EXConstants-EXConstants » ResourceBundle-EXConstants-EXConstants-Info.plist\r\n› Copying   EXApplication/ExpoApplication_privacy.bundle/PrivacyInfo.xcprivacy ➜ node_modules/expo-application/ios/PrivacyInfo.xcprivacy\r\n› Preparing Pods/EXApplication-ExpoApplication_privacy » ResourceBundle-ExpoApplication_privacy-EXApplication-Info.plist\r\n› Creating  Pods/ExpoDevice-ExpoDevice_privacy » ExpoDevice_privacy.bundle\r\n› Creating  Pods/EXConstants-ExpoConstants_privacy » ExpoConstants_privacy.bundle\r\n› Creating  expo-constants Pods/EXConstants-EXConstants » EXConstants.bundle\r\n› Creating  Pods/EXApplication-ExpoApplication_privacy » ExpoApplication_privacy.bundle\r\n› Executing react-native Pods/React-Core-prebuilt » [CP-User] [RNCore] Replace React Native Core for the right configuration, if needed\r\n› Executing react-native Pods/React-Core-prebuilt » [CP] Copy XCFrameworks\r\n› Compiling react-native-mmkv Pods/MMKVCore » openssl_md5_one.cpp\r\n› Compiling react-native-mmkv Pods/MMKVCore » ThreadLock_Win32.cpp\r\n› Compiling react-native-mmkv Pods/MMKVCore » openssl_md5_dgst.cpp\r\n› Compiling react-native-mmkv Pods/MMKVCore » openssl_cfb128.cpp\r\n› Compiling react-native-mmkv Pods/MMKVCore » openssl_aes_core.cpp\r\n› Compiling react-native-mmkv Pods/MMKVCore » ThreadLock.cpp\r\n› Compiling react-native-mmkv Pods/MMKVCore » PBUtility.cpp\r\n› Compiling react-native-mmkv Pods/MMKVCore » MiniPBCoder_OSX.cpp\r\n› Compiling react-native-mmkv Pods/MMKVCore » MiniPBCoder.cpp\r\n› Compiling react-native-mmkv Pods/MMKVCore » MemoryFile_Win32.cpp\r\n› Compiling react-native-mmkv Pods/MMKVCore » Memor\n... output clipped for the viewer",
+          "exitCode": 1
+        },
+        {
+          "id": "item_42",
+          "startSeconds": 512.315,
+          "endSeconds": 512.571,
+          "command": "agent-device close",
+          "output": "Closed: default\r\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_46",
+          "startSeconds": 527.221,
+          "endSeconds": 527.221,
+          "command": "test -f results/luna-rc12/native-control/proof/settings.png && file results/luna-rc12/native-control/proof/settings.png && stat -f '%N %z bytes' results/luna-rc12/native-control/proof/settings.png",
+          "output": "results/luna-rc12/native-control/proof/settings.png: PNG image data, 402 x 874, 8-bit/color RGBA, non-interlaced\nresults/luna-rc12/native-control/proof/settings.png 76883 bytes\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_44",
+          "startSeconds": 527.204,
+          "endSeconds": 527.366,
+          "command": "git status --short --branch; git diff --check; git diff -- ios/Trailhead/AppDelegate.swift",
+          "output": "## bench/native-control\n M ios/Podfile.lock\n M ios/Trailhead/AppDelegate.swift\ndiff --git a/ios/Trailhead/AppDelegate.swift b/ios/Trailhead/AppDelegate.swift\nindex 0dd14a1..e62dbb7 100644\n--- a/ios/Trailhead/AppDelegate.swift\n+++ b/ios/Trailhead/AppDelegate.swift\n@@ -22,6 +22,7 @@ class AppDelegate: ExpoAppDelegate {\n \n #if os(iOS) || os(tvOS)\n     window = UIWindow(frame: UIScreen.main.bounds)\n+    window?.accessibilityIdentifier = \"Trailhead native-control\"\n     factory.startReactNative(\n       withModuleName: \"main\",\n       in: window,\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_45",
+          "startSeconds": 527.208,
+          "endSeconds": 527.822,
+          "command": "xcrun simctl list devices | rg -A 2 -B 1 'Trailhead Luna RC12 iPhone 17|<simulator-udid>'; xcrun simctl listapps <simulator-udid> | rg -A 8 -B 1 'com.appandflow.trailhead' || true; xcrun simctl spawn <simulator-udid> launchctl list | rg -i 'trailhead|expo' || true",
+          "output": "    stim-parked (iPhone 17 26.5) 3372 (<simulator-udid>) (Shutdown) \n    Trailhead Luna RC12 iPhone 17 (<simulator-udid>) (Booted) \n{\n    \"com.appandflow.trailhead\" =     {\n        ApplicationType = User;\n        Bundle = \"file://workspace/Trailhead.app\";\n        BundleContainer = \"file://workspace/<simulator-udid>\";\n        CFBundleDisplayName = Trailhead;\n        CFBundleExecutable = Trailhead;\n        CFBundleIdentifier = \"com.appandflow.trailhead\";\n        CFBundleName = Trailhead;\n        CFBundleVersion = 1;\n        DataContainer = \"file://workspace/<simulator-udid>\";\n        GroupContainers =         {\n        };\n        Path = \"workspace/Trailhead.app\";\n        SBAppTags =         (\n        );\n83676\t0\tUIKitApplication:com.appandflow.trailhead[a21b][rb-legacy]\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_47",
+          "startSeconds": 532.993,
+          "endSeconds": 533.116,
+          "command": "git diff -- ios/Podfile.lock",
+          "output": "diff --git a/ios/Podfile.lock b/ios/Podfile.lock\nindex 550994f..48acf13 100644\n--- a/ios/Podfile.lock\n+++ b/ios/Podfile.lock\n@@ -3074,7 +3074,7 @@ SPEC CHECKSUMS:\n   ExpoLinking: b616f5d0c2e11db3a5cccd8ae6bff45294929fd2\n   ExpoLocation: cc81013b678d75014ae395cd4707c0136e88cfb1\n   ExpoLogBox: 80957303325cd4439137765c90a87d7f22aaf2ff\n-  ExpoModulesCore: fb834e52d821cbf0f133f3b1074fa0010279bfe4\n+  ExpoModulesCore: aef270140d98c1a26ce32f4ed6e8cf0e19df7d18\n   ExpoModulesJSI: 1529d4289b9a3647d8901a27b41f1af173598b45\n   ExpoModulesWorklets: 57a11e6ae984c2680e7967b785ded96199caed8c\n   ExpoModulesWorkletsAdapter: be52ecb2cbbed64febbb739971bd77d9c8e84569\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_50",
+          "startSeconds": 542.699,
+          "endSeconds": 542.862,
+          "command": "git status --short --branch; git diff --check; git diff --stat; git diff -- ios/Trailhead/AppDelegate.swift ios/Podfile.lock",
+          "output": "## bench/native-control\n M ios/Trailhead/AppDelegate.swift\n ios/Trailhead/AppDelegate.swift | 1 +\n 1 file changed, 1 insertion(+)\ndiff --git a/ios/Trailhead/AppDelegate.swift b/ios/Trailhead/AppDelegate.swift\nindex 0dd14a1..e62dbb7 100644\n--- a/ios/Trailhead/AppDelegate.swift\n+++ b/ios/Trailhead/AppDelegate.swift\n@@ -22,6 +22,7 @@ class AppDelegate: ExpoAppDelegate {\n \n #if os(iOS) || os(tvOS)\n     window = UIWindow(frame: UIScreen.main.bounds)\n+    window?.accessibilityIdentifier = \"Trailhead native-control\"\n     factory.startReactNative(\n       withModuleName: \"main\",\n       in: window,\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_51",
+          "startSeconds": 542.702,
+          "endSeconds": 543.077,
+          "command": "test -s results/luna-rc12/native-control/proof/settings.png && xcrun simctl spawn <simulator-udid> launchctl list | rg 'UIKitApplication:com\\\\.appandflow\\\\.trailhead' && echo 'proof-and-app-ok'",
+          "output": "83676\t0\tUIKitApplication:com.appandflow.trailhead[a21b][rb-legacy]\nproof-and-app-ok\n",
+          "exitCode": 0
+        }
+      ],
+      "markers": [
+        {
+          "id": "app-alive",
+          "kind": "appAlive",
+          "label": "App process alive",
+          "atSeconds": 425.973
+        },
+        {
+          "id": "settings-ready",
+          "kind": "settingsReady",
+          "label": "Settings proof ready",
+          "atSeconds": 503.032
+        }
+      ],
+      "proof": {
+        "src": "benchmarks/luna-rc12/native-control.png",
+        "expected": "Offline maps",
+        "width": 402,
+        "height": 874
+      }
+    }
+  ]
+}

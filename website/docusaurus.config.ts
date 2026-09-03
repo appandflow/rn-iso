@@ -61,6 +61,7 @@ const config: Config = {
           position: 'left',
           label: 'Docs',
         },
+        { to: '/benchmarks', label: 'Benchmarks', position: 'left' },
         { to: '/docs/changelog', label: 'Changelog', position: 'left' },
         {
           href: 'https://www.npmjs.com/package/stim-cli',

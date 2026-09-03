@@ -10,6 +10,8 @@ export default defineConfig({
       'packages/*/src/**/*.test.ts',
       'packages/*/src/**/__tests__/**/*.test.ts',
       'packages/*/__tests__/**/*.test.ts',
+      'scripts/**/*.test.mjs',
+      'website/src/**/*.test.ts',
     ],
     pool: 'forks',
   },
