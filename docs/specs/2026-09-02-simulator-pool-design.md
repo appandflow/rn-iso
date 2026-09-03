@@ -212,7 +212,9 @@ A parked record whose simulator `simctl list` does not report, or reports
 unavailable (its runtime removed), is deleted (`simctl delete` accepts an
 unavailable device) and its record dropped, with a line saying so: a listed
 record proves the simulator is Stim's, and dropping the record alone would
-hide 2.5 GB from every sweep. Adoption then falls through to creation.
+hide 2.5 GB from every sweep. This check needs a listing that keeps
+`isAvailable: false` entries, which `parseSimctlList` filters out today.
+Adoption then falls through to creation.
 No match creates a new simulator as today; the pool is never a reason to
 boot a different model than requested, and the new simulator is parked
 normally when its workspace is removed.
