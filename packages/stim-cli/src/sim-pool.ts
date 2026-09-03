@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { ensureConfig, loadConfig, saveConfig, withConfigLock } from './config.ts';
 import type { Config, DeviceRecord } from './types.ts';
 
@@ -12,6 +13,7 @@ export interface ParkedSim {
   simslimManaged: boolean;
   bundleId?: string;
   cacheKey?: string;
+  deletionClaim?: unknown;
 }
 
 export const DEFAULT_PARKED_MAX = 3;
@@ -108,7 +110,12 @@ export function selectParked(
   { deviceTypeIdentifier, runtimeIdentifier }: { deviceTypeIdentifier: string; runtimeIdentifier: string },
 ): ParkedSim[] {
   return oldestFirst(
-    records.filter((r) => r.deviceTypeIdentifier === deviceTypeIdentifier && r.runtimeIdentifier === runtimeIdentifier),
+    records.filter(
+      (r) =>
+        r.deletionClaim === undefined &&
+        r.deviceTypeIdentifier === deviceTypeIdentifier &&
+        r.runtimeIdentifier === runtimeIdentifier,
+    ),
   );
 }
 
@@ -158,7 +165,7 @@ export function adoptParked({
     const cfg = ensureConfig();
     const records = readParked(platform, { config: cfg });
     const taken = records.find((r) => r.udid === udid);
-    if (!taken) return null;
+    if (!taken || taken.deletionClaim !== undefined) return null;
     writeParked(
       cfg,
       platform,
@@ -173,25 +180,92 @@ export function adoptParked({
   });
 }
 
-export function removeParkedAfter(
-  platform: PoolPlatform,
-  udid: string,
-  beforeRemove: (record: ParkedSim) => void,
-): ParkedSim | null {
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+function parseDeletionClaim(value: unknown): { pid: number; token: string } | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
+  const claim = value as Record<string, unknown>;
+  if (!Number.isSafeInteger(claim.pid) || (claim.pid as number) <= 0) return null;
+  if (typeof claim.token !== 'string' || claim.token.length === 0) return null;
+  return { pid: claim.pid as number, token: claim.token };
+}
+
+function claimParkedRemoval(platform: PoolPlatform, udid: string): { record: ParkedSim; token: string } | null {
   return withConfigLock(() => {
     const cfg = loadConfig();
     if (!cfg) return null;
     const records = readParked(platform, { config: cfg });
     const record = records.find((candidate) => candidate.udid === udid);
     if (!record) return null;
-    beforeRemove(record);
+    const existingClaim = parseDeletionClaim(record.deletionClaim);
+    if (record.deletionClaim !== undefined && (!existingClaim || isProcessAlive(existingClaim.pid))) return null;
+    const token = randomUUID();
+    const claimedRecord = { ...record, deletionClaim: { pid: process.pid, token } };
+    writeParked(
+      cfg,
+      platform,
+      records.map((candidate) => (candidate.udid === udid ? claimedRecord : candidate)),
+    );
+    saveConfig(cfg);
+    const claimed = { ...record };
+    delete claimed.deletionClaim;
+    return { record: claimed, token };
+  });
+}
+
+function clearParkedRemovalClaim(platform: PoolPlatform, udid: string, token: string): void {
+  withConfigLock(() => {
+    const cfg = loadConfig();
+    if (!cfg) return;
+    const records = readParked(platform, { config: cfg });
+    const record = records.find((candidate) => candidate.udid === udid);
+    if (!record || parseDeletionClaim(record.deletionClaim)?.token !== token) return;
+    const restored = { ...record };
+    delete restored.deletionClaim;
+    writeParked(
+      cfg,
+      platform,
+      records.map((candidate) => (candidate.udid === udid ? restored : candidate)),
+    );
+    saveConfig(cfg);
+  });
+}
+
+export function removeParkedAfter(
+  platform: PoolPlatform,
+  udid: string,
+  beforeRemove: (record: ParkedSim) => void,
+): ParkedSim | null {
+  const claim = claimParkedRemoval(platform, udid);
+  if (!claim) return null;
+  try {
+    beforeRemove(claim.record);
+  } catch (error) {
+    try {
+      clearParkedRemovalClaim(platform, udid, claim.token);
+    } catch {}
+    throw error;
+  }
+  return withConfigLock(() => {
+    const cfg = loadConfig();
+    if (!cfg) return null;
+    const records = readParked(platform, { config: cfg });
+    const record = records.find((candidate) => candidate.udid === udid);
+    if (parseDeletionClaim(record?.deletionClaim)?.token !== claim.token) return null;
     writeParked(
       cfg,
       platform,
       records.filter((candidate) => candidate.udid !== udid),
     );
     saveConfig(cfg);
-    return record;
+    return claim.record;
   });
 }
 

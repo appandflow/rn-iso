@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -148,6 +149,41 @@ test('a deletion claim skips a simulator that another workspace adopted', () => 
   expect(deleted).toBe(false);
   expect(getProject('/tmp/adopter')?.platforms?.ios).toEqual(device);
 });
+
+test('a live deletion claim blocks adoption beyond the ordinary lock stale window', () => {
+  upsertProject('/tmp/source', {
+    platforms: { ios: { deviceUdid: first.udid, deviceName: 'stim-source', owned: true } },
+  });
+  upsertProject('/tmp/adopter', { platforms: {} });
+  parkSim({ platform: 'ios', projectPath: '/tmp/source', record: first, max: 3 });
+  const device = { deviceUdid: first.udid, deviceName: 'stim-adopter', owned: true };
+  let childResult = '';
+
+  const removed = removeParkedAfter('ios', first.udid, () => {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10_250);
+    const script = `
+        const { adoptParked } = await import(process.argv[1]);
+        const result = adoptParked(JSON.parse(process.argv[2]));
+        process.stdout.write(JSON.stringify(result));
+      `;
+    childResult = execFileSync(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        script,
+        new URL('../sim-pool.ts', import.meta.url).href,
+        JSON.stringify({ platform: 'ios', projectPath: '/tmp/adopter', udid: first.udid, device }),
+      ],
+      { encoding: 'utf8', env: { ...process.env, STIM_HOME: stimHome } },
+    );
+  });
+
+  expect(JSON.parse(childResult)).toBe(null);
+  expect(removed).toEqual(first);
+  expect(getProject('/tmp/adopter')?.platforms?.ios).toBeUndefined();
+  expect(readParked('ios')).toEqual([]);
+}, 20_000);
 
 test('adoption takes a pool record and creates the owned project claim in one persisted update', () => {
   upsertProject('/tmp/project', { platforms: {} });

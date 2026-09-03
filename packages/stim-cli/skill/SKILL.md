@@ -100,7 +100,7 @@ emulator or simulator.
 
 `worktree remove` parks the workspace's simulator for a later one to adopt. A
 parked simulator is Stim-owned: never delete one by hand; `gc --delete` clears
-verified entries, keeps failures (`stim guide lifecycle`). A first launch on a physical iPhone can need
+verified entries, keeps failures (`stim guide lifecycle`). First launch on a physical iPhone can need
 one-time taps the remedy names.
 
 `stim android --device [serial]` and `stim ios --device [udid]` install on a
