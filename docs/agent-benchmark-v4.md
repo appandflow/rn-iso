@@ -128,10 +128,11 @@ JavaScript source and captured Metro bundle must contain the changed subtitle.
 Native must have the exact run marker in the live window accessibility node.
 Missing proof makes the attempt invalid even when the app process is alive.
 
-The initial Luna pilot predated this UDID-binding correction. Each of its four
-valid snapshots still proved the target through the run-specific changed text
-or native accessibility marker, so those attempts remain valid. Any later
-block must use the explicit UDID command above.
+The initial Luna pilot predated this UDID-binding correction. Its retained
+launch, watcher, command, and screenshot evidence shows the changed JavaScript
+subtitle or run-specific native accessibility marker on the intended
+simulator, so those four attempts remain valid. Any later block must use the
+explicit UDID command above.
 
 ## Metrics and records
 
