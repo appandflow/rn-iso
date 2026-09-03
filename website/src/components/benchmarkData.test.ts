@@ -3,6 +3,7 @@ import {
   assignCommandLanes,
   comparableRuns,
   formatSeconds,
+  initialAuditSelection,
   type BenchmarkCommand,
   type BenchmarkRun,
 } from './benchmarkData';
@@ -49,5 +50,20 @@ describe('comparableRuns', () => {
     const missing = { id: 'missing', valid: true, settingsReadySeconds: null } as BenchmarkRun;
 
     expect(comparableRuns([valid, invalid, missing]).map((run) => run.id)).toEqual(['valid']);
+  });
+});
+
+describe('initialAuditSelection', () => {
+  it('returns an empty audit state when an invalid run has no events or proof', () => {
+    const run = {
+      valid: false,
+      commands: [],
+      markers: [],
+      messages: [],
+      proof: null,
+    } as unknown as BenchmarkRun;
+
+    expect(initialAuditSelection(run)).toBeNull();
+    expect(run.proof).toBeNull();
   });
 });

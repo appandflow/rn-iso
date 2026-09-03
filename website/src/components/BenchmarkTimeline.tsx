@@ -6,18 +6,13 @@ import {
   formatCost,
   formatSeconds,
   formatTokens,
+  initialAuditSelection,
   totalTokens,
+  type BenchmarkAuditSelection,
   type BenchmarkCommand,
-  type BenchmarkMarker,
-  type BenchmarkMessage,
   type BenchmarkRun,
 } from './benchmarkData';
 import styles from './BenchmarkTimeline.module.css';
-
-type SelectedEvent =
-  | { kind: 'command'; event: BenchmarkCommand }
-  | { kind: 'message'; event: BenchmarkMessage }
-  | { kind: 'marker'; event: BenchmarkMarker };
 
 function position(seconds: number, total: number): string {
   return `${Math.min(100, Math.max(0, (seconds / total) * 100))}%`;
@@ -31,7 +26,7 @@ function displayCommand(command: string): string {
   return command.replace(/^\/bin\/(?:zsh|bash|sh) -lc /, '').replace(/^['"]|['"]$/g, '');
 }
 
-function eventTime(selected: SelectedEvent): number {
+function eventTime(selected: BenchmarkAuditSelection): number {
   if (selected.kind === 'command') return selected.event.endSeconds;
   return selected.event.atSeconds;
 }
@@ -60,19 +55,7 @@ function TerminalDetail({ command }: { command: BenchmarkCommand }): ReactNode {
 }
 
 export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): ReactNode {
-  const longestCommand = run.commands.reduce<BenchmarkCommand | undefined>(
-    (longest, command) =>
-      !longest || command.endSeconds - command.startSeconds > longest.endSeconds - longest.startSeconds
-        ? command
-        : longest,
-    undefined,
-  );
-  const initial: SelectedEvent = longestCommand
-    ? { kind: 'command', event: longestCommand }
-    : run.markers[0]
-      ? { kind: 'marker', event: run.markers[0] }
-      : { kind: 'message', event: run.messages[0] };
-  const [selected, setSelected] = useState<SelectedEvent>(initial);
+  const [selected, setSelected] = useState<BenchmarkAuditSelection | null>(() => initialAuditSelection(run));
   const { commands, laneCount } = useMemo(() => assignCommandLanes(run.commands), [run.commands]);
   const proofSrc = useBaseUrl(run.proof?.src ?? '');
   const ticks = [0, 0.25, 0.5, 0.75, 1];
@@ -153,7 +136,7 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
                       key={command.id}
                       type="button"
                       className={`${styles.commandBar} ${command.exitCode === 0 ? '' : styles.commandFailed} ${
-                        selected.kind === 'command' && selected.event.id === command.id ? styles.commandSelected : ''
+                        selected?.kind === 'command' && selected.event.id === command.id ? styles.commandSelected : ''
                       }`}
                       style={{
                         left: position(command.startSeconds, run.totalSeconds),
@@ -190,15 +173,22 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
         </div>
       </div>
 
-      {selected.kind === 'command' ? (
+      {selected?.kind === 'command' ? (
         <TerminalDetail command={selected.event} />
-      ) : (
+      ) : selected ? (
         <section className={styles.eventDetail} aria-live="polite">
           <div>
             <strong>{selected.kind === 'marker' ? selected.event.label : 'Agent note'}</strong>
             <span>+{formatSeconds(eventTime(selected))}</span>
           </div>
           <p>{selected.kind === 'message' ? selected.event.text : `${selected.event.label}.`}</p>
+        </section>
+      ) : (
+        <section className={styles.eventDetail} aria-live="polite">
+          <div>
+            <strong>No audit events recorded</strong>
+          </div>
+          <p>This attempt ended before the agent emitted a command, message, or app/device marker.</p>
         </section>
       )}
 
@@ -215,16 +205,16 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
         </div>
       </details>
 
-      <section className={styles.proof}>
-        <div>
-          <span>Validated proof</span>
-          <h2>Settings screen</h2>
-          <p>
-            Captured by <code>agent-device</code> after it found “{run.proof?.expected}”. This screenshot completion is
-            the timing endpoint used above.
-          </p>
-        </div>
-        {run.proof ? (
+      {run.proof ? (
+        <section className={styles.proof}>
+          <div>
+            <span>Validated proof</span>
+            <h2>Settings screen</h2>
+            <p>
+              Captured by <code>agent-device</code> after it found “{run.proof.expected}”. This screenshot completion is
+              the timing endpoint used above.
+            </p>
+          </div>
           <img
             src={proofSrc}
             width={run.proof.width}
@@ -232,10 +222,16 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
             loading="lazy"
             alt={`Validated Settings screen for the ${run.variant} ${run.arm} run`}
           />
-        ) : (
-          <p>No validated Settings screenshot.</p>
-        )}
-      </section>
+        </section>
+      ) : (
+        <section className={styles.proof}>
+          <div>
+            <span>Proof unavailable</span>
+            <h2>No validated Settings screenshot</h2>
+            <p>This attempt did not reach the benchmark’s required visual endpoint.</p>
+          </div>
+        </section>
+      )}
     </div>
   );
 }

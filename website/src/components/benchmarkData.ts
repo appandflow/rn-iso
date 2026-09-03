@@ -69,6 +69,11 @@ export type BenchmarkData = {
   runs: BenchmarkRun[];
 };
 
+export type BenchmarkAuditSelection =
+  | { kind: 'command'; event: BenchmarkCommand }
+  | { kind: 'message'; event: BenchmarkMessage }
+  | { kind: 'marker'; event: BenchmarkMarker };
+
 export type CommandWithLane = BenchmarkCommand & { lane: number };
 
 export function assignCommandLanes(commands: BenchmarkCommand[]): {
@@ -107,6 +112,20 @@ export function comparableRuns(runs: BenchmarkRun[]): Array<BenchmarkRun & { set
   return runs.filter(
     (run): run is BenchmarkRun & { settingsReadySeconds: number } => run.valid && run.settingsReadySeconds !== null,
   );
+}
+
+export function initialAuditSelection(run: BenchmarkRun): BenchmarkAuditSelection | null {
+  const longestCommand = run.commands.reduce<BenchmarkCommand | undefined>(
+    (longest, command) =>
+      !longest || command.endSeconds - command.startSeconds > longest.endSeconds - longest.startSeconds
+        ? command
+        : longest,
+    undefined,
+  );
+  if (longestCommand) return { kind: 'command', event: longestCommand };
+  if (run.markers[0]) return { kind: 'marker', event: run.markers[0] };
+  if (run.messages[0]) return { kind: 'message', event: run.messages[0] };
+  return null;
 }
 
 export function formatTokens(value: number): string {
