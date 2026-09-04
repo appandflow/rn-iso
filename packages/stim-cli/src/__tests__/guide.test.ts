@@ -910,6 +910,29 @@ test('the static skill is only the agent guide router', () => {
   }
 });
 
+test('the skill description names the task phrases an agent sees', () => {
+  const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
+  const description = skill.match(/^description: (.+)$/m)?.[1];
+  assert(description);
+  expect(description).toMatch(/^The React Native \/ Expo CLI for AI agents\./);
+
+  for (const trigger of [
+    'expo run:ios',
+    'expo run:android',
+    'react-native run-ios',
+    'react-native run-android',
+    'expo start',
+    'Metro',
+    'simulator',
+    'emulator',
+    'device',
+    'redbox',
+    'parallel worktrees',
+  ]) {
+    expect(description).toContain(trigger);
+  }
+});
+
 test('every guide topic explains the npx fallback for short stim commands', () => {
   for (const name of topicNames()) {
     const topic = renderTopic(name);
