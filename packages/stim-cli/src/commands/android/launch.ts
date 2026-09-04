@@ -20,8 +20,8 @@ import {
   RELEASE_VERIFY_WAIT_MS,
   installConflictKind,
 } from '../../engine/app-install.ts';
-import { formatDuration, launchErrorReport, stepTimer } from '../../command-output.ts';
-import { MODE_BARE, MODE_EXPO, writeWorkspaceState } from '../../supervisor/state.ts';
+import { formatDuration, launchErrorReport, phaseLine, stepTimer } from '../../command-output.ts';
+import { MODE_BARE, MODE_EXPO, writeWorkspaceLaunch, writeWorkspaceState } from '../../supervisor/state.ts';
 import type {
   VerifyLaunchResultLike,
   RemoteUploadLike,
@@ -151,7 +151,7 @@ async function verifyAndroidRun({
       phase(
         'remedy',
         chalk.yellow(
-          `The native app is still running. Fix the JavaScript or TypeScript error, then run \`agent-device metro reload --metro-port ${metroPort}\`. Do not run \`stim android\` unless native inputs changed or the app process exits.`,
+          `The native app is still running. Fix the JavaScript or TypeScript error, then run ${physical ? `\`agent-device metro reload --metro-port ${metroPort}\`` : '`stim reload android`'}. Do not run \`stim android\` unless native inputs changed or the app process exits.`,
         ),
       );
     }
@@ -172,7 +172,7 @@ async function verifyAndroidRun({
       phase(
         'remedy',
         chalk.yellow(
-          `The native app is still running. Fix the JavaScript or TypeScript error; Fast Refresh should apply the edit. If the error screen remains, run \`agent-device metro reload --metro-port ${metroPort}\`. Do not run \`stim android\` unless native inputs changed or the app process exits.`,
+          `The native app is still running. Fix the JavaScript or TypeScript error; Fast Refresh should apply the edit. If the error screen remains, run ${physical ? `\`agent-device metro reload --metro-port ${metroPort}\`` : '`stim reload android`'}. Do not run \`stim android\` unless native inputs changed or the app process exits.`,
         ),
       );
     }
@@ -258,6 +258,7 @@ interface FinishAndroidRunArgs {
   kill: (pid: number, signal: NodeJS.Signals) => boolean;
   pidAlive: typeof isPidAlive;
   verifyCollector: typeof verifyCollectorOwnership;
+  writeLaunch: typeof writeWorkspaceLaunch;
   writeState: typeof writeWorkspaceState;
   now: () => number;
   out: (line: string) => void;
@@ -309,6 +310,7 @@ export async function finishAndroidRun({
   kill,
   pidAlive,
   verifyCollector,
+  writeLaunch,
   writeState,
   now,
   out,
@@ -441,6 +443,22 @@ export async function finishAndroidRun({
       : `launched ${androidPackage} on ${serial} against Metro port ${metroPort}`,
   });
   phase('launch', `${androidPackage} ${launchTimer()}`);
+
+  if (!physical && !remoteDevice) {
+    const deepLinkUrl = scheme ? androidDevClientUrl(scheme, metroPort ?? DEFAULT_METRO_PORT) : null;
+    try {
+      writeLaunch(root, 'android', {
+        appId: androidPackage,
+        deviceId: serial,
+        metroPort,
+        release,
+        deepLinkUrl,
+        launchedAt: new Date(launchedAt).toISOString(),
+      });
+    } catch (error) {
+      out(phaseLine('state', chalk.yellow(`could not record Android launch: ${(error as Error)?.message || error}`)));
+    }
+  }
 
   const reversedSummary = (launched.reversed ?? []).join(', ') || `tcp:${metroPort}->tcp:${metroPort}`;
   if (!release && launched.debugHttpHost) {

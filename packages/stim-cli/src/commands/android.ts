@@ -80,7 +80,7 @@ import {
   statsProjectKey,
   type RunEstimates,
 } from '../engine/stats.ts';
-import { readWorkspaceState, writeWorkspaceState } from '../supervisor/state.ts';
+import { readWorkspaceState, writeWorkspaceLaunch, writeWorkspaceState } from '../supervisor/state.ts';
 import {
   installAndroidApp,
   launchAndroidApp,
@@ -336,6 +336,7 @@ interface RunAndroidOptions {
   spawn?: (cmd: string, args: readonly string[], opts: Record<string, unknown>) => ChildProcess;
   kill?: (pid: number, signal: NodeJS.Signals) => boolean;
   createWriter?: typeof createNdjsonWriter;
+  writeLaunch?: typeof writeWorkspaceLaunch;
   writeState?: typeof writeWorkspaceState;
   recordStats?: typeof recordRunStats;
   readEstimates?: typeof readRunEstimates;
@@ -412,6 +413,7 @@ function resolveRunAndroidOptions(
     spawn = (cmd, args, opts) => getExecutor().spawn(cmd, args, opts),
     kill = (pid, signal) => process.kill(pid, signal),
     createWriter = createNdjsonWriter,
+    writeLaunch = writeWorkspaceLaunch,
     writeState = writeWorkspaceState,
     recordStats = recordRunStats,
     readEstimates = readRunEstimates,
@@ -487,6 +489,7 @@ function resolveRunAndroidOptions(
     spawn,
     kill,
     createWriter,
+    writeLaunch,
     writeState,
     recordStats,
     readEstimates,
@@ -564,6 +567,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     spawn,
     kill,
     createWriter,
+    writeLaunch,
     writeState,
     recordStats,
     readEstimates,
@@ -1512,6 +1516,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         kill,
         pidAlive,
         verifyCollector,
+        writeLaunch,
         writeState,
         now,
         out,

@@ -47,7 +47,7 @@ import { isPidAlive, resolveProjectMetro } from '../../metro.ts';
 import { createNdjsonWriter } from '../../ndjson.ts';
 import { detectBundleId, detectIsExpo, findProjectRoot, projectShortcut } from '../../project.ts';
 import { resolveCacheProviderConfig, resolveSettings } from '../../settings.ts';
-import { readWorkspaceState, writeWorkspaceState } from '../../supervisor/state.ts';
+import { readWorkspaceState, writeWorkspaceLaunch, writeWorkspaceState } from '../../supervisor/state.ts';
 import { gitCommonDir, repoRoot } from '../../worktree.ts';
 import { resolveMetroWithRetry, ensureWorkspaceStorageSafely } from '../native-runtime.ts';
 import { devClientScheme } from '../dev-client.ts';
@@ -125,6 +125,7 @@ export interface IosDeps {
   ensureWorkspaceStorage: typeof ensureWorkspaceStorageSafely;
   replaceCollector: typeof replaceCollector;
   stopPreviousCollector: typeof stopPreviousCollector;
+  writeWorkspaceLaunch: typeof writeWorkspaceLaunch;
   writeWorkspaceState: typeof writeWorkspaceState;
   createWriter: typeof createNdjsonWriter;
   recordStats: typeof recordRunStats;
@@ -204,6 +205,7 @@ export const DEFAULT_DEPS: IosDeps = {
   ensureWorkspaceStorage: ensureWorkspaceStorageSafely,
   replaceCollector,
   stopPreviousCollector,
+  writeWorkspaceLaunch,
   writeWorkspaceState,
   createWriter: createNdjsonWriter,
   recordStats: recordRunStats,
