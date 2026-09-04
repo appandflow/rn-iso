@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import {
   formatDuration,
   formatElapsed,
@@ -77,7 +77,17 @@ test('the label set is closed, sorted, and free of duplicates', () => {
 
 test('every label the run, lifecycle, and doctor commands print comes from that one set', () => {
   for (const command of ['ios', 'android', 'worktree', 'start', 'stop', 'doctor']) {
-    const src = readFileSync(new URL(`../commands/${command}.ts`, import.meta.url), 'utf-8');
+    const files = [`${command}.ts`];
+    if (command === 'ios' || command === 'android') {
+      files.push(
+        ...readdirSync(new URL(`../commands/${command}/`, import.meta.url))
+          .filter((file) => file.endsWith('.ts'))
+          .map((file) => `${command}/${file}`),
+        'native-runtime.ts',
+        'dev-client.ts',
+      );
+    }
+    const src = files.map((file) => readFileSync(new URL(`../commands/${file}`, import.meta.url), 'utf-8')).join('\n');
     const labels = new Set<string>();
     for (const match of src.matchAll(/\bphase(?:Line)?\(\s*'((?:[^'\\]|\\.)*)'/g)) labels.add(match[1]!);
     expect(labels.size).toBeGreaterThan(1);

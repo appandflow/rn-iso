@@ -689,10 +689,20 @@ test('the guide scopes each platform dev-menu suppression mechanism accurately',
 test('the errors topic documents every code the build commands and the iOS signing gate can emit', () => {
   const body = renderTopic('errors');
   assert(body);
-  const sources = [
-    ...['ios.ts', 'android.ts', 'start.ts'].map((f) =>
-      readFileSync(new URL(`../commands/${f}`, import.meta.url), 'utf-8'),
+  const commandFiles = [
+    'ios.ts',
+    'android.ts',
+    'start.ts',
+    'native-runtime.ts',
+    'dev-client.ts',
+    ...['ios', 'android'].flatMap((command) =>
+      readdirSync(new URL(`../commands/${command}/`, import.meta.url))
+        .filter((file) => file.endsWith('.ts'))
+        .map((file) => `${command}/${file}`),
     ),
+  ];
+  const sources = [
+    ...commandFiles.map((file) => readFileSync(new URL(`../commands/${file}`, import.meta.url), 'utf-8')),
     ...['engine/ios-profile.ts', 'engine/ios-signing.ts'].map((f) =>
       readFileSync(new URL(`../${f}`, import.meta.url), 'utf-8'),
     ),
@@ -700,7 +710,7 @@ test('the errors topic documents every code the build commands and the iOS signi
   const codes = new Set([...sources.matchAll(/STIM_[A-Z_]+/g)].map((m) => m[0]));
   expect(codes.size >= 8).toBeTruthy();
   for (const code of codes) {
-    expect(body.includes(code)).toBeTruthy();
+    expect(body).toContain(code);
   }
 });
 
