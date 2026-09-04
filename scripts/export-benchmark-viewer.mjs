@@ -473,11 +473,18 @@ function sameUsage(left, right) {
 }
 
 function validateLaunchCrashRecord(runDir, record, meta) {
+  const reject = (reason) => {
+    if (process.env.STIM_BENCH_EXPORT_DEBUG === '1') {
+      process.stderr.write(`${basename(runDir)}: ${reason}\n`);
+    }
+    return null;
+  };
   const eventsPath = join(runDir, 'events.jsonl');
   const proofPath = join(runDir, 'proof', 'settings.png');
-  if (!existsSync(eventsPath) || !validPng(proofPath, record.screen?.dimensions)) return null;
-  if (record.evidenceSha256?.events !== fileSha256(eventsPath)) return null;
-  if (record.evidenceSha256?.settingsPng !== fileSha256(proofPath)) return null;
+  if (!existsSync(eventsPath) || !validPng(proofPath, record.screen?.dimensions))
+    return reject('invalid evidence files');
+  if (record.evidenceSha256?.events !== fileSha256(eventsPath)) return reject('events hash mismatch');
+  if (record.evidenceSha256?.settingsPng !== fileSha256(proofPath)) return reject('screenshot hash mismatch');
   const eventData = eventsFor(runDir, meta.dispatchAt, []);
   const commands = eventData.commands.map((command) =>
     Object.assign({}, command, {
@@ -488,7 +495,7 @@ function validateLaunchCrashRecord(runDir, record, meta) {
   const token = [record.proof?.expected, ...commands.map((command) => command.output)]
     .join('\n')
     .match(/STIM_BENCH_LAUNCH_CRASH_[0-9A-F]{12}/)?.[0];
-  if (!token) return null;
+  if (!token) return reject('crash token missing');
   const diagnosis = launchCrashDiagnosis(commands, {
     dispatchAt: meta.dispatchAt,
     token,
@@ -502,13 +509,15 @@ function validateLaunchCrashRecord(runDir, record, meta) {
     platform: meta.platform ?? 'ios',
     screen: record.screen,
   });
-  if (!diagnosis.valid || !recovery.valid) return null;
+  if (!diagnosis.valid || !recovery.valid) {
+    return reject(`event graph invalid: ${JSON.stringify({ diagnosis, recovery })}`);
+  }
   const screenReadySeconds = relativeSeconds(record.screen.observedAt, meta.dispatchAt);
   const runner = record.runner ?? meta.runner;
   const transcriptPath = runner === 'claude' ? eventsPath : join(runDir, 'rollout.jsonl');
   const diagnosisUsage = runner === 'claude' ? null : usageAtOrBefore(transcriptPath, diagnosis.observedAt);
-  if (!existsSync(transcriptPath)) return null;
-  if (record.evidenceSha256?.transcript !== fileSha256(transcriptPath)) return null;
+  if (!existsSync(transcriptPath)) return reject('transcript missing');
+  if (record.evidenceSha256?.transcript !== fileSha256(transcriptPath)) return reject('transcript hash mismatch');
   if (
     record.diagnosis?.observedAt !== diagnosis.observedAt ||
     record.dispatchToDiagnosisSeconds !== diagnosis.dispatchToDiagnosisSeconds ||
@@ -518,7 +527,7 @@ function validateLaunchCrashRecord(runDir, record, meta) {
     record.screen?.dispatchToScreenReadySeconds !== screenReadySeconds ||
     !sameUsage(record.diagnosisUsage ?? null, diagnosisUsage)
   ) {
-    return null;
+    return reject('derived metrics mismatch');
   }
   if (
     record.diagnosis?.initialLaunchCommandId !== diagnosis.initialLaunchCommandId ||
@@ -527,7 +536,7 @@ function validateLaunchCrashRecord(runDir, record, meta) {
     record.recovery?.repairedLaunchCommandId !== recovery.repairedLaunchCommandId ||
     record.recovery?.screenshotCommandId !== recovery.screenshotCommandId
   ) {
-    return null;
+    return reject('evidence command ids mismatch');
   }
   return { diagnosis, recovery, diagnosisUsage, screenReadySeconds };
 }
@@ -588,12 +597,14 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
       const attempt = (attemptCounts.get(countKey) ?? 0) + 1;
       attemptCounts.set(countKey, attempt);
       const id = record.valid && validCounts.get(baseId) === 1 ? baseId : `${baseId}-${attemptKind}-${attempt}`;
+      const runNonce = record.runId.match(/-(\d{13})$/)?.[1];
       const replacements = [
         [runDir, `results/${stage}/${id}`],
         [absoluteStageDir, `results/${stage}`],
         [resultsRoot, 'results'],
         [coordinatorRoot, '.'],
         [record.runId, id],
+        ...(runNonce ? [[runNonce, id]] : []),
       ];
       const proofSource = join(runDir, 'proof', 'settings.png');
       const proofName = `${id}.png`;

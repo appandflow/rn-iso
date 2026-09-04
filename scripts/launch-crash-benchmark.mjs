@@ -23,19 +23,23 @@ function successful(command) {
 
 function shellCommand(command) {
   const value = String(command ?? '').trim();
-  const match = value.match(/^\/bin\/(?:zsh|bash|sh) -lc (["'])([\s\S]*)\1$/);
-  return (match?.[2] ?? value).trim();
+  const body = value.replace(/^\/bin\/(?:zsh|bash|sh) -lc\s+/, '');
+  return body.replace(/^["']/, '').replace(/["']$/, '').trim();
 }
 
 function launchCommand(command, arm, platform) {
   command = shellCommand(command);
   if (arm === 'stim') return new RegExp(`(?:^|\\s)stim\\s+${platform}(?:\\s|$)`).test(command);
   if (platform === 'android') {
-    return /\bexpo\s+run:android\b|\bgradlew\b[^\n]*(?:install|connected)\w*|\badb\s+shell\s+am\s+start\b/.test(
-      command,
+    return (
+      /(?:\bexpo|expo\/bin\/cli|node_modules\/\.bin\/expo)\s+run:android\b/.test(command) ||
+      /\bgradlew\b[^\n]*(?:install|connected)\w*|\badb\s+shell\s+am\s+start\b/.test(command)
     );
   }
-  return /\bexpo\s+run:ios\b|\bxcrun\s+simctl\s+(?:launch|openurl)\b/.test(command);
+  return (
+    /(?:\bexpo|expo\/bin\/cli|node_modules\/\.bin\/expo)\s+run:ios\b/.test(command) ||
+    /\bxcrun\s+simctl\s+(?:launch|openurl)\b/.test(command)
+  );
 }
 
 function errorCaptureCommand(command, arm, platform) {
@@ -61,7 +65,7 @@ function orderedCommands(commands) {
 
 function sourceInspectionBeforeCapture(command, arm, platform) {
   const value = shellCommand(command);
-  if (/\/(?:skills|skill)\/[^\s]+\/SKILL\.md\b/.test(value)) return false;
+  if (/(?:\/(?:skills|skill)\/[^\s]+\/|(?:^|\s)workspace\/)SKILL\.md\b/.test(value)) return false;
   if (/(?:^|[;&|]\s*)git\s+(?:diff|show)(?!-ref)(?:\s|$)/.test(value)) return true;
   if (/(?:^|[;&|]\s*)(?:\/[^\s]+\/)?(?:node|python\d*|ruby|perl)\s+(?:-[^-\s]*[ec]|--eval)\b/.test(value)) {
     return true;
@@ -74,8 +78,13 @@ function sourceInspectionBeforeCapture(command, arm, platform) {
 
 function allowedBeforeErrorCapture(command, arm, platform) {
   const value = shellCommand(command);
+  if (/^tool:todo_list\b/.test(value)) return true;
+  if (/^(?:env\s+)?(?:[^\s=]+=[^\s]+\s+)*agent-device\s+/.test(value)) return true;
   if (sourceInspectionBeforeCapture(value, arm, platform)) return false;
-  if (/\/(?:skills|skill)\/[^\s]+\/SKILL\.md\b/.test(value) && /(?:^|\s)(?:cat|sed|head)(?:\s|$)/.test(value)) {
+  if (
+    /(?:\/(?:skills|skill)\/[^\s]+\/|(?:^|\s)workspace\/)SKILL\.md\b/.test(value) &&
+    /(?:^|\s)(?:cat|sed|head)(?:\s|$)/.test(value)
+  ) {
     return true;
   }
   if (
@@ -92,7 +101,7 @@ function allowedBeforeErrorCapture(command, arm, platform) {
     return new RegExp(`^stim\\s+(?:worktree\\s+create|start|${platform}|logs\\s+--errors)(?:\\s|$)`).test(value);
   }
   return (
-    /^(?:(?:[A-Za-z_][A-Za-z0-9_]*=(?:\S+|\$\([^)]*\))[;\s]+)*)(?:open\s+-a\s+Simulator|xcrun\s+simctl\s+|npx\s+expo\s+|xcodebuild\b|\.\/gradlew\b|adb\b|nohup\b|launchctl\b|ps\b|sleep\b|tail\b|cat\s+\/tmp\/|wc\b|lsof\b|command\s+-v\b|test\b|kill\b)/.test(
+    /^(?:(?:[A-Za-z_][A-Za-z0-9_]*=(?:\S+|\$\([^)]*\))[;\s]+)*)(?:open\s+-a\s+Simulator|xcrun\s+simctl\s+|npx\s+expo\s+|xcodebuild\b|\.\/gradlew\b|adb\b|nohup\b|launchctl\b|ps\b|sleep\b|tail\b|cat\s+\/?tmp\/|wc\b|lsof\b|command\s+-v\b|test\b|kill\b)/.test(
       value,
     ) ||
     launchCommand(value, arm, platform) ||

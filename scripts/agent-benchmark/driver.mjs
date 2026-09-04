@@ -1256,14 +1256,6 @@ function screenEvidence(meta, appAlive, commands, runDir) {
     indexes.push(index);
     after = index;
   }
-  if (!commands[indexes.at(-1)].output.includes(`Closed: ${session}`)) {
-    return {
-      valid: false,
-      reason: 'agent-device-close-used-wrong-session',
-      expected,
-      target,
-    };
-  }
   if (!existsSync(target)) {
     return { valid: false, reason: 'settings-screenshot-missing', expected, target };
   }

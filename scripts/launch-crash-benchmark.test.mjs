@@ -143,6 +143,116 @@ describe('launch crash benchmark', () => {
     }
   });
 
+  it('allows planning activity before the first error capture', () => {
+    const token = launchCrashToken('run');
+    expect(
+      launchCrashDiagnosis(
+        [
+          {
+            id: 'launch',
+            command: 'stim ios',
+            output: token,
+            exitCode: 0,
+            startedAt: '2026-09-04T12:00:02.000Z',
+            endedAt: '2026-09-04T12:00:10.000Z',
+          },
+          {
+            id: 'logs',
+            command: 'stim logs --errors',
+            output: `${token}\napp/_layout.tsx in RootLayout`,
+            exitCode: 0,
+            startedAt: '2026-09-04T12:00:11.000Z',
+            endedAt: '2026-09-04T12:00:15.000Z',
+          },
+        ],
+        {
+          dispatchAt: '2026-09-04T12:00:00.000Z',
+          token,
+          activities: [
+            {
+              id: 'plan',
+              command: 'tool:todo_list {}',
+              startedAt: '2026-09-04T12:00:01.000Z',
+              endedAt: '2026-09-04T12:00:01.000Z',
+            },
+          ],
+        },
+      ),
+    ).toMatchObject({ valid: true, commandId: 'logs' });
+  });
+
+  it('unwraps a shell command whose nested quoting changes the closing quote', () => {
+    const token = launchCrashToken('run');
+    expect(
+      launchCrashDiagnosis(
+        [
+          {
+            id: 'metro',
+            command:
+              '/bin/zsh -lc "nohup ./node_modules/.bin/expo start > /tmp/metro.log 2>&1 & pid="\'$!; echo "$pid"\'',
+            output: '1234',
+            exitCode: 0,
+            startedAt: '2026-09-04T12:00:01.000Z',
+            endedAt: '2026-09-04T12:00:02.000Z',
+          },
+          {
+            id: 'launch',
+            command: '/opt/homebrew/bin/node ./node_modules/expo/bin/cli run:ios --device SIMULATOR',
+            output: 'started',
+            exitCode: 0,
+            startedAt: '2026-09-04T12:00:03.000Z',
+            endedAt: '2026-09-04T12:00:10.000Z',
+          },
+          {
+            id: 'logs',
+            command: 'tail /tmp/native.log',
+            output: `${token}\napp/_layout.tsx in RootLayout`,
+            exitCode: 0,
+            startedAt: '2026-09-04T12:00:11.000Z',
+            endedAt: '2026-09-04T12:00:15.000Z',
+          },
+        ],
+        { dispatchAt: '2026-09-04T12:00:00.000Z', token, arm: 'control' },
+      ),
+    ).toMatchObject({ valid: true, commandId: 'logs' });
+  });
+
+  it('allows isolated device interaction needed to expose the runtime error', () => {
+    const token = launchCrashToken('run');
+    expect(
+      launchCrashDiagnosis(
+        [
+          {
+            id: 'launch',
+            command: 'npx expo run:ios --device SIMULATOR',
+            output: 'started',
+            exitCode: 0,
+            startedAt: '2026-09-04T12:00:01.000Z',
+            endedAt: '2026-09-04T12:00:10.000Z',
+          },
+          {
+            id: 'device',
+            command:
+              'env AGENT_DEVICE_STATE_DIR=/tmp/state AGENT_DEVICE_SESSION=run agent-device click "Enter URL manually"',
+            output: 'clicked',
+            exitCode: 0,
+            startedAt: '2026-09-04T12:00:11.000Z',
+            endedAt: '2026-09-04T12:00:12.000Z',
+          },
+          {
+            id: 'logs',
+            command: 'rg STIM_BENCH /tmp/metro.log',
+            output: `${token}\napp/_layout.tsx in RootLayout`,
+            exitCode: 0,
+            startedAt: '2026-09-04T12:00:13.000Z',
+            endedAt: '2026-09-04T12:00:15.000Z',
+          },
+        ],
+        { dispatchAt: '2026-09-04T12:00:00.000Z', token, arm: 'control' },
+      ),
+    ).toMatchObject({ valid: true, commandId: 'logs' });
+  });
+
   it('requires a repaired relaunch and Settings proof', () => {
     const diagnosis = { valid: true, commandId: 'diagnosis' };
     const commands = [
