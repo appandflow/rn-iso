@@ -388,6 +388,42 @@ describe('launch crash benchmark', () => {
     }
   });
 
+  it('rejects mixed log-capture and source-inspection commands', () => {
+    const token = launchCrashToken('run');
+    for (const command of [
+      `rg ${token} app/_layout.tsx tmp/runtime.log`,
+      'cat app/_layout.tsx; tail tmp/runtime.log',
+    ]) {
+      expect(
+        launchCrashDiagnosis(
+          [
+            {
+              id: 'launch',
+              command: 'npx expo run:ios --device SIMULATOR',
+              output: 'started',
+              exitCode: 0,
+              startedAt: '2026-09-04T12:00:01Z',
+              endedAt: '2026-09-04T12:00:10Z',
+            },
+            {
+              id: 'mixed',
+              command,
+              output: `${token}\napp/_layout.tsx in RootLayout`,
+              exitCode: 0,
+              startedAt: '2026-09-04T12:00:11Z',
+              endedAt: '2026-09-04T12:00:12Z',
+            },
+          ],
+          { dispatchAt: '2026-09-04T12:00:00Z', token, arm: 'control' },
+        ),
+      ).toEqual({
+        valid: false,
+        reason: 'launch-crash-pre-capture-command-not-allowed',
+        commandId: 'mixed',
+      });
+    }
+  });
+
   it('requires an explicit zero exit code for every diagnosis and recovery phase', () => {
     const token = launchCrashToken('run');
     const launch = {

@@ -73,7 +73,7 @@ function sourceInspectionBeforeCapture(command, arm, platform) {
     return true;
   }
   const namesSource = /(?:^|[\s'"`])(?:app|src)\/|\.(?:[cm]?[jt]sx?|swift|kt|java)(?:[\s'"`]|$)/.test(value);
-  if (namesSource && !errorCaptureCommand(value, arm, platform)) return true;
+  if (namesSource) return true;
   if (/RootLayout|STIM_BENCH_LAUNCH_CRASH_/.test(value) && !errorCaptureCommand(value, arm, platform)) return true;
   return false;
 }
