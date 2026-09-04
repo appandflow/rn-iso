@@ -190,6 +190,11 @@ export function benchmarkSelectionSearch(selection: BenchmarkRouteSelection, ben
   return `?${params.toString()}`;
 }
 
+export function timelineZoomFromPinch(initialZoom: number, initialDistance: number, distance: number): number {
+  if (initialDistance <= 0 || distance <= 0) return Math.min(4, Math.max(1, initialZoom));
+  return Number(Math.min(4, Math.max(1, initialZoom * (distance / initialDistance))).toFixed(2));
+}
+
 export function comparisonOutcome(
   stimSeconds: number | null | undefined,
   controlSeconds: number | null | undefined,

@@ -8,6 +8,7 @@ import {
   commandAtCursor,
   formatSeconds,
   initialAuditSelection,
+  timelineZoomFromPinch,
   timeBreakdown,
   type BenchmarkData,
   type BenchmarkCommand,
@@ -116,6 +117,14 @@ describe('comparisonOutcome', () => {
       tone: 'neutral',
     });
     expect(comparisonOutcome(null, 100)).toEqual({ label: 'Matched run unavailable', tone: 'neutral' });
+  });
+});
+
+describe('timelineZoomFromPinch', () => {
+  it('scales from the gesture start and clamps to the supported range', () => {
+    expect(timelineZoomFromPinch(2, 100, 150)).toBe(3);
+    expect(timelineZoomFromPinch(3, 100, 200)).toBe(4);
+    expect(timelineZoomFromPinch(2, 100, 20)).toBe(1);
   });
 });
 
