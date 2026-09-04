@@ -490,6 +490,32 @@ STIM_REMOTE_METRO_UNREACHABLE
   STIM_NO_REMOTE_SESSION's tunnel guidance -- set metro.tunnel, or use
   metro.publicUrl for an existing endpoint.
 
+--- RELOAD CODES (\`stim reload [ios|android]\`) ---
+
+STIM_RELOAD_AMBIGUOUS
+  Both owned apps are live. Name ios or android; Stim never guesses.
+
+STIM_RELOAD_RELEASE
+  The live app was launched with embedded JavaScript. Run the platform command
+  with a Debug configuration or variant first.
+
+STIM_RELOAD_STOPPED / STIM_RELOAD_UNOWNED / STIM_RELOAD_PROBE_FAILED
+  The recorded app is gone, its exact device is not live and owned by this
+  workspace, or simctl/adb could not prove the process exists. No launch or
+  device lifecycle action is taken; follow the printed platform-command or
+  process-probe remedy.
+
+STIM_RELOAD_FAILED
+  The exact deep link, Android reload broadcast, or targeted Metro websocket
+  failed. If bare iOS has not connected or Metro cannot identify one iOS peer,
+  the remedy tells the agent to continue in its existing automation session on
+  this workspace's exact simulator and press the Reload control. Stim does not
+  take over automation sessions.
+
+STIM_NO_METRO
+  Reload requires the recorded launch's port to be this workspace's live
+  Metro. It refuses a missing, changed, unresponsive, or foreign port.
+
 --- DEV-SERVER CODES (\`stim start\`) ---
 
 STIM_WORKTREE_REMOVAL_IN_PROGRESS

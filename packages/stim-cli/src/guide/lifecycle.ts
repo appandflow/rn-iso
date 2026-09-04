@@ -32,7 +32,9 @@ export default {
   stim logs --errors
 
   # 5. Edit the JS. Fast Refresh applies it; no Stim command is involved.
-  #    Then ask again.
+  #    If a startup or error overlay stays, reload without rebuilding. The
+  #    platform is optional unless both owned apps are live. Then ask again.
+  stim reload          # or: stim reload ios / stim reload android
   stim logs --since 30s --level error
 
   # 6. Pausing: supervisor halted, collectors reaped, owned device SHUT DOWN
@@ -49,7 +51,17 @@ reserved port. That refusal costs a second; the alternative costs four minutes
 and produces an app that cannot load a bundle.
 
 Repeat step 3 whenever a NATIVE input changes. A JS-only edit needs nothing --
-that is what Fast Refresh over the running dev server is for.
+that is what Fast Refresh over the running dev server is for. \`stim reload\` is
+the explicit recovery path when Fast Refresh cannot clear the current screen.
+It never builds, installs, boots, or cold-launches. It acts only on a live app
+on this workspace's owned local simulator or emulator, and refuses release
+builds, stopped or unowned devices, a missing or foreign Metro, and an
+ambiguous no-platform request. Expo/dev-client reloads resend the exact deep
+link recorded at launch. Bare Android sends the app-scoped React Native reload
+broadcast. Bare iOS reloads through this Metro's sole identifiable iOS peer. If
+Metro cannot identify one iOS peer, the command tells the agent to press Reload
+through its existing automation session on the exact simulator. Stim does not
+take over that stateful session.
 
 PROGRESS ON A LONG RUN
   The whole summary is stderr; stdout carries only the \`--json\` payload. Every
@@ -422,6 +434,7 @@ THE OPTION SURFACE, IN FULL
   start           --json --wait <seconds> --remote
   ios             --json --no-metro-check --no-build-cache --configuration <name> --device-type <name> --runtime <version> --device [udid] --wait <seconds> --no-wait --remote <proxy|eas>
   android         --json --no-metro-check --no-build-cache --variant <name> --system-image <id> --device [serial] --wait <seconds> --no-wait --remote <proxy|eas>
+  reload          [ios|android] --json
   device          lock <ios|android> [id] --for <duration> --wait <seconds> --json;
                   unlock [ios|android] --json
   logs            --source --level --since --grep --tail --follow --errors --json

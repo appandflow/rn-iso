@@ -1,9 +1,9 @@
 export default {
   summary:
-    'The --json payloads: `start`, `ios`, `android`, `stop`, `status`, `doctor`, `device lock`/`unlock`, and the error contract',
+    'The --json payloads: `start`, `ios`, `android`, `reload`, `stop`, `status`, `doctor`, `device lock`/`unlock`, and the error contract',
   body: () => `FACTS CONTRACT
 
-\`start\`, \`ios\`, \`android\`, \`stop\`, \`status\`, \`stats\`, \`doctor\`,
+\`start\`, \`ios\`, \`android\`, \`reload\`, \`stop\`, \`status\`, \`stats\`, \`doctor\`,
 and \`device lock\`/\`device unlock\` each print exactly ONE line of JSON on
 stdout for \`--json\`. Every other line goes to stderr, so it is always safe
 to pipe. \`logs --json\` is the one exception: it is NDJSON, one record per
@@ -280,6 +280,16 @@ line by design (see \`guide logs\`), not this single-payload contract.
                   app back on THIS workspace's bundle
   logs            the workspace log directory
   durationMs      wall time for the whole run
+
+  stim reload [ios|android] --json
+
+  platform        "ios" | "android"
+  deviceId        the exact owned simulator UDID or emulator serial reloaded
+  deviceName      the owned simulator or AVD name
+  appId           the live bundle id or Android package
+  metroPort       the workspace's verified Metro port
+  strategy        "deep-link" for Expo/dev-client, "android-broadcast" for
+                  bare Android, or "metro-websocket" for an identifiable bare iOS peer
 
   stim stats --json
 
