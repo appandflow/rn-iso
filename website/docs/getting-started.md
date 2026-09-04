@@ -92,7 +92,7 @@ com.appandflow.trailhead · Metro 8083 · launch ready`}
   </PromptBox>
   <PromptBox
     title="Review build performance"
-    response={`iOS · 2 runs · 100% cache hits · cached average 46s · estimated savings ~0s`}
+    response={`iOS · 3 runs · 67% cache hits · cached average 46s · estimated savings ~7m`}
   >
     {`Show iOS build performance.`}
   </PromptBox>
