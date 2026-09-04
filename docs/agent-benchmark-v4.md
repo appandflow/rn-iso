@@ -146,10 +146,11 @@ The coordinator timestamps every runner event and reconstructs every command's
 start, end, duration, exit status, and output. The website's interactive
 benchmark viewer provides per-run tabs, agent messages, non-overlapping command
 lanes, app-alive and screen-ready milestones, terminal output drill-down, token
-usage, estimated token cost, and the proof image. Exported website data uses
-relative paths and redacted device identifiers. The Markdown report is the
-machine-readable summary; the viewer is an audit view and does not redefine
-metrics.
+usage, estimated token cost, and the proof image. Exported website data includes
+only valid attempts and uses relative paths and redacted device identifiers.
+Private raw results retain invalid attempts for diagnosis. The Markdown report
+is the machine-readable summary; the viewer is an audit view and does not
+redefine metrics.
 
 Export a completed block into the website with:
 

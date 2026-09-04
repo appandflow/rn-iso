@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { userInfo } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -301,8 +301,10 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
     .toSorted()
     .map((name) => join(absoluteStageDir, name))
     .filter((runDir) => existsSync(join(runDir, 'run.json')) && existsSync(join(runDir, 'meta.json')));
-  const records = runDirs.map((runDir) => ({ runDir, record: readJson(join(runDir, 'run.json')) }));
-  if (records.length === 0) throw new Error(`no benchmark runs found in ${absoluteStageDir}`);
+  const records = runDirs
+    .map((runDir) => ({ runDir, record: readJson(join(runDir, 'run.json')) }))
+    .filter(({ record }) => record.valid);
+  if (records.length === 0) throw new Error(`no valid benchmark runs found in ${absoluteStageDir}`);
   const validCounts = new Map();
   for (const { record } of records) {
     if (!record.valid) continue;
@@ -310,7 +312,7 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
     validCounts.set(base, (validCounts.get(base) ?? 0) + 1);
   }
   const attemptCounts = new Map();
-  const environment = benchmarkEnvironment(readJson(join(runDirs[0], 'meta.json')), machine);
+  const environment = benchmarkEnvironment(readJson(join(records[0].runDir, 'meta.json')), machine);
   const runs = records
     .map(({ runDir, record }) => {
       const meta = readJson(join(runDir, 'meta.json'));
@@ -390,10 +392,8 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
     );
 
   const model = runs[0].model;
-  const recordedOn = readdirSync(absoluteStageDir)
-    .map((name) => join(absoluteStageDir, name, 'meta.json'))
-    .filter(existsSync)
-    .map((path) => readJson(path).dispatchAt)
+  const recordedOn = records
+    .map(({ runDir }) => readJson(join(runDir, 'meta.json')).dispatchAt)
     .filter(Boolean)
     .toSorted()[0]
     ?.slice(0, 10);
@@ -417,6 +417,11 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
   };
   assertPortable(payload);
   mkdirSync(proofDir, { recursive: true });
+  const expectedProofs = new Set(proofCopies.map(([, target]) => resolve(target)));
+  for (const entry of readdirSync(proofDir)) {
+    const path = join(proofDir, entry);
+    if (entry.endsWith('.png') && !expectedProofs.has(resolve(path))) unlinkSync(path);
+  }
   for (const [source, target] of proofCopies) copyFileSync(source, target);
   mkdirSync(dirname(outputPath), { recursive: true });
   writeFileSync(outputPath, `${JSON.stringify(payload, null, 2)}\n`);

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { tmpdir, userInfo } from 'node:os';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   benchmarkEnvironment,
@@ -197,11 +197,70 @@ describe('benchmark viewer export', () => {
     });
   });
 
-  it('sanitizes invalid reasons as part of a complete export', () => {
+  it('omits invalid attempts and their proof from a complete export', () => {
     const root = mkdtempSync(join(tmpdir(), 'stim-benchmark-export-'));
     tempDirs.push(root);
     const stageDir = join(root, 'results', 'test-rc1');
-    const runDir = join(stageDir, 'private-run-id');
+    const invalidRunDir = join(stageDir, 'private-invalid-run-id');
+    const validRunDir = join(stageDir, 'private-valid-run-id');
+    mkdirSync(join(invalidRunDir, 'proof'), { recursive: true });
+    mkdirSync(validRunDir, { recursive: true });
+    writeFileSync(
+      join(invalidRunDir, 'meta.json'),
+      JSON.stringify({ dispatchAt: '2026-09-03T20:00:00.000Z', finishedAt: '2026-09-03T20:00:01.000Z' }),
+    );
+    writeFileSync(
+      join(invalidRunDir, 'run.json'),
+      JSON.stringify({
+        runId: 'private-invalid-run-id',
+        model: 'gpt-5.6-sol',
+        variant: 'native',
+        arm: 'stim',
+        valid: false,
+        invalidReasons: ['missing command for A35AFE7E-06D9-4E4B-A14D-0451595A13BC (3372..) on Janics-Mac-mini.local'],
+        commandCount: 0,
+        screen: { valid: true },
+      }),
+    );
+    writeFileSync(join(invalidRunDir, 'proof', 'settings.png'), 'invalid proof');
+    writeFileSync(
+      join(validRunDir, 'meta.json'),
+      JSON.stringify({ dispatchAt: '2026-09-03T20:00:02.000Z', finishedAt: '2026-09-03T20:00:03.000Z' }),
+    );
+    writeFileSync(
+      join(validRunDir, 'run.json'),
+      JSON.stringify({
+        runId: 'private-valid-run-id',
+        model: 'gpt-5.6-sol',
+        variant: 'native',
+        arm: 'control',
+        valid: true,
+        invalidReasons: [],
+        dispatchToScreenReadySeconds: 1,
+        commandCount: 0,
+        screen: { valid: false },
+      }),
+    );
+
+    const proofDir = join(root, 'proof');
+    mkdirSync(proofDir, { recursive: true });
+    writeFileSync(join(proofDir, 'native-stim-invalid-1.png'), 'stale invalid proof');
+    const payload = exportBenchmark(stageDir, join(root, 'benchmark.json'), proofDir, {
+      model: 'Test Mac',
+      chip: 'Test chip',
+      memory: 'Test memory',
+    });
+
+    expect(payload.runs.map((run) => run.id)).toEqual(['native-control']);
+    expect(payload.recordedOn).toBe('2026-09-03');
+    expect(readdirSync(proofDir)).toEqual([]);
+  });
+
+  it('refuses to publish a block with no valid attempts', () => {
+    const root = mkdtempSync(join(tmpdir(), 'stim-benchmark-export-'));
+    tempDirs.push(root);
+    const stageDir = join(root, 'results', 'test-rc1');
+    const runDir = join(stageDir, 'private-invalid-run-id');
     mkdirSync(runDir, { recursive: true });
     writeFileSync(
       join(runDir, 'meta.json'),
@@ -210,25 +269,18 @@ describe('benchmark viewer export', () => {
     writeFileSync(
       join(runDir, 'run.json'),
       JSON.stringify({
-        runId: 'private-run-id',
+        runId: 'private-invalid-run-id',
         model: 'gpt-5.6-sol',
         variant: 'native',
         arm: 'stim',
         valid: false,
-        invalidReasons: ['missing command for A35AFE7E-06D9-4E4B-A14D-0451595A13BC (3372..) on Janics-Mac-mini.local'],
         commandCount: 0,
         screen: { valid: false },
       }),
     );
 
-    const payload = exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'proof'), {
-      model: 'Test Mac',
-      chip: 'Test chip',
-      memory: 'Test memory',
-    });
-
-    expect(payload.runs[0].invalidReasons).toEqual([
-      'missing command for <simulator-udid> (<simulator-udid-prefix>) on <local-host>',
-    ]);
+    expect(() => exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'proof'))).toThrow(
+      'no valid benchmark runs found',
+    );
   });
 });
