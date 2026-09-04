@@ -229,7 +229,9 @@ export default function Benchmarks(): ReactNode {
                 endpoint starts when the agent is dispatched and stops only after agent-device finds the expected text
                 on Settings and saves a screenshot.
               </p>
-              <a href="https://github.com/appandflow/stim/blob/main/docs/agent-benchmark-v4.md">Read the full protocol</a>
+              <a href="https://github.com/appandflow/stim/blob/main/docs/agent-benchmark-v4.md">
+                Read the full protocol
+              </a>
             </div>
             <dl>
               <div>
