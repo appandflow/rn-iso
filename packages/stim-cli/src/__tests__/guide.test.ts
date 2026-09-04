@@ -966,6 +966,10 @@ test('the agent guide carries the normal workflow and safety rules', () => {
   expect(agent).toMatch(/Exit code 0 from logs --errors is the pass condition/);
   expect(agent).toContain('No matching log records');
   expect(agent).toContain('agent-device metro reload --metro-port <reported-port>');
+  expect(agent).toContain('adb -s <reported-serial> shell am broadcast -a <app-id>.RELOAD_APP_ACTION');
+  expect(agent).toContain('agent-device snapshot -i --platform ios --udid <reported-device>');
+  expect(agent).toContain('agent-device press <reported-ref> --settle');
+  expect(agent).toMatch(/bundle-build error can prevent the app from handling Metro's reload/);
   expect(agent).toMatch(/app error but also says the native process is alive,[\s\S]*app did not crash/);
   expect(agent).toMatch(/FATAL because the app process exited,[\s\S]*Metro cannot restart it/);
   expect(agent).toMatch(/Ordinary stim stop and an authorized clean\s+stim worktree remove do not need/);

@@ -48,6 +48,13 @@ upstream gap.
   # JavaScript and TypeScript edits use Fast Refresh. If an error screen stays
   # after the edit, reload the running app through its reported Metro port.
   agent-device metro reload --metro-port <reported-port>
+  # A bundle-build error can prevent the app from handling Metro's reload. On
+  # Android, invoke React Native's native reload receiver. On iOS, inspect the
+  # same reported device and press the overlay's Reload button by the ref or
+  # label from the snapshot.
+  adb -s <reported-serial> shell am broadcast -a <app-id>.RELOAD_APP_ACTION
+  agent-device snapshot -i --platform ios --udid <reported-device>
+  agent-device press <reported-ref> --settle
   stim logs --since 30s --level error
 
   stim stop

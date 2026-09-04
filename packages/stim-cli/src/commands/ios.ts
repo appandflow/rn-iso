@@ -1188,7 +1188,7 @@ async function verifyIosRun({
         chalk.yellow(
           phaseLine(
             'remedy',
-            `The native app is still running. Fix the JavaScript or TypeScript error, then run \`agent-device metro reload --metro-port ${metroPort}\`. Do not run \`stim ios\` unless native inputs changed or the app process exits.`,
+            `The native app is still running. Fix the JavaScript or TypeScript error, then inspect it with \`agent-device snapshot -i --platform ios --udid ${udid}\` and press the error overlay's Reload button by its reported ref or label. Do not run \`stim ios\` unless native inputs changed or the app process exits.`,
           ),
         ),
       );
@@ -1209,7 +1209,7 @@ async function verifyIosRun({
         chalk.yellow(
           phaseLine(
             'remedy',
-            `The native app is still running. Fix the JavaScript or TypeScript error; Fast Refresh should apply the edit. If the error screen remains, run \`agent-device metro reload --metro-port ${metroPort}\`. Do not run \`stim ios\` unless native inputs changed or the app process exits.`,
+            `The native app is still running. Fix the JavaScript or TypeScript error; Fast Refresh should apply the edit. If the error screen remains, run \`agent-device metro reload --metro-port ${metroPort}\`. If it still remains, inspect it with \`agent-device snapshot -i --platform ios --udid ${udid}\` and press its Reload button by the reported ref or label. Do not run \`stim ios\` unless native inputs changed or the app process exits.`,
           ),
         ),
       );

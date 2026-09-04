@@ -850,6 +850,8 @@ describe('launch verification', () => {
     const text = errs.join('\n');
     expect(text).toMatch(/native app is still running/);
     expect(text).toContain('agent-device metro reload --metro-port 8082');
+    expect(text).toContain(`agent-device snapshot -i --platform ios --udid ${UDID}`);
+    expect(text).toMatch(/press its Reload button by the reported ref or label/);
     expect(text).toMatch(/Do not run `stim ios` unless native inputs changed or the app process exits/);
   });
 
@@ -911,7 +913,9 @@ describe('launch verification', () => {
     const text = errs.join('\n');
     expect(exitCode).toBe(1);
     expect(text).toMatch(/native app is still running/);
-    expect(text).toContain('agent-device metro reload --metro-port 8082');
+    expect(text).toContain(`agent-device snapshot -i --platform ios --udid ${UDID}`);
+    expect(text).toMatch(/press the error overlay's Reload button by its reported ref or label/);
+    expect(text).not.toContain('agent-device metro reload --metro-port 8082');
     expect(text).toMatch(/Do not run `stim ios` unless native inputs changed or the app process exits/);
   });
 
