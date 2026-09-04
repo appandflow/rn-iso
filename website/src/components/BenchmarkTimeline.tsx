@@ -1,5 +1,5 @@
 import type { CSSProperties, ReactNode } from 'react';
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import useBaseUrl from '@docusaurus/useBaseUrl';
 import {
   assignCommandLanes,
@@ -11,6 +11,7 @@ import {
   timeBreakdown,
   totalTokens,
   type BenchmarkAuditSelection,
+  type BenchmarkBackgroundProcess,
   type BenchmarkCommand,
   type BenchmarkRun,
 } from './benchmarkData';
@@ -30,7 +31,26 @@ function displayCommand(command: string): string {
 
 function eventTime(selected: BenchmarkAuditSelection): number {
   if (selected.kind === 'command') return selected.event.endSeconds;
+  if (selected.kind === 'background') return selected.event.endSeconds;
   return selected.event.atSeconds;
+}
+
+function BackgroundDetail({ process }: { process: BenchmarkBackgroundProcess }): ReactNode {
+  return (
+    <section className={styles.eventDetail} aria-live="polite">
+      <div>
+        <strong>{process.label}</strong>
+        <span>
+          +{formatSeconds(process.startSeconds)} to +{formatSeconds(process.endSeconds)}
+        </span>
+      </div>
+      <p>
+        A launcher detached this process with <code>nohup</code>. Later process-inspection commands referenced its PID
+        or PID file {process.monitorCount} {process.monitorCount === 1 ? 'time' : 'times'} through the end of this span;
+        this is recorded monitoring evidence, not a claim that the process exited there.
+      </p>
+    </section>
+  );
 }
 
 function TerminalDetail({
@@ -149,6 +169,11 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
         </div>
         <span>Agent turn {formatSeconds(run.totalSeconds)}</span>
       </div>
+
+      <section className={styles.summary}>
+        <span>What the agent did</span>
+        <p>{run.summary}</p>
+      </section>
 
       <div className={styles.breakdown}>
         <div className={styles.breakdownBar} aria-label="Agent time category summary">
@@ -293,6 +318,42 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
             ))}
           </div>
 
+          {run.backgroundProcesses.length
+            ? run.backgroundProcesses.map((process, index) => {
+                const active =
+                  playbackMode && cursorSeconds >= process.startSeconds && cursorSeconds <= process.endSeconds;
+                const selectedProcess =
+                  !playbackMode && selected?.kind === 'background' && selected.event.id === process.id;
+                return (
+                  <Fragment key={process.id}>
+                    <div className={styles.laneLabel}>{index === 0 ? 'Background' : null}</div>
+                    <div className={styles.backgroundTrack}>
+                      {playbackMode ? (
+                        <i className={styles.playhead} style={{ left: position(cursorSeconds, run.totalSeconds) }} />
+                      ) : null}
+                      <button
+                        type="button"
+                        className={`${styles.backgroundBar} ${active || selectedProcess ? styles.commandSelected : ''}`}
+                        style={{
+                          left: position(process.startSeconds, run.totalSeconds),
+                          width: `${Math.max(
+                            0.7,
+                            ((process.endSeconds - process.startSeconds) / run.totalSeconds) * 100,
+                          )}%`,
+                        }}
+                        aria-label={`${process.label}, monitored for ${formatSeconds(
+                          process.endSeconds - process.startSeconds,
+                        )}`}
+                        onClick={() => inspect({ kind: 'background', event: process })}
+                      >
+                        {process.label}
+                      </button>
+                    </div>
+                  </Fragment>
+                );
+              })
+            : null}
+
           <div className={styles.laneLabel}>App/device</div>
           <div className={styles.dotTrack}>
             {run.markers.map((marker) => (
@@ -321,6 +382,8 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
         </section>
       ) : selected?.kind === 'command' ? (
         <TerminalDetail command={selected.event} />
+      ) : selected?.kind === 'background' ? (
+        <BackgroundDetail process={selected.event} />
       ) : selected ? (
         <section className={styles.eventDetail} aria-live="polite">
           <div>

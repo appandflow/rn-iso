@@ -145,12 +145,18 @@ invalid-attempt reasons.
 The coordinator timestamps every runner event and reconstructs every command's
 start, end, duration, exit status, and output. The website's interactive
 benchmark viewer provides per-run tabs, agent messages, non-overlapping command
-lanes, app-alive and screen-ready milestones, terminal output drill-down, token
-usage, estimated token cost, and the proof image. Exported website data includes
-only valid attempts and uses relative paths and redacted device identifiers.
-Private raw results retain invalid attempts for diagnosis. The Markdown report
-is the machine-readable summary; the viewer is an audit view and does not
-redefine metrics.
+lanes, inferred spans for detached processes that later process-inspection
+commands monitor,
+app-alive and screen-ready milestones, terminal output drill-down, a concise
+evidence-derived activity summary, token usage, estimated token cost, and the
+proof image. A detached span ends at the last recorded PID or PID-file
+reference; it does not assert that the process exited then. Exported website
+data includes only valid attempts and uses relative paths and redacted device
+identifiers. Private raw results retain invalid attempts for diagnosis. The
+Markdown report is the machine-readable summary; the viewer is an audit view
+and does not redefine metrics.
+
+![A benchmark timeline with separate shell and monitored background-process lanes](images/benchmark-background-process.png)
 
 Export a completed block into the website with:
 

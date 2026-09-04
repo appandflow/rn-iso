@@ -59,6 +59,27 @@
   font-variant-numeric: tabular-nums;
 }
 
+.summary {
+  margin-bottom: 1rem;
+  padding: 0.9rem 1rem;
+  border-left: 0.22rem solid #0f766e;
+  border-radius: 0.35rem 0.8rem 0.8rem 0.35rem;
+  background: color-mix(in srgb, #0f766e 8%, var(--bench-surface));
+}
+
+.summary span {
+  color: #0f766e;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.summary p {
+  margin: 0.35rem 0 0;
+  font-size: 0.88rem;
+}
+
 .breakdown {
   margin-bottom: 1rem;
   padding: 0.9rem 1rem;
@@ -193,9 +214,48 @@
 .axis,
 .laneLabel,
 .dotTrack,
-.shellTracks {
+.shellTracks,
+.backgroundTrack {
   min-width: 0;
   border-bottom: 1px solid var(--bench-line);
+}
+
+.backgroundTrack {
+  position: relative;
+  height: 3.7rem;
+}
+
+.backgroundBar {
+  position: absolute;
+  top: 0.52rem;
+  height: 2.65rem;
+  overflow: hidden;
+  padding: 0 0.65rem;
+  border: 1px solid color-mix(in srgb, #0f766e 55%, var(--bench-line));
+  border-radius: 0.55rem;
+  background: repeating-linear-gradient(
+    -45deg,
+    color-mix(in srgb, #0f766e 18%, var(--bench-surface)),
+    color-mix(in srgb, #0f766e 18%, var(--bench-surface)) 0.45rem,
+    color-mix(in srgb, #0f766e 8%, var(--bench-surface)) 0.45rem,
+    color-mix(in srgb, #0f766e 8%, var(--bench-surface)) 0.9rem
+  );
+  color: var(--ifm-font-color-base);
+  cursor: pointer;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.72rem;
+  line-height: 2.55rem;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.backgroundBar:hover,
+.backgroundBar:focus-visible {
+  z-index: 2;
+  border-color: #0f766e;
+  outline: none;
+  box-shadow: 0 0 0 0.16rem color-mix(in srgb, #0f766e 22%, transparent);
 }
 
 .axisLabel,

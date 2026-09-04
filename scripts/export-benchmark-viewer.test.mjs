@@ -3,12 +3,14 @@ import { tmpdir, userInfo } from 'node:os';
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+  backgroundProcessesFor,
   benchmarkEnvironment,
   estimateTokenCost,
   eventsFor,
   exportBenchmark,
   sanitizeBenchmarkText,
   sanitizeCommandOutput,
+  summarizeRun,
 } from './export-benchmark-viewer.mjs';
 
 const tempDirs = [];
@@ -22,6 +24,184 @@ afterEach(() => {
 });
 
 describe('benchmark viewer export', () => {
+  it('extends detached processes through commands that monitor their PID or PID file', () => {
+    const commands = [
+      {
+        id: 'wrong-launch',
+        startSeconds: 1,
+        endSeconds: 1.1,
+        command: 'nohup npx expo run:ios --udid U1 > tmp/build.log 2>&1 &\necho $! > tmp/build.pid',
+        output: '1001',
+        exitCode: 0,
+      },
+      {
+        id: 'wrong-check',
+        startSeconds: 2,
+        endSeconds: 3,
+        command: 'ps -p 1001; cat tmp/build.pid',
+        output: '',
+        exitCode: 0,
+      },
+      {
+        id: 'launch',
+        startSeconds: 4,
+        endSeconds: 4.1,
+        command: 'nohup npx expo run:ios --device U1 > tmp/run.log 2>&1 &\necho $! > tmp/build.pid',
+        output: 'PID=2002',
+        exitCode: 0,
+      },
+      {
+        id: 'poll',
+        startSeconds: 10,
+        endSeconds: 20,
+        command: 'ps -p 2002; tail tmp/run.log',
+        output: '',
+        exitCode: 0,
+      },
+    ];
+
+    expect(backgroundProcessesFor(commands)).toEqual([
+      {
+        id: 'background-wrong-launch',
+        label: 'npx expo run:ios --udid U1',
+        startSeconds: 1.1,
+        endSeconds: 3,
+        launcherCommandId: 'wrong-launch',
+        monitorCount: 1,
+      },
+      {
+        id: 'background-launch',
+        label: 'npx expo run:ios --device U1',
+        startSeconds: 4.1,
+        endSeconds: 20,
+        launcherCommandId: 'launch',
+        monitorCount: 1,
+      },
+    ]);
+  });
+
+  it('omits detached launchers without an identifier or later monitoring evidence', () => {
+    expect(
+      backgroundProcessesFor([
+        {
+          id: 'no-identifier',
+          startSeconds: 0,
+          endSeconds: 1,
+          command: 'nohup npx expo start > tmp/metro.log 2>&1 &',
+          output: '',
+          exitCode: 0,
+        },
+        {
+          id: 'not-monitored',
+          startSeconds: 2,
+          endSeconds: 3,
+          command: 'nohup npx expo start > tmp/metro.log 2>&1 &\necho $! > tmp/metro.pid',
+          output: '3003',
+          exitCode: 0,
+        },
+      ]),
+    ).toEqual([]);
+  });
+
+  it('does not treat PID cleanup or incidental numbers as process monitoring', () => {
+    expect(
+      backgroundProcessesFor([
+        {
+          id: 'launch',
+          startSeconds: 0,
+          endSeconds: 1,
+          command: 'nohup npx expo start > tmp/metro.log 2>&1 &\necho $! > tmp/metro.pid',
+          output: '4004',
+          exitCode: 0,
+        },
+        {
+          id: 'incidental',
+          startSeconds: 2,
+          endSeconds: 3,
+          command: 'echo "build 4004 finished"',
+          output: '',
+          exitCode: 0,
+        },
+        {
+          id: 'cleanup',
+          startSeconds: 4,
+          endSeconds: 5,
+          command: 'rm tmp/metro.pid',
+          output: '',
+          exitCode: 0,
+        },
+      ]),
+    ).toEqual([]);
+  });
+
+  it('summarizes the recorded preparation, launcher, proof, and failed attempts', () => {
+    const commands = [
+      {
+        id: 'worktree',
+        startSeconds: 0,
+        endSeconds: 1,
+        command: 'git worktree add worktree/native-control',
+        output: '',
+        exitCode: 0,
+      },
+      {
+        id: 'launch',
+        startSeconds: 2,
+        endSeconds: 3,
+        command: 'nohup npx expo run:ios --device U1 > tmp/run.log 2>&1 &',
+        output: '2002',
+        exitCode: 0,
+      },
+      {
+        id: 'monitor',
+        startSeconds: 3.1,
+        endSeconds: 3.5,
+        command: 'ps -p 2002',
+        output: '',
+        exitCode: 0,
+      },
+      {
+        id: 'proof',
+        startSeconds: 4,
+        endSeconds: 5,
+        command: 'agent-device screenshot proof.png',
+        output: '',
+        exitCode: 1,
+      },
+    ];
+
+    expect(
+      summarizeRun({ variant: 'native', screen: { valid: true } }, commands, backgroundProcessesFor(commands)),
+    ).toBe(
+      'Created an isolated worktree, worked on the native iOS change, and started the local Expo/Xcode workflow. It started one process with nohup and monitored the detached work through later commands. The record includes 1 failed command attempt before completion.',
+    );
+  });
+
+  it('uses neutral wording when no successful build command is recorded', () => {
+    const commands = [
+      {
+        id: 'open',
+        startSeconds: 0,
+        endSeconds: 1,
+        command: 'agent-device open com.example.app --platform ios --udid U1',
+        output: '',
+        exitCode: 0,
+      },
+      {
+        id: 'failed-proof',
+        startSeconds: 1,
+        endSeconds: 2,
+        command: 'agent-device screenshot proof.png',
+        output: '',
+        exitCode: 1,
+      },
+    ];
+
+    expect(summarizeRun({ variant: 'native', screen: { valid: false } }, commands, [])).toBe(
+      'Prepared the benchmark workspace, worked on the native iOS change, and opened the app with agent-device. The record includes 1 failed command attempt before completion.',
+    );
+  });
+
   it('replaces machine paths, run ids, and simulator ids', () => {
     const source =
       '/Volumes/ExternalSSD/Developer/bench/results/run-123/proof/settings.png ' +
