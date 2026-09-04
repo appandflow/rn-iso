@@ -37,6 +37,7 @@
         "reasoning_output_tokens": 329
       },
       "estimatedTokenCostUsd": 0.1947374,
+      "summary": "Created an isolated worktree, worked on the JavaScript change, and ran Stim's iOS workflow. It reached Settings and captured valid agent-device proof. The record includes 1 failed command attempt before completion.",
       "messages": [
         {
           "id": "7d1a7e75-02bf-4269-b3c7-a0b464e6ee06-0",
@@ -177,6 +178,7 @@
           "exitCode": 0
         }
       ],
+      "backgroundProcesses": [],
       "markers": [
         {
           "id": "app-alive",
@@ -217,6 +219,7 @@
         "reasoning_output_tokens": 3687
       },
       "estimatedTokenCostUsd": 0.47119780000000006,
+      "summary": "Created an isolated worktree and carried over dependencies or native outputs, worked on the JavaScript change, and started the local Expo/Xcode workflow. It reached Settings and captured valid agent-device proof.",
       "messages": [
         {
           "id": "3bce6169-6829-4575-9c6a-e5f63cb87cbf-0",
@@ -558,6 +561,7 @@
           "exitCode": 0
         }
       ],
+      "backgroundProcesses": [],
       "markers": [
         {
           "id": "app-alive",
@@ -598,6 +602,7 @@
         "reasoning_output_tokens": 878
       },
       "estimatedTokenCostUsd": 0.18641739999999998,
+      "summary": "Created an isolated worktree, worked on the native iOS change, and ran Stim's iOS workflow. It reached Settings and captured valid agent-device proof.",
       "messages": [
         {
           "id": "b5b8c8e1-8791-4beb-8448-d1564cc4387c-0",
@@ -742,6 +747,7 @@
           "exitCode": 0
         }
       ],
+      "backgroundProcesses": [],
       "markers": [
         {
           "id": "app-alive",
@@ -782,6 +788,7 @@
         "reasoning_output_tokens": 938
       },
       "estimatedTokenCostUsd": 0.5113698,
+      "summary": "Created an isolated worktree and carried over dependencies or native outputs, worked on the native iOS change, and started the local Expo/Xcode workflow. It started 2 processes with nohup and monitored the detached work through later commands. It reached Settings and captured valid agent-device proof. The record includes 2 failed command attempts before completion.",
       "messages": [
         {
           "id": "febc8839-0bdd-4aad-a2d8-642ee0165a9d-0",
@@ -1224,6 +1231,24 @@
           "command": "ps -p 36865 -o pid,etime,command\nxcrun simctl list devices | grep sonnet-rc12",
           "output": "<device inventory omitted from public artifact>",
           "exitCode": 0
+        }
+      ],
+      "backgroundProcesses": [
+        {
+          "id": "background-toolu_01X47B5KTSMLmBg79LAwJtRF",
+          "label": "npx expo run:ios --udid <simulator-udid>",
+          "startSeconds": 86.177,
+          "endSeconds": 90.746,
+          "launcherCommandId": "toolu_01X47B5KTSMLmBg79LAwJtRF",
+          "monitorCount": 1
+        },
+        {
+          "id": "background-toolu_017vKikj28rDigoj9k4PLabw",
+          "label": "npx expo run:ios --device <simulator-udid>",
+          "startSeconds": 96.491,
+          "endSeconds": 390,
+          "launcherCommandId": "toolu_017vKikj28rDigoj9k4PLabw",
+          "monitorCount": 17
         }
       ],
       "markers": [

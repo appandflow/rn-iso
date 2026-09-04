@@ -37,6 +37,7 @@
         "reasoning_output_tokens": 63
       },
       "estimatedTokenCostUsd": 0.4158494999999999,
+      "summary": "Created an isolated worktree, worked on the JavaScript change, and ran Stim's iOS workflow. It reached Settings and captured valid agent-device proof.",
       "messages": [
         {
           "id": "27d0307e-f4b5-43ed-899c-4c8a3c712bbe-0",
@@ -169,6 +170,7 @@
           "exitCode": 0
         }
       ],
+      "backgroundProcesses": [],
       "markers": [
         {
           "id": "app-alive",
@@ -209,6 +211,7 @@
         "reasoning_output_tokens": 2207
       },
       "estimatedTokenCostUsd": 1.2138974999999994,
+      "summary": "Created an isolated worktree and carried over dependencies or native outputs, worked on the JavaScript change, and started the local Expo/Xcode workflow. It started 2 processes with nohup and monitored the detached work through later commands. It reached Settings and captured valid agent-device proof. The record includes 2 failed command attempts before completion.",
       "messages": [
         {
           "id": "cde9d9fa-48ae-440a-ab5b-a95aff24f6d0-0",
@@ -638,6 +641,24 @@
           "exitCode": 0
         }
       ],
+      "backgroundProcesses": [
+        {
+          "id": "background-toolu_01TCv7kc7jw4ogE9oa4bMiUs",
+          "label": "npx expo start --port 8081",
+          "startSeconds": 95.855,
+          "endSeconds": 407.224,
+          "launcherCommandId": "toolu_01TCv7kc7jw4ogE9oa4bMiUs",
+          "monitorCount": 2
+        },
+        {
+          "id": "background-toolu_01K8vT4XuCsSENZnsV4tML7P",
+          "label": "npx expo run:ios --device <simulator-udid>",
+          "startSeconds": 115.263,
+          "endSeconds": 364.343,
+          "launcherCommandId": "toolu_01K8vT4XuCsSENZnsV4tML7P",
+          "monitorCount": 18
+        }
+      ],
       "markers": [
         {
           "id": "app-alive",
@@ -678,6 +699,7 @@
         "reasoning_output_tokens": 88
       },
       "estimatedTokenCostUsd": 0.33580000000000004,
+      "summary": "Created an isolated worktree, worked on the native iOS change, and ran Stim's iOS workflow. It reached Settings and captured valid agent-device proof.",
       "messages": [
         {
           "id": "0979c689-9a07-49c1-8f82-fd9b99ca738a-0",
@@ -779,6 +801,7 @@
           "exitCode": 0
         }
       ],
+      "backgroundProcesses": [],
       "markers": [
         {
           "id": "app-alive",
@@ -819,6 +842,7 @@
         "reasoning_output_tokens": 2573
       },
       "estimatedTokenCostUsd": 3.8191059999999983,
+      "summary": "Created an isolated worktree and carried over dependencies or native outputs, worked on the native iOS change, and started the local Expo/Xcode workflow. It started one process with nohup and monitored the detached work through later commands. It reached Settings and captured valid agent-device proof. The record includes 1 failed command attempt before completion.",
       "messages": [
         {
           "id": "4b74c5b6-7313-4ea9-96fe-519e369f2713-0",
@@ -1795,6 +1819,16 @@
           "command": "agent-device close; echo \"---\"; ps -p $(cat tmp/opus-rc12-run.pid) -o pid=,etime= ; xcrun simctl listapps <simulator-udid> >/dev/null 2>&1 && echo \"sim alive\"",
           "output": "<process output omitted from public artifact>",
           "exitCode": 0
+        }
+      ],
+      "backgroundProcesses": [
+        {
+          "id": "background-toolu_01Rr3QBaJipDAdVja32mG6jy",
+          "label": "npx expo run:ios --device \"$UDID\"",
+          "startSeconds": 108.781,
+          "endSeconds": 400.158,
+          "launcherCommandId": "toolu_01Rr3QBaJipDAdVja32mG6jy",
+          "monitorCount": 92
         }
       ],
       "markers": [

@@ -20,6 +20,15 @@ export type BenchmarkMarker = {
   atSeconds: number;
 };
 
+export type BenchmarkBackgroundProcess = {
+  id: string;
+  label: string;
+  startSeconds: number;
+  endSeconds: number;
+  launcherCommandId: string;
+  monitorCount: number;
+};
+
 export type BenchmarkUsage = {
   input_tokens: number;
   cached_input_tokens: number;
@@ -40,8 +49,10 @@ export type BenchmarkRun = {
   commandCount: number;
   usage: BenchmarkUsage;
   estimatedTokenCostUsd: number | null;
+  summary: string;
   messages: BenchmarkMessage[];
   commands: BenchmarkCommand[];
+  backgroundProcesses: BenchmarkBackgroundProcess[];
   markers: BenchmarkMarker[];
   proof: {
     src: string;
@@ -85,7 +96,8 @@ export type BenchmarkEnvironment = {
 export type BenchmarkAuditSelection =
   | { kind: 'command'; event: BenchmarkCommand }
   | { kind: 'message'; event: BenchmarkMessage }
-  | { kind: 'marker'; event: BenchmarkMarker };
+  | { kind: 'marker'; event: BenchmarkMarker }
+  | { kind: 'background'; event: BenchmarkBackgroundProcess };
 
 export type BenchmarkTimeBreakdown = {
   shellActiveSeconds: number;

@@ -254,6 +254,94 @@ export function eventsFor(runDir, start, replacements) {
   return { messages, commands };
 }
 
+function detachedCommandLabel(command) {
+  const line = command.split('\n').find((candidate) => /\bnohup\b/.test(candidate) && /&(?:\s|$)/.test(candidate));
+  return line?.match(/\bnohup\s+(.+?)(?=\s+(?:\d?>>?)|\s+&(?:\s|$))/)?.[1]?.trim() ?? null;
+}
+
+function capturedPid(output) {
+  for (const line of output.split('\n')) {
+    const match = line.trim().match(/^(?:(?:PID|Metro PID)\s*[=:]\s*)?(\d{2,})(?:\s|$)/);
+    if (match?.[1]) return match[1];
+  }
+  return null;
+}
+
+function capturedPidFile(command) {
+  return command.match(/echo\s+(?:"?\$!"?|"?\$[A-Za-z_][A-Za-z0-9_]*"?)\s*>\s*"?([^"\s;]+\.pid)"?/)?.[1] ?? null;
+}
+
+function inspectsProcess(command, pid, pidFile) {
+  const processInspection = /\b(?:ps|wait)\b|\bkill\s+-0\b/;
+  if (!processInspection.test(command)) return false;
+  const mentionsPid = pid ? new RegExp(`(^|[^0-9])${pid}([^0-9]|$)`).test(command) : false;
+  return mentionsPid || Boolean(pidFile && command.includes(pidFile));
+}
+
+export function backgroundProcessesFor(commands) {
+  return commands.flatMap((launcher) => {
+    if (launcher.exitCode !== 0) return [];
+    const label = detachedCommandLabel(launcher.command);
+    if (!label) return [];
+    const pid = capturedPid(launcher.output);
+    const pidFile = capturedPidFile(launcher.command);
+    if (!pid && !pidFile) return [];
+    const later = commands.filter((command) => {
+      if (command.startSeconds < launcher.endSeconds || command.id === launcher.id) return false;
+      if (detachedCommandLabel(command.command)) return false;
+      return inspectsProcess(command.command, pid, pidFile);
+    });
+    if (later.length === 0) return [];
+    const endSeconds = later.reduce((latest, command) => Math.max(latest, command.endSeconds), launcher.endSeconds);
+    return [
+      {
+        id: `background-${launcher.id}`,
+        label,
+        startSeconds: launcher.endSeconds,
+        endSeconds,
+        launcherCommandId: launcher.id,
+        monitorCount: later.length,
+      },
+    ];
+  });
+}
+
+export function summarizeRun(record, commands, backgroundProcesses) {
+  const successfulCommands = commands.filter((command) => command.exitCode === 0);
+  const commandText = successfulCommands.map((command) => command.command).join('\n');
+  const preparedWorktree = /\bgit\s+worktree\b|\bstim\s+worktree\s+create\b/.test(commandText);
+  const copiedInputs = /\bcp\b[^\n]*(?:node_modules|ios\/Pods|ios\/build)/.test(commandText);
+  const change = record.variant === 'native' ? 'native iOS change' : 'JavaScript change';
+  const preparation = preparedWorktree
+    ? `Created an isolated worktree${copiedInputs ? ' and carried over dependencies or native outputs' : ''}`
+    : 'Prepared the benchmark workspace';
+  let launch = 'completed the app task';
+  if (/(?:^|\s)stim\s+ios(?:\s|$)/.test(commandText)) {
+    launch = "ran Stim's iOS workflow";
+  } else if (/\bexpo\s+run:ios\b|\bxcodebuild\b/.test(commandText)) {
+    launch = 'started the local Expo/Xcode workflow';
+  } else if (/\bexpo\s+start\b/.test(commandText)) {
+    launch = 'started the local Expo dev server';
+  } else if (/\bxcrun\s+simctl\s+launch\b/.test(commandText)) {
+    launch = 'launched the app with simctl';
+  } else if (/\bagent-device\s+open\b/.test(commandText)) {
+    launch = 'opened the app with agent-device';
+  }
+  const backgroundMonitors = backgroundProcesses.reduce((sum, process) => sum + process.monitorCount, 0);
+  const background = backgroundProcesses.length
+    ? ` It started ${backgroundProcesses.length === 1 ? 'one process' : `${backgroundProcesses.length} processes`} with nohup${backgroundMonitors ? ' and monitored the detached work through later commands' : ''}.`
+    : '';
+  const validation =
+    record.screen?.valid && /\bagent-device\s+screenshot\b/.test(commandText)
+      ? ' It reached Settings and captured valid agent-device proof.'
+      : '';
+  const failed = commands.filter((command) => command.exitCode !== 0).length;
+  const recovery = failed
+    ? ` The record includes ${failed} failed command ${failed === 1 ? 'attempt' : 'attempts'} before completion.`
+    : '';
+  return `${preparation}, worked on the ${change}, and ${launch}.${background}${validation}${recovery}`;
+}
+
 function assertPortable(payload) {
   const serialized = JSON.stringify(collectPublicStrings(payload));
   const leakedRoot = ['/Users', '/Volumes', '/private', '/var/folders', '/tmp/'].find((root) =>
@@ -340,6 +428,7 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
         relativeSeconds(meta.finishedAt, meta.dispatchAt),
       );
       const events = eventsFor(runDir, meta.dispatchAt, replacements);
+      const backgroundProcesses = backgroundProcessesFor(events.commands);
       const usage = record.usage ?? {
         input_tokens: 0,
         cached_input_tokens: 0,
@@ -359,8 +448,10 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
         commandCount: record.commandCount,
         usage,
         estimatedTokenCostUsd: record.reportedCostUsd ?? estimateTokenCost(usage, record.model),
+        summary: summarizeRun(record, events.commands, backgroundProcesses),
         messages: events.messages,
         commands: events.commands,
+        backgroundProcesses,
         markers: [
           appAlive?.observedAt && {
             id: 'app-alive',

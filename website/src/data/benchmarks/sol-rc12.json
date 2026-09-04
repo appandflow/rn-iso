@@ -43,6 +43,7 @@
         "reasoning_output_tokens": 1359
       },
       "estimatedTokenCostUsd": 0.3327496,
+      "summary": "Created an isolated worktree, worked on the JavaScript change, and ran Stim's iOS workflow. It reached Settings and captured valid agent-device proof.",
       "messages": [
         {
           "id": "item_0",
@@ -238,6 +239,7 @@
           "exitCode": 0
         }
       ],
+      "backgroundProcesses": [],
       "markers": [
         {
           "id": "app-alive",
@@ -277,6 +279,7 @@
         "reasoning_output_tokens": 6901
       },
       "estimatedTokenCostUsd": 1.8173616000000001,
+      "summary": "Created an isolated worktree, worked on the JavaScript change, and started the local Expo/Xcode workflow. It started one process with nohup and monitored the detached work through later commands. It reached Settings and captured valid agent-device proof.",
       "messages": [
         {
           "id": "item_0",
@@ -617,6 +620,16 @@
           "exitCode": 0
         }
       ],
+      "backgroundProcesses": [
+        {
+          "id": "background-item_14",
+          "label": "./node_modules/.bin/expo start --dev-client --port 8081",
+          "startSeconds": 141.26,
+          "endSeconds": 182.563,
+          "launcherCommandId": "item_14",
+          "monitorCount": 2
+        }
+      ],
       "markers": [
         {
           "id": "app-alive",
@@ -656,6 +669,7 @@
         "reasoning_output_tokens": 5293
       },
       "estimatedTokenCostUsd": 0.8897664000000001,
+      "summary": "Created an isolated worktree, worked on the native iOS change, and ran Stim's iOS workflow. It reached Settings and captured valid agent-device proof. The record includes 7 failed command attempts before completion.",
       "messages": [
         {
           "id": "item_0",
@@ -1025,6 +1039,7 @@
           "exitCode": 0
         }
       ],
+      "backgroundProcesses": [],
       "markers": [
         {
           "id": "app-alive",
@@ -1064,6 +1079,7 @@
         "reasoning_output_tokens": 3742
       },
       "estimatedTokenCostUsd": 1.066816,
+      "summary": "Created an isolated worktree and carried over dependencies or native outputs, worked on the native iOS change, and launched the app with simctl. It reached Settings and captured valid agent-device proof. The record includes 1 failed command attempt before completion.",
       "messages": [
         {
           "id": "item_0",
@@ -1260,6 +1276,7 @@
           "exitCode": 0
         }
       ],
+      "backgroundProcesses": [],
       "markers": [
         {
           "id": "app-alive",

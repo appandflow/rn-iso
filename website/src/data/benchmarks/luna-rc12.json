@@ -43,6 +43,7 @@
         "reasoning_output_tokens": 1171
       },
       "estimatedTokenCostUsd": 0.02353276,
+      "summary": "Created an isolated worktree, worked on the JavaScript change, and ran Stim's iOS workflow. It reached Settings and captured valid agent-device proof.",
       "messages": [
         {
           "id": "item_0",
@@ -194,6 +195,7 @@
           "exitCode": 0
         }
       ],
+      "backgroundProcesses": [],
       "markers": [
         {
           "id": "app-alive",
@@ -233,6 +235,7 @@
         "reasoning_output_tokens": 7895
       },
       "estimatedTokenCostUsd": 0.09709372,
+      "summary": "Created an isolated worktree, worked on the JavaScript change, and started the local Expo dev server. It started 2 processes with nohup and monitored the detached work through later commands. It reached Settings and captured valid agent-device proof. The record includes 5 failed command attempts before completion.",
       "messages": [
         {
           "id": "item_0",
@@ -660,6 +663,24 @@
           "exitCode": 0
         }
       ],
+      "backgroundProcesses": [
+        {
+          "id": "background-item_18",
+          "label": "./node_modules/.bin/expo start --dev-client --localhost",
+          "startSeconds": 110.398,
+          "endSeconds": 512.127,
+          "launcherCommandId": "item_18",
+          "monitorCount": 1
+        },
+        {
+          "id": "background-item_44",
+          "label": "./node_modules/.bin/expo start --dev-client --localhost",
+          "startSeconds": 537.72,
+          "endSeconds": 552.269,
+          "launcherCommandId": "item_44",
+          "monitorCount": 2
+        }
+      ],
       "markers": [
         {
           "id": "app-alive",
@@ -699,6 +720,7 @@
         "reasoning_output_tokens": 2145
       },
       "estimatedTokenCostUsd": 0.0249928,
+      "summary": "Created an isolated worktree, worked on the native iOS change, and ran Stim's iOS workflow. It reached Settings and captured valid agent-device proof.",
       "messages": [
         {
           "id": "item_0",
@@ -858,6 +880,7 @@
           "exitCode": 0
         }
       ],
+      "backgroundProcesses": [],
       "markers": [
         {
           "id": "app-alive",
@@ -897,6 +920,7 @@
         "reasoning_output_tokens": 3000
       },
       "estimatedTokenCostUsd": 0.0652868,
+      "summary": "Created an isolated worktree and carried over dependencies or native outputs, worked on the native iOS change, and opened the app with agent-device. It reached Settings and captured valid agent-device proof. The record includes 4 failed command attempts before completion.",
       "messages": [
         {
           "id": "item_0",
@@ -1265,6 +1289,7 @@
           "exitCode": 0
         }
       ],
+      "backgroundProcesses": [],
       "markers": [
         {
           "id": "app-alive",
