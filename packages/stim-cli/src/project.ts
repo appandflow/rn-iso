@@ -125,6 +125,26 @@ function readPackageJson(projectRoot: string): PackageJson | null {
   }
 }
 
+const APP_DEPENDENCIES = ['react-native', 'expo'];
+
+export const NOT_AN_APP_REMEDY =
+  'Run this from the app directory -- the one whose package.json depends on react-native or expo -- or from that directory inside a worktree.';
+
+export function declaresAppDependency(pkg: unknown): boolean {
+  if (!pkg || typeof pkg !== 'object') return false;
+  const { dependencies, devDependencies } = pkg as PackageJson;
+  const deps = { ...dependencies, ...devDependencies };
+  return APP_DEPENDENCIES.some((name) => name in deps);
+}
+
+export function isAppProject(projectRoot: string): boolean {
+  return declaresAppDependency(readPackageJson(projectRoot));
+}
+
+export function notAnAppMessage(projectRoot: string): string {
+  return `${join(projectRoot, 'package.json')} depends on neither react-native nor expo, so this is not a React Native or Expo app.`;
+}
+
 export function detectIsExpo(projectRoot: string): boolean {
   const pkg = readPackageJson(projectRoot);
   const iosScript = pkg?.scripts?.ios;

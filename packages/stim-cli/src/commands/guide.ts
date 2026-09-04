@@ -55,6 +55,10 @@ upstream gap.
 
 RULES DURING THE LOOP
 
+- Run Stim from the app directory: the one whose package.json depends on
+  react-native or expo. Anywhere else -- a monorepo root, a tools package --
+  start, ios and android refuse with STIM_NO_PROJECT naming that package.json,
+  and doctor reports it as a finding.
 - Run start before a debug ios or android build. If it returns STIM_NO_METRO,
   run stim start and retry.
 - Run ios or android again after a native input changes. A JavaScript-only
@@ -1370,7 +1374,10 @@ STIM_BAD_ARG / STIM_NO_PROJECT
   android.avdConfig key or fragment, a malformed ios.signingIdentity,
   ios.signingIdentitySha1 or ios.lanHost value, \`--device\` with an empty
   serial or UDID, \`--device\` together with \`--remote\`, a working directory
-  with no package.json above it, an android/app/build.gradle that
+  with no package.json above it or whose nearest package.json depends on
+  neither react-native nor expo, so the directory is not an app (the refusal
+  names that package.json, and \`doctor\` reports the same directory as a
+  finding), an android/app/build.gradle that
   declares product flavors with
   no variant selected (the refusal names the debug variants), or a
   \`--device-type\`, \`--runtime\` or \`--system-image\` name that is BLANK or

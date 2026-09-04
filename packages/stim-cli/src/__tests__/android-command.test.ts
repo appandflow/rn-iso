@@ -73,7 +73,11 @@ beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'stim-android-'));
   writeFileSync(
     join(root, 'package.json'),
-    JSON.stringify({ name: 'app', scripts: { android: 'react-native run-android' } }),
+    JSON.stringify({
+      name: 'app',
+      dependencies: { 'react-native': '0.81.0' },
+      scripts: { android: 'react-native run-android' },
+    }),
   );
   mkdirSync(join(root, 'android', 'app'), { recursive: true });
   writeFileSync(join(root, 'android', 'app', 'build.gradle'), 'android {\n  namespace "com.example.app"\n}\n');
@@ -1362,6 +1366,19 @@ describe('metro is verified before any build work', () => {
 });
 
 describe('the other refusals', () => {
+  test('a directory that depends on neither react-native nor expo is refused before any workspace state', async () => {
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'monorepo', devDependencies: { vitest: '5' } }));
+    const h = harness({ ensureDevice: never('the device'), build: never('the build') });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('STIM_NO_PROJECT');
+    expect(result.error?.message).toContain(join(root, 'package.json'));
+    expect(result.error?.message).toMatch(/neither react-native nor expo/);
+    expect(result.error?.remedy).toBeTruthy();
+    expect(h.calls.ensureStorage).toEqual([]);
+    expect(h.stdout).toEqual([]);
+  });
+
   test('a fingerprint with no hash refuses without a package-install remedy', async () => {
     const h = harness({
       fingerprint: async () => null,

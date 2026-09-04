@@ -153,7 +153,16 @@ import type { CacheHitLevel, CompilationCacheActivity, IosFacts, RemoteDeviceBac
 import { NOT_OURS_FOREIGN_CWD, isPidAlive, resolveProjectMetro } from '../metro.ts';
 import { createNdjsonWriter, type NdjsonWriter } from '../ndjson.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../paths.ts';
-import { detectBundleId, detectIsExpo, findProjectRoot, isPackageResolvable, projectShortcut } from '../project.ts';
+import {
+  NOT_AN_APP_REMEDY,
+  detectBundleId,
+  detectIsExpo,
+  findProjectRoot,
+  isAppProject,
+  isPackageResolvable,
+  notAnAppMessage,
+  projectShortcut,
+} from '../project.ts';
 import {
   cacheProviderSettingError,
   iosLanHostSetting,
@@ -1870,6 +1879,14 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     return null;
   }
   const root = foundRoot;
+  if (!isAppProject(root)) {
+    const message = notAnAppMessage(root);
+    note(chalk.red(phaseLine('error', `STIM_NO_PROJECT: ${message}`)));
+    note(chalk.dim(phaseLine('remedy', NOT_AN_APP_REMEDY)));
+    if (json) console.log(JSON.stringify({ code: 'STIM_NO_PROJECT', message, remedy: NOT_AN_APP_REMEDY }));
+    process.exit(1);
+    return null;
+  }
 
   try {
     await d.ensureWorkspaceStorage(root, { note });

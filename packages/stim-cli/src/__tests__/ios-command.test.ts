@@ -104,7 +104,10 @@ beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
   process.env.STIM_HOME = tmpHome;
   root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ws-')));
-  writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'fixture' }));
+  writeFileSync(
+    join(root, 'package.json'),
+    JSON.stringify({ name: 'fixture', dependencies: { 'react-native': '0.81.0' } }),
+  );
 });
 
 afterEach(() => {
@@ -376,6 +379,22 @@ function buildRecords() {
   const file = buildLogFile(root);
   return existsSync(file) ? parseNdjsonText(readFileSync(file, 'utf-8')) : [];
 }
+
+describe('the project gate', () => {
+  test('a directory that depends on neither react-native nor expo is refused before any workspace state', async () => {
+    reserve();
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'monorepo', devDependencies: { vitest: '5' } }));
+    const { exitCode, logs, errs, calls } = await run({ json: true });
+    expect(exitCode).toBe(1);
+    const payload = parseFirst(logs);
+    expect(payload.code).toBe('STIM_NO_PROJECT');
+    expect(payload.message).toContain(join(root, 'package.json'));
+    expect(payload.message).toMatch(/neither react-native nor expo/);
+    expect(payload.remedy).toBeTruthy();
+    expect(calls.order).toEqual([]);
+    expect(errs.join('\n')).toMatch(/STIM_NO_PROJECT/);
+  });
+});
 
 describe('the Metro gate', () => {
   test('fires before the device, boot, and fingerprint: a dead port costs a second, not a build', async () => {
@@ -2009,7 +2028,7 @@ describe('Contract 6: the dev-client scheme', () => {
       join(root, 'package.json'),
       JSON.stringify({
         name: 'fixture',
-        dependencies: { 'expo-dev-client': '5.0.0' },
+        dependencies: { expo: '52.0.0', 'expo-dev-client': '5.0.0' },
       }),
     );
     const { calls } = await run({}, { devClientScheme });

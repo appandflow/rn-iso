@@ -110,6 +110,15 @@ test('the errors topic states that the stale-carry line only prints on a real di
   expect(body).toMatch(/a carry whose lockfile matches is\s+silent/);
 });
 
+test('the errors topic covers a directory that is not a React Native or Expo app', () => {
+  const body = renderTopic('errors');
+  assert(body);
+  expect(body).toMatch(/whose nearest package.json depends on\s+neither react-native nor expo/);
+  expect(body).toMatch(/the refusal\s+names that package.json/);
+  expect(body).toMatch(/`doctor` reports the same directory as a\s+finding/);
+  expect(body).toMatch(/These errors are caught before the port is reserved/);
+});
+
 test('an unknown topic renders nothing rather than throwing', () => {
   expect(renderTopic('nope')).toBe(null);
 });
@@ -977,6 +986,16 @@ test('the logs guide keeps Expo and bare React Native stack context on one human
   expect(logs).toMatch(/Expo error includes its immediately\s+following code frame and Call Stack lines/);
   expect(logs).toMatch(/Bare React Native symbolication is\s+shown as separate context/);
   expect(logs).toMatch(/Context does not change the error count or the raw error records\s+returned by --json/);
+});
+
+test('the agent guide tells the agent to run from the app directory', () => {
+  const agent = renderTopic('agent');
+  assert(agent);
+  expect(agent).toMatch(
+    /Run Stim from the app directory: the one whose package.json depends on\s+react-native or expo/,
+  );
+  expect(agent).toMatch(/start, ios and android refuse with STIM_NO_PROJECT naming that package.json/);
+  expect(agent).toMatch(/doctor reports it as a finding/);
 });
 
 test('the agent guide routes to every detailed topic', () => {

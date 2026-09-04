@@ -2,7 +2,9 @@ import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { resolve, join } from 'path';
 import {
+  declaresAppDependency,
   findProjectRoot,
+  isAppProject,
   detectIsExpo,
   detectBundleId,
   detectAndroidPackage,
@@ -22,6 +24,34 @@ test('findProjectRoot walks up from cwd to find package.json', () => {
 
 test('findProjectRoot returns null when no package.json found', () => {
   expect(findProjectRoot('/')).toBe(null);
+});
+
+test('declaresAppDependency accepts react-native or expo from either dependency block', () => {
+  expect(declaresAppDependency({ dependencies: { 'react-native': '0.81.0' } })).toBe(true);
+  expect(declaresAppDependency({ dependencies: { expo: '~54.0.0' } })).toBe(true);
+  expect(declaresAppDependency({ devDependencies: { 'react-native': '0.81.0' } })).toBe(true);
+});
+
+test('declaresAppDependency rejects a package.json that depends on neither', () => {
+  expect(declaresAppDependency({ name: 'monorepo', dependencies: { typescript: '5.9.3' } })).toBe(false);
+  expect(declaresAppDependency({ scripts: { ios: 'expo run:ios' } })).toBe(false);
+  expect(declaresAppDependency(null)).toBe(false);
+  expect(declaresAppDependency('not an object')).toBe(false);
+});
+
+test('isAppProject reads the nearest package.json', () => {
+  expect(isAppProject(EXPO_PROJ)).toBe(true);
+  expect(isAppProject(BARE_PROJ)).toBe(true);
+});
+
+test('isAppProject is false for a directory whose package.json is not an app', () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'stim-app-'));
+  try {
+    writeFileSync(join(tmp, 'package.json'), JSON.stringify({ name: 'monorepo', devDependencies: { vitest: '5' } }));
+    expect(isAppProject(tmp)).toBe(false);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
 });
 
 test('detectIsExpo true when expo deps + app.json has expo block', () => {
