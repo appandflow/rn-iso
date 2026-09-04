@@ -46,8 +46,8 @@ upstream gap.
   stim logs --errors
 
   # JavaScript and TypeScript edits use Fast Refresh. If an error screen stays
-  # after the edit, reload the running app through its reported Metro port.
-  agent-device metro reload --metro-port <reported-port>
+  # after the edit, reload the running app without rebuilding it.
+  stim reload                            # add ios or android when both are live
   stim logs --since 30s --level error
 
   stim stop
@@ -61,8 +61,8 @@ RULES DURING THE LOOP
   change does not need one.
 - If launch reports an app error but also says the native process is alive,
   the app did not crash. Fix JavaScript or TypeScript and use Fast Refresh; if
-  the error screen remains, reload through the reported Metro port. Do not run
-  ios or android again. If launch says FATAL because the app process exited,
+  the error screen remains, use stim reload. Do not run ios or android again.
+  If launch says FATAL because the app process exited,
   fix the crash and run the platform command again; Metro cannot restart it.
 - A cold native build can outlive a shell timeout. Run the same command again:
   the second call joins the active build or returns its result. If a builder
@@ -154,10 +154,10 @@ stim worktree remove do not need the cleanup guide.`,
   },
   facts: {
     summary:
-      'The --json payloads: `start`, `ios`, `android`, `stop`, `status`, `doctor`, `device lock`/`unlock`, and the error contract',
+      'The --json payloads: `start`, `ios`, `android`, `reload`, `stop`, `status`, `doctor`, `device lock`/`unlock`, and the error contract',
     body: () => `FACTS CONTRACT
 
-\`start\`, \`ios\`, \`android\`, \`stop\`, \`status\`, \`stats\`, \`doctor\`,
+\`start\`, \`ios\`, \`android\`, \`reload\`, \`stop\`, \`status\`, \`stats\`, \`doctor\`,
 and \`device lock\`/\`device unlock\` each print exactly ONE line of JSON on
 stdout for \`--json\`. Every other line goes to stderr, so it is always safe
 to pipe. \`logs --json\` is the one exception: it is NDJSON, one record per
@@ -433,6 +433,16 @@ line by design (see \`guide logs\`), not this single-payload contract.
                   app back on THIS workspace's bundle
   logs            the workspace log directory
   durationMs      wall time for the whole run
+
+  stim reload [ios|android] --json
+
+  platform        "ios" | "android"
+  deviceId        the exact owned simulator UDID or emulator serial reloaded
+  deviceName      the owned simulator or AVD name
+  appId           the live bundle id or Android package
+  metroPort       the workspace's verified Metro port
+  strategy        "deep-link" for Expo/dev-client, "android-broadcast" for
+                  bare Android, or "metro-websocket" for an identifiable bare iOS peer
 
   stim stats --json
 
@@ -1325,6 +1335,32 @@ STIM_REMOTE_METRO_UNREACHABLE
   STIM_NO_REMOTE_SESSION's tunnel guidance -- set metro.tunnel, or use
   metro.publicUrl for an existing endpoint.
 
+--- RELOAD CODES (\`stim reload [ios|android]\`) ---
+
+STIM_RELOAD_AMBIGUOUS
+  Both owned apps are live. Name ios or android; Stim never guesses.
+
+STIM_RELOAD_RELEASE
+  The live app was launched with embedded JavaScript. Run the platform command
+  with a Debug configuration or variant first.
+
+STIM_RELOAD_STOPPED / STIM_RELOAD_UNOWNED / STIM_RELOAD_PROBE_FAILED
+  The recorded app is gone, its exact device is not live and owned by this
+  workspace, or simctl/adb could not prove the process exists. No launch or
+  device lifecycle action is taken; follow the printed platform-command or
+  process-probe remedy.
+
+STIM_RELOAD_FAILED
+  The exact deep link, Android reload broadcast, or targeted Metro websocket
+  failed. If bare iOS has not connected or Metro cannot identify one iOS peer,
+  the remedy tells the agent to continue in its existing automation session on
+  this workspace's exact simulator and press the Reload control. Stim does not
+  take over automation sessions.
+
+STIM_NO_METRO
+  Reload requires the recorded launch's port to be this workspace's live
+  Metro. It refuses a missing, changed, unresponsive, or foreign port.
+
 --- DEV-SERVER CODES (\`stim start\`) ---
 
 STIM_WORKTREE_REMOVAL_IN_PROGRESS
@@ -1674,7 +1710,9 @@ STIM_CONFIG_CORRUPT  ("Stim config at <path> is not valid JSON")
   stim logs --errors
 
   # 5. Edit the JS. Fast Refresh applies it; no Stim command is involved.
-  #    Then ask again.
+  #    If a startup or error overlay stays, reload without rebuilding. The
+  #    platform is optional unless both owned apps are live. Then ask again.
+  stim reload          # or: stim reload ios / stim reload android
   stim logs --since 30s --level error
 
   # 6. Pausing: supervisor halted, collectors reaped, owned device SHUT DOWN
@@ -1691,7 +1729,17 @@ reserved port. That refusal costs a second; the alternative costs four minutes
 and produces an app that cannot load a bundle.
 
 Repeat step 3 whenever a NATIVE input changes. A JS-only edit needs nothing --
-that is what Fast Refresh over the running dev server is for.
+that is what Fast Refresh over the running dev server is for. \`stim reload\` is
+the explicit recovery path when Fast Refresh cannot clear the current screen.
+It never builds, installs, boots, or cold-launches. It acts only on a live app
+on this workspace's owned local simulator or emulator, and refuses release
+builds, stopped or unowned devices, a missing or foreign Metro, and an
+ambiguous no-platform request. Expo/dev-client reloads resend the exact deep
+link recorded at launch. Bare Android sends the app-scoped React Native reload
+broadcast. Bare iOS reloads through this Metro's sole identifiable iOS peer. If
+Metro cannot identify one iOS peer, the command tells the agent to press Reload
+through its existing automation session on the exact simulator. Stim does not
+take over that stateful session.
 
 PROGRESS ON A LONG RUN
   The whole summary is stderr; stdout carries only the \`--json\` payload. Every

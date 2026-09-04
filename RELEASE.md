@@ -281,9 +281,23 @@ Before continuing:
    version; never move or force-push the published tag.
 7. **Publish to npm.** Pushing the tag in step 5 triggers the
    `Release` workflow, which publishes all FIVE packages via OIDC trusted
-   publishing (no token, `--provenance`) once you APPROVE the run in the
-   `release` environment on GitHub (Actions -> the waiting run -> Review
-   deployments -> check `release` -> Approve and deploy) -- that approval
+   publishing (no token, `--provenance`) once the run is approved in the
+   `release` environment. If the current GitHub identity is an allowed
+   reviewer, approve the deployment directly with `gh` instead of waiting for
+   a separate human action. First resolve the pending environment ID and
+   confirm that `current_user_can_approve` is `true`, then approve it:
+
+   ```bash
+   gh api repos/appandflow/stim/actions/runs/<run-id>/pending_deployments \
+     --jq '.[] | [.environment.id, .environment.name, .current_user_can_approve] | @tsv'
+   gh api --method POST repos/appandflow/stim/actions/runs/<run-id>/pending_deployments \
+     -F 'environment_ids[]=<environment-id>' \
+     -f state=approved \
+     -f comment='Approved after exact-SHA CI and preflight passed.'
+   ```
+
+   If the current identity cannot approve, use Actions -> the waiting run ->
+   Review deployments -> check `release` -> Approve and deploy. That approval
    replaces the OTP. ALWAYS hand the approver the direct link to the waiting
    run -- do not make them hunt for it:
 

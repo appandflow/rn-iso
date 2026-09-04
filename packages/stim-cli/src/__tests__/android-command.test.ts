@@ -2537,7 +2537,7 @@ describe('launch verification', () => {
     );
     expect(text).toMatch(/^  launch {6}a redbox from the app$/m);
     expect(text).not.toMatch(/a native framework error/);
-    expect(text).toContain('agent-device metro reload --metro-port 8082');
+    expect(text).toContain('stim reload android');
     expect(text).toMatch(/Do not run `stim android` unless native inputs changed or the app process exits/);
   });
 
@@ -2566,7 +2566,7 @@ describe('launch verification', () => {
     const text = h.stderr.join('\n');
     expect(result.ok).toBe(false);
     expect(text).toMatch(/native app is still running/);
-    expect(text).toContain('agent-device metro reload --metro-port 8082');
+    expect(text).toContain('stim reload android');
     expect(text).toMatch(/Do not run `stim android` unless native inputs changed or the app process exits/);
   });
 
