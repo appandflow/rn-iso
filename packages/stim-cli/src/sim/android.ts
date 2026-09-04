@@ -13,6 +13,7 @@ import {
 import { homedir } from 'os';
 import { dirname, isAbsolute, join, resolve } from 'path';
 import { type Executor, getExecutor } from '../exec.ts';
+import { isPidAlive } from '../metro.ts';
 import { androidDataPartitionSizeBytes } from '../settings.ts';
 
 export interface SystemImage {
@@ -708,6 +709,78 @@ export async function waitForBoot(
 
 export function shutdownAndroidEmulator(serial: string): void {
   getExecutor().runQuiet(`${androidTool('adb')} -s ${serial} emu kill`);
+}
+
+const ANDROID_EMULATOR_SHUTDOWN_TIMEOUT_MS = 60_000;
+const ANDROID_EMULATOR_SHUTDOWN_POLL_MS = 100;
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function avdProcessLockPaths(avdDirectory: string, platform: NodeJS.Platform): string[] {
+  const names = ['hardware-qemu.ini.lock', 'userdata-qemu.img.lock'];
+  return names.map((name) => join(avdDirectory, name, ...(platform === 'win32' ? ['pid'] : [])));
+}
+
+function readAvdProcessId(path: string): number | null {
+  try {
+    const pid = Number.parseInt(readFileSync(path, 'utf8').split('\0')[0] ?? '', 10);
+    return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') return null;
+    throw error;
+  }
+}
+
+export function waitForAndroidEmulatorShutdown(
+  avdName: string,
+  shutdown: () => void,
+  {
+    timeoutMs = ANDROID_EMULATOR_SHUTDOWN_TIMEOUT_MS,
+    pollMs = ANDROID_EMULATOR_SHUTDOWN_POLL_MS,
+    platform = process.platform,
+    resolveDirectory = ownedAvdDirectory,
+    readProcessId = readAvdProcessId,
+    processAlive = isPidAlive,
+    directoryExists = (path: string) => statSync(path).isDirectory(),
+    now = Date.now,
+    sleep = sleepSync,
+  }: {
+    timeoutMs?: number;
+    pollMs?: number;
+    platform?: NodeJS.Platform;
+    resolveDirectory?: typeof ownedAvdDirectory;
+    readProcessId?: (path: string) => number | null;
+    processAlive?: (pid: number) => boolean;
+    directoryExists?: (path: string) => boolean;
+    now?: () => number;
+    sleep?: (ms: number) => void;
+  } = {},
+): void {
+  const directory = resolveDirectory(avdName);
+  if (!directory) throw new Error(`Could not resolve the content directory for owned AVD ${avdName}.`);
+  let processId: number | null = null;
+  for (const lockPath of avdProcessLockPaths(directory, platform)) {
+    processId = readProcessId(lockPath);
+    if (processId !== null) break;
+  }
+  if (processId === null) {
+    throw new Error(`Could not find the emulator process lock for owned AVD ${avdName}.`);
+  }
+  shutdown();
+  const deadline = now() + timeoutMs;
+  while (processAlive(processId)) {
+    const remaining = deadline - now();
+    if (remaining <= 0) {
+      throw new Error(`Owned AVD ${avdName} did not finish shutting down within ${Math.ceil(timeoutMs / 1000)}s.`);
+    }
+    sleep(Math.min(pollMs, remaining));
+  }
+  if (!directoryExists(directory)) {
+    throw new Error(`Could not verify the content directory for owned AVD ${avdName} after shutdown.`);
+  }
 }
 
 export function getAvdNameForSerial(serial: string): string | null {

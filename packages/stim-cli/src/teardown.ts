@@ -11,7 +11,12 @@ import {
   shutdownIosSim,
   type IosSimRecord,
 } from './sim/ios.ts';
-import { resolveOwnedAvdSerial, shutdownAndroidEmulator, deleteAvd } from './sim/android.ts';
+import {
+  resolveOwnedAvdSerial,
+  shutdownAndroidEmulator,
+  waitForAndroidEmulatorShutdown,
+  deleteAvd,
+} from './sim/android.ts';
 import { parkSim, removeParkedAfter, type ParkedSim } from './sim-pool.ts';
 
 export interface ParkedDevice {
@@ -134,14 +139,23 @@ export function teardownOwnedIosSim(
   }
 }
 
-export function teardownOwnedAvd(avdName: string, { del = false }: { del?: boolean } = {}): TeardownOutcome {
+export function teardownOwnedAvd(
+  avdName: string,
+  {
+    del = false,
+    waitForShutdown = waitForAndroidEmulatorShutdown,
+  }: { del?: boolean; waitForShutdown?: typeof waitForAndroidEmulatorShutdown } = {},
+): TeardownOutcome {
   try {
     const resolved = resolveOwnedAvdSerial(avdName);
     if (resolved.notOwned) {
       return { status: 'skipped', kind: 'not-owned', reason: `AVD ${avdName} is not Stim-owned by name` };
     }
     if (resolved.missing) return { status: 'missing' };
-    if (resolved.serial) shutdownAndroidEmulator(resolved.serial);
+    const serial = resolved.serial;
+    if (serial) {
+      waitForShutdown(avdName, () => shutdownAndroidEmulator(serial));
+    }
     if (del) deleteAvd(avdName);
     return { status: 'torn-down', label: avdName, serial: resolved.serial ?? null };
   } catch (e) {

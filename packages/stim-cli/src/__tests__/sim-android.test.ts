@@ -39,6 +39,7 @@ import {
   resolveOwnedAvdSerial,
   physicalDeviceModel,
   resolvePhysicalDevice,
+  waitForAndroidEmulatorShutdown,
   waitForBoot,
   withAvdConfigOverrides,
   withAvdDataPartitionSize,
@@ -442,6 +443,144 @@ test('resolveOwnedAvdSerial reports notRunning when the recorded port is held by
     spawn: () => null,
   });
   expect(resolveOwnedAvdSerial('stim-mine')).toEqual({ notRunning: true });
+});
+
+test('waitForAndroidEmulatorShutdown waits for the owned AVD process lock to disappear', () => {
+  let locked = true;
+  const sleeps: number[] = [];
+  const calls: string[] = [];
+
+  waitForAndroidEmulatorShutdown('stim-app', () => calls.push('shutdown'), {
+    resolveDirectory: () => '/avds/stim-app.avd',
+    readProcessId: () => 123,
+    processAlive: () => locked,
+    directoryExists: () => true,
+    sleep: (ms) => {
+      calls.push('wait');
+      sleeps.push(ms);
+      locked = false;
+    },
+  });
+
+  expect(sleeps).toEqual([100]);
+  expect(calls).toEqual(['shutdown', 'wait']);
+});
+
+test('waitForAndroidEmulatorShutdown reads Android emulator lock PIDs on Unix and Windows', () => {
+  const avdDirectory = join(tmpHome, 'stim-app.avd');
+  for (const [platform, lockPath] of [
+    ['darwin', join(avdDirectory, 'hardware-qemu.ini.lock')],
+    ['win32', join(avdDirectory, 'hardware-qemu.ini.lock', 'pid')],
+  ] as const) {
+    rmSync(avdDirectory, { recursive: true, force: true });
+    mkdirSync(join(lockPath, '..'), { recursive: true });
+    writeFileSync(lockPath, '412503\0');
+    let observedPid: number | null = null;
+
+    waitForAndroidEmulatorShutdown('stim-app', () => {}, {
+      platform,
+      resolveDirectory: () => avdDirectory,
+      processAlive: (pid) => {
+        observedPid = pid;
+        return false;
+      },
+    });
+
+    expect(observedPid).toBe(412503);
+  }
+});
+
+test('waitForAndroidEmulatorShutdown prefers the active process lock over the legacy fallback', () => {
+  const paths: string[] = [];
+  let observedPid: number | null = null;
+
+  waitForAndroidEmulatorShutdown('stim-app', () => {}, {
+    resolveDirectory: () => '/avds/stim-app.avd',
+    readProcessId: (path) => {
+      paths.push(path);
+      return path.endsWith('hardware-qemu.ini.lock') ? 123 : 456;
+    },
+    processAlive: (pid) => {
+      observedPid = pid;
+      return false;
+    },
+    directoryExists: () => true,
+  });
+
+  expect(paths).toEqual(['/avds/stim-app.avd/hardware-qemu.ini.lock']);
+  expect(observedPid).toBe(123);
+});
+
+test('waitForAndroidEmulatorShutdown falls back to the legacy process lock', () => {
+  const paths: string[] = [];
+  let observedPid: number | null = null;
+
+  waitForAndroidEmulatorShutdown('stim-app', () => {}, {
+    resolveDirectory: () => '/avds/stim-app.avd',
+    readProcessId: (path) => {
+      paths.push(path);
+      return path.endsWith('userdata-qemu.img.lock') ? 456 : null;
+    },
+    processAlive: (pid) => {
+      observedPid = pid;
+      return false;
+    },
+    directoryExists: () => true,
+  });
+
+  expect(paths).toEqual(['/avds/stim-app.avd/hardware-qemu.ini.lock', '/avds/stim-app.avd/userdata-qemu.img.lock']);
+  expect(observedPid).toBe(456);
+});
+
+test('waitForAndroidEmulatorShutdown times out while the owned AVD process lock remains', () => {
+  let elapsed = 0;
+
+  expect(() =>
+    waitForAndroidEmulatorShutdown('stim-app', () => {}, {
+      timeoutMs: 250,
+      pollMs: 100,
+      resolveDirectory: () => '/avds/stim-app.avd',
+      readProcessId: () => 123,
+      processAlive: () => true,
+      directoryExists: () => true,
+      now: () => elapsed,
+      sleep: (ms) => {
+        elapsed += ms;
+      },
+    }),
+  ).toThrow(/did not finish shutting down within 1s/);
+});
+
+test('waitForAndroidEmulatorShutdown refuses to signal a process without an AVD lock', () => {
+  const shutdown = vi.fn<() => void>();
+
+  expect(() =>
+    waitForAndroidEmulatorShutdown('stim-app', shutdown, {
+      resolveDirectory: () => '/avds/stim-app.avd',
+      readProcessId: () => null,
+      processAlive: () => false,
+      directoryExists: () => true,
+    }),
+  ).toThrow(/Could not find the emulator process lock/);
+  expect(shutdown).not.toHaveBeenCalled();
+});
+
+test('waitForAndroidEmulatorShutdown verifies the AVD directory remains available', () => {
+  let locked = true;
+
+  expect(() =>
+    waitForAndroidEmulatorShutdown('stim-app', () => {}, {
+      resolveDirectory: () => '/avds/stim-app.avd',
+      readProcessId: () => 123,
+      processAlive: () => {
+        const result = locked;
+        locked = false;
+        return result;
+      },
+      directoryExists: () => false,
+      sleep: () => {},
+    }),
+  ).toThrow(/Could not verify the content directory/);
 });
 
 test('waitForBoot keeps polling while adb still fails', async () => {
