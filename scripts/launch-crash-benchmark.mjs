@@ -56,7 +56,9 @@ function launchCommand(command, arm, platform) {
 
 function metroReloadCommand(command) {
   command = shellCommand(command);
-  return /(?:^|\s)agent-device\s+metro\s+reload\s+--metro-port\s+\d+(?:\s|$)/.test(command);
+  return /^(?:env\s+(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*)?agent-device\s+metro\s+reload\s+--metro-port\s+\d+$/.test(
+    command,
+  );
 }
 
 function errorCaptureCommand(command, arm, platform) {

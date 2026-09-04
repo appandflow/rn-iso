@@ -689,6 +689,46 @@ describe('launch crash benchmark', () => {
     ).toEqual({ valid: false, reason: 'launch-crash-repaired-reload-missing' });
   });
 
+  it('rejects a chained command that masks a failed Metro reload', () => {
+    const diagnosis = { valid: true, commandId: 'diagnosis' };
+    const commands = [
+      {
+        id: 'diagnosis',
+        command: 'stim logs --errors',
+        output: 'app/_layout.tsx',
+        exitCode: 0,
+        endedAt: '2026-09-04T12:00:10Z',
+      },
+      {
+        id: 'reload',
+        command: 'agent-device metro reload --metro-port 65535 || true',
+        output: 'No Metro server is listening',
+        exitCode: 0,
+        startedAt: '2026-09-04T12:00:11Z',
+        endedAt: '2026-09-04T12:00:12Z',
+      },
+      {
+        id: 'screenshot',
+        command: 'agent-device screenshot /tmp/settings.png',
+        output: 'saved',
+        exitCode: 0,
+        startedAt: '2026-09-04T12:00:13Z',
+        endedAt: '2026-09-04T12:00:14Z',
+      },
+    ];
+
+    expect(
+      launchCrashRecovery(commands, {
+        diagnosis,
+        screen: {
+          valid: true,
+          observedAt: '2026-09-04T12:00:14Z',
+          screenshotCommandId: 'screenshot',
+        },
+      }),
+    ).toEqual({ valid: false, reason: 'launch-crash-repaired-reload-missing' });
+  });
+
   it('rejects crash evidence observed after the purported repaired reload', () => {
     const diagnosis = { valid: true, commandId: 'diagnosis' };
     const commands = [
