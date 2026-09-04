@@ -408,7 +408,8 @@ export function BenchmarkReplay({
               src={staticFile(interactionSrc)}
               muted
               playbackRate={2}
-              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+              objectFit="cover"
+              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
             />
           </Sequence>
           {frame >= clipEnd ? (
