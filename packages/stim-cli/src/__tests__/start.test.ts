@@ -40,7 +40,7 @@ beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
   process.env.STIM_HOME = tmpHome;
   root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ws-')));
-  writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'ws' }));
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'ws', dependencies: { 'react-native': '0.81.0' } }));
 });
 
 afterEach(() => {
@@ -219,7 +219,10 @@ async function runSpawnedExpoStart({
   tunnelDelayMs?: number;
   exitAfterTunnel?: boolean;
 }) {
-  writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'ws', scripts: { ios: 'expo run:ios' } }));
+  writeFileSync(
+    join(root, 'package.json'),
+    JSON.stringify({ name: 'ws', dependencies: { expo: '54.0.0' }, scripts: { ios: 'expo run:ios' } }),
+  );
   const exec = metroExecutor({ listeners: {} });
   const held: { server: Server | null } = { server: null };
   const childHandlers: Record<string, (...args: unknown[]) => void> = {};
@@ -516,7 +519,10 @@ describe('action: already running', () => {
   });
 
   test('start --remote refuses an external Expo server that has no public URL', async () => {
-    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'ws', scripts: { ios: 'expo run:ios' } }));
+    writeFileSync(
+      join(root, 'package.json'),
+      JSON.stringify({ name: 'ws', dependencies: { expo: '54.0.0' }, scripts: { ios: 'expo run:ios' } }),
+    );
     const port = 8169;
     const server = await metroListener(port);
     const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } });
@@ -536,7 +542,10 @@ describe('action: already running', () => {
   });
 
   test('start --remote accepts an external Expo server with an operator public URL', async () => {
-    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'ws', scripts: { ios: 'expo run:ios' } }));
+    writeFileSync(
+      join(root, 'package.json'),
+      JSON.stringify({ name: 'ws', dependencies: { expo: '54.0.0' }, scripts: { ios: 'expo run:ios' } }),
+    );
     const port = 8170;
     const server = await metroListener(port);
     const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } });
@@ -624,7 +633,10 @@ describe('action: already running', () => {
   });
 
   test('start --remote refuses when a healthy local Expo supervisor has no Expo tunnel', async () => {
-    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'ws', scripts: { ios: 'expo run:ios' } }));
+    writeFileSync(
+      join(root, 'package.json'),
+      JSON.stringify({ name: 'ws', dependencies: { expo: '54.0.0' }, scripts: { ios: 'expo run:ios' } }),
+    );
     const port = 8166;
     const server = await metroListener(port);
     const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } });
@@ -649,7 +661,10 @@ describe('action: already running', () => {
   });
 
   test('a concurrent remote start waits when an owned Expo server is already healthy before its tunnel', async () => {
-    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'ws', scripts: { ios: 'expo run:ios' } }));
+    writeFileSync(
+      join(root, 'package.json'),
+      JSON.stringify({ name: 'ws', dependencies: { expo: '54.0.0' }, scripts: { ios: 'expo run:ios' } }),
+    );
     const port = 8173;
     const server = await metroListener(port);
     const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } });
@@ -1760,6 +1775,37 @@ describe('the error contract', () => {
     expect(facts.remedy).toBeTruthy();
   });
 
+  test('a directory that depends on neither react-native nor expo is refused before the registry is touched', async () => {
+    setExecutor(metroExecutor({ listeners: {} }));
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'monorepo', devDependencies: { vitest: '5' } }));
+    const result = await runAction({ json: true });
+    expect(result.exitCode).toBe(1);
+    expect(result.logs.length).toBe(1);
+    const facts = JSON.parse(result.logs[0] ?? '');
+    expect(facts.code).toBe('STIM_NO_PROJECT');
+    expect(facts.message).toContain(join(root, 'package.json'));
+    expect(facts.message).toMatch(/neither react-native nor expo/);
+    expect(facts.remedy).toBeTruthy();
+    expect(getProject(root)).toBeNull();
+    expect(existsSync(workspaceMetadataFile(root))).toBe(false);
+  });
+
+  test('a package.json that does not parse is refused as unreadable, not as a missing app dependency', async () => {
+    setExecutor(metroExecutor({ listeners: {} }));
+    writeFileSync(join(root, 'package.json'), '{ "name": "app", "dependencies": { "react-native": "0.81.0"');
+    const result = await runAction({ json: true });
+    expect(result.exitCode).toBe(1);
+    expect(result.logs.length).toBe(1);
+    const facts = JSON.parse(result.logs[0] ?? '');
+    expect(facts.code).toBe('STIM_NO_PROJECT');
+    expect(facts.message).toContain(join(root, 'package.json'));
+    expect(facts.message).toMatch(/is not valid JSON/);
+    expect(facts.message).not.toMatch(/neither react-native nor expo/);
+    expect(facts.remedy).toMatch(/Fix the JSON/);
+    expect(getProject(root)).toBeNull();
+    expect(existsSync(workspaceMetadataFile(root))).toBe(false);
+  });
+
   test('without --json a failure keeps stdout free of JSON and names the code', async () => {
     setExecutor(metroExecutor({ listeners: {} }));
     const result = await runAction({ wait: 'soon' });
@@ -1895,7 +1941,10 @@ describe('action: an existing supervisor that is not answering', () => {
   });
 
   test('a remote start refuses after the local Expo supervisor begins answering without a tunnel', async () => {
-    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'ws', scripts: { ios: 'expo run:ios' } }));
+    writeFileSync(
+      join(root, 'package.json'),
+      JSON.stringify({ name: 'ws', dependencies: { expo: '54.0.0' }, scripts: { ios: 'expo run:ios' } }),
+    );
     const port = 8167;
     const exec = metroExecutor({ listeners: {} });
     const held: { server: Server | null } = { server: null };
@@ -1927,7 +1976,10 @@ describe('action: an existing supervisor that is not answering', () => {
   });
 
   test('a concurrent remote start waits when Metro becomes healthy before the Expo tunnel', async () => {
-    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'ws', scripts: { ios: 'expo run:ios' } }));
+    writeFileSync(
+      join(root, 'package.json'),
+      JSON.stringify({ name: 'ws', dependencies: { expo: '54.0.0' }, scripts: { ios: 'expo run:ios' } }),
+    );
     const port = 8171;
     const exec = metroExecutor({ listeners: {} });
     const held: { server: Server | null } = { server: null };

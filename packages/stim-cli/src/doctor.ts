@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'fs'
 import { tmpdir } from 'os';
 import { dirname, join, relative, resolve } from 'path';
 import { getExecutor } from './exec.ts';
-import { detectIsExpo } from './project.ts';
+import { appProjectProblem, detectIsExpo } from './project.ts';
 import * as expoFingerprint from '@expo/fingerprint';
 import { diffFingerprintSources, fingerprintProject } from './build-cache.ts';
 import { dirtyFingerprintFiles, gitCommonDir, listWorktrees, repoRoot } from './worktree.ts';
@@ -689,6 +689,7 @@ export function runDoctor(
     .filter((remoteFinding): remoteFinding is Finding => remoteFinding !== null);
 
   return [
+    checkAppProject(projectRoot),
     ...checkMainCheckout(projectRoot, { platform }),
     checkDevClient(pkg, isExpo),
     checkMetroCache(metroConfig),
@@ -701,6 +702,19 @@ export function runDoctor(
     ...remoteFindings,
     ...settingShapeFindings,
   ].filter((f): f is Finding => Boolean(f));
+}
+
+function checkAppProject(projectRoot: string): Finding | null {
+  const problem = appProjectProblem(projectRoot);
+  if (!problem) return null;
+  return finding(
+    'cost',
+    problem.kind === 'unreadable'
+      ? 'This package.json does not parse'
+      : 'This directory is not a React Native or Expo app',
+    `${problem.message} \`stim start\`, \`stim ios\` and \`stim android\` refuse here with STIM_NO_PROJECT, so nothing below was measured against an app.`,
+    problem.remedy,
+  );
 }
 
 function agentDeviceIsOnPath(): boolean {

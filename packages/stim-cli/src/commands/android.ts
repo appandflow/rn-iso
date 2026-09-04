@@ -47,7 +47,14 @@ import { acquireBuildSlot, releaseBuildSlot, type BuildSlotHandle } from '../eng
 import { createNdjsonWriter } from '../ndjson.ts';
 import { isPidAlive, resolveProjectMetro } from '../metro.ts';
 import { emulatorLogFile, workspaceDir, workspaceLogsDir } from '../paths.ts';
-import { detectAndroidPackage, detectBundleId, detectIsExpo, findProjectRoot, projectShortcut } from '../project.ts';
+import {
+  appProjectProblem,
+  detectAndroidPackage,
+  detectBundleId,
+  detectIsExpo,
+  findProjectRoot,
+  projectShortcut,
+} from '../project.ts';
 import {
   devClientScheme as configuredDevClientScheme,
   ensureWorkspaceStorageSafely,
@@ -1789,6 +1796,14 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   } = resolveRunAndroidOptions(options);
   const started = now();
   const startedAt = new Date(started).toISOString();
+  const projectProblem = appProjectProblem(root);
+  if (projectProblem) {
+    const { message, remedy } = projectProblem;
+    out(phaseLine('error', chalk.red(`STIM_NO_PROJECT: ${message}`)));
+    out(phaseLine('remedy', remedy));
+    if (json) emit(JSON.stringify({ code: 'STIM_NO_PROJECT', message, remedy }));
+    return { ok: false, error: { code: 'STIM_NO_PROJECT', message, remedy } };
+  }
   try {
     await ensureStorage(root, { note: out });
   } catch (error) {
