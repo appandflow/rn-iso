@@ -30,16 +30,21 @@ function ComparisonCard({
   runs: BenchmarkRun[];
   maxSeconds: number;
 }): ReactNode {
-  const comparable = comparableRuns(runs);
+  const isLaunchCrash = variant === 'launch-crash';
+  const comparable = isLaunchCrash
+    ? runs.filter((run) => run.valid && run.diagnosisSeconds !== null)
+    : comparableRuns(runs);
   const stim = comparable.find((run) => run.arm === 'stim');
   const control = comparable.find((run) => run.arm === 'control');
   const outcome = comparisonOutcome(stim?.settingsReadySeconds, control?.settingsReadySeconds);
   return (
     <article className={styles.comparisonCard}>
       <h3>{displayVariant(variant)}</h3>
-      <span className={`${styles.outcome} ${styles[outcome.tone]}`}>{outcome.label}</span>
+      <span className={`${styles.outcome} ${styles[isLaunchCrash ? 'neutral' : outcome.tone]}`}>
+        {isLaunchCrash ? 'Time to first actionable diagnosis' : outcome.label}
+      </span>
       {comparable.map((run) => {
-        const endpoint = comparable.find((candidate) => candidate.id === run.id)?.settingsReadySeconds ?? null;
+        const endpoint = (isLaunchCrash ? run.diagnosisSeconds : run.settingsReadySeconds) ?? null;
         return (
           <div className={styles.barRow} key={run.id}>
             <div className={styles.barHead}>
@@ -53,9 +58,21 @@ function ComparisonCard({
               />
             </div>
             <div className={styles.barMeta}>
-              <span>{formatTokens(totalTokens(run.usage))} tokens</span>
-              <span>{formatCost(run.estimatedTokenCostUsd)} cost</span>
-              <span>{run.commandCount} commands</span>
+              {isLaunchCrash ? (
+                <>
+                  <span>Settings repaired {formatSeconds(run.settingsReadySeconds)}</span>
+                  <span>
+                    {run.diagnosisUsage ? formatTokens(totalTokens(run.diagnosisUsage)) : 'unavailable'} tokens
+                  </span>
+                  <span>{formatCost(run.estimatedDiagnosisCostUsd ?? null)} cost</span>
+                </>
+              ) : (
+                <>
+                  <span>{formatTokens(totalTokens(run.usage))} tokens</span>
+                  <span>{formatCost(run.estimatedTokenCostUsd)} cost</span>
+                  <span>{run.commandCount} commands</span>
+                </>
+              )}
             </div>
           </div>
         );
@@ -80,15 +97,20 @@ export default function BenchmarkDetails(): ReactNode {
       hash: location.hash,
     });
   };
-  const grouped = useMemo(
-    () =>
-      (['javascript', 'native'] as const).map((variant) => ({
-        variant,
-        runs: publishedRuns.filter((run) => run.variant === variant),
-      })),
-    [publishedRuns],
+  const grouped = useMemo(() => {
+    const variants: BenchmarkRun['variant'][] =
+      benchmark?.suite === 'launch-crash' ? ['launch-crash'] : ['javascript', 'native'];
+    return variants.map((variant) => ({
+      variant,
+      runs: publishedRuns.filter((run) => run.variant === variant),
+    }));
+  }, [benchmark?.suite, publishedRuns]);
+  const maxSeconds = Math.max(
+    1,
+    ...(benchmark?.suite === 'launch-crash'
+      ? publishedRuns.map((run) => run.diagnosisSeconds ?? 0)
+      : comparableRuns(publishedRuns).map((run) => run.settingsReadySeconds)),
   );
-  const maxSeconds = Math.max(1, ...comparableRuns(publishedRuns).map((run) => run.settingsReadySeconds));
 
   if (!benchmark || !activeRun) {
     return (
@@ -134,7 +156,7 @@ export default function BenchmarkDetails(): ReactNode {
           <section className={styles.comparison} aria-labelledby="comparison-title">
             <div className={styles.sectionHeading}>
               <Heading as="h2" id="comparison-title">
-                Settings-ready comparison
+                {benchmark.suite === 'launch-crash' ? 'Launch-failure result' : 'Settings-ready comparison'}
               </Heading>
               <p>Recorded {benchmark.recordedOn} / valid runs only</p>
             </div>

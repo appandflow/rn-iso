@@ -15,7 +15,7 @@ export type BenchmarkMessage = {
 
 export type BenchmarkMarker = {
   id: string;
-  kind: 'appAlive' | 'settingsReady';
+  kind: 'appAlive' | 'diagnosis' | 'settingsReady';
   label: string;
   atSeconds: number;
 };
@@ -39,12 +39,24 @@ export type BenchmarkUsage = {
 export type BenchmarkRun = {
   id: string;
   model: string;
-  variant: 'javascript' | 'native';
+  platform?: 'ios' | 'android';
+  variant: 'javascript' | 'native' | 'launch-crash';
   arm: 'stim' | 'control';
   valid: boolean;
   invalidReasons: string[];
   settingsReadySeconds: number | null;
   appAliveSeconds: number | null;
+  diagnosisSeconds?: number | null;
+  diagnosisCommandCount?: number | null;
+  launchCrashAudit?: {
+    initialLaunchCommandId: string;
+    errorCaptureCommandId: string;
+    diagnosisCommandId: string;
+    repairedLaunchCommandId: string;
+    screenshotCommandId: string;
+  } | null;
+  diagnosisUsage?: BenchmarkUsage | null;
+  estimatedDiagnosisCostUsd?: number | null;
   totalSeconds: number;
   commandCount: number;
   usage: BenchmarkUsage;
@@ -66,6 +78,8 @@ export type BenchmarkData = {
   schemaVersion: number;
   stage: string;
   title: string;
+  suite?: 'readiness' | 'launch-crash';
+  platform?: 'ios' | 'android';
   protocolVersion: number;
   recordedOn: string;
   primaryMetric: string;
@@ -238,7 +252,7 @@ export function benchmarkOverview(benchmarks: BenchmarkData[], variant: Benchmar
       const run = runs.find((candidate) => candidate.arm === arm) ?? null;
       return {
         arm,
-        label: arm === 'stim' ? 'Stim' : 'Control',
+        label: (arm === 'stim' ? 'Stim' : 'Control') as BenchmarkOverviewArm['label'],
         run,
         widthPercent: run ? (run.settingsReadySeconds / maxSeconds) * 100 : 0,
         href: run

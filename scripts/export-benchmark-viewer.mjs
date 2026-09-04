@@ -1,8 +1,10 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { userInfo } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { stripVTControlCharacters } from 'node:util';
+import { launchCrashDiagnosis, launchCrashRecovery } from './launch-crash-benchmark.mjs';
 
 const modelPricing = {
   'gpt-5.6-luna': {
@@ -19,8 +21,16 @@ const modelPricing = {
   },
 };
 
-const absolutePathPattern = /(?<![A-Za-z0-9._-])\/(?:Users|Volumes|private|tmp|var\/folders)\/[^\s'"`,;()<>[\]]+/g;
-const ipAddressPattern = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
+const absolutePathPattern =
+  /(?<![A-Za-z0-9._/])\/(?:Applications|Library|System|Users|Volumes|private|tmp|var|opt|Pods\.build|XPCServices)(?![A-Za-z0-9._+-])(?:\/[^\s'"`,;()<>[\]]+)*/g;
+const compilerFlagAbsolutePathPattern =
+  /(-[FLI])((?:\/(?:Applications|Library|System|Users|Volumes|private|tmp|var|opt))(?![A-Za-z0-9._+-])(?:\/[^\s'"`,;()<>[\]]+)*)/g;
+const fileUrlAbsolutePathPattern =
+  /file:\/\/(\/(?:Applications|Library|System|Users|Volumes|private|tmp|var|opt)(?![A-Za-z0-9._+-])(?:\/[^\s'"`,;()<>[\]]+)*)/g;
+const systemAbsolutePathPattern = /(?<![A-Za-z0-9._/-])\/(?:usr\/(?:s?bin)|bin|sbin)\/[A-Za-z0-9._+-]+/g;
+const homebrewExecutablePattern = /\/opt\/homebrew\/bin\/([A-Za-z0-9._+-]+)/g;
+const shellPathPattern = /\bPATH=(?:"[^"]*"|'[^']*'|[^\s]+)/g;
+const ipAddressPattern = /(?:\d{1,3}\.){3}\d{1,3}/g;
 const ipv6LoopbackPattern = /\[::1\]|(?<![A-Za-z0-9:])::1(?![A-Za-z0-9:])/g;
 const simulatorIdPattern = /\b[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}\b/gi;
 const simulatorIdPrefixPattern = /\b(?=[0-9A-F]{8}\b)(?=[0-9A-F]*[A-F])[0-9A-F]{8}\b/g;
@@ -93,6 +103,13 @@ export function benchmarkEnvironment(meta, machine = {}) {
 }
 
 function replacementLabel(path) {
+  if (path.startsWith('/Applications/Xcode.app/Contents/Developer/')) {
+    return `Xcode/${path.slice('/Applications/Xcode.app/Contents/Developer/'.length)}`;
+  }
+  if (/^\/(?:usr\/)?(?:s?bin)\/[^/]+$/.test(path)) return basename(path);
+  if (path.startsWith('/Pods.build/')) return `build/${path.slice(1)}`;
+  if (path === '/XPCServices' || path.startsWith('/XPCServices/')) return `app${path}`;
+  if (path.startsWith('/Library/') || path.startsWith('/System/')) return `system/${path.slice(1)}`;
   const parts = path.split('/').filter(Boolean);
   const worktreeIndex = parts.findIndex((part) => part.includes('worktree'));
   if (worktreeIndex >= 0) return `worktree/${parts.slice(worktreeIndex + 1).join('/') || 'project'}`;
@@ -115,8 +132,13 @@ export function sanitizeBenchmarkText(value, replacements = []) {
   for (const [absolute, portable] of replacements.toSorted((a, b) => b[0].length - a[0].length)) {
     text = text.replaceAll(absolute, portable);
   }
+  text = text.replace(shellPathPattern, 'PATH=<toolchain-path>');
+  text = text.replace(homebrewExecutablePattern, '$1');
   text = text.replace(agentDeviceBundlePattern, '<agent-device-helper>');
+  text = text.replace(fileUrlAbsolutePathPattern, (_match, path) => `file:///${replacementLabel(path)}`);
+  text = text.replace(compilerFlagAbsolutePathPattern, (_match, flag, path) => `${flag}${replacementLabel(path)}`);
   text = text.replace(absolutePathPattern, (path) => replacementLabel(path));
+  text = text.replace(systemAbsolutePathPattern, (path) => replacementLabel(path));
   text = text.replace(remoteBranchUserPattern, '$1@<user>');
   text = text.replaceAll(userInfo().username, '<local-user>');
   return text
@@ -239,13 +261,19 @@ export function eventsFor(runDir, start, replacements) {
         const begin = started.get(content.tool_use_id);
         if (!begin) continue;
         const output = claudeToolOutput(event, content);
+        const result = event.tool_use_result;
+        const exitCode = Number.isInteger(result?.exit_code)
+          ? result.exit_code
+          : content.is_error || result?.is_error || result?.interrupted
+            ? 1
+            : 0;
         commands.push({
           id: content.tool_use_id,
           startSeconds: relativeSeconds(begin.at, start),
           endSeconds: relativeSeconds(stamped.arrivedAt, start),
           command: sanitizeBenchmarkText(unwrapShellCommand(begin.command), replacements),
           output: sanitizeCommandOutput(begin.command, output, replacements),
-          exitCode: content.is_error || event.tool_use_result?.interrupted ? 1 : 0,
+          exitCode,
         });
         started.delete(content.tool_use_id);
       }
@@ -311,7 +339,12 @@ export function summarizeRun(record, commands, backgroundProcesses) {
   const commandText = successfulCommands.map((command) => command.command).join('\n');
   const preparedWorktree = /\bgit\s+worktree\b|\bstim\s+worktree\s+create\b/.test(commandText);
   const copiedInputs = /\bcp\b[^\n]*(?:node_modules|ios\/Pods|ios\/build)/.test(commandText);
-  const change = record.variant === 'native' ? 'native iOS change' : 'JavaScript change';
+  const change =
+    record.variant === 'native'
+      ? 'native iOS change'
+      : record.variant === 'launch-crash'
+        ? 'JavaScript launch failure'
+        : 'JavaScript change';
   const preparation = preparedWorktree
     ? `Created an isolated worktree${copiedInputs ? ' and carried over dependencies or native outputs' : ''}`
     : 'Prepared the benchmark workspace';
@@ -339,15 +372,47 @@ export function summarizeRun(record, commands, backgroundProcesses) {
   const recovery = failed
     ? ` The record includes ${failed} failed command ${failed === 1 ? 'attempt' : 'attempts'} before completion.`
     : '';
-  return `${preparation}, worked on the ${change}, and ${launch}.${background}${validation}${recovery}`;
+  const diagnosis =
+    record.variant === 'launch-crash' && /(?:^|\s)stim\s+logs\s+--errors(?:\s|$)/.test(commandText)
+      ? ' It used the captured Stim error log to identify the injected failure before repairing it.'
+      : '';
+  return `${preparation}, worked on the ${change}, and ${launch}.${diagnosis}${background}${validation}${recovery}`;
 }
 
 function assertPortable(payload) {
   const serialized = JSON.stringify(collectPublicStrings(payload));
-  const leakedRoot = ['/Users', '/Volumes', '/private', '/var/folders', '/tmp/'].find((root) =>
-    serialized.includes(root),
-  );
-  if (leakedRoot) throw new Error(`benchmark export contains an absolute machine path root: ${leakedRoot}`);
+  const leakedFileUrl = serialized.match(fileUrlAbsolutePathPattern)?.[0];
+  if (leakedFileUrl) {
+    throw new Error(`benchmark export contains an absolute machine file URL: ${leakedFileUrl}`);
+  }
+  const leakedRoot = [
+    '/Applications',
+    '/Library',
+    '/System',
+    '/Users',
+    '/Volumes',
+    '/private',
+    '/var',
+    '/tmp',
+    '/opt',
+    '/Pods.build',
+    '/XPCServices',
+  ].find((root) => {
+    const escaped = root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return (
+      new RegExp(`(?<![A-Za-z0-9._/])${escaped}(?![A-Za-z0-9._+-])`).test(serialized) ||
+      new RegExp(`-[FLI]${escaped}(?![A-Za-z0-9._+-])`).test(serialized)
+    );
+  });
+  if (leakedRoot) {
+    const at = serialized.indexOf(leakedRoot);
+    const field = serialized.slice(Math.max(0, at - 80), Math.min(serialized.length, at + 240));
+    throw new Error(`benchmark export contains an absolute machine path root: ${leakedRoot}\n${field}`);
+  }
+  const leakedSystemPath = serialized.match(systemAbsolutePathPattern)?.[0];
+  if (leakedSystemPath) {
+    throw new Error(`benchmark export contains an absolute system path: ${leakedSystemPath}`);
+  }
   const leakedPath = serialized.match(absolutePathPattern)?.[0];
   if (leakedPath) {
     const at = serialized.indexOf(leakedPath);
@@ -379,6 +444,151 @@ function assertPortable(payload) {
   }
 }
 
+function fileSha256(path) {
+  return createHash('sha256').update(readFileSync(path)).digest('hex');
+}
+
+function validPng(path, expectedDimensions) {
+  if (!existsSync(path)) return false;
+  const bytes = readFileSync(path);
+  if (bytes.length < 24 || bytes.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a') return false;
+  const width = bytes.readUInt32BE(16);
+  const height = bytes.readUInt32BE(20);
+  return width >= 300 && height >= 600 && width === expectedDimensions?.width && height === expectedDimensions?.height;
+}
+
+function nonShellActivitiesFor(runDir) {
+  const eventsPath = join(runDir, 'events.jsonl');
+  if (!existsSync(eventsPath)) return [];
+  const activities = [];
+  for (const record of readFileSync(eventsPath, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse)) {
+    let event;
+    try {
+      event = JSON.parse(record.line);
+    } catch {
+      continue;
+    }
+    const item = event.item;
+    if (event.type === 'item.started' && item?.type && item.type !== 'command_execution') {
+      activities.push({
+        id: item.id,
+        command: `tool:${item.type} ${JSON.stringify(item.changes ?? item)}`,
+        startedAt: record.arrivedAt,
+        endedAt: record.arrivedAt,
+      });
+    }
+    for (const block of event.message?.content ?? []) {
+      if (event.type === 'assistant' && block.type === 'tool_use' && block.name !== 'Bash') {
+        activities.push({
+          id: block.id,
+          command: `tool:${block.name} ${JSON.stringify(block.input ?? {})}`,
+          startedAt: record.arrivedAt,
+          endedAt: record.arrivedAt,
+        });
+      }
+    }
+  }
+  return activities;
+}
+
+function usageAtOrBefore(path, observedAt) {
+  if (!path || !existsSync(path)) return null;
+  const cutoff = Date.parse(observedAt);
+  if (!Number.isFinite(cutoff)) return null;
+  let usage = null;
+  for (const line of readFileSync(path, 'utf8').trim().split('\n').filter(Boolean)) {
+    const event = JSON.parse(line);
+    const timestamp = Date.parse(event.timestamp);
+    const candidate = event.payload?.info?.total_token_usage;
+    if (
+      event.type === 'event_msg' &&
+      event.payload?.type === 'token_count' &&
+      candidate &&
+      Number.isFinite(timestamp) &&
+      timestamp <= cutoff
+    ) {
+      usage = candidate;
+    }
+  }
+  return usage;
+}
+
+function sameUsage(left, right) {
+  if (left === null || right === null) return left === right;
+  return ['input_tokens', 'cached_input_tokens', 'output_tokens', 'reasoning_output_tokens'].every(
+    (field) => (left?.[field] ?? 0) === (right?.[field] ?? 0),
+  );
+}
+
+function validateLaunchCrashRecord(runDir, record, meta) {
+  const reject = (reason) => {
+    if (process.env.STIM_BENCH_EXPORT_DEBUG === '1') {
+      process.stderr.write(`${basename(runDir)}: ${reason}\n`);
+    }
+    return null;
+  };
+  const eventsPath = join(runDir, 'events.jsonl');
+  const proofPath = join(runDir, 'proof', 'settings.png');
+  if (!existsSync(eventsPath) || !validPng(proofPath, record.screen?.dimensions))
+    return reject('invalid evidence files');
+  if (record.evidenceSha256?.events !== fileSha256(eventsPath)) return reject('events hash mismatch');
+  if (record.evidenceSha256?.settingsPng !== fileSha256(proofPath)) return reject('screenshot hash mismatch');
+  const eventData = eventsFor(runDir, meta.dispatchAt, []);
+  const commands = eventData.commands.map((command) =>
+    Object.assign({}, command, {
+      startedAt: new Date(Date.parse(meta.dispatchAt) + command.startSeconds * 1000).toISOString(),
+      endedAt: new Date(Date.parse(meta.dispatchAt) + command.endSeconds * 1000).toISOString(),
+    }),
+  );
+  const token = [record.proof?.expected, ...commands.map((command) => command.output)]
+    .join('\n')
+    .match(/STIM_BENCH_LAUNCH_CRASH_[0-9A-F]{12}/)?.[0];
+  if (!token) return reject('crash token missing');
+  const diagnosis = launchCrashDiagnosis(commands, {
+    dispatchAt: meta.dispatchAt,
+    token,
+    arm: record.arm,
+    platform: meta.platform ?? 'ios',
+    activities: nonShellActivitiesFor(runDir),
+  });
+  const recovery = launchCrashRecovery(commands, {
+    diagnosis,
+    arm: record.arm,
+    platform: meta.platform ?? 'ios',
+    screen: record.screen,
+  });
+  if (!diagnosis.valid || !recovery.valid) {
+    return reject(`event graph invalid: ${JSON.stringify({ diagnosis, recovery })}`);
+  }
+  const screenReadySeconds = relativeSeconds(record.screen.observedAt, meta.dispatchAt);
+  const runner = record.runner ?? meta.runner;
+  const transcriptPath = runner === 'claude' ? eventsPath : join(runDir, 'rollout.jsonl');
+  const diagnosisUsage = runner === 'claude' ? null : usageAtOrBefore(transcriptPath, diagnosis.observedAt);
+  if (!existsSync(transcriptPath)) return reject('transcript missing');
+  if (record.evidenceSha256?.transcript !== fileSha256(transcriptPath)) return reject('transcript hash mismatch');
+  if (
+    record.diagnosis?.observedAt !== diagnosis.observedAt ||
+    record.dispatchToDiagnosisSeconds !== diagnosis.dispatchToDiagnosisSeconds ||
+    record.diagnosisCommandCount !== diagnosis.commandCount ||
+    record.screen?.observedAt !== new Date(Date.parse(meta.dispatchAt) + screenReadySeconds * 1000).toISOString() ||
+    record.dispatchToScreenReadySeconds !== screenReadySeconds ||
+    record.screen?.dispatchToScreenReadySeconds !== screenReadySeconds ||
+    !sameUsage(record.diagnosisUsage ?? null, diagnosisUsage)
+  ) {
+    return reject('derived metrics mismatch');
+  }
+  if (
+    record.diagnosis?.initialLaunchCommandId !== diagnosis.initialLaunchCommandId ||
+    record.diagnosis?.errorCaptureCommandId !== diagnosis.errorCaptureCommandId ||
+    record.diagnosis?.commandId !== diagnosis.commandId ||
+    record.recovery?.repairedLaunchCommandId !== recovery.repairedLaunchCommandId ||
+    record.recovery?.screenshotCommandId !== recovery.screenshotCommandId
+  ) {
+    return reject('evidence command ids mismatch');
+  }
+  return { diagnosis, recovery, diagnosisUsage, screenReadySeconds };
+}
+
 export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
   const absoluteStageDir = resolve(stageDir);
   const stage = basename(absoluteStageDir);
@@ -390,8 +600,33 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
     .map((name) => join(absoluteStageDir, name))
     .filter((runDir) => existsSync(join(runDir, 'run.json')) && existsSync(join(runDir, 'meta.json')));
   const records = runDirs
-    .map((runDir) => ({ runDir, record: readJson(join(runDir, 'run.json')) }))
-    .filter(({ record }) => record.valid);
+    .map((runDir) => {
+      const record = readJson(join(runDir, 'run.json'));
+      const meta = readJson(join(runDir, 'meta.json'));
+      return {
+        runDir,
+        record,
+        meta,
+        launchCrashValidation:
+          record.variant === 'launch-crash' ? validateLaunchCrashRecord(runDir, record, meta) : null,
+      };
+    })
+    .filter(({ runDir, record, launchCrashValidation }) => {
+      if (!record.valid || !record.screen?.valid || !existsSync(join(runDir, 'proof', 'settings.png'))) return false;
+      if (record.variant !== 'launch-crash') return true;
+      return (
+        record.diagnosis?.valid === true &&
+        Number.isFinite(record.dispatchToDiagnosisSeconds) &&
+        record.dispatchToDiagnosisSeconds >= 0 &&
+        Number.isInteger(record.diagnosisCommandCount) &&
+        record.diagnosisCommandCount > 0 &&
+        record.proof?.valid === true &&
+        record.recovery?.valid === true &&
+        typeof record.recovery.repairedLaunchCommandId === 'string' &&
+        typeof record.recovery.screenshotCommandId === 'string' &&
+        launchCrashValidation !== null
+      );
+    });
   if (records.length === 0) throw new Error(`no valid benchmark runs found in ${absoluteStageDir}`);
   const validCounts = new Map();
   for (const { record } of records) {
@@ -402,8 +637,7 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
   const attemptCounts = new Map();
   const environment = benchmarkEnvironment(readJson(join(records[0].runDir, 'meta.json')), machine);
   const runs = records
-    .map(({ runDir, record }) => {
-      const meta = readJson(join(runDir, 'meta.json'));
+    .map(({ runDir, record, meta, launchCrashValidation }) => {
       const appAlive = existsSync(join(runDir, 'app-alive.json')) ? readJson(join(runDir, 'app-alive.json')) : null;
       const baseId = publicRunId(record);
       const attemptKind = record.valid ? 'valid' : 'invalid';
@@ -411,12 +645,20 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
       const attempt = (attemptCounts.get(countKey) ?? 0) + 1;
       attemptCounts.set(countKey, attempt);
       const id = record.valid && validCounts.get(baseId) === 1 ? baseId : `${baseId}-${attemptKind}-${attempt}`;
+      const runNonce = record.runId.match(/-(\d{13})$/)?.[1];
       const replacements = [
         [runDir, `results/${stage}/${id}`],
         [absoluteStageDir, `results/${stage}`],
         [resultsRoot, 'results'],
         [coordinatorRoot, '.'],
         [record.runId, id],
+        ...(record.simulator?.udid
+          ? [
+              [record.simulator.udid, '<simulator-udid>'],
+              [record.simulator.udid.slice(0, 8), '<simulator-udid-prefix>'],
+            ]
+          : []),
+        ...(runNonce ? [[runNonce, id]] : []),
       ];
       const proofSource = join(runDir, 'proof', 'settings.png');
       const proofName = `${id}.png`;
@@ -438,12 +680,27 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
       return {
         id,
         model: record.model,
+        platform: meta.platform ?? 'ios',
         variant: record.variant,
         arm: record.arm,
         valid: record.valid,
         invalidReasons: (record.invalidReasons ?? []).map((reason) => sanitizeBenchmarkText(reason, replacements)),
-        settingsReadySeconds: record.dispatchToScreenReadySeconds,
+        settingsReadySeconds: launchCrashValidation?.screenReadySeconds ?? record.dispatchToScreenReadySeconds,
         appAliveSeconds: record.dispatchToAppAliveSeconds,
+        diagnosisSeconds: launchCrashValidation?.diagnosis.dispatchToDiagnosisSeconds ?? null,
+        diagnosisCommandCount: launchCrashValidation?.diagnosis.commandCount ?? null,
+        launchCrashAudit:
+          record.variant === 'launch-crash'
+            ? {
+                initialLaunchCommandId: record.diagnosis.initialLaunchCommandId,
+                errorCaptureCommandId: record.diagnosis.errorCaptureCommandId,
+                diagnosisCommandId: record.diagnosis.commandId,
+                repairedLaunchCommandId: record.recovery.repairedLaunchCommandId,
+                screenshotCommandId: record.recovery.screenshotCommandId,
+              }
+            : null,
+        diagnosisUsage: launchCrashValidation?.diagnosisUsage ?? null,
+        estimatedDiagnosisCostUsd: estimateTokenCost(launchCrashValidation?.diagnosisUsage, record.model),
         totalSeconds,
         commandCount: record.commandCount,
         usage,
@@ -458,6 +715,12 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
             kind: 'appAlive',
             label: 'App process alive',
             atSeconds: relativeSeconds(appAlive.observedAt, meta.dispatchAt),
+          },
+          launchCrashValidation?.diagnosis.observedAt && {
+            id: 'diagnosis',
+            kind: 'diagnosis',
+            label: 'Actionable diagnosis',
+            atSeconds: launchCrashValidation.diagnosis.dispatchToDiagnosisSeconds,
           },
           record.screen?.observedAt && {
             id: 'settings-ready',
@@ -478,7 +741,8 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
     })
     .toSorted(
       (a, b) =>
-        ['javascript', 'native'].indexOf(a.variant) - ['javascript', 'native'].indexOf(b.variant) ||
+        ['javascript', 'native', 'launch-crash'].indexOf(a.variant) -
+          ['javascript', 'native', 'launch-crash'].indexOf(b.variant) ||
         ['stim', 'control'].indexOf(a.arm) - ['stim', 'control'].indexOf(b.arm),
     );
 
@@ -492,9 +756,14 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
     schemaVersion: 1,
     stage,
     title: formatStage(stage),
+    suite: runs.every((run) => run.variant === 'launch-crash') ? 'launch-crash' : 'readiness',
+    platform: runs[0].platform,
     protocolVersion: 4,
     recordedOn,
-    primaryMetric: 'Dispatch to validated Settings screenshot',
+    primaryMetric:
+      runs[0].variant === 'launch-crash'
+        ? 'Dispatch to first actionable diagnosis; repaired Settings screenshot reported separately'
+        : 'Dispatch to validated Settings screenshot',
     pricing: modelPricing[model]
       ? {
           model,

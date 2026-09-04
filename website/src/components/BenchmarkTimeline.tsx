@@ -101,6 +101,7 @@ function pinchGeometry(event: ReactTouchEvent<HTMLDivElement>): ReturnType<typeo
 }
 
 export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): ReactNode {
+  const isLaunchCrash = run.variant === 'launch-crash';
   const [selected, setSelected] = useState<BenchmarkAuditSelection | null>(() => initialAuditSelection(run));
   const [playbackMode, setPlaybackMode] = useState(false);
   const [playing, setPlaying] = useState(false);
@@ -221,29 +222,59 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
   return (
     <div className={styles.viewer}>
       <div className={styles.stats}>
-        <div>
-          <span>Settings ready</span>
-          <strong>{formatSeconds(run.settingsReadySeconds)}</strong>
-          <small>primary outcome</small>
-        </div>
-        <div>
-          <span>Total tokens</span>
-          <strong>{formatTokens(totalTokens(run.usage))}</strong>
-          <small>
-            {formatTokens(run.usage.input_tokens)} input / {formatTokens(run.usage.output_tokens)} output /{' '}
-            {formatTokens(run.usage.reasoning_output_tokens)} reasoning
-          </small>
-        </div>
-        <div>
-          <span>Token cost</span>
-          <strong>{formatCost(run.estimatedTokenCostUsd)}</strong>
-          <small>reported by runner or API-equivalent estimate</small>
-        </div>
-        <div>
-          <span>Commands</span>
-          <strong>{run.commandCount}</strong>
-          <small>{formatTokens(run.usage.cached_input_tokens)} cached input</small>
-        </div>
+        {isLaunchCrash ? (
+          <>
+            <div>
+              <span>Actionable diagnosis</span>
+              <strong>{formatSeconds(run.diagnosisSeconds ?? null)}</strong>
+              <small>primary outcome</small>
+            </div>
+            <div>
+              <span>Settings repaired</span>
+              <strong>{formatSeconds(run.settingsReadySeconds)}</strong>
+              <small>validated recovery endpoint</small>
+            </div>
+            <div>
+              <span>Tokens to diagnosis</span>
+              <strong>{run.diagnosisUsage ? formatTokens(totalTokens(run.diagnosisUsage)) : 'unavailable'}</strong>
+              <small>{formatTokens(totalTokens(run.usage))} tokens for the full repair</small>
+            </div>
+            <div>
+              <span>Cost to diagnosis</span>
+              <strong>{formatCost(run.estimatedDiagnosisCostUsd ?? null)}</strong>
+              <small>
+                {formatCost(run.estimatedTokenCostUsd)} total / {run.diagnosisCommandCount ?? '-'} of {run.commandCount}{' '}
+                commands
+              </small>
+            </div>
+          </>
+        ) : (
+          <>
+            <div>
+              <span>Settings ready</span>
+              <strong>{formatSeconds(run.settingsReadySeconds)}</strong>
+              <small>primary outcome</small>
+            </div>
+            <div>
+              <span>Total tokens</span>
+              <strong>{formatTokens(totalTokens(run.usage))}</strong>
+              <small>
+                {formatTokens(run.usage.input_tokens)} input / {formatTokens(run.usage.output_tokens)} output /{' '}
+                {formatTokens(run.usage.reasoning_output_tokens)} reasoning
+              </small>
+            </div>
+            <div>
+              <span>Token cost</span>
+              <strong>{formatCost(run.estimatedTokenCostUsd)}</strong>
+              <small>reported by runner or API-equivalent estimate</small>
+            </div>
+            <div>
+              <span>Commands</span>
+              <strong>{run.commandCount}</strong>
+              <small>{formatTokens(run.usage.cached_input_tokens)} cached input</small>
+            </div>
+          </>
+        )}
       </div>
 
       <div className={styles.runHeading}>
@@ -487,7 +518,9 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
               <button
                 key={marker.id}
                 type="button"
-                className={`${styles.deviceDot} ${marker.kind === 'settingsReady' ? styles.readyDot : ''}`}
+                className={`${styles.deviceDot} ${marker.kind === 'settingsReady' ? styles.readyDot : ''} ${
+                  marker.kind === 'diagnosis' ? styles.diagnosisDot : ''
+                }`}
                 style={{ left: position(marker.atSeconds, run.totalSeconds) }}
                 aria-label={`${marker.label} at ${formatSeconds(marker.atSeconds)}`}
                 onClick={() => inspect({ kind: 'marker', event: marker })}
@@ -548,7 +581,7 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
             <h2>Settings screen</h2>
             <p>
               Captured by <code>agent-device</code> after it found &quot;{run.proof.expected}&quot;. This screenshot
-              completion is the timing endpoint used above.
+              completion is the {isLaunchCrash ? 'validated recovery endpoint' : 'timing endpoint used above'}.
             </p>
           </div>
           <img

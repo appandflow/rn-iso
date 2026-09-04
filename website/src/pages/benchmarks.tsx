@@ -2,17 +2,61 @@ import type { ReactNode } from 'react';
 import Link from '@docusaurus/Link';
 import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
-import { benchmarks, displayVariant } from '@site/src/components/benchmarkCatalog';
+import { benchmarks, defaultRun, displayVariant } from '@site/src/components/benchmarkCatalog';
 import BenchmarkVideo from '@site/src/components/BenchmarkVideo';
 import {
   benchmarkDisplayTitle,
   benchmarkOverview,
+  benchmarkSelectionSearch,
+  formatCost,
   formatSeconds,
+  formatTokens,
+  totalTokens,
   type BenchmarkData,
   type BenchmarkRun,
 } from '@site/src/components/benchmarkData';
 import styles from './benchmarks.module.css';
 
+const readinessBenchmarks = benchmarks.filter((benchmark) => benchmark.suite !== 'launch-crash');
+const launchCrashBenchmarks = benchmarks.filter((benchmark) => benchmark.suite === 'launch-crash');
+
+function LaunchCrashCard({ benchmark }: { benchmark: BenchmarkData }): ReactNode {
+  const runs = benchmark.runs.filter((run) => run.valid && run.diagnosisSeconds !== null);
+  const maxSeconds = Math.max(1, ...runs.map((run) => run.diagnosisSeconds ?? 0));
+  return (
+    <article className={styles.comparisonCard}>
+      <h3>{benchmark.runs[0]?.model ?? benchmarkDisplayTitle(benchmark.title)}: JavaScript launch failure</h3>
+      <span className={`${styles.outcome} ${styles.neutral}`}>Time to first actionable diagnosis</span>
+      {runs.map((run) => (
+        <div className={styles.barRow} key={run.id}>
+          <div className={styles.barHead}>
+            <span>{run.arm === 'stim' ? 'Stim' : 'Control'}</span>
+            <strong>{formatSeconds(run.diagnosisSeconds ?? null)}</strong>
+          </div>
+          <div className={styles.barTrack}>
+            <div
+              className={`${styles.bar} ${run.arm === 'control' ? styles.controlBar : ''}`}
+              style={{ width: `${((run.diagnosisSeconds ?? 0) / maxSeconds) * 100}%` }}
+            />
+          </div>
+          <div className={styles.barMeta}>
+            <span>Settings repaired {formatSeconds(run.settingsReadySeconds)}</span>
+            <span>{run.diagnosisUsage ? formatTokens(totalTokens(run.diagnosisUsage)) : 'unavailable'} tokens</span>
+            <span>{formatCost(run.estimatedDiagnosisCostUsd ?? null)} cost</span>
+          </div>
+        </div>
+      ))}
+      <Link
+        to={`/benchmarks/details${benchmarkSelectionSearch(
+          { stage: benchmark.stage, runId: defaultRun(benchmark)?.id ?? '' },
+          benchmarks,
+        )}#audit-title`}
+      >
+        Open the run audit
+      </Link>
+    </article>
+  );
+}
 function OverviewChart({
   variant,
   benchmarks: allBenchmarks,
@@ -98,10 +142,31 @@ export default function Benchmarks(): ReactNode {
             </div>
             <div className={styles.overviewGrid}>
               {(['javascript', 'native'] as const).map((variant) => (
-                <OverviewChart key={variant} variant={variant} benchmarks={benchmarks} />
+                <OverviewChart key={variant} variant={variant} benchmarks={readinessBenchmarks} />
               ))}
             </div>
           </section>
+
+          {launchCrashBenchmarks.length ? (
+            <section className={styles.overview} aria-labelledby="launch-crash-title">
+              <div className={styles.sectionHeading}>
+                <div>
+                  <Heading as="h2" id="launch-crash-title">
+                    Launch failure diagnosis
+                  </Heading>
+                  <p>
+                    A deterministic root-render exception is committed before dispatch. The agent must launch first,
+                    diagnose from captured errors, repair the source, and prove the unchanged Settings screen.
+                  </p>
+                </div>
+              </div>
+              <div className={styles.comparisonGrid}>
+                {launchCrashBenchmarks.map((candidate) => (
+                  <LaunchCrashCard benchmark={candidate} key={candidate.stage} />
+                ))}
+              </div>
+            </section>
+          ) : null}
 
           <section className={styles.methodology} aria-labelledby="methodology-title">
             <div>
@@ -110,9 +175,9 @@ export default function Benchmarks(): ReactNode {
                 What these numbers measure
               </Heading>
               <p>
-                Each pair uses the same clean app fixture, requested model, machine, and fixed code change. The primary
-                endpoint starts when the agent is dispatched and stops only after agent-device finds the expected text
-                on Settings and saves a screenshot.
+                Readiness comparisons use the same clean app fixture, requested model, machine, and fixed code change.
+                The primary endpoint starts when the agent is dispatched and stops only after agent-device finds the
+                expected text on Settings and saves a screenshot.
               </p>
               <a href="https://github.com/appandflow/stim/blob/main/docs/agent-benchmark-v4.md">
                 Read the full protocol
@@ -132,6 +197,10 @@ export default function Benchmarks(): ReactNode {
               <div>
                 <dt>Proof, not process liveness</dt>
                 <dd>The reported time is the validated Settings screenshot, not the earlier app-process marker.</dd>
+              </div>
+              <div>
+                <dt>Launch-failure suite</dt>
+                <dd>Diagnosis time and repaired Settings proof are reported separately from readiness results.</dd>
               </div>
               <div>
                 <dt>Audited attempts</dt>

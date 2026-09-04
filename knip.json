@@ -1,5 +1,10 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
-  "ignore": ["website/**", "packages/stim-cli/shim/**"],
+  "ignore": [
+    "website/**",
+    "packages/stim-cli/shim/**",
+    "scripts/agent-benchmark/stamp.mjs",
+    "scripts/agent-benchmark/watch-app.mjs"
+  ],
   "ignoreBinaries": ["pod"]
 }

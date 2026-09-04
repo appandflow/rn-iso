@@ -172,6 +172,13 @@ identifiers. Private raw results retain invalid attempts for diagnosis. The
 Markdown report is the machine-readable summary; the viewer is an audit view
 and does not redefine metrics.
 
+The executable coordinator and its machine-local setup contract live in
+[`scripts/agent-benchmark/`](../scripts/agent-benchmark/README.md). The driver
+prepares and commits launch-failure fixtures, dispatches Codex or Claude,
+collects and audits proof, writes `run.json`, cleans owned resources, and
+generates the private report. Credentials, pins, golden build state, and raw
+transcripts remain outside the repository.
+
 ![A benchmark timeline with separate shell and monitored background-process lanes](images/benchmark-background-process.png)
 
 ![A benchmark timeline expanded to 4x with its lane labels pinned during horizontal scrolling](images/benchmark-timeline-zoom.jpg)
@@ -226,6 +233,17 @@ a repaired Settings screenshot. The Stim arm must preserve `stim ios` launch
 output and `stim logs --errors`; control collects the equivalent Metro and
 simulator logs manually. The injected error text is unique per run so the
 collector can prove that the reported stack and repair refer to this failure.
+
+The coordinator creates a per-run fixture branch, injects and commits the
+exception, and checks out that fixture before dispatch, outside the timed
+interval. The agent starts in the fixture checkout and creates its own isolated
+run worktree from that HEAD, so worktree setup remains part of the measured
+workflow. The agent must launch before inspecting source. An actionable
+diagnosis contains both the run's unique error token and the root-layout source
+location. A valid repair removes that token, relaunches the app, and reaches the
+unchanged Settings proof on the same explicitly targeted simulator. Report
+diagnosis and repair timing separately; do not add crash-suite results to the
+readiness charts.
 
 Run the crash suite only after the four-cell readiness pilot is accepted. Keep
 its goldens, prompts, metrics, and report separate from the normal JS/native
