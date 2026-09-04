@@ -43,7 +43,6 @@ function reloadDeps(overrides: Partial<ReloadDeps> = {}): Partial<ReloadDeps> {
     openIosUrl: () => ({ ok: true }),
     reloadAndroid: () => ({ ok: true }),
     reloadIosMetro: async () => ({ ok: true, peers: 1 }),
-    reloadIosFallback: () => ({ ok: true }),
     ...overrides,
   };
 }
@@ -125,51 +124,31 @@ test('reload refuses a launch record that no longer belongs to the configured ow
 });
 
 test('Expo reload resends the recorded deep link to the same device', async () => {
-  const opened: { serial: string; url: string }[] = [];
+  const opened: { serial: string; url: string; packageName?: string }[] = [];
   const deepLinkUrl = 'example://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8082';
   const result = await runReload({
     root: '/project',
     platform: 'android',
     deps: reloadDeps({
       readLaunches: () => ({ android: { ...androidLaunch, deepLinkUrl } }),
-      openAndroidUrl: ({ serial, url }) => {
-        opened.push({ serial, url });
+      openAndroidUrl: ({ serial, url, packageName }) => {
+        opened.push({ serial, url, packageName });
         return { ok: true };
       },
     }),
   });
 
   expect(result.ok && result.facts.strategy).toBe('deep-link');
-  expect(opened).toEqual([{ serial: 'emulator-5554', url: deepLinkUrl }]);
+  expect(opened).toEqual([{ serial: 'emulator-5554', url: deepLinkUrl, packageName: 'com.example.android' }]);
 });
 
-test('bare iOS falls back to the exact simulator startup overlay when Metro has no peer', async () => {
-  const fallback: string[] = [];
+test("bare iOS leaves startup-overlay automation to the agent's existing session", async () => {
   const result = await runReload({
     root: '/project',
     platform: 'ios',
     deps: reloadDeps({
       readLaunches: () => ({ ios: iosLaunch }),
       reloadIosMetro: async () => ({ failed: true, peers: 0, reason: 'No app connected.' }),
-      reloadIosFallback: (udid) => {
-        fallback.push(udid);
-        return { ok: true };
-      },
-    }),
-  });
-
-  expect(result.ok && result.facts.strategy).toBe('agent-device');
-  expect(fallback).toEqual(['U1']);
-});
-
-test('bare iOS prints exact recovery commands when the startup overlay cannot be driven', async () => {
-  const result = await runReload({
-    root: '/project',
-    platform: 'ios',
-    deps: reloadDeps({
-      readLaunches: () => ({ ios: iosLaunch }),
-      reloadIosMetro: async () => ({ failed: true, peers: 0, reason: 'No app connected.' }),
-      reloadIosFallback: () => ({ failed: true, reason: 'agent-device is unavailable.' }),
     }),
   });
 
@@ -177,11 +156,42 @@ test('bare iOS prints exact recovery commands when the startup overlay cannot be
     ok: false,
     error: {
       code: 'STIM_RELOAD_FAILED',
-      remedy: expect.stringContaining('agent-device open com.example.ios --foreground --platform ios --udid U1'),
+      message: 'No app connected.',
+      remedy: expect.stringContaining('existing automation session for com.example.ios on U1'),
     },
   });
   expect(result).toMatchObject({
-    error: { remedy: expect.stringContaining(`agent-device press 'label="Reload"' --platform ios --udid U1`) },
+    error: {
+      remedy: expect.stringContaining('agent-device snapshot -i --platform ios --udid U1'),
+    },
+  });
+});
+
+test('reload turns owned-device inspection failures into actionable errors', async () => {
+  const ios = await runReload({
+    root: '/project',
+    platform: 'ios',
+    deps: reloadDeps({
+      readLaunches: () => ({ ios: iosLaunch }),
+      resolveIos: () => {
+        throw new Error('simctl unavailable');
+      },
+    }),
+  });
+  const android = await runReload({
+    root: '/project',
+    platform: 'android',
+    deps: reloadDeps({
+      resolveAndroid: () => {
+        throw new Error('adb unavailable');
+      },
+    }),
+  });
+
+  expect(ios).toMatchObject({ ok: false, error: { code: 'STIM_RELOAD_PROBE_FAILED', remedy: expect.any(String) } });
+  expect(android).toMatchObject({
+    ok: false,
+    error: { code: 'STIM_RELOAD_PROBE_FAILED', remedy: expect.any(String) },
   });
 });
 

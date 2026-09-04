@@ -1110,6 +1110,7 @@ test('the guide defines reload as a JavaScript-only live-app recovery', () => {
   expect(errors).toContain('STIM_RELOAD_AMBIGUOUS');
   expect(errors).toContain('STIM_RELOAD_RELEASE');
   expect(errors).toContain('STIM_RELOAD_FAILED');
+  expect(lifecycle).toMatch(/does not take over\s+that stateful session/);
 });
 
 test('the guide documents the project cache provider as the tier between local and Expo', () => {

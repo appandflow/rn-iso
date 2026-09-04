@@ -3,7 +3,7 @@ import type { Command } from 'commander';
 import { phaseLine } from '../command-output.ts';
 import { getProject, type ProjectRecord } from '../config.ts';
 import { androidAppProcess, iosAppProcess, openAndroidDevClientUrl } from '../engine/app-install.ts';
-import { openIosDeepLink, reloadAndroidJs, reloadIosOverlay, reloadIosThroughMetro } from '../engine/reload.ts';
+import { openIosDeepLink, reloadAndroidJs, reloadIosThroughMetro } from '../engine/reload.ts';
 import { resolveProjectMetro, type MetroResolution } from '../metro.ts';
 import { findProjectRoot } from '../project.ts';
 import { resolveOwnedAvdSerial, type ResolvedAvdSerial } from '../sim/android.ts';
@@ -16,16 +16,16 @@ import {
 
 type ReloadPlatform = WorkspaceLaunchPlatform;
 
-export interface ReloadFacts {
+interface ReloadFacts {
   platform: ReloadPlatform;
   deviceId: string;
   deviceName: string;
   appId: string;
   metroPort: number;
-  strategy: 'deep-link' | 'android-broadcast' | 'metro-websocket' | 'agent-device';
+  strategy: 'deep-link' | 'android-broadcast' | 'metro-websocket';
 }
 
-export interface ReloadFailure {
+interface ReloadFailure {
   code: string;
   message: string;
   remedy: string | null;
@@ -57,7 +57,6 @@ export interface ReloadDeps {
   openIosUrl: typeof openIosDeepLink;
   reloadAndroid: typeof reloadAndroidJs;
   reloadIosMetro: typeof reloadIosThroughMetro;
-  reloadIosFallback: typeof reloadIosOverlay;
 }
 
 const DEFAULT_DEPS: ReloadDeps = {
@@ -73,11 +72,14 @@ const DEFAULT_DEPS: ReloadDeps = {
   openIosUrl: openIosDeepLink,
   reloadAndroid: reloadAndroidJs,
   reloadIosMetro: reloadIosThroughMetro,
-  reloadIosFallback: reloadIosOverlay,
 };
 
 function failure(code: string, message: string, remedy: string | null): ReloadFailure {
   return { code, message, remedy };
+}
+
+function describe(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function processFailure(platform: ReloadPlatform, record: WorkspaceLaunchRecord, d: ReloadDeps): ReloadFailure | null {
@@ -122,7 +124,19 @@ function inspectTarget(
         ),
       };
     }
-    const resolved = d.resolveIos(record.deviceId);
+    let resolved: ResolvedIosSim;
+    try {
+      resolved = d.resolveIos(record.deviceId);
+    } catch (error) {
+      return {
+        platform,
+        error: failure(
+          'STIM_RELOAD_PROBE_FAILED',
+          `Stim could not inspect iOS simulator ${record.deviceId}: ${describe(error)}`,
+          'Run `xcrun simctl list devices` and retry when simctl responds.',
+        ),
+      };
+    }
     if (!resolved.sim || resolved.sim.state !== 'Booted') {
       return {
         platform,
@@ -149,7 +163,19 @@ function inspectTarget(
       ),
     };
   }
-  const resolved = d.resolveAndroid(configured.avdName);
+  let resolved: ResolvedAvdSerial;
+  try {
+    resolved = d.resolveAndroid(configured.avdName);
+  } catch (error) {
+    return {
+      platform,
+      error: failure(
+        'STIM_RELOAD_PROBE_FAILED',
+        `Stim could not inspect Android emulator ${configured.avdName}: ${describe(error)}`,
+        'Run `adb devices` and retry when adb responds.',
+      ),
+    };
+  }
   if (!resolved.serial || resolved.serial !== record.deviceId) {
     return {
       platform,
@@ -259,7 +285,11 @@ export async function runReload({
     const opened =
       target.platform === 'ios'
         ? d.openIosUrl(target.record.deviceId, target.record.deepLinkUrl)
-        : d.openAndroidUrl({ serial: target.record.deviceId, url: target.record.deepLinkUrl });
+        : d.openAndroidUrl({
+            serial: target.record.deviceId,
+            url: target.record.deepLinkUrl,
+            packageName: target.record.appId,
+          });
     if (!opened.ok) {
       return {
         ok: false,
@@ -285,20 +315,17 @@ export async function runReload({
     if (reloaded.ok) {
       strategy = 'metro-websocket';
     } else {
-      const fallback = d.reloadIosFallback(target.record.deviceId);
-      if (!fallback.ok) {
-        const open = `agent-device open ${target.record.appId} --foreground --platform ios --udid ${target.record.deviceId}`;
-        const press = `agent-device press 'label="Reload"' --platform ios --udid ${target.record.deviceId}`;
-        return {
-          ok: false,
-          error: failure(
-            'STIM_RELOAD_FAILED',
-            `${reloaded.reason ?? 'No app is connected to Metro'} ${fallback.reason ?? 'The startup overlay fallback failed.'}`,
-            `While ${target.record.appId} is still running, run \`${open}\`, then \`${press}\`.`,
-          ),
-        };
-      }
-      strategy = 'agent-device';
+      const stoppedAfterMetro = processFailure(target.platform, target.record, d);
+      if (stoppedAfterMetro) return { ok: false, error: stoppedAfterMetro };
+      const snapshot = `agent-device snapshot -i --platform ios --udid ${target.record.deviceId}`;
+      return {
+        ok: false,
+        error: failure(
+          'STIM_RELOAD_FAILED',
+          reloaded.reason ?? `No React Native app is connected to Metro on port ${port}.`,
+          `Continue in your existing automation session for ${target.record.appId} on ${target.record.deviceId}. Run \`${snapshot}\`, then press the Reload control by the exact ref or label it reports. Do not open another session or rerun \`stim ios\`.`,
+        ),
+      };
     }
   }
 

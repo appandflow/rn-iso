@@ -440,8 +440,7 @@ line by design (see \`guide logs\`), not this single-payload contract.
   appId           the live bundle id or Android package
   metroPort       the workspace's verified Metro port
   strategy        "deep-link" for Expo/dev-client, "android-broadcast" for
-                  bare Android, "metro-websocket" for connected bare iOS, or
-                  "agent-device" for the bare iOS startup-overlay fallback
+                  bare Android, or "metro-websocket" for connected bare iOS
 
   stim stats --json
 
@@ -1350,9 +1349,10 @@ STIM_RELOAD_STOPPED / STIM_RELOAD_UNOWNED / STIM_RELOAD_PROBE_FAILED
   process-probe remedy.
 
 STIM_RELOAD_FAILED
-  The exact deep link, Android reload broadcast, Metro websocket, or iOS
-  startup-overlay fallback failed. On bare iOS the remedy prints the exact
-  agent-device command for this workspace's simulator.
+  The exact deep link, Android reload broadcast, or Metro websocket failed. If
+  bare iOS has not connected to Metro, the remedy tells the agent to continue
+  in its existing automation session on this workspace's exact simulator and
+  press the Reload control. Stim does not take over automation sessions.
 
 STIM_NO_METRO
   Reload requires the recorded launch's port to be this workspace's live
@@ -1734,8 +1734,9 @@ builds, stopped or unowned devices, a missing or foreign Metro, and an
 ambiguous no-platform request. Expo/dev-client reloads resend the exact deep
 link recorded at launch. Bare Android sends the app-scoped React Native reload
 broadcast. Bare iOS reloads through this Metro's connected-app websocket and
-uses the exact simulator's agent-device Reload button only when no app peer is
-connected.
+when no app peer is connected, tells the agent to press Reload through its
+existing automation session on the exact simulator. Stim does not take over
+that stateful session.
 
 PROGRESS ON A LONG RUN
   The whole summary is stderr; stdout carries only the \`--json\` payload. Every

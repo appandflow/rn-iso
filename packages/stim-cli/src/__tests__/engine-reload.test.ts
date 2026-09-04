@@ -1,5 +1,5 @@
 import { WebSocketServer } from 'ws';
-import { openIosDeepLink, reloadAndroidJs, reloadIosOverlay, reloadIosThroughMetro } from '../engine/reload.ts';
+import { openIosDeepLink, reloadAndroidJs, reloadIosThroughMetro } from '../engine/reload.ts';
 import type { Executor } from '../exec.ts';
 
 function recordingExecutor() {
@@ -36,20 +36,14 @@ test('Android reload sends the React Native debug broadcast to the exact emulato
   ]);
 });
 
-test('iOS deep-link and overlay reloads target the exact simulator', () => {
+test('iOS deep-link reload targets the exact simulator', () => {
   const { calls, exec } = recordingExecutor();
 
   expect(openIosDeepLink('U1', 'example://reload', { exec })).toEqual({ ok: true });
-  expect(reloadIosOverlay('U1', { exec })).toEqual({ ok: true });
   expect(calls).toEqual([
     {
       file: 'xcrun',
       args: ['simctl', 'openurl', 'U1', 'example://reload'],
-      timeoutMs: 10_000,
-    },
-    {
-      file: 'agent-device',
-      args: ['press', 'label="Reload"', '--platform', 'ios', '--udid', 'U1'],
       timeoutMs: 10_000,
     },
   ]);

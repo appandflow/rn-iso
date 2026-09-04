@@ -48,16 +48,6 @@ export function openIosDeepLink(
   }
 }
 
-export function reloadIosOverlay(udid: string, { exec = getExecutor() }: { exec?: Executor } = {}): ReloadToolResult {
-  try {
-    exec.runFile('agent-device', ['press', 'label="Reload"', '--platform', 'ios', '--udid', udid], {
-      timeoutMs: TOOL_TIMEOUT_MS,
-    });
-    return { ok: true };
-  } catch {}
-  return { failed: true, reason: `agent-device has no usable Reload overlay session for ${udid}.` };
-}
-
 export function reloadIosThroughMetro(
   port: number,
   { timeoutMs = METRO_TIMEOUT_MS }: { timeoutMs?: number } = {},
