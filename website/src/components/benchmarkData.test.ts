@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   assignCommandLanes,
+  benchmarkDisplayTitle,
   benchmarkSelectionFromSearch,
   benchmarkSelectionSearch,
   benchmarkOverview,
@@ -66,6 +67,18 @@ describe('formatSeconds', () => {
     expect(formatSeconds(59.6)).toBe('1m 0s');
     expect(formatSeconds(59.4)).toBe('59s');
     expect(formatSeconds(null)).toBe('unavailable');
+  });
+});
+
+describe('benchmarkDisplayTitle', () => {
+  it('removes release and benchmark versions from display titles', () => {
+    expect(benchmarkDisplayTitle('Luna rc.12')).toBe('Luna');
+    expect(benchmarkDisplayTitle('Sonnet RC12')).toBe('Sonnet');
+    expect(benchmarkDisplayTitle('Benchmark v4')).toBe('Benchmark');
+  });
+
+  it('keeps model version numbers that are part of the name', () => {
+    expect(benchmarkDisplayTitle('GPT-5.6 Luna')).toBe('GPT-5.6 Luna');
   });
 });
 
