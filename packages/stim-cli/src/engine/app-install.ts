@@ -465,13 +465,13 @@ export function amStartError(text: unknown): string | null {
 }
 
 export function openAndroidDevClientUrl(
-  { serial, url }: { serial: string; url: string },
+  { serial, url, packageName }: { serial: string; url: string; packageName?: string },
   { exec = null }: ExecOpt = {},
 ): { ok?: boolean; url?: string; failed?: boolean; reason?: string } {
   const e = exec || getExecutor();
   let out;
   try {
-    out = e.runFile('adb', [
+    const args = [
       '-s',
       serial,
       'shell',
@@ -481,10 +481,12 @@ export function openAndroidDevClientUrl(
       'android.intent.action.VIEW',
       '-d',
       deviceShellArg(url),
+      ...(packageName ? ['-p', packageName] : []),
       '--ez',
       ANDROID_DISABLE_AUTO_LAUNCH_EXTRA,
       'true',
-    ]);
+    ];
+    out = e.runFile('adb', args);
   } catch (err) {
     return { failed: true, reason: `am start -d ${url} failed on ${serial}: ${describe(err)}` };
   }
