@@ -27,6 +27,7 @@ Node 20.19.4 or later on Node 20, or Node 22.12.0 or later, is required.
 stim doctor
 stim start
 stim ios                  # or: stim android
+stim reload               # after a JS-only edit when Fast Refresh needs help
 stim logs --errors
 stim stop
 ```
@@ -52,6 +53,10 @@ default device label includes a stable hash so a flat name cannot collide.
 Stim builds or restores the app, installs it, launches it, and checks launch
 readiness. Plain output streams progress and reports the complete result. Use
 `--json` when a script needs structured data.
+
+`stim reload [ios|android]` reloads JavaScript in the live app on this
+workspace's owned local device. It does not build, install, boot, or launch an
+app. The platform is optional when only one app is live.
 
 ## Reference
 

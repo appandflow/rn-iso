@@ -1221,6 +1221,33 @@ describe('the Android dev-client deep link', () => {
     expect(r.reason).toMatch(/am start -d exp\+app:\/\/x failed/);
   });
 
+  test('openAndroidDevClientUrl can restrict the deep link to the recorded package', () => {
+    const exec = recordingExec();
+    const r = openAndroidDevClientUrl(
+      { serial: 'emulator-5554', url: 'exp+app://x', packageName: 'com.example.app' },
+      { exec },
+    );
+
+    expect(r.ok).toBe(true);
+    expect(exec.calls[0]).toEqual([
+      'adb',
+      '-s',
+      'emulator-5554',
+      'shell',
+      'am',
+      'start',
+      '-a',
+      'android.intent.action.VIEW',
+      '-d',
+      "'exp+app://x'",
+      '-p',
+      'com.example.app',
+      '--ez',
+      'EXDevMenuDisableAutoLaunch',
+      'true',
+    ]);
+  });
+
   test('deviceShellArg quotes what adb will not', () => {
     expect(deviceShellArg('a b')).toBe(`'a b'`);
     expect(deviceShellArg("it's")).toBe(`'it'\\''s'`);
