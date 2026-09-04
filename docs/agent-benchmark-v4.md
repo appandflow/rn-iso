@@ -48,6 +48,15 @@ and no unexpected listener on Metro ports 8081 through 8090. Wait for a
 one-minute load average at or below 3.0 for two consecutive 15-second samples.
 Runs are sequential.
 
+Give the campaign its own `AGENT_DEVICE_STATE_DIR`, separate from the
+operator's normal sessions, and set `AGENT_DEVICE_SESSION` to the exact run id.
+The runner environment is not proof that nested shell tools inherit those
+values: repeat both assignments explicitly on every `agent-device` command.
+Before dispatch, require an empty session inventory and no ownership claim on
+the prepared simulator. If prior campaign state cannot be proven clean, stop
+the daemon with `daemon stop --clean` against that campaign state directory
+before starting the timer. Never stop the operator's global daemon.
+
 ## Fixed changes
 
 The JavaScript cell changes only the Settings Offline maps subtitle:
@@ -105,13 +114,20 @@ After launch, every agent must use `agent-device`. The required command
 sequence is:
 
 ```text
-agent-device open com.appandflow.trailhead --foreground --platform ios --udid <run-udid>
+env AGENT_DEVICE_STATE_DIR=<campaign-state> AGENT_DEVICE_SESSION=<run-id> agent-device open com.appandflow.trailhead --foreground --platform ios --udid <run-udid>
 <handle Expo onboarding if it appears and navigate by semantic label to Settings>
-agent-device wait text "<expected text>"
-agent-device screenshot /tmp/<run-id>-settings.png
+env AGENT_DEVICE_STATE_DIR=<campaign-state> AGENT_DEVICE_SESSION=<run-id> agent-device wait text "<expected text>"
+env AGENT_DEVICE_STATE_DIR=<campaign-state> AGENT_DEVICE_SESSION=<run-id> agent-device screenshot /tmp/<run-id>-settings.png
 cp /tmp/<run-id>-settings.png <run-dir>/proof/settings.png
-agent-device close
+env AGENT_DEVICE_STATE_DIR=<campaign-state> AGENT_DEVICE_SESSION=<run-id> agent-device close
 ```
+
+Record each proof step as its own top-level shell command. Do not hide proof in
+an interactive shell, script, chained command, or redirected background job.
+Using a bare or mismatched agent-device state directory/session, or restarting
+its daemon inside the timed interval, invalidates the attempt. The collector
+also requires `open` and `close` output to name the exact run session; command
+shape alone is insufficient.
 
 The agent reads `<run-udid>` from the Stim result or control simulator-creation
 output. The explicit UDID prevents an existing automation session from
@@ -189,8 +205,11 @@ demonstrates the intended invariant.
 
 ## Cleanup
 
-After collection, close the run's `agent-device` session, remove its temporary
-screenshot, and terminate only benchmark-owned processes. For Stim, run
+After collection, close the exact run-scoped `agent-device` session and verify
+that the campaign session inventory is empty before a simulator can be parked
+or reused. If closure cannot be proven, stop and clean only the campaign-owned
+daemon. Remove the temporary screenshot and terminate only benchmark-owned
+processes. For Stim, run
 `stim stop` and `stim worktree remove --force`, then verify that the same
 simulator is shut down, renamed as parked, and is the sole pool record. For
 control, remove its worktree and branch and shut down and delete only the newly
