@@ -944,6 +944,19 @@ async function verifyAndroidRun({
     for (const record of verification.errors ?? []) {
       if (record.msg) phase('', chalk.red(String(record.msg)));
     }
+    if (verification.processAlive === false) {
+      phase(
+        'remedy',
+        chalk.yellow('Fix the crash, then run `stim android` again. A Metro reload cannot restart an exited app.'),
+      );
+    } else if (verification.processAlive === true && metroPort !== null) {
+      phase(
+        'remedy',
+        chalk.yellow(
+          `The native app is still running. Fix the JavaScript or TypeScript error, then run \`agent-device metro reload --metro-port ${metroPort}\`. Do not run \`stim android\` unless native inputs changed or the app process exits.`,
+        ),
+      );
+    }
     return LAUNCH_FATAL;
   }
   if (verification?.verified) {
@@ -957,6 +970,14 @@ async function verifyAndroidRun({
     const report = launchErrorReport(verification.errors ?? []);
     if (report.summary) phase('launch', chalk.dim(report.summary));
     for (const line of report.lines) phase('launch', chalk.yellow(line));
+    if (report.lines.length > 0 && verification.processAlive === true && metroPort !== null) {
+      phase(
+        'remedy',
+        chalk.yellow(
+          `The native app is still running. Fix the JavaScript or TypeScript error; Fast Refresh should apply the edit. If the error screen remains, run \`agent-device metro reload --metro-port ${metroPort}\`. Do not run \`stim android\` unless native inputs changed or the app process exits.`,
+        ),
+      );
+    }
     return true;
   }
   if (verification?.skipped) {

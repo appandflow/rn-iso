@@ -965,8 +965,18 @@ test('the agent guide carries the normal workflow and safety rules', () => {
   expect(agent).toMatch(/Do not repeat the\s+phase transcript/);
   expect(agent).toMatch(/Exit code 0 from logs --errors is the pass condition/);
   expect(agent).toContain('No matching log records');
+  expect(agent).toContain('agent-device metro reload --metro-port <reported-port>');
+  expect(agent).toMatch(/app error but also says the native process is alive,[\s\S]*app did not crash/);
+  expect(agent).toMatch(/FATAL because the app process exited,[\s\S]*Metro cannot restart it/);
   expect(agent).toMatch(/Ordinary stim stop and an authorized clean\s+stim worktree remove do not need/);
-  expect(agent).not.toMatch(/agent-device/i);
+});
+
+test('the logs guide keeps Expo and bare React Native stack context on one human error record', () => {
+  const logs = renderTopic('logs');
+  assert(logs);
+  expect(logs).toMatch(/Expo error includes its immediately\s+following code frame and Call Stack lines/);
+  expect(logs).toMatch(/Bare React Native symbolication is\s+shown as separate context/);
+  expect(logs).toMatch(/Context does not change the error count or the raw error records\s+returned by --json/);
 });
 
 test('the agent guide routes to every detailed topic', () => {

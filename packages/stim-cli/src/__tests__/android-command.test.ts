@@ -2465,6 +2465,7 @@ describe('launch verification', () => {
     const h = harness({
       verifyLaunched: async () => ({
         verified: true,
+        processAlive: true,
         waitedMs: 2500,
         errors: [
           { src: 'device', proc: 'ReactNativeJS(1234)', msg: 'a native framework error' },
@@ -2479,6 +2480,37 @@ describe('launch verification', () => {
     );
     expect(text).toMatch(/^  launch {6}a redbox from the app$/m);
     expect(text).not.toMatch(/a native framework error/);
+    expect(text).toContain('agent-device metro reload --metro-port 8082');
+    expect(text).toMatch(/Do not run `stim android` unless native inputs changed or the app process exits/);
+  });
+
+  test('a native process exit recommends another platform run instead of a Metro reload', async () => {
+    const h = harness({
+      verifyLaunched: async () => ({
+        fatal: true,
+        processAlive: false,
+        errors: [{ src: 'device', msg: 'native crash' }],
+      }),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(h.stderr.join('\n')).toMatch(/run `stim android` again.*Metro reload cannot restart an exited app/);
+  });
+
+  test('a Metro build failure with a live native process recommends reload instead of another native run', async () => {
+    const h = harness({
+      verifyLaunched: async () => ({
+        fatal: true,
+        processAlive: true,
+        errors: [{ src: 'metro', msg: 'Unable to resolve module ./missing' }],
+      }),
+    });
+    const result = await h.run();
+    const text = h.stderr.join('\n');
+    expect(result.ok).toBe(false);
+    expect(text).toMatch(/native app is still running/);
+    expect(text).toContain('agent-device metro reload --metro-port 8082');
+    expect(text).toMatch(/Do not run `stim android` unless native inputs changed or the app process exits/);
   });
 
   test('the picker: no bundle request makes it launched: "unverified", still exit ok', async () => {

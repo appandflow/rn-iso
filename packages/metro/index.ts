@@ -38,7 +38,8 @@ interface MetroEvent {
   level?: unknown;
   data?: unknown;
   error?: unknown;
-  stack?: string;
+  stack?: unknown;
+  codeFrame?: unknown;
   buildID?: string;
   bundleDetails?: { platform?: string | null };
 }
@@ -49,7 +50,7 @@ interface LogRecord {
   level: string;
   msg: string;
   event?: string;
-  stack?: string;
+  stack?: unknown;
   marker?: boolean;
   buildID?: string;
   platform?: string;
@@ -223,6 +224,30 @@ function errorMessage(error: unknown): string {
   return formatValue(error);
 }
 
+function symbolicationMessage(codeFrame: unknown): string {
+  if (!isPlainObject(codeFrame) || typeof codeFrame.content !== 'string') return 'Call Stack';
+  const fileName = typeof codeFrame.fileName === 'string' ? codeFrame.fileName : 'unknown source';
+  const location = isPlainObject(codeFrame.location) ? codeFrame.location : null;
+  const row = typeof location?.row === 'number' ? `:${location.row}` : '';
+  const column = typeof location?.column === 'number' ? `:${location.column}` : '';
+  return `Code: ${fileName}${row}${column}\n${codeFrame.content}\nCall Stack`;
+}
+
+function symbolicationStack(stack: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(stack)) return [];
+  return stack
+    .filter((frame) => isPlainObject(frame) && frame.collapse !== true)
+    .map((frame) => {
+      const normalized: Record<string, unknown> = {};
+      if (typeof frame.file === 'string') normalized.file = frame.file;
+      if (typeof frame.lineNumber === 'number') normalized.line = frame.lineNumber;
+      if (typeof frame.column === 'number') normalized.column = frame.column;
+      if (typeof frame.methodName === 'string') normalized.fn = frame.methodName;
+      return normalized;
+    })
+    .filter((frame) => Object.keys(frame).length > 0);
+}
+
 export function ndjsonReporter({ dir }: { dir?: string } = {}): NdjsonReporter {
   const logDir = dir || workspaceLogDir(process.cwd());
   let ensured = false;
@@ -273,6 +298,18 @@ export function ndjsonReporter({ dir }: { dir?: string } = {}): NdjsonReporter {
         record.level = ndjsonLevel(event.level, 'info');
         record.msg = formatData(event.data);
         if (event.stack) record.stack = event.stack;
+        write('client.ndjson', record);
+        return;
+      }
+
+      if (type === 'client_symbolication') {
+        const stack = symbolicationStack(event.stack);
+        const hasCodeFrame = isPlainObject(event.codeFrame) && typeof event.codeFrame.content === 'string';
+        if (!hasCodeFrame && stack.length === 0) return;
+        record.src = 'client';
+        record.level = 'info';
+        record.msg = symbolicationMessage(event.codeFrame);
+        if (stack.length > 0) record.stack = stack;
         write('client.ndjson', record);
         return;
       }

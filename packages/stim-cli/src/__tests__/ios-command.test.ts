@@ -835,6 +835,24 @@ describe('launch verification', () => {
     );
   });
 
+  test('an app error with a live native process recommends reload instead of another native run', async () => {
+    reserve();
+    const { errs } = await run(
+      {},
+      {
+        verifyLaunch: async () => ({
+          verified: true,
+          processAlive: true,
+          errors: [{ src: 'metro', msg: 'ERROR [Error: root render failed]' }],
+        }),
+      },
+    );
+    const text = errs.join('\n');
+    expect(text).toMatch(/native app is still running/);
+    expect(text).toContain('agent-device metro reload --metro-port 8082');
+    expect(text).toMatch(/Do not run `stim ios` unless native inputs changed or the app process exits/);
+  });
+
   test('a verified launch counts the device log instead of printing it', async () => {
     reserve();
     const { errs } = await run(
@@ -875,6 +893,26 @@ describe('launch verification', () => {
     );
     expect(exitCode).toBe(1);
     expect(errs.join('\n')).toMatch(/attention client lost event tag/);
+    expect(errs.join('\n')).toMatch(/run `stim ios` again.*Metro reload cannot restart an exited app/);
+  });
+
+  test('a Metro build failure with a live native process recommends reload instead of another native run', async () => {
+    reserve();
+    const { errs, exitCode } = await run(
+      {},
+      {
+        verifyLaunch: async () => ({
+          fatal: true,
+          processAlive: true,
+          errors: [{ src: 'metro', msg: 'Unable to resolve module ./missing' }],
+        }),
+      },
+    );
+    const text = errs.join('\n');
+    expect(exitCode).toBe(1);
+    expect(text).toMatch(/native app is still running/);
+    expect(text).toContain('agent-device metro reload --metro-port 8082');
+    expect(text).toMatch(/Do not run `stim ios` unless native inputs changed or the app process exits/);
   });
 
   test('the picker: an unverified launch is launched: "unverified", exit 0, and a loud warning', async () => {

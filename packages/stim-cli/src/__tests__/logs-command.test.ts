@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Command } from 'commander';
-import { parseNdjsonLine } from '../ndjson.ts';
+import { type NdjsonRecord, parseNdjsonLine } from '../ndjson.ts';
 import { workspaceDir, workspaceLogsDir } from '../paths.ts';
 import logsCommand, {
   ERRORS_PRINT_CAP,
@@ -269,6 +269,128 @@ describe('logs command', () => {
     expect(parsedMsgs(out)).toEqual(['fresh']);
   });
 
+  test('--errors keeps Expo code and call-stack lines with their error in human output', () => {
+    const event = 'expo_stdout';
+    const error = {
+      ts: 1,
+      src: 'metro',
+      level: 'error',
+      raw: true,
+      event,
+      msg: 'ERROR  [Error: STIM_BENCH_LAUNCH_CRASH_1427F780936F]',
+    };
+    writeLog('metro.ndjson', [
+      error,
+      { ts: 2, src: 'metro', level: 'info', raw: true, event, msg: 'Code: _layout.tsx' },
+      { ts: 3, src: 'metro', level: 'info', raw: true, event, msg: '> 27 |   throw new Error(...)' },
+      { ts: 4, src: 'metro', level: 'info', raw: true, event, msg: '     |                  ^' },
+      { ts: 5, src: 'metro', level: 'info', raw: true, event, msg: 'Call Stack' },
+      { ts: 6, src: 'metro', level: 'info', raw: true, event, msg: '  RootLayout (app/_layout.tsx:27:18)' },
+      { ts: 7, src: 'metro', level: 'info', raw: true, event, msg: '  at app/index.tsx:1:1' },
+      { ts: 8, src: 'metro', level: 'info', raw: true, event, msg: 'iOS Bundled 50ms' },
+    ]);
+
+    run({ errors: true });
+    expect(out).toHaveLength(1);
+    expect(out[0]).toContain('Code: _layout.tsx');
+    expect(out[0]).toContain('RootLayout (app/_layout.tsx:27:18)');
+    expect(out[0]).toContain('at app/index.tsx:1:1');
+    expect(out[0]).not.toContain('iOS Bundled');
+
+    out.length = 0;
+    run({ errors: true, json: true });
+    expect(out).toHaveLength(1);
+    expect(parseNdjsonLine(out[0])).toEqual(error);
+  });
+
+  test('--errors keeps bare React Native symbolication with its error in human output', () => {
+    const error = { ts: 1, src: 'client', level: 'error', msg: '[Error: STIM_BARE_LAUNCH_CRASH]' };
+    writeLog('client.ndjson', [
+      error,
+      {
+        ts: 2,
+        src: 'client',
+        level: 'info',
+        event: 'client_symbolication',
+        msg: 'Code: /app/App.tsx:18:8\n> 18 | throw new Error("STIM_BARE_LAUNCH_CRASH")\nCall Stack',
+        stack: [{ file: '/app/App.tsx', line: 18, column: 8, fn: 'App' }],
+      },
+      {
+        ts: 3,
+        src: 'client',
+        level: 'info',
+        event: 'client_symbolication',
+        msg: 'Code: /app/App.tsx:16:35\n> 16 | function App()\nCall Stack',
+        stack: [
+          { file: '/app/App.tsx', line: 18, column: 8, fn: 'App' },
+          { file: '/app/App.tsx', line: 16, column: 35, fn: 'App' },
+        ],
+      },
+    ]);
+
+    run({ errors: true });
+    expect(out).toHaveLength(3);
+    expect(out[0]).toContain('[Error: STIM_BARE_LAUNCH_CRASH]');
+    expect(out[1]).toContain('Metro symbolication context (not correlated to a specific client error)');
+    expect(out[1]).toContain('Code: /app/App.tsx:18:8');
+    expect(out[1]).toContain('at App (/app/App.tsx:18:8)');
+    expect(out[2]).toContain('Code: /app/App.tsx:16:35');
+
+    out.length = 0;
+    run({ errors: true, json: true });
+    expect(out).toHaveLength(1);
+    expect(parseNdjsonLine(out[0])).toEqual(error);
+  });
+
+  test('--errors reports reordered bare symbolication separately from client errors', () => {
+    writeLog('client.ndjson', [
+      {
+        ts: 1,
+        src: 'client',
+        level: 'info',
+        event: 'client_symbolication',
+        msg: 'Code: /app/First.tsx:1:1\n> 1 | throw first\nCall Stack',
+      },
+      { ts: 2, src: 'client', level: 'error', msg: '[Error: first]' },
+      { ts: 3, src: 'client', level: 'error', msg: '[Error: second]' },
+    ]);
+
+    run({ errors: true });
+    expect(out).toHaveLength(3);
+    expect(out[0]).toContain('not correlated to a specific client error');
+    expect(out[0]).toContain('First.tsx');
+    expect(out[1]).not.toContain('First.tsx');
+    expect(out[2]).not.toContain('First.tsx');
+  });
+
+  test('--since also bounds bare context when a launch marker exists', () => {
+    const now = Date.now();
+    writeLog('build-ios.ndjson', [
+      { ts: now - 60 * 60 * 1000, src: 'build', level: 'info', msg: 'launched', marker: true },
+    ]);
+    writeLog('client.ndjson', [
+      {
+        ts: now - 30 * 60 * 1000,
+        src: 'client',
+        level: 'info',
+        event: 'client_symbolication',
+        msg: 'old context',
+      },
+      {
+        ts: now - 60 * 1000,
+        src: 'client',
+        level: 'info',
+        event: 'client_symbolication',
+        msg: 'recent context',
+      },
+      { ts: now, src: 'client', level: 'error', msg: '[Error: recent]' },
+    ]);
+
+    run({ errors: true, since: '5m' });
+    expect(out.join('\n')).toContain('recent context');
+    expect(out.join('\n')).not.toContain('old context');
+  });
+
   test('--source, --level, --grep and --tail reach the query', () => {
     writeLog('metro.ndjson', [
       { ts: 1, src: 'metro', level: 'debug', msg: 'noise' },
@@ -368,7 +490,7 @@ describe('logs command', () => {
       expect(out[0]).toMatch(/device line$/);
     });
 
-    test(`--errors prints at most ${ERRORS_PRINT_CAP} records and says how many are left`, () => {
+    test(`--errors prints at most ${ERRORS_PRINT_CAP} errors plus context and says how many are left`, () => {
       const many = [];
       for (let i = 0; i < 3004; i += 1) {
         many.push({ ts: 1000 + i, src: 'client', level: 'error', msg: `boom ${i}` });
@@ -382,6 +504,30 @@ describe('logs command', () => {
       expect(out[ERRORS_PRINT_CAP]).toMatch(new RegExp(`and ${hidden} more`));
       expect(out[ERRORS_PRINT_CAP]).toMatch(new RegExp(`--tail ${hidden}`));
       expect(out[ERRORS_PRINT_CAP]).toMatch(/--json/);
+    });
+
+    test('the error cap includes context around visible errors without counting it as an error', () => {
+      const symbolication = (ts: number, msg: string) => ({
+        ts,
+        src: 'client',
+        level: 'info',
+        event: 'client_symbolication',
+        msg,
+      });
+      const records: NdjsonRecord[] = [symbolication(1, 'before visible errors')];
+      for (let i = 0; i < ERRORS_PRINT_CAP; i += 1) {
+        records.push({ ts: 2 + i, src: 'client', level: 'error', msg: `boom ${i}` });
+      }
+      records.push(symbolication(22, 'after visible errors'));
+      records.push({ ts: 23, src: 'client', level: 'error', msg: 'hidden error' });
+      records.push(symbolication(24, 'after hidden error'));
+      writeLog('client.ndjson', records);
+
+      run({ errors: true });
+      expect(out.join('\n')).toContain('before visible errors');
+      expect(out.join('\n')).toContain('after visible errors');
+      expect(out.join('\n')).not.toContain('after hidden error');
+      expect(out.at(-1)).toMatch(/and 1 more/);
     });
 
     test('the cap does not apply to --json, or to an explicit --tail', () => {

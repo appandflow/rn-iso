@@ -210,6 +210,31 @@ export function reporterLogger(reporter: BareModule): {
   return { info: at('info'), warn: at('warn'), error: at('error') };
 }
 
+export function symbolicationReporterMiddleware(reporter: BareModule): BareModule {
+  return (req: BareModule, res: BareModule, next: () => void) => {
+    if (typeof req?.url !== 'string' || req.url.split('?', 1)[0] !== '/symbolicate') {
+      next();
+      return;
+    }
+    const end = res.end;
+    res.end = function (chunk?: unknown, ...args: unknown[]) {
+      try {
+        const text = typeof chunk === 'string' ? chunk : Buffer.isBuffer(chunk) ? chunk.toString('utf8') : null;
+        const body = text ? JSON.parse(text) : null;
+        if (body !== null && typeof body === 'object' && !Array.isArray(body)) {
+          reporter.update({
+            type: 'client_symbolication',
+            codeFrame: (body as BareModule).codeFrame,
+            stack: (body as BareModule).stack,
+          });
+        }
+      } catch {}
+      return end.call(this, chunk, ...args);
+    };
+    next();
+  };
+}
+
 function closeHttpServer(httpServer: BareModule, timeoutMs: number): Promise<void> {
   return new Promise<void>((resolve) => {
     let done = false;
@@ -321,7 +346,7 @@ export async function startBareServer({
   });
 
   const httpServer = await metro.runServer(config, {
-    unstable_extraMiddleware: [communityMiddleware, middleware],
+    unstable_extraMiddleware: [symbolicationReporterMiddleware(reporter), communityMiddleware, middleware],
     websocketEndpoints: { ...communityWebsocketEndpoints, ...websocketEndpoints },
   });
 

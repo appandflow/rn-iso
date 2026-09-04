@@ -182,6 +182,68 @@ export function readLogRecords(dir: string): NdjsonRecord[] {
   return sortByTs(all);
 }
 
+function isExpoErrorContext(record: NdjsonRecord, event: unknown): boolean {
+  if (record.src !== 'metro' || record.raw !== true || record.event !== event || typeof record.msg !== 'string') {
+    return false;
+  }
+  return (
+    /^Code: \S/.test(record.msg) ||
+    /^\s*>?\s*\d+\s*\|/.test(record.msg) ||
+    /^\s*\|\s*\^/.test(record.msg) ||
+    /^Call Stack$/.test(record.msg) ||
+    /^\s+.+\([^()]+:\d+:\d+\)\s*$/.test(record.msg) ||
+    /^\s+at\s+\S+:\d+:\d+\s*$/.test(record.msg)
+  );
+}
+
+function attachExpoErrorContext(all: NdjsonRecord[], matched: NdjsonRecord[]): NdjsonRecord[] {
+  return matched.map((record) => {
+    if (
+      record.src !== 'metro' ||
+      record.raw !== true ||
+      (record.level !== 'error' && record.level !== 'fatal') ||
+      typeof record.msg !== 'string'
+    ) {
+      return record;
+    }
+    const index = all.indexOf(record);
+    if (index === -1) return record;
+    const context: string[] = [];
+    for (let i = index + 1; i < all.length; i += 1) {
+      const next = all[i] as NdjsonRecord;
+      if (next.src !== 'metro') continue;
+      if (!isExpoErrorContext(next, record.event)) break;
+      context.push(next.msg as string);
+    }
+    return context.length > 0 ? { ...record, msg: [record.msg, ...context].join('\n') } : record;
+  });
+}
+
+function includeBareErrorContext(
+  all: NdjsonRecord[],
+  matched: NdjsonRecord[],
+  launchTs: number | null,
+  sinceTs: number | undefined,
+): NdjsonRecord[] {
+  const hasClientError = matched.some(
+    (record) => record.src === 'client' && (record.level === 'error' || record.level === 'fatal'),
+  );
+  if (!hasClientError) return matched;
+  const renderedContext: NdjsonRecord[] = [];
+  for (const record of all) {
+    if (record.src !== 'client' || record.event !== 'client_symbolication') continue;
+    const ts = tsOf(record);
+    if (launchTs !== null && (ts === null || ts <= launchTs)) continue;
+    if (sinceTs !== undefined && (ts === null || ts < sinceTs)) continue;
+    renderedContext.push({
+      ...record,
+      msg: `Metro symbolication context (not correlated to a specific client error)\n${String(record.msg ?? '')}`,
+      errorContext: true,
+    });
+  }
+  return sortByTs([...matched, ...renderedContext]);
+}
+
 export function queryLogs({
   dir,
   sources,
@@ -190,6 +252,7 @@ export function queryLogs({
   grep,
   tail,
   errorsOnly,
+  errorContext,
   now,
 }: {
   dir?: string;
@@ -199,6 +262,7 @@ export function queryLogs({
   grep?: string | RegExp;
   tail?: number;
   errorsOnly?: boolean;
+  errorContext?: boolean;
   now?: number;
 } = {}): NdjsonRecord[] {
   const all = readLogRecords(dir as string);
@@ -216,11 +280,13 @@ export function queryLogs({
     bundleMarkerTs: bundleTs === null ? undefined : bundleTs,
   });
 
-  const matched = all.filter((r) => recordMatches(r, criteria));
+  let matched = all.filter((r) => recordMatches(r, criteria));
   if (typeof tail === 'number' && tail >= 0 && matched.length > tail) {
-    return matched.slice(matched.length - tail);
+    matched = matched.slice(matched.length - tail);
   }
-  return matched;
+  return errorContext
+    ? includeBareErrorContext(all, attachExpoErrorContext(all, matched), launchTs, criteria.sinceTs)
+    : matched;
 }
 
 export function tailRead(prev: TailState | null | undefined, size: number): { start: number; prev: TailState } {

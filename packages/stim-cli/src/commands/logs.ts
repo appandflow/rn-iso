@@ -178,6 +178,7 @@ export default function logsCommand(program: Command): void {
         grep: opts.grep,
         tail,
         errorsOnly: Boolean(opts.errors),
+        errorContext: Boolean(opts.errors && !opts.json && !opts.follow),
       };
 
       const emit = (record: NdjsonRecord) => {
@@ -191,12 +192,18 @@ export default function logsCommand(program: Command): void {
       const offsets = opts.follow ? fileSizes(dir) : null;
 
       const records = queryLogs(query);
+      const errorCount = records.filter((record) => record.errorContext !== true).length;
+      let seenErrors = 0;
       const capped =
-        opts.errors && !opts.json && tail === undefined && records.length > ERRORS_PRINT_CAP
-          ? records.slice(0, ERRORS_PRINT_CAP)
+        opts.errors && !opts.json && tail === undefined && errorCount > ERRORS_PRINT_CAP
+          ? records.filter((record) => {
+              if (record.errorContext === true) return seenErrors <= ERRORS_PRINT_CAP;
+              seenErrors += 1;
+              return seenErrors <= ERRORS_PRINT_CAP;
+            })
           : records;
       for (const record of capped) emit(record);
-      const hidden = records.length - capped.length;
+      const hidden = errorCount - capped.filter((record) => record.errorContext !== true).length;
       if (hidden > 0) {
         console.log(chalk.dim(`... and ${hidden} more (rerun with --tail ${hidden} or --json)`));
       }

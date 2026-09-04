@@ -1177,6 +1177,22 @@ async function verifyIosRun({
     for (const record of verification.errors ?? []) {
       if (record.msg) note(chalk.red(phaseLine('', String(record.msg))));
     }
+    if (verification.processAlive === false) {
+      note(
+        chalk.yellow(
+          phaseLine('remedy', 'Fix the crash, then run `stim ios` again. A Metro reload cannot restart an exited app.'),
+        ),
+      );
+    } else if (verification.processAlive === true && metroPort !== null) {
+      note(
+        chalk.yellow(
+          phaseLine(
+            'remedy',
+            `The native app is still running. Fix the JavaScript or TypeScript error, then run \`agent-device metro reload --metro-port ${metroPort}\`. Do not run \`stim ios\` unless native inputs changed or the app process exits.`,
+          ),
+        ),
+      );
+    }
     return LAUNCH_FATAL;
   }
   if (verification?.verified) {
@@ -1187,7 +1203,17 @@ async function verifyIosRun({
         `, stable for 3s -- the first screen may still be rendering` +
         ` (${formatDuration(verification.waitedMs ?? 0)} total)`,
     );
-    reportLaunchErrors(verification.errors ?? [], note);
+    const hasAppErrors = reportLaunchErrors(verification.errors ?? [], note);
+    if (hasAppErrors && verification.processAlive === true && metroPort !== null) {
+      note(
+        chalk.yellow(
+          phaseLine(
+            'remedy',
+            `The native app is still running. Fix the JavaScript or TypeScript error; Fast Refresh should apply the edit. If the error screen remains, run \`agent-device metro reload --metro-port ${metroPort}\`. Do not run \`stim ios\` unless native inputs changed or the app process exits.`,
+          ),
+        ),
+      );
+    }
     return true;
   }
   if (verification?.skipped) {
@@ -1234,10 +1260,11 @@ async function verifyIosRun({
   return LAUNCH_UNVERIFIED;
 }
 
-function reportLaunchErrors(errors: LaunchErrorRecord[], note: (line: string) => void): void {
+function reportLaunchErrors(errors: LaunchErrorRecord[], note: (line: string) => void): boolean {
   const report = launchErrorReport(errors);
   if (report.summary) note(chalk.dim(phaseLine('launch', report.summary)));
   for (const line of report.lines) note(chalk.yellow(phaseLine('launch', line)));
+  return report.lines.length > 0;
 }
 
 async function finishIosUpload(

@@ -67,7 +67,8 @@ node scripts/agent-benchmark/driver.mjs dispatch gpt-5.6-sol stim javascript sol
 the agent the fixture checkout as its starting directory, and requires the
 agent to create the measured run worktree itself. `collect` rejects source
 inspection before launch/error capture, a missing exact repair, a missing
-successful relaunch, a mismatched device, or missing Settings-screen proof.
+mismatched device, or missing Settings-screen proof. The recovery mechanism is
+measured, not prescribed.
 
 Run the self-tests before a campaign:
 
