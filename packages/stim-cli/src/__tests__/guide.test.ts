@@ -945,6 +945,7 @@ test('the website offers copyable outcome prompts and explains skill activation'
   expect(promptBox).toContain('Example agent response');
   expect(gettingStarted).toContain('You normally do not need to name Stim');
   expect(gettingStarted).toContain('The current checkout is the default');
+  expect(gettingStarted).toContain('illustrative agent response');
   expect(gettingStarted).toContain('Run the app on an iPhone 17 simulator with iOS 26.5');
   expect(gettingStarted).toContain('Show iOS build performance');
   expect(gettingStarted).toContain('Record the affected flow before and after on iOS with agent-device');

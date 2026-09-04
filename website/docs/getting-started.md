@@ -61,7 +61,9 @@ build-performance details when you want history across runs.
 
 ## Common prompts
 
-Each prompt has a copy button and a simulated response based on Trailhead.
+Each prompt has a copy button and an illustrative agent response. Simulator
+results use the Trailhead run above; device and PR flows show the same compact
+reporting style.
 
 <PromptGrid>
   <PromptBox

@@ -1,6 +1,17 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
+  oxc: {
+    jsx: {
+      runtime: 'automatic',
+    },
+  },
+  resolve: {
+    alias: {
+      '@theme/CodeBlock': fileURLToPath(new URL('./website/src/test/CodeBlock.ts', import.meta.url)),
+    },
+  },
   test: {
     globals: true,
     environment: 'node',
