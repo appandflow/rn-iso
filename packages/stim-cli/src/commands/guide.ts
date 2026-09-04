@@ -1473,8 +1473,6 @@ not on any remote"  (worktree remove)
   refusal actually named.
   Use --force only when you genuinely intend to discard work; it deletes
   uncommitted and untracked files permanently.
-  Runtime state is outside the project tree, so Stim's own files never cause
-  Other dirty paths still refuse as described above.
 
 STIM_WORKTREE_BRANCH_EXISTS  (worktree create)
   "Refusing to create <name>: the branch worktree-<name> already exists at
