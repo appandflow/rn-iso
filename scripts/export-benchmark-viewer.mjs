@@ -241,13 +241,19 @@ export function eventsFor(runDir, start, replacements) {
         const begin = started.get(content.tool_use_id);
         if (!begin) continue;
         const output = claudeToolOutput(event, content);
+        const result = event.tool_use_result;
+        const exitCode = Number.isInteger(result?.exit_code)
+          ? result.exit_code
+          : content.is_error || result?.is_error || result?.interrupted
+            ? 1
+            : 0;
         commands.push({
           id: content.tool_use_id,
           startSeconds: relativeSeconds(begin.at, start),
           endSeconds: relativeSeconds(stamped.arrivedAt, start),
           command: sanitizeBenchmarkText(unwrapShellCommand(begin.command), replacements),
           output: sanitizeCommandOutput(begin.command, output, replacements),
-          exitCode: content.is_error || event.tool_use_result?.interrupted ? 1 : 0,
+          exitCode,
         });
         started.delete(content.tool_use_id);
       }
@@ -437,12 +443,41 @@ function nonShellActivitiesFor(runDir) {
   return activities;
 }
 
-function validLaunchCrashRecord(runDir, record, meta) {
+function usageAtOrBefore(path, observedAt) {
+  if (!path || !existsSync(path)) return null;
+  const cutoff = Date.parse(observedAt);
+  if (!Number.isFinite(cutoff)) return null;
+  let usage = null;
+  for (const line of readFileSync(path, 'utf8').trim().split('\n').filter(Boolean)) {
+    const event = JSON.parse(line);
+    const timestamp = Date.parse(event.timestamp);
+    const candidate = event.payload?.info?.total_token_usage;
+    if (
+      event.type === 'event_msg' &&
+      event.payload?.type === 'token_count' &&
+      candidate &&
+      Number.isFinite(timestamp) &&
+      timestamp <= cutoff
+    ) {
+      usage = candidate;
+    }
+  }
+  return usage;
+}
+
+function sameUsage(left, right) {
+  if (left === null || right === null) return left === right;
+  return ['input_tokens', 'cached_input_tokens', 'output_tokens', 'reasoning_output_tokens'].every(
+    (field) => (left?.[field] ?? 0) === (right?.[field] ?? 0),
+  );
+}
+
+function validateLaunchCrashRecord(runDir, record, meta) {
   const eventsPath = join(runDir, 'events.jsonl');
   const proofPath = join(runDir, 'proof', 'settings.png');
-  if (!existsSync(eventsPath) || !validPng(proofPath, record.screen?.dimensions)) return false;
-  if (record.evidenceSha256?.events !== fileSha256(eventsPath)) return false;
-  if (record.evidenceSha256?.settingsPng !== fileSha256(proofPath)) return false;
+  if (!existsSync(eventsPath) || !validPng(proofPath, record.screen?.dimensions)) return null;
+  if (record.evidenceSha256?.events !== fileSha256(eventsPath)) return null;
+  if (record.evidenceSha256?.settingsPng !== fileSha256(proofPath)) return null;
   const eventData = eventsFor(runDir, meta.dispatchAt, []);
   const commands = eventData.commands.map((command) =>
     Object.assign({}, command, {
@@ -453,7 +488,7 @@ function validLaunchCrashRecord(runDir, record, meta) {
   const token = [record.proof?.expected, ...commands.map((command) => command.output)]
     .join('\n')
     .match(/STIM_BENCH_LAUNCH_CRASH_[0-9A-F]{12}/)?.[0];
-  if (!token) return false;
+  if (!token) return null;
   const diagnosis = launchCrashDiagnosis(commands, {
     dispatchAt: meta.dispatchAt,
     token,
@@ -467,15 +502,34 @@ function validLaunchCrashRecord(runDir, record, meta) {
     platform: meta.platform ?? 'ios',
     screen: record.screen,
   });
-  return (
-    diagnosis.valid &&
-    recovery.valid &&
-    record.diagnosis?.initialLaunchCommandId === diagnosis.initialLaunchCommandId &&
-    record.diagnosis?.errorCaptureCommandId === diagnosis.errorCaptureCommandId &&
-    record.diagnosis?.commandId === diagnosis.commandId &&
-    record.recovery?.repairedLaunchCommandId === recovery.repairedLaunchCommandId &&
-    record.recovery?.screenshotCommandId === recovery.screenshotCommandId
-  );
+  if (!diagnosis.valid || !recovery.valid) return null;
+  const screenReadySeconds = relativeSeconds(record.screen.observedAt, meta.dispatchAt);
+  const runner = record.runner ?? meta.runner;
+  const transcriptPath = runner === 'claude' ? eventsPath : join(runDir, 'rollout.jsonl');
+  const diagnosisUsage = runner === 'claude' ? null : usageAtOrBefore(transcriptPath, diagnosis.observedAt);
+  if (!existsSync(transcriptPath)) return null;
+  if (record.evidenceSha256?.transcript !== fileSha256(transcriptPath)) return null;
+  if (
+    record.diagnosis?.observedAt !== diagnosis.observedAt ||
+    record.dispatchToDiagnosisSeconds !== diagnosis.dispatchToDiagnosisSeconds ||
+    record.diagnosisCommandCount !== diagnosis.commandCount ||
+    record.screen?.observedAt !== new Date(Date.parse(meta.dispatchAt) + screenReadySeconds * 1000).toISOString() ||
+    record.dispatchToScreenReadySeconds !== screenReadySeconds ||
+    record.screen?.dispatchToScreenReadySeconds !== screenReadySeconds ||
+    !sameUsage(record.diagnosisUsage ?? null, diagnosisUsage)
+  ) {
+    return null;
+  }
+  if (
+    record.diagnosis?.initialLaunchCommandId !== diagnosis.initialLaunchCommandId ||
+    record.diagnosis?.errorCaptureCommandId !== diagnosis.errorCaptureCommandId ||
+    record.diagnosis?.commandId !== diagnosis.commandId ||
+    record.recovery?.repairedLaunchCommandId !== recovery.repairedLaunchCommandId ||
+    record.recovery?.screenshotCommandId !== recovery.screenshotCommandId
+  ) {
+    return null;
+  }
+  return { diagnosis, recovery, diagnosisUsage, screenReadySeconds };
 }
 
 export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
@@ -489,12 +543,18 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
     .map((name) => join(absoluteStageDir, name))
     .filter((runDir) => existsSync(join(runDir, 'run.json')) && existsSync(join(runDir, 'meta.json')));
   const records = runDirs
-    .map((runDir) => ({
-      runDir,
-      record: readJson(join(runDir, 'run.json')),
-      meta: readJson(join(runDir, 'meta.json')),
-    }))
-    .filter(({ runDir, record, meta }) => {
+    .map((runDir) => {
+      const record = readJson(join(runDir, 'run.json'));
+      const meta = readJson(join(runDir, 'meta.json'));
+      return {
+        runDir,
+        record,
+        meta,
+        launchCrashValidation:
+          record.variant === 'launch-crash' ? validateLaunchCrashRecord(runDir, record, meta) : null,
+      };
+    })
+    .filter(({ runDir, record, launchCrashValidation }) => {
       if (!record.valid || !record.screen?.valid || !existsSync(join(runDir, 'proof', 'settings.png'))) return false;
       if (record.variant !== 'launch-crash') return true;
       return (
@@ -507,7 +567,7 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
         record.recovery?.valid === true &&
         typeof record.recovery.repairedLaunchCommandId === 'string' &&
         typeof record.recovery.screenshotCommandId === 'string' &&
-        validLaunchCrashRecord(runDir, record, meta)
+        launchCrashValidation !== null
       );
     });
   if (records.length === 0) throw new Error(`no valid benchmark runs found in ${absoluteStageDir}`);
@@ -520,8 +580,7 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
   const attemptCounts = new Map();
   const environment = benchmarkEnvironment(readJson(join(records[0].runDir, 'meta.json')), machine);
   const runs = records
-    .map(({ runDir, record }) => {
-      const meta = readJson(join(runDir, 'meta.json'));
+    .map(({ runDir, record, meta, launchCrashValidation }) => {
       const appAlive = existsSync(join(runDir, 'app-alive.json')) ? readJson(join(runDir, 'app-alive.json')) : null;
       const baseId = publicRunId(record);
       const attemptKind = record.valid ? 'valid' : 'invalid';
@@ -561,10 +620,10 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
         arm: record.arm,
         valid: record.valid,
         invalidReasons: (record.invalidReasons ?? []).map((reason) => sanitizeBenchmarkText(reason, replacements)),
-        settingsReadySeconds: record.dispatchToScreenReadySeconds,
+        settingsReadySeconds: launchCrashValidation?.screenReadySeconds ?? record.dispatchToScreenReadySeconds,
         appAliveSeconds: record.dispatchToAppAliveSeconds,
-        diagnosisSeconds: record.dispatchToDiagnosisSeconds ?? null,
-        diagnosisCommandCount: record.diagnosisCommandCount ?? null,
+        diagnosisSeconds: launchCrashValidation?.diagnosis.dispatchToDiagnosisSeconds ?? null,
+        diagnosisCommandCount: launchCrashValidation?.diagnosis.commandCount ?? null,
         launchCrashAudit:
           record.variant === 'launch-crash'
             ? {
@@ -575,8 +634,8 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
                 screenshotCommandId: record.recovery.screenshotCommandId,
               }
             : null,
-        diagnosisUsage: record.diagnosisUsage ?? null,
-        estimatedDiagnosisCostUsd: estimateTokenCost(record.diagnosisUsage, record.model),
+        diagnosisUsage: launchCrashValidation?.diagnosisUsage ?? null,
+        estimatedDiagnosisCostUsd: estimateTokenCost(launchCrashValidation?.diagnosisUsage, record.model),
         totalSeconds,
         commandCount: record.commandCount,
         usage,
@@ -592,11 +651,11 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
             label: 'App process alive',
             atSeconds: relativeSeconds(appAlive.observedAt, meta.dispatchAt),
           },
-          record.diagnosis?.observedAt && {
+          launchCrashValidation?.diagnosis.observedAt && {
             id: 'diagnosis',
             kind: 'diagnosis',
             label: 'Actionable diagnosis',
-            atSeconds: relativeSeconds(record.diagnosis.observedAt, meta.dispatchAt),
+            atSeconds: launchCrashValidation.diagnosis.dispatchToDiagnosisSeconds,
           },
           record.screen?.observedAt && {
             id: 'settings-ready',

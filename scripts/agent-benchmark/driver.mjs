@@ -348,7 +348,7 @@ function preflight() {
     'for p in 8081 8082 8083 8084 8085 8086 8087 8088 8089 8090; do /usr/sbin/lsof -nP -iTCP:$p -sTCP:LISTEN 2>/dev/null; done; exit 0',
   ]);
   if (listeners) throw new Error(`Metro-range listener found:\n${listeners}`);
-  const disk = run('df', ['-k', '/', '/Volumes/ExternalSSD']);
+  const disk = run('df', ['-k', main, root]);
   const load = run('sysctl', ['-n', 'vm.loadavg']);
   const thermal = run('pmset', ['-g', 'therm']);
   if (thermal.split('\n').some((line) => /warning/i.test(line) && !/No .*warning/i.test(line))) {
@@ -953,7 +953,7 @@ async function dispatch(model, arm, variant, stage = 'pilot') {
     join(runDir, 'events.jsonl'),
     { cwd: runnerCwd, env, stdio: ['pipe', 'pipe', 'pipe'] },
     prompt,
-    runnerKind === 'claude' ? 25 * 60 * 1000 : null,
+    25 * 60 * 1000,
   );
   const runnerResult = await runner;
   const watcherResult = await watcherClosed;
@@ -1625,6 +1625,7 @@ function collect(runDir) {
     evidenceSha256: {
       events: existsSync(eventsPath) ? sha256(eventsPath) : null,
       settingsPng: screen.valid && existsSync(screen.target) ? sha256(screen.target) : null,
+      transcript: rollout && existsSync(rollout) ? sha256(rollout) : null,
     },
     reportedCostUsd: runnerMetrics?.reportedCostUsd ?? null,
     modelUsage: runnerMetrics?.modelUsage ?? null,

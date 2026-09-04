@@ -207,6 +207,29 @@ describe('benchmark viewer export', () => {
     );
   });
 
+  it('preserves a failed Claude Bash exit code when reconstructing events', () => {
+    const root = mkdtempSync(join(tmpdir(), 'stim-claude-events-'));
+    tempDirs.push(root);
+    writeFileSync(
+      join(root, 'events.jsonl'),
+      `${[
+        stamp('2026-09-04T12:00:01.000Z', {
+          type: 'assistant',
+          message: {
+            content: [{ type: 'tool_use', id: 'failed', name: 'Bash', input: { command: 'npx expo run:ios' } }],
+          },
+        }),
+        stamp('2026-09-04T12:00:02.000Z', {
+          type: 'user',
+          message: { content: [{ type: 'tool_result', tool_use_id: 'failed', content: 'failed' }] },
+          tool_use_result: { exit_code: 1 },
+        }),
+      ].join('\n')}\n`,
+    );
+
+    expect(eventsFor(root, '2026-09-04T12:00:00.000Z', []).commands[0].exitCode).toBe(1);
+  });
+
   it('summarizes a Stim-assisted launch-failure diagnosis separately from a normal change', () => {
     const commands = [
       {
@@ -551,10 +574,31 @@ describe('benchmark viewer export', () => {
     );
     const proofPath = join(runDir, 'proof', 'settings.png');
     copyFileSync(join(process.cwd(), 'website/static/benchmarks/sol-launch-crash/launch-crash-stim.png'), proofPath);
+    const rolloutPath = join(runDir, 'rollout.jsonl');
     writeFileSync(
-      join(runDir, 'run.json'),
+      rolloutPath,
+      `${JSON.stringify({
+        timestamp: '2026-09-04T12:01:30.000Z',
+        type: 'event_msg',
+        payload: {
+          type: 'token_count',
+          info: {
+            total_token_usage: {
+              input_tokens: 100_000,
+              cached_input_tokens: 80_000,
+              output_tokens: 1_000,
+              reasoning_output_tokens: 100,
+            },
+          },
+        },
+      })}\n`,
+    );
+    const recordPath = join(runDir, 'run.json');
+    writeFileSync(
+      recordPath,
       JSON.stringify({
         runId: 'private-run-id',
+        runner: 'codex',
         model: 'gpt-5.6-sol',
         variant: 'launch-crash',
         arm: 'stim',
@@ -590,11 +634,13 @@ describe('benchmark viewer export', () => {
           expected: 'Keep map tiles for saved trails on device',
           dimensions: { width: 402, height: 874 },
           observedAt: '2026-09-04T12:02:30.000Z',
+          dispatchToScreenReadySeconds: 150,
           screenshotCommandId: 'screenshot',
         },
         evidenceSha256: {
           events: sha256(join(runDir, 'events.jsonl')),
           settingsPng: sha256(proofPath),
+          transcript: sha256(rolloutPath),
         },
       }),
     );
@@ -626,6 +672,22 @@ describe('benchmark viewer export', () => {
       label: 'Actionable diagnosis',
       atSeconds: 90,
     });
+
+    const original = JSON.parse(readFileSync(recordPath, 'utf8'));
+    for (const mutate of [
+      (record) => (record.dispatchToDiagnosisSeconds = 1),
+      (record) => (record.diagnosisCommandCount = 1),
+      (record) => (record.dispatchToScreenReadySeconds = 1),
+      (record) => (record.diagnosisUsage.input_tokens = 1),
+    ]) {
+      const changed = structuredClone(original);
+      mutate(changed);
+      writeFileSync(recordPath, JSON.stringify(changed));
+      expect(() => exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'proof'))).toThrow(
+        'no valid benchmark runs found',
+      );
+    }
+    writeFileSync(recordPath, JSON.stringify(original));
   });
 
   it('refuses a launch-crash record without audited recovery proof', () => {

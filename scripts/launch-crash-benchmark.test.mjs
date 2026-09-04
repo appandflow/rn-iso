@@ -38,6 +38,7 @@ describe('launch crash benchmark', () => {
           command: 'stim ios',
           output: token,
           exitCode: 0,
+          startedAt: '2026-09-04T12:00:01.000Z',
           endedAt: '2026-09-04T12:00:10.000Z',
         },
         {
@@ -45,6 +46,7 @@ describe('launch crash benchmark', () => {
           command: 'stim logs --errors',
           output: `${token}\napp/_layout.tsx:28 in RootLayout`,
           exitCode: 0,
+          startedAt: '2026-09-04T12:00:11.000Z',
           endedAt: '2026-09-04T12:00:15.000Z',
         },
       ],
@@ -94,6 +96,51 @@ describe('launch crash benchmark', () => {
       reason: 'launch-crash-pre-capture-command-not-allowed',
       commandId: 'inspect',
     });
+  });
+
+  it('rejects source inspection hidden after an allowed compound-command prefix', () => {
+    const token = launchCrashToken('run');
+    const tail = [
+      {
+        id: 'launch',
+        command: 'stim ios',
+        output: token,
+        exitCode: 0,
+        startedAt: '2026-09-04T12:00:02.000Z',
+        endedAt: '2026-09-04T12:00:10.000Z',
+      },
+      {
+        id: 'logs',
+        command: 'stim logs --errors',
+        output: `${token}\napp/_layout.tsx in RootLayout`,
+        exitCode: 0,
+        startedAt: '2026-09-04T12:00:11.000Z',
+        endedAt: '2026-09-04T12:00:15.000Z',
+      },
+    ];
+
+    for (const command of ["pwd && sed -n '1,80p' app/secret.tsx", 'git status && git diff']) {
+      expect(
+        launchCrashDiagnosis(
+          [
+            {
+              id: 'inspect',
+              command,
+              output: 'source',
+              exitCode: 0,
+              startedAt: '2026-09-04T12:00:01.000Z',
+              endedAt: '2026-09-04T12:00:01.500Z',
+            },
+            ...tail,
+          ],
+          { dispatchAt: '2026-09-04T12:00:00.000Z', token },
+        ),
+      ).toEqual({
+        valid: false,
+        reason: 'launch-crash-pre-capture-command-not-allowed',
+        commandId: 'inspect',
+      });
+    }
   });
 
   it('requires a repaired relaunch and Settings proof', () => {

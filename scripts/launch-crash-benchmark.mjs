@@ -59,18 +59,30 @@ function orderedCommands(commands) {
     );
 }
 
+function sourceInspectionBeforeCapture(command, arm, platform) {
+  const value = shellCommand(command);
+  if (/\/(?:skills|skill)\/[^\s]+\/SKILL\.md\b/.test(value)) return false;
+  if (/(?:^|[;&|]\s*)git\s+(?:diff|show)(?!-ref)(?:\s|$)/.test(value)) return true;
+  if (/(?:^|[;&|]\s*)(?:\/[^\s]+\/)?(?:node|python\d*|ruby|perl)\s+(?:-[^-\s]*[ec]|--eval)\b/.test(value)) {
+    return true;
+  }
+  const namesSource = /(?:^|[\s'"`])(?:app|src)\/|\.(?:[cm]?[jt]sx?|swift|kt|java)(?:[\s'"`]|$)/.test(value);
+  if (namesSource && !errorCaptureCommand(value, arm, platform)) return true;
+  if (/RootLayout|STIM_BENCH_LAUNCH_CRASH_/.test(value) && !errorCaptureCommand(value, arm, platform)) return true;
+  return false;
+}
+
 function allowedBeforeErrorCapture(command, arm, platform) {
   const value = shellCommand(command);
-  if (
-    /app\/_layout\.tsx|RootLayout|STIM_BENCH_LAUNCH_CRASH_/.test(value) &&
-    !errorCaptureCommand(value, arm, platform)
-  ) {
-    return false;
-  }
+  if (sourceInspectionBeforeCapture(value, arm, platform)) return false;
   if (/\/(?:skills|skill)\/[^\s]+\/SKILL\.md\b/.test(value) && /(?:^|\s)(?:cat|sed|head)(?:\s|$)/.test(value)) {
     return true;
   }
-  if (/^(?:pwd|ls(?:\s|$)|du(?:\s|$)|git\s+status(?:\s|$)|git\s+worktree\s+add(?:\s|$)|mkdir(?:\s|$))/.test(value)) {
+  if (
+    /^(?:pwd|ls(?:\s|$)|du(?:\s|$)|for\s|git\s+(?:rev-parse|show-ref|status|worktree\s+add)(?:\s|$)|mkdir(?:\s|$))/.test(
+      value,
+    )
+  ) {
     return true;
   }
   if (/^cp\b/.test(value) && /(?:node_modules|ios\/Pods|ios\/build|android\/(?:\.gradle|app\/build))/.test(value)) {
@@ -80,7 +92,7 @@ function allowedBeforeErrorCapture(command, arm, platform) {
     return new RegExp(`^stim\\s+(?:worktree\\s+create|start|${platform}|logs\\s+--errors)(?:\\s|$)`).test(value);
   }
   return (
-    /^(?:open\s+-a\s+Simulator|xcrun\s+simctl\s+(?:create|boot|bootstatus|install|launch|openurl)|npx\s+expo\s+(?:start|run:ios|run:android)|xcodebuild\b|\.\/gradlew\b|adb\b|nohup\b|ps\b|sleep\b|tail\b)/.test(
+    /^(?:(?:[A-Za-z_][A-Za-z0-9_]*=(?:\S+|\$\([^)]*\))[;\s]+)*)(?:open\s+-a\s+Simulator|xcrun\s+simctl\s+|npx\s+expo\s+|xcodebuild\b|\.\/gradlew\b|adb\b|nohup\b|launchctl\b|ps\b|sleep\b|tail\b|cat\s+\/tmp\/|wc\b|lsof\b|command\s+-v\b|test\b|kill\b)/.test(
       value,
     ) ||
     launchCommand(value, arm, platform) ||
@@ -126,14 +138,21 @@ export function launchCrashDiagnosis(commands, { dispatchAt, token, arm = 'stim'
       commandId: disallowedBeforeCapture.id,
     };
   }
-  const index = ordered.findIndex(
-    (command) =>
-      timestamp(command, 'startedAt') >= captureEndedAt &&
-      successful(command) &&
-      typeof command.output === 'string' &&
-      command.output.includes(token) &&
-      sourceMarkers.some((marker) => command.output.includes(marker)),
-  );
+  const capture = ordered[errorCaptureIndex];
+  const captureIsActionable =
+    typeof capture.output === 'string' &&
+    capture.output.includes(token) &&
+    sourceMarkers.some((marker) => capture.output.includes(marker));
+  const index = captureIsActionable
+    ? errorCaptureIndex
+    : ordered.findIndex(
+        (command) =>
+          timestamp(command, 'startedAt') >= captureEndedAt &&
+          successful(command) &&
+          typeof command.output === 'string' &&
+          command.output.includes(token) &&
+          sourceMarkers.some((marker) => command.output.includes(marker)),
+      );
   if (index === -1) {
     return { valid: false, reason: 'actionable-launch-crash-diagnosis-missing' };
   }
