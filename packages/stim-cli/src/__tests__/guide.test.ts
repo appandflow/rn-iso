@@ -887,20 +887,30 @@ test('the Android data partition contract is consistent across user guidance', (
   }
 });
 
-test('the skill points at the guide command and the topics it advertises', () => {
+test('the static skill is only the agent guide router', () => {
+  const dir = fileURLToPath(new URL('../../skill/', import.meta.url));
+  expect(readdirSync(dir).toSorted()).toEqual(['SKILL.md']);
   const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
-  expect(skill).toMatch(/stim guide/);
-  for (const name of topicNames()) {
-    expect(skill.includes(`guide ${name}`)).toBeTruthy();
+  const wordCount = skill.split(/\s+/).filter(Boolean).length;
+  expect(wordCount).toBeLessThanOrEqual(100);
+  expect(skill.match(/stim guide agent/g)).toHaveLength(1);
+  expect(skill).toMatch(/Follow the version-matched instructions it prints/);
+
+  for (const mutableDetail of [
+    'stim doctor',
+    'worktree create',
+    'STIM_NO_METRO',
+    'gc --delete',
+    '--force',
+    'registry.npmjs.org',
+    '20.19.4',
+    'sandbox',
+  ]) {
+    expect(skill).not.toContain(mutableDetail);
   }
 });
 
-test('the skill and guide explain the npx fallback for short stim commands', () => {
-  const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
-  expect(skill.match(/npx stim-cli <command>/g)).toHaveLength(1);
-  expect(skill).toContain('npm install --global stim-cli');
-  expect(skill).toMatch(/replace `stim` with the `npx` form above/i);
-
+test('every guide topic explains the npx fallback for short stim commands', () => {
   for (const name of topicNames()) {
     const topic = renderTopic(name);
     assert(topic);
@@ -924,60 +934,37 @@ test('website command tabs synchronize with Global as the default', () => {
   expect(tabs).toContain("const npxPrefix = 'npx stim-cli'");
 });
 
-test('exactly one compact skill ships', () => {
-  const dir = fileURLToPath(new URL('../../skill/', import.meta.url));
-  expect(readdirSync(dir).toSorted()).toEqual(['SKILL.md']);
-  const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
-  const wordCount = skill.split(/\s+/).filter(Boolean).length;
-  expect(wordCount).toBeLessThanOrEqual(1200);
-  expect(skill).toMatch(/stim doctor/);
+test('the agent guide carries the normal workflow and safety rules', () => {
+  const agent = renderTopic('agent');
+  assert(agent);
+  expect(agent).toContain('stim doctor --platform ios');
+  expect(agent).toContain('stim worktree create <name> --carry-ignored');
+  expect(agent).toMatch(/ios and android install the app, launch it, and check readiness/);
+  expect(agent).toMatch(/Exit code 0 from logs --errors is the pass condition/);
+  expect(agent).toContain('No matching log records');
+  expect(agent).toMatch(/Ordinary stim stop and an authorized clean\s+stim worktree remove do not need/);
+  expect(agent).not.toMatch(/agent-device/i);
 });
 
-test('the skill shows the fast worktree path and owns app launch', () => {
-  const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
-  expect(skill).toContain('stim worktree create <name> --carry-ignored');
-  expect(skill).toMatch(/`ios` and `android` install the app, launch it, and check its readiness/);
-  expect(skill).not.toMatch(/agent-device/i);
+test('the agent guide routes to every detailed topic', () => {
+  const agent = renderTopic('agent');
+  assert(agent);
+  for (const topicName of topicNames().filter((name) => name !== 'agent')) {
+    expect(agent).toContain(`guide ${topicName}`);
+  }
 });
 
-test('the skill explains a clean human log result', () => {
-  const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
-  expect(skill).toMatch(/Exit code 0 from `logs --errors` is the pass condition/);
-  expect(skill).toContain('No matching log records');
-});
-
-test('the skill keeps ordinary authorized cleanup on the fast path', () => {
-  const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
-  expect(skill).toMatch(/Ordinary `stim stop` and an authorized clean `stim worktree remove` do not need/);
-  expect(skill).toMatch(/`gc`, `--force`, cleanup failures, or unfamiliar cleanup states/);
-});
-
-test('the skill and guide shut down owned simulators without an occupancy check', () => {
-  const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
+test('the agent and cleanup guides shut down owned simulators without an occupancy check', () => {
+  const agent = renderTopic('agent');
   const cleanup = renderTopic('cleanup');
+  assert(agent);
   assert(cleanup);
 
-  expect(skill).toMatch(/explicit `stop` shuts down a Stim-owned simulator even when[\s\S]*another process uses it/i);
-  expect(skill).toMatch(/never shuts down an unowned simulator/i);
+  expect(agent).toMatch(/explicit stop shuts down a Stim-owned simulator even when\s+another process uses it/i);
+  expect(agent).toMatch(/never shuts down an unowned simulator/i);
   expect(cleanup).toMatch(/do not check simulator occupancy/i);
   expect(cleanup).toMatch(/never shuts down an unowned simulator/i);
-  expect(skill).not.toContain('agent-device close --shutdown');
-});
-
-test('the skill still carries the rules an agent must not have to look up', () => {
-  const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
-  for (const must of [
-    'gc --delete',
-    '--force',
-    'STIM_NO_METRO',
-    'booted',
-    'stim-',
-    'registry.npmjs.org',
-    '20.19.4',
-    'worktree remove',
-  ]) {
-    expect(skill.includes(must)).toBeTruthy();
-  }
+  expect(agent).not.toContain('agent-device close --shutdown');
 });
 
 test('the guide names every path Stim ignores by default', () => {
@@ -989,9 +976,9 @@ test('the guide names every path Stim ignores by default', () => {
   }
 });
 
-test('the sandbox failures are named in the guide, and the skill points at them', () => {
+test('the sandbox failures are named in the errors guide, and the agent guide points at them', () => {
   const errors = renderTopic('errors') ?? '';
-  const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
+  const agent = renderTopic('agent') ?? '';
 
   // The three failures an agent actually sees.
   for (const detail of [
@@ -1002,19 +989,17 @@ test('the sandbox failures are named in the guide, and the skill points at them'
     expect(errors).toContain(detail);
   }
 
-  // The allowlist keys are advanced detail: the guide carries them, not the skill.
   for (const key of [
     'sandbox.filesystem.allowWrite',
     'sandbox.network.allowMachLookup',
     'sandbox.network.allowLocalBinding',
   ]) {
     expect(errors).toContain(key);
-    expect(skill).not.toContain(key);
+    expect(agent).not.toContain(key);
   }
 
-  // The skill says a sandbox exists and sends the reader to the topic.
-  expect(skill).toMatch(/sandbox/i);
-  expect(skill).toContain('stim guide errors');
+  expect(agent).toMatch(/sandbox/i);
+  expect(agent).toContain('guide errors');
 });
 
 test('advanced contracts stay in guide topics instead of the skill', () => {
@@ -1177,12 +1162,13 @@ test('the busy remedy for this root own lease names the command that releases by
   expect(errors).toMatch(/remedy for that last one is `stim device unlock`, which releases by\s+holder/);
 });
 
-test('the skill routes the lease to the guide and states the permanent lease rule', () => {
-  const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
-  expect(skill).toMatch(/A `--device` run leases that device for the run/);
-  expect(skill).toMatch(/stim device lock ios --for\s+10m` holds it across runs; `stim device unlock` gives it back/);
-  expect(skill).toMatch(/Never delete another workspace's lease file under\s+`~\/\.stim\/device-locks`/);
-  expect(skill).toMatch(/`gc --delete` removes the expired ones/);
+test('the agent guide states the permanent lease rule', () => {
+  const agent = renderTopic('agent');
+  assert(agent);
+  expect(agent).toMatch(/A --device run leases that device for the run/);
+  expect(agent).toMatch(/stim device lock ios --for 10m\s+holds it across runs; stim device unlock gives it back/);
+  expect(agent).toMatch(/Never delete another\s+workspace's lease file under ~\/\.stim\/device-locks/);
+  expect(agent).toMatch(/gc --delete removes expired\s+ones/);
 });
 
 test('the guide documents the pool an id-less --device picks from', () => {
@@ -1295,12 +1281,12 @@ test('the guide routes the two report questions to the two commands', () => {
   expect(cleanup).toMatch(/stats\.json\.corrupt-<unix ms>/);
 });
 
-test('the skill routes cache-saving questions to `stim stats` without teaching the payload', () => {
-  const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
-
-  expect(skill).toMatch(/`stim stats` reports/);
-  expect(skill).not.toContain('timeSavedMs');
-  expect(skill).not.toContain('stats.json');
+test('the agent guide routes cache-saving questions without teaching the payload', () => {
+  const agent = renderTopic('agent');
+  assert(agent);
+  expect(agent).toContain('stim stats');
+  expect(agent).not.toContain('timeSavedMs');
+  expect(agent).not.toContain('stats.json');
 });
 
 test('the website documents the stats command and its JSON shape', () => {

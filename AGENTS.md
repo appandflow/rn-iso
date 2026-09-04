@@ -127,25 +127,28 @@ pedantic, or style-only rule.
 
 ### 1. Keep agent guidance current
 
-Treat `packages/stim-cli/skill/SKILL.md` as a compact entry point, not a manual.
-Keep it under 1,200 words. Include only the normal local workflow, permanent
-ownership and deletion rules, and routing to `guide` topics. Put exact flags,
-payload schemas, uncommon backends, release builds, cache mechanics, settings,
-capacity details, cleanup internals, and remedies in `guide`. Do not duplicate
-that reference text in the skill.
+Treat `packages/stim-cli/skill/SKILL.md` as a tiny discovery router. Its body
+only tells the agent to run `stim guide agent` and follow the version-matched
+instructions. Keep every operational detail in that guide topic, including the
+normal workflow, ownership and deletion rules, command notation, topic routing,
+flags, payloads, settings, backends, caches, cleanup, and remedies. Do not add a
+version check, compatibility branch, migration path, or failure fallback to the
+static skill. Only one skill ships.
 
-Update `guide` output and its contract tests when commands, flags, defaults, or
-remedies change. Update the skill only when the normal workflow, a permanent
-safety rule, or topic routing changes. Only one skill ships.
+Update `guide agent`, the relevant detailed guide topics, and their contract
+tests when commands, defaults, safety rules, or remedies change. The static
+skill changes only when its activation description or single routing command
+changes.
 
-Document command invocation once in each main entry point. Show the no-install
-form, `npx stim-cli <command>`, and the global install,
-`npm install --global stim-cli`. Use `stim` alone in later examples. In a
-document that does not explain installation, add one short note that tells
-readers to replace `stim` with `npx stim-cli` when it is not
-installed globally. On the website, use synchronized Global and npx tabs with
-Global as the default. Keep the full `npx` form in runnable hooks, release
-checks, and registry remedies, which cannot assume a global install.
+Document command invocation once in each human-facing installation entry
+point. Show the no-install form, `npx stim-cli <command>`, and the global
+install, `npm install --global stim-cli`. The static skill is only a router and
+does not repeat installation instructions. Use `stim` alone in later examples.
+In a document that does not explain installation, add one short note that tells
+readers to replace `stim` with `npx stim-cli` when it is not installed globally.
+On the website, use synchronized Global and npx tabs with Global as the default.
+Keep the full `npx` form in runnable hooks, release checks, and registry
+remedies, which cannot assume a global install.
 
 ### 2. Create, boot, and delete only owned devices
 

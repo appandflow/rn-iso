@@ -19,8 +19,8 @@ Install the bundled skill for your coding agent:
 npx skills add appandflow/stim
 ```
 
-Run the same skill command after a Stim upgrade. The skill stays small and asks
-the installed CLI for version-specific guidance.
+The skill stays small and asks the installed CLI for version-specific guidance,
+so upgrading Stim does not require reinstalling the skill.
 
 ## Ask the agent to run the app
 
