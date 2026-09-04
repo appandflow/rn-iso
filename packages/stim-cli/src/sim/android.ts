@@ -449,7 +449,7 @@ export function headlessEmulatorArgs(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
 ): string[] {
-  const args = ['-no-snapshot-save', '-no-snapshot-load'];
+  const args: string[] = [];
   if (platform === 'linux' && !env.DISPLAY && !env.WAYLAND_DISPLAY) {
     args.push('-no-window', '-noaudio', '-no-boot-anim', '-gpu', 'swiftshader_indirect');
   }

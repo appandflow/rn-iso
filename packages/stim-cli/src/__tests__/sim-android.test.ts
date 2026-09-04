@@ -136,18 +136,15 @@ test('nextConsolePort returns next even port above max claimed', () => {
 
 test('headlessEmulatorArgs is headless on displayless linux only', () => {
   expect(headlessEmulatorArgs({}, 'linux')).toEqual([
-    '-no-snapshot-save',
-    '-no-snapshot-load',
     '-no-window',
     '-noaudio',
     '-no-boot-anim',
     '-gpu',
     'swiftshader_indirect',
   ]);
-  const snapshotArgs = ['-no-snapshot-save', '-no-snapshot-load'];
-  expect(headlessEmulatorArgs({ DISPLAY: ':0' }, 'linux')).toEqual(snapshotArgs);
-  expect(headlessEmulatorArgs({ WAYLAND_DISPLAY: 'wayland-0' }, 'linux')).toEqual(snapshotArgs);
-  expect(headlessEmulatorArgs({}, 'darwin')).toEqual(snapshotArgs);
+  expect(headlessEmulatorArgs({ DISPLAY: ':0' }, 'linux')).toEqual([]);
+  expect(headlessEmulatorArgs({ WAYLAND_DISPLAY: 'wayland-0' }, 'linux')).toEqual([]);
+  expect(headlessEmulatorArgs({}, 'darwin')).toEqual([]);
 });
 
 test('parseAvdRootIni keeps the content paths and ignores unrelated lines', () => {
@@ -533,12 +530,7 @@ test('bootAndroidEmulator spawns the resolved emulator binary', () => {
     if (savedDisplay === undefined) delete process.env.DISPLAY;
     else process.env.DISPLAY = savedDisplay;
   }
-  expect(spawned).toEqual([
-    [
-      join(sdk, 'emulator', 'emulator'),
-      ['-avd', 'stim-app', '-port', '5556', '-no-snapshot-save', '-no-snapshot-load'],
-    ],
-  ]);
+  expect(spawned).toEqual([[join(sdk, 'emulator', 'emulator'), ['-avd', 'stim-app', '-port', '5556']]]);
 });
 
 test('listAvds keeps the bare command when resolution falls back to PATH', () => {
