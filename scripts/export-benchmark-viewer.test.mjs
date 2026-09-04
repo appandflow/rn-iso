@@ -282,6 +282,22 @@ describe('benchmark viewer export', () => {
     expect(sanitizeBenchmarkText(`/Users/${username}/.agent-device/sessions/example`)).toBe('workspace/example');
   });
 
+  it('removes Homebrew executables and shell search paths', () => {
+    expect(
+      sanitizeBenchmarkText(
+        'PATH=/opt/homebrew/bin:/usr/bin /opt/homebrew/bin/node ./node_modules/expo/bin/cli run:ios',
+      ),
+    ).toBe('PATH=<toolchain-path> node ./node_modules/expo/bin/cli run:ios');
+  });
+
+  it('redacts absolute compiler paths attached to flags', () => {
+    expect(
+      sanitizeBenchmarkText(
+        '-L/Volumes/ExternalSSD/Developer/bench/worktrees/native-control/DerivedData/Build/Products',
+      ),
+    ).toBe('-Lworktree/native-control/DerivedData/Build/Products');
+  });
+
   it('strips terminal color codes before making machine paths relative', () => {
     const coloredPath =
       '\u001b[331m/\u001b[339mVolumes\u001b[49m\u001b[331m/\u001b[3103mExternalSSD\u001b[49m\u001b[331m/\u001b[3103mDeveloper\u001b[49m\u001b[331m/\u001b[3103mstim-bench\u001b[49m';
@@ -294,6 +310,7 @@ describe('benchmark viewer export', () => {
       sanitizeBenchmarkText('Janics-Mac-mini.local A35AFE7E-06D9-4E4B-A14D-0451595A13BC grep A35AFE7E (3372..)'),
     ).toBe('<local-host> <simulator-udid> grep <simulator-udid-prefix> (<simulator-udid-prefix>)');
     expect(sanitizeBenchmarkText('estimated cost 0.02353276')).toBe('estimated cost 0.02353276');
+    expect(sanitizeBenchmarkText('http%3A%2F%2F127.0.0.1%3A8081')).toBe('http%3A%2F%2F<local-ip>%3A8081');
   });
 
   it('omits machine-global process output', () => {

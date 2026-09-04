@@ -8,6 +8,7 @@ import {
   formatSeconds,
   formatTokens,
   initialAuditSelection,
+  timelineZoomDimensions,
   timelineZoomFromPinch,
   timeBreakdown,
   totalTokens,
@@ -102,6 +103,7 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
   const [cursorSeconds, setCursorSeconds] = useState(0);
   const [speed, setSpeed] = useState(20);
   const [zoom, setZoom] = useState(1);
+  const [timelineViewport, setTimelineViewport] = useState({ width: 0, rootFontSize: 16 });
   const pinch = useRef<{ distance: number; zoom: number } | null>(null);
   const timelineScroller = useRef<HTMLDivElement>(null);
   const zoomAnchor = useRef<{ contentRatio: number; viewportOffset: number } | null>(null);
@@ -110,6 +112,7 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
   const playbackCommand = useMemo(() => commandAtCursor(run.commands, cursorSeconds), [run.commands, cursorSeconds]);
   const proofSrc = useBaseUrl(run.proof?.src ?? '');
   const ticks = [0, 0.25, 0.5, 0.75, 1];
+  const timelineDimensions = timelineZoomDimensions(timelineViewport.width, timelineViewport.rootFontSize, zoom);
   const beginPinch = (event: ReactTouchEvent<HTMLDivElement>) => {
     const gesture = pinchGeometry(event);
     if (!gesture) return;
@@ -143,6 +146,21 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
       };
       setZoom((current) => timelineZoomFromPinch(current, 1, scale));
     });
+  }, []);
+
+  useEffect(() => {
+    const scroller = timelineScroller.current;
+    if (!scroller) return;
+    const update = () => {
+      setTimelineViewport({
+        width: scroller.clientWidth,
+        rootFontSize: Number.parseFloat(getComputedStyle(document.documentElement).fontSize),
+      });
+    };
+    const observer = new ResizeObserver(update);
+    observer.observe(scroller);
+    update();
+    return () => observer.disconnect();
   }, []);
 
   useEffect(() => {
@@ -362,7 +380,14 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
       >
         <div
           className={styles.timeline}
-          style={{ width: zoom === 1 ? '100%' : `max(${49.5 * zoom}rem, ${zoom * 100}%)` }}
+          style={
+            timelineViewport.width > 0
+              ? {
+                  width: `${timelineDimensions.totalWidth}px`,
+                  gridTemplateColumns: `${timelineDimensions.labelWidth}px ${timelineDimensions.trackWidth}px`,
+                }
+              : undefined
+          }
         >
           <div className={styles.axisLabel} />
           <div className={styles.axis}>

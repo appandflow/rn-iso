@@ -19,6 +19,7 @@ minimumReleaseAgeExclude:
 allowBuilds:
   '@swc/core': false
   core-js: false
+  esbuild: false
 
 # website's Docusaurus toolchain pulls these transitively at vulnerable
 # versions; the published packages under packages/ do not depend on them

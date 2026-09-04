@@ -1,18 +1,13 @@
 import type { ReactNode } from 'react';
-import { useMemo } from 'react';
-import { useHistory, useLocation } from '@docusaurus/router';
-import useIsBrowser from '@docusaurus/useIsBrowser';
 import Link from '@docusaurus/Link';
 import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
-import BenchmarkTimeline from '@site/src/components/BenchmarkTimeline';
+import { benchmarks, defaultRun, displayVariant } from '@site/src/components/benchmarkCatalog';
+import BenchmarkVideo from '@site/src/components/BenchmarkVideo';
 import {
   benchmarkDisplayTitle,
-  comparableRuns,
   benchmarkOverview,
-  benchmarkSelectionFromSearch,
   benchmarkSelectionSearch,
-  comparisonOutcome,
   formatCost,
   formatSeconds,
   formatTokens,
@@ -20,115 +15,48 @@ import {
   type BenchmarkData,
   type BenchmarkRun,
 } from '@site/src/components/benchmarkData';
-import benchmarkJson from '@site/src/data/benchmarks/luna-rc12.json';
-import opusBenchmarkJson from '@site/src/data/benchmarks/opus-rc12.json';
-import sonnetBenchmarkJson from '@site/src/data/benchmarks/sonnet-rc12.json';
-import solBenchmarkJson from '@site/src/data/benchmarks/sol-rc12.json';
-import solLaunchCrashJson from '@site/src/data/benchmarks/sol-launch-crash.json';
 import styles from './benchmarks.module.css';
 
-const benchmarks = (
-  [
-    benchmarkJson,
-    solBenchmarkJson,
-    sonnetBenchmarkJson,
-    opusBenchmarkJson,
-    solLaunchCrashJson,
-  ] as unknown as BenchmarkData[]
-).filter((benchmark) => benchmark.runs.some((run) => run.valid));
 const readinessBenchmarks = benchmarks.filter((benchmark) => benchmark.suite !== 'launch-crash');
 const launchCrashBenchmarks = benchmarks.filter((benchmark) => benchmark.suite === 'launch-crash');
 
-function defaultRun(benchmark: BenchmarkData | undefined): BenchmarkRun | undefined {
-  return benchmark?.runs.find((run) => run.valid);
-}
-
-function displayVariant(variant: BenchmarkRun['variant']): string {
-  if (variant === 'javascript') return 'JavaScript change';
-  if (variant === 'native') return 'Native change';
-  return 'JavaScript launch failure';
-}
-
-function ComparisonCard({
-  variant,
-  runs,
-  maxSeconds,
-  modelLabel,
-  href,
-}: {
-  variant: BenchmarkRun['variant'];
-  runs: BenchmarkRun[];
-  maxSeconds: number;
-  modelLabel?: string;
-  href?: string;
-}): ReactNode {
-  const isLaunchCrash = variant === 'launch-crash';
-  const comparable = isLaunchCrash
-    ? runs.filter((run) => run.valid && run.diagnosisSeconds !== null)
-    : comparableRuns(runs);
-  const stim = comparable.find((run) => run.arm === 'stim');
-  const control = comparable.find((run) => run.arm === 'control');
-  const outcome = comparisonOutcome(stim?.settingsReadySeconds, control?.settingsReadySeconds);
+function LaunchCrashCard({ benchmark }: { benchmark: BenchmarkData }): ReactNode {
+  const runs = benchmark.runs.filter((run) => run.valid && run.diagnosisSeconds !== null);
+  const maxSeconds = Math.max(1, ...runs.map((run) => run.diagnosisSeconds ?? 0));
   return (
     <article className={styles.comparisonCard}>
-      <h3>{modelLabel ? `${modelLabel}: ${displayVariant(variant)}` : displayVariant(variant)}</h3>
-      <span className={`${styles.outcome} ${styles[isLaunchCrash ? 'neutral' : outcome.tone]}`}>
-        {isLaunchCrash
-          ? control
-            ? 'Time to first actionable diagnosis'
-            : 'Stim baseline / control pending'
-          : outcome.label}
-      </span>
-      {comparable.map((run) => {
-        const endpoint = (isLaunchCrash ? run.diagnosisSeconds : run.settingsReadySeconds) ?? null;
-        return (
-          <div className={styles.barRow} key={run.id}>
-            <div className={styles.barHead}>
-              <span>{run.arm === 'stim' ? 'Stim' : 'Control'}</span>
-              <strong>{formatSeconds(endpoint)}</strong>
-            </div>
-            <div className={styles.barTrack}>
-              <div
-                className={`${styles.bar} ${run.arm === 'control' ? styles.controlBar : ''}`}
-                style={{ width: `${endpoint === null ? 0 : (endpoint / maxSeconds) * 100}%` }}
-              />
-            </div>
-            <div className={styles.barMeta}>
-              {isLaunchCrash ? (
-                <>
-                  <span>Settings repaired {formatSeconds(run.settingsReadySeconds)}</span>
-                  <span>
-                    {run.diagnosisUsage ? formatTokens(totalTokens(run.diagnosisUsage)) : 'unavailable'} tokens
-                  </span>
-                  <span>{formatCost(run.estimatedDiagnosisCostUsd ?? null)} cost</span>
-                </>
-              ) : (
-                <>
-                  <span>{formatTokens(totalTokens(run.usage))} tokens</span>
-                  <span>{formatCost(run.estimatedTokenCostUsd)} cost</span>
-                  <span>{run.commandCount} commands</span>
-                </>
-              )}
-            </div>
-          </div>
-        );
-      })}
-      {isLaunchCrash && !control ? (
-        <div className={styles.barRow}>
+      <h3>{benchmark.runs[0]?.model ?? benchmarkDisplayTitle(benchmark.title)}: JavaScript launch failure</h3>
+      <span className={`${styles.outcome} ${styles.neutral}`}>Time to first actionable diagnosis</span>
+      {runs.map((run) => (
+        <div className={styles.barRow} key={run.id}>
           <div className={styles.barHead}>
-            <span>Control</span>
-            <strong>Not run</strong>
+            <span>{run.arm === 'stim' ? 'Stim' : 'Control'}</span>
+            <strong>{formatSeconds(run.diagnosisSeconds ?? null)}</strong>
+          </div>
+          <div className={styles.barTrack}>
+            <div
+              className={`${styles.bar} ${run.arm === 'control' ? styles.controlBar : ''}`}
+              style={{ width: `${((run.diagnosisSeconds ?? 0) / maxSeconds) * 100}%` }}
+            />
           </div>
           <div className={styles.barMeta}>
-            <span>This result is not a Stim-versus-control comparison yet.</span>
+            <span>Settings repaired {formatSeconds(run.settingsReadySeconds)}</span>
+            <span>{run.diagnosisUsage ? formatTokens(totalTokens(run.diagnosisUsage)) : 'unavailable'} tokens</span>
+            <span>{formatCost(run.estimatedDiagnosisCostUsd ?? null)} cost</span>
           </div>
         </div>
-      ) : null}
-      {href ? <Link to={href}>Open the run audit</Link> : null}
+      ))}
+      <Link
+        to={`/benchmarks/details${benchmarkSelectionSearch(
+          { stage: benchmark.stage, runId: defaultRun(benchmark)?.id ?? '' },
+          benchmarks,
+        )}#audit-title`}
+      >
+        Open the run audit
+      </Link>
     </article>
   );
 }
-
 function OverviewChart({
   variant,
   benchmarks: allBenchmarks,
@@ -186,51 +114,6 @@ function OverviewChart({
 }
 
 export default function Benchmarks(): ReactNode {
-  const history = useHistory();
-  const location = useLocation();
-  const isBrowser = useIsBrowser();
-  const search = isBrowser ? location.search : '';
-  const selection = useMemo(() => benchmarkSelectionFromSearch(search, benchmarks), [search]);
-  const stage = selection.stage;
-  const benchmark = benchmarks.find((candidate) => candidate.stage === stage) ?? benchmarks[0];
-  const publishedRuns = useMemo(() => benchmark?.runs.filter((run) => run.valid) ?? [], [benchmark]);
-  const activeId = selection.runId;
-  const activeRun = publishedRuns.find((run) => run.id === activeId) ?? defaultRun(benchmark);
-  const navigateTo = (nextStage: string, nextRunId: string) => {
-    history.push({
-      pathname: location.pathname,
-      search: benchmarkSelectionSearch({ stage: nextStage, runId: nextRunId }, benchmarks),
-      hash: location.hash,
-    });
-  };
-  const grouped = useMemo(() => {
-    const variants: BenchmarkRun['variant'][] =
-      benchmark?.suite === 'launch-crash' ? ['launch-crash'] : ['javascript', 'native'];
-    return variants.map((variant) => ({
-      variant,
-      runs: publishedRuns.filter((run) => run.variant === variant),
-    }));
-  }, [benchmark?.suite, publishedRuns]);
-  const maxSeconds = Math.max(
-    1,
-    ...(benchmark?.suite === 'launch-crash'
-      ? publishedRuns.map((run) => run.diagnosisSeconds ?? 0)
-      : comparableRuns(publishedRuns).map((run) => run.settingsReadySeconds)),
-  );
-
-  if (!benchmark || !activeRun) {
-    return (
-      <Layout title="Agent benchmarks" description="Auditable Stim agent benchmark results.">
-        <main className={styles.page}>
-          <div className="container">
-            <Heading as="h1">Agent benchmarks unavailable</Heading>
-            <p>No valid benchmark runs have been published.</p>
-          </div>
-        </main>
-      </Layout>
-    );
-  }
-
   return (
     <Layout
       title="Agent benchmarks"
@@ -279,17 +162,7 @@ export default function Benchmarks(): ReactNode {
               </div>
               <div className={styles.comparisonGrid}>
                 {launchCrashBenchmarks.map((candidate) => (
-                  <ComparisonCard
-                    key={candidate.stage}
-                    variant="launch-crash"
-                    runs={candidate.runs}
-                    maxSeconds={Math.max(1, ...candidate.runs.map((run) => run.diagnosisSeconds ?? 0))}
-                    modelLabel={candidate.runs[0]?.model ?? benchmarkDisplayTitle(candidate.title)}
-                    href={`/benchmarks${benchmarkSelectionSearch(
-                      { stage: candidate.stage, runId: defaultRun(candidate)?.id ?? '' },
-                      benchmarks,
-                    )}#audit-title`}
-                  />
+                  <LaunchCrashCard benchmark={candidate} key={candidate.stage} />
                 ))}
               </div>
             </section>
@@ -304,8 +177,7 @@ export default function Benchmarks(): ReactNode {
               <p>
                 Readiness comparisons use the same clean app fixture, requested model, machine, and fixed code change.
                 The primary endpoint starts when the agent is dispatched and stops only after agent-device finds the
-                expected text on Settings and saves a screenshot. Unmatched launch-failure runs are labeled as baselines
-                until both arms exist.
+                expected text on Settings and saves a screenshot.
               </p>
               <a href="https://github.com/appandflow/stim/blob/main/docs/agent-benchmark-v4.md">
                 Read the full protocol
@@ -337,113 +209,20 @@ export default function Benchmarks(): ReactNode {
             </dl>
           </section>
 
-          <div className={styles.detailHeading}>
-            <span className={styles.eyebrow}>Detailed audit</span>
-            <Heading as="h2">
-              {benchmarkDisplayTitle(benchmark.title)}
-              {benchmark.suite === 'launch-crash' && !benchmark.runs.some((run) => run.arm === 'control')
-                ? ': Stim baseline'
-                : ': Stim vs local toolchain'}
-            </Heading>
-          </div>
+          <BenchmarkVideo />
 
-          <nav className={styles.modelPicker} aria-label="Benchmark model">
-            <span>Model</span>
-            {benchmarks.map((candidate) => (
-              <button
-                key={candidate.stage}
-                type="button"
-                aria-pressed={candidate.stage === benchmark.stage}
-                onClick={() => {
-                  navigateTo(candidate.stage, defaultRun(candidate)?.id ?? '');
-                }}
-              >
-                {benchmarkDisplayTitle(candidate.title)}
-              </button>
-            ))}
-          </nav>
-
-          <section className={styles.comparison} aria-labelledby="comparison-title">
-            <div className={styles.sectionHeading}>
-              <Heading as="h2" id="comparison-title">
-                {benchmark.suite === 'launch-crash' ? 'Launch-failure result' : 'Settings-ready comparison'}
-              </Heading>
-              <p>Recorded {benchmark.recordedOn} / valid runs only</p>
-            </div>
-            <div className={styles.comparisonGrid}>
-              {grouped.map(({ variant, runs }) => (
-                <ComparisonCard key={variant} variant={variant} runs={runs} maxSeconds={maxSeconds} />
-              ))}
-            </div>
-          </section>
-
-          <section className={styles.environment} aria-labelledby="environment-title">
+          <section className={styles.detailCta} aria-labelledby="detail-cta-title">
             <div>
-              <span>Benchmark machine</span>
-              <Heading as="h2" id="environment-title">
-                {benchmark.environment.machine.model}
+              <span className={styles.eyebrow}>Command-level evidence</span>
+              <Heading as="h2" id="detail-cta-title">
+                Inspect every benchmark run
               </Heading>
-              <p>
-                {benchmark.environment.machine.chip} / {benchmark.environment.machine.memory}
-              </p>
+              <p>Compare environments, play each command timeline, inspect terminal output, and open proof images.</p>
             </div>
-            <dl>
-              <div>
-                <dt>System</dt>
-                <dd>{benchmark.environment.macos}</dd>
-              </div>
-              <div>
-                <dt>Toolchain</dt>
-                <dd>
-                  {benchmark.environment.xcode} / {benchmark.environment.node}
-                </dd>
-              </div>
-              <div>
-                <dt>Device</dt>
-                <dd>{benchmark.environment.simulator}</dd>
-              </div>
-            </dl>
+            <Link className="button button--primary" to="/benchmarks/details">
+              Explore detailed audits
+            </Link>
           </section>
-
-          <section className={styles.audit} aria-labelledby="audit-title">
-            <div className={styles.sectionHeading}>
-              <div>
-                <Heading as="h2" id="audit-title">
-                  Run audit
-                </Heading>
-                <p>Select a command bar to inspect its terminal output.</p>
-              </div>
-            </div>
-            <div className={styles.runTabs} role="group" aria-label="Benchmark runs">
-              {publishedRuns.map((run) => (
-                <button
-                  key={run.id}
-                  type="button"
-                  aria-pressed={run.id === activeRun.id}
-                  onClick={() => navigateTo(benchmark.stage, run.id)}
-                >
-                  {run.variant} / {run.arm}
-                </button>
-              ))}
-            </div>
-            <BenchmarkTimeline key={`${benchmark.stage}-${activeRun.id}`} run={activeRun} />
-          </section>
-
-          <aside className={styles.notes}>
-            <p>
-              <strong>About cost.</strong>{' '}
-              {benchmark.pricing?.estimateNote ??
-                'Provider-reported cost is shown when the benchmark runner supplies it.'}{' '}
-              {benchmark.pricing ? (
-                <a href={benchmark.pricing.source}>See the recorded model's official token rates.</a>
-              ) : null}
-            </p>
-            <p>
-              The protocol keeps JavaScript and native changes separate. App-process liveness is a secondary diagnostic
-              marker in the timeline, not a reported performance result. Public artifacts use relative paths and
-              redacted simulator identifiers.
-            </p>
-          </aside>
         </div>
       </main>
     </Layout>

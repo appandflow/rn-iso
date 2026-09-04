@@ -232,13 +232,20 @@ export function timelineZoomFromPinch(initialZoom: number, initialDistance: numb
   return Number(Math.min(4, Math.max(1, initialZoom * (distance / initialDistance))).toFixed(2));
 }
 
+export function timelineZoomDimensions(viewportWidth: number, rootFontSize: number, zoom: number) {
+  const labelWidth = rootFontSize * 7;
+  const baseTrackWidth = Math.max(rootFontSize * 45, viewportWidth - labelWidth);
+  const trackWidth = baseTrackWidth * zoom;
+  return { labelWidth, trackWidth, totalWidth: labelWidth + trackWidth };
+}
+
 export function benchmarkOverview(benchmarks: BenchmarkData[], variant: BenchmarkRun['variant']): BenchmarkOverview {
   const candidates = benchmarks.map((benchmark) => ({
     benchmark,
     runs: comparableRuns(benchmark.runs).filter((run) => run.variant === variant),
   }));
   const maxSeconds = Math.max(1, ...candidates.flatMap(({ runs }) => runs.map((run) => run.settingsReadySeconds)));
-  const rows = candidates.map(({ benchmark, runs }) => ({
+  const rows: BenchmarkOverviewRow[] = candidates.map(({ benchmark, runs }) => ({
     stage: benchmark.stage,
     title: benchmark.title,
     arms: (['stim', 'control'] as const).map((arm) => {
@@ -249,7 +256,7 @@ export function benchmarkOverview(benchmarks: BenchmarkData[], variant: Benchmar
         run,
         widthPercent: run ? (run.settingsReadySeconds / maxSeconds) * 100 : 0,
         href: run
-          ? `/benchmarks${benchmarkSelectionSearch({ stage: benchmark.stage, runId: run.id }, benchmarks)}#audit-title`
+          ? `/benchmarks/details${benchmarkSelectionSearch({ stage: benchmark.stage, runId: run.id }, benchmarks)}#audit-title`
           : null,
       };
     }),

@@ -21,8 +21,10 @@ const modelPricing = {
   },
 };
 
-const absolutePathPattern = /(?<![A-Za-z0-9._-])\/(?:Users|Volumes|private|tmp|var\/folders)\/[^\s'"`,;()<>[\]]+/g;
-const ipAddressPattern = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
+const absolutePathPattern = /\/(?:Users|Volumes|private|tmp|var\/folders|opt\/homebrew)\/[^\s'"`,;()<>[\]]+/g;
+const homebrewExecutablePattern = /\/opt\/homebrew\/bin\/([A-Za-z0-9._+-]+)/g;
+const shellPathPattern = /\bPATH=(?:"[^"]*"|'[^']*'|[^\s]+)/g;
+const ipAddressPattern = /(?:\d{1,3}\.){3}\d{1,3}/g;
 const ipv6LoopbackPattern = /\[::1\]|(?<![A-Za-z0-9:])::1(?![A-Za-z0-9:])/g;
 const simulatorIdPattern = /\b[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}\b/gi;
 const simulatorIdPrefixPattern = /\b(?=[0-9A-F]{8}\b)(?=[0-9A-F]*[A-F])[0-9A-F]{8}\b/g;
@@ -117,6 +119,8 @@ export function sanitizeBenchmarkText(value, replacements = []) {
   for (const [absolute, portable] of replacements.toSorted((a, b) => b[0].length - a[0].length)) {
     text = text.replaceAll(absolute, portable);
   }
+  text = text.replace(shellPathPattern, 'PATH=<toolchain-path>');
+  text = text.replace(homebrewExecutablePattern, '$1');
   text = text.replace(agentDeviceBundlePattern, '<agent-device-helper>');
   text = text.replace(absolutePathPattern, (path) => replacementLabel(path));
   text = text.replace(remoteBranchUserPattern, '$1@<user>');
@@ -361,10 +365,14 @@ export function summarizeRun(record, commands, backgroundProcesses) {
 
 function assertPortable(payload) {
   const serialized = JSON.stringify(collectPublicStrings(payload));
-  const leakedRoot = ['/Users', '/Volumes', '/private', '/var/folders', '/tmp/'].find((root) =>
+  const leakedRoot = ['/Users', '/Volumes', '/private', '/var/folders', '/tmp/', '/opt/homebrew'].find((root) =>
     serialized.includes(root),
   );
-  if (leakedRoot) throw new Error(`benchmark export contains an absolute machine path root: ${leakedRoot}`);
+  if (leakedRoot) {
+    const at = serialized.indexOf(leakedRoot);
+    const field = serialized.slice(Math.max(0, at - 80), Math.min(serialized.length, at + 240));
+    throw new Error(`benchmark export contains an absolute machine path root: ${leakedRoot}\n${field}`);
+  }
   const leakedPath = serialized.match(absolutePathPattern)?.[0];
   if (leakedPath) {
     const at = serialized.indexOf(leakedPath);
@@ -604,6 +612,12 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
         [resultsRoot, 'results'],
         [coordinatorRoot, '.'],
         [record.runId, id],
+        ...(record.simulator?.udid
+          ? [
+              [record.simulator.udid, '<simulator-udid>'],
+              [record.simulator.udid.slice(0, 8), '<simulator-udid-prefix>'],
+            ]
+          : []),
         ...(runNonce ? [[runNonce, id]] : []),
       ];
       const proofSource = join(runDir, 'proof', 'settings.png');

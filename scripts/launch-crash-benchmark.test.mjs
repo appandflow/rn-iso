@@ -253,6 +253,220 @@ describe('launch crash benchmark', () => {
     ).toMatchObject({ valid: true, commandId: 'logs' });
   });
 
+  it('allows directory-only dependency and native-cache inventory before launch diagnosis', () => {
+    const token = launchCrashToken('run');
+    expect(
+      launchCrashDiagnosis(
+        [
+          {
+            id: 'inventory',
+            command:
+              'find . -maxdepth 3 -type d \\( -name node_modules -o -name Pods -o -name build -o -name .gradle -o -name DerivedData \\) -print',
+            output: './node_modules\n./ios/Pods\n./ios/build',
+            exitCode: 0,
+            startedAt: '2026-09-04T12:00:01Z',
+            endedAt: '2026-09-04T12:00:02Z',
+          },
+          {
+            id: 'launch',
+            command: 'npx expo run:ios --device SIMULATOR',
+            output: 'started',
+            exitCode: 0,
+            startedAt: '2026-09-04T12:00:03Z',
+            endedAt: '2026-09-04T12:00:10Z',
+          },
+          {
+            id: 'logs',
+            command: 'rg STIM_BENCH logs/runtime.log',
+            output: `${token}\napp/_layout.tsx in RootLayout`,
+            exitCode: 0,
+            startedAt: '2026-09-04T12:00:11Z',
+            endedAt: '2026-09-04T12:00:12Z',
+          },
+        ],
+        { dispatchAt: '2026-09-04T12:00:00Z', token, arm: 'control' },
+      ),
+    ).toMatchObject({ valid: true, commandId: 'logs' });
+  });
+
+  it('allows iOS project-container discovery before launch diagnosis', () => {
+    const token = launchCrashToken('run');
+    expect(
+      launchCrashDiagnosis(
+        [
+          {
+            id: 'inventory',
+            command: "find ios -maxdepth 1 \\( -name '*.xcworkspace' -o -name '*.xcodeproj' \\) -print",
+            output: 'ios/Trailhead.xcworkspace\nios/Trailhead.xcodeproj',
+            exitCode: 0,
+            startedAt: '2026-09-04T12:00:01Z',
+            endedAt: '2026-09-04T12:00:02Z',
+          },
+          {
+            id: 'launch',
+            command: 'npx expo run:ios --device SIMULATOR',
+            output: 'started',
+            exitCode: 0,
+            startedAt: '2026-09-04T12:00:03Z',
+            endedAt: '2026-09-04T12:00:10Z',
+          },
+          {
+            id: 'logs',
+            command: 'rg STIM_BENCH logs/runtime.log',
+            output: `${token}\napp/_layout.tsx in RootLayout`,
+            exitCode: 0,
+            startedAt: '2026-09-04T12:00:11Z',
+            endedAt: '2026-09-04T12:00:12Z',
+          },
+        ],
+        { dispatchAt: '2026-09-04T12:00:00Z', token, arm: 'control' },
+      ),
+    ).toMatchObject({ valid: true, commandId: 'logs' });
+  });
+
+  it('allows installed iOS URL-scheme discovery before launch diagnosis', () => {
+    const token = launchCrashToken('run');
+    expect(
+      launchCrashDiagnosis(
+        [
+          {
+            id: 'scheme',
+            command:
+              'app_container=$(xcrun simctl get_app_container SIMULATOR com.example.app app); plutil -p "$app_container/Info.plist" | rg -A 8 CFBundleURLSchemes',
+            output: 'CFBundleURLSchemes => [ trailhead ]',
+            exitCode: 0,
+            startedAt: '2026-09-04T12:00:01Z',
+            endedAt: '2026-09-04T12:00:02Z',
+          },
+          {
+            id: 'launch',
+            command: 'npx expo run:ios --device SIMULATOR',
+            output: 'started',
+            exitCode: 0,
+            startedAt: '2026-09-04T12:00:03Z',
+            endedAt: '2026-09-04T12:00:10Z',
+          },
+          {
+            id: 'logs',
+            command: 'rg STIM_BENCH logs/runtime.log',
+            output: `${token}\napp/_layout.tsx in RootLayout`,
+            exitCode: 0,
+            startedAt: '2026-09-04T12:00:11Z',
+            endedAt: '2026-09-04T12:00:12Z',
+          },
+        ],
+        { dispatchAt: '2026-09-04T12:00:00Z', token, arm: 'control' },
+      ),
+    ).toMatchObject({ valid: true, commandId: 'logs' });
+  });
+
+  it('does not accept source searches as control error capture', () => {
+    const token = launchCrashToken('run');
+    for (const command of [`rg ${token} app/_layout.tsx`, `rg ${token} .`]) {
+      expect(
+        launchCrashDiagnosis(
+          [
+            {
+              id: 'launch',
+              command: 'npx expo run:ios --device SIMULATOR',
+              output: 'started',
+              exitCode: 0,
+              endedAt: '2026-09-04T12:00:10Z',
+            },
+            {
+              id: 'source',
+              command,
+              output: `${token}\napp/_layout.tsx in RootLayout`,
+              exitCode: 0,
+              startedAt: '2026-09-04T12:00:11Z',
+              endedAt: '2026-09-04T12:00:12Z',
+            },
+          ],
+          { dispatchAt: '2026-09-04T12:00:00Z', token, arm: 'control' },
+        ),
+      ).toEqual({ valid: false, reason: 'launch-crash-error-capture-missing' });
+    }
+  });
+
+  it('requires an explicit zero exit code for every diagnosis and recovery phase', () => {
+    const token = launchCrashToken('run');
+    const launch = {
+      id: 'launch',
+      command: 'stim ios',
+      output: token,
+      exitCode: 0,
+      endedAt: '2026-09-04T12:00:10Z',
+    };
+    const logs = {
+      id: 'logs',
+      command: 'stim logs --errors',
+      output: token,
+      exitCode: 0,
+      startedAt: '2026-09-04T12:00:11Z',
+      endedAt: '2026-09-04T12:00:12Z',
+    };
+    const diagnosis = {
+      id: 'diagnosis',
+      command: 'rg token logs/runtime.log',
+      output: `${token}\napp/_layout.tsx in RootLayout`,
+      exitCode: 0,
+      startedAt: '2026-09-04T12:00:13Z',
+      endedAt: '2026-09-04T12:00:14Z',
+    };
+    expect(
+      launchCrashDiagnosis([{ ...launch, exitCode: null }, logs, diagnosis], {
+        dispatchAt: '2026-09-04T12:00:00Z',
+        token,
+      }),
+    ).toEqual({ valid: false, reason: 'launch-crash-initial-launch-evidence-missing' });
+    expect(
+      launchCrashDiagnosis([launch, { ...logs, exitCode: undefined }, diagnosis], {
+        dispatchAt: '2026-09-04T12:00:00Z',
+        token,
+      }),
+    ).toEqual({ valid: false, reason: 'launch-crash-error-capture-missing' });
+    expect(
+      launchCrashDiagnosis([launch, logs, { ...diagnosis, exitCode: null }], {
+        dispatchAt: '2026-09-04T12:00:00Z',
+        token,
+      }),
+    ).toEqual({ valid: false, reason: 'actionable-launch-crash-diagnosis-missing' });
+
+    const validDiagnosis = { valid: true, commandId: 'diagnosis' };
+    const relaunch = {
+      id: 'relaunch',
+      command: 'stim ios',
+      output: 'OK: com.example.app',
+      exitCode: 0,
+      startedAt: '2026-09-04T12:00:15Z',
+      endedAt: '2026-09-04T12:00:20Z',
+    };
+    const screenshot = {
+      id: 'screenshot',
+      command: 'agent-device screenshot /tmp/settings.png',
+      output: 'saved',
+      exitCode: 0,
+      startedAt: '2026-09-04T12:00:21Z',
+      endedAt: '2026-09-04T12:00:22Z',
+    };
+    const screen = { valid: true, observedAt: screenshot.endedAt, screenshotCommandId: screenshot.id };
+    expect(
+      launchCrashRecovery([diagnosis, { ...relaunch, exitCode: null }, screenshot], {
+        diagnosis: validDiagnosis,
+        screen,
+      }),
+    ).toEqual({
+      valid: false,
+      reason: 'launch-crash-repaired-relaunch-missing',
+    });
+    expect(
+      launchCrashRecovery([diagnosis, relaunch, { ...screenshot, exitCode: undefined }], {
+        diagnosis: validDiagnosis,
+        screen,
+      }),
+    ).toEqual({ valid: false, reason: 'launch-crash-settings-command-invalid' });
+  });
+
   it('requires a repaired relaunch and Settings proof', () => {
     const diagnosis = { valid: true, commandId: 'diagnosis' };
     const commands = [
@@ -376,6 +590,51 @@ describe('launch crash benchmark', () => {
         screen: { valid: true, observedAt: '2026-09-04T12:00:14Z', screenshotCommandId: 'screenshot' },
       }),
     ).toEqual({ valid: true, repairedLaunchCommandId: 'relaunch', screenshotCommandId: 'screenshot' });
+  });
+
+  it('rejects crash evidence observed after the purported repaired relaunch', () => {
+    const diagnosis = { valid: true, commandId: 'diagnosis' };
+    const commands = [
+      {
+        id: 'diagnosis',
+        command: 'rg token logs/runtime.log',
+        output: 'app/_layout.tsx',
+        exitCode: 0,
+        endedAt: '2026-09-04T12:00:10Z',
+      },
+      {
+        id: 'relaunch',
+        command: 'xcrun simctl launch SIMULATOR com.example.app',
+        output: 'com.example.app: 1234',
+        exitCode: 0,
+        startedAt: '2026-09-04T12:00:11Z',
+        endedAt: '2026-09-04T12:00:12Z',
+      },
+      {
+        id: 'crash',
+        command: 'tail logs/runtime.log',
+        output: 'STIM_BENCH_LAUNCH_CRASH_ABCDEF123456',
+        exitCode: 0,
+        startedAt: '2026-09-04T12:00:13Z',
+        endedAt: '2026-09-04T12:00:14Z',
+      },
+      {
+        id: 'screenshot',
+        command: 'agent-device screenshot /tmp/settings.png',
+        output: 'saved',
+        exitCode: 0,
+        startedAt: '2026-09-04T12:00:15Z',
+        endedAt: '2026-09-04T12:00:16Z',
+      },
+    ];
+
+    expect(
+      launchCrashRecovery(commands, {
+        diagnosis,
+        arm: 'control',
+        screen: { valid: true, observedAt: '2026-09-04T12:00:16Z', screenshotCommandId: 'screenshot' },
+      }),
+    ).toEqual({ valid: false, reason: 'launch-crash-token-observed-after-relaunch', commandId: 'crash' });
   });
 
   it('rejects generic errors and verifies that the injected source was restored', () => {

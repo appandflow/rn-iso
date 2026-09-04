@@ -18,7 +18,7 @@ export function injectRootRenderCrash(source, token) {
 }
 
 function successful(command) {
-  return command.exitCode === undefined || command.exitCode === null || command.exitCode === 0;
+  return command.exitCode === 0;
 }
 
 function shellCommand(command) {
@@ -45,8 +45,10 @@ function launchCommand(command, arm, platform) {
 function errorCaptureCommand(command, arm, platform) {
   command = shellCommand(command);
   if (arm === 'stim') return /(?:^|\s)stim\s+logs\s+--errors(?:\s|$)/.test(command);
-  if (platform === 'android') return /\badb\s+logcat\b|\btail\b|\brg\b|\bgrep\b/.test(command);
-  return /\bxcrun\s+simctl\s+spawn\b|\blog\s+(?:show|stream)\b|\btail\b|\brg\b|\bgrep\b/.test(command);
+  const explicitLogFile =
+    /\b(?:tail|rg|grep)\b[\s\S]*(?:\.log\b|(?:^|[\s'"])(?:\.?\/)?(?:tmp|logs?|\.expo\/dev\/logs)\/)/.test(command);
+  if (platform === 'android') return /\badb\s+logcat\b/.test(command) || explicitLogFile;
+  return /\bxcrun\s+simctl\s+spawn\b|\blog\s+(?:show|stream)\b/.test(command) || explicitLogFile;
 }
 
 function timestamp(command, field) {
@@ -80,6 +82,14 @@ function allowedBeforeErrorCapture(command, arm, platform) {
   const value = shellCommand(command);
   if (/^tool:todo_list\b/.test(value)) return true;
   if (/^(?:env\s+)?(?:[^\s=]+=[^\s]+\s+)*agent-device\s+/.test(value)) return true;
+  if (
+    platform === 'ios' &&
+    /xcrun\s+simctl\s+get_app_container\b/.test(value) &&
+    /plutil\s+-p\s+[^;&|]*Info\.plist\b/.test(value) &&
+    /CFBundleURLSchemes/.test(value)
+  ) {
+    return true;
+  }
   if (sourceInspectionBeforeCapture(value, arm, platform)) return false;
   if (
     /(?:\/(?:skills|skill)\/[^\s]+\/|(?:^|\s)workspace\/)SKILL\.md\b/.test(value) &&
@@ -91,6 +101,21 @@ function allowedBeforeErrorCapture(command, arm, platform) {
     /^(?:pwd|ls(?:\s|$)|du(?:\s|$)|for\s|git\s+(?:rev-parse|show-ref|status|worktree\s+add)(?:\s|$)|mkdir(?:\s|$))/.test(
       value,
     )
+  ) {
+    return true;
+  }
+  if (
+    /^find\s+\.\s/.test(value) &&
+    /-type\s+d(?:\s|$)/.test(value) &&
+    /(?:node_modules|Pods|DerivedData|\.gradle)/.test(value) &&
+    !/\.(?:[cm]?[jt]sx?|swift|kt|java)(?:\s|$)/.test(value)
+  ) {
+    return true;
+  }
+  if (
+    /^find\s+ios\s+-maxdepth\s+1(?:\s|$)/.test(value) &&
+    /\*\.(?:xcworkspace|xcodeproj)/.test(value) &&
+    !/\.(?:[cm]?[jt]sx?|swift|kt|java)(?:\s|$)/.test(value)
   ) {
     return true;
   }
@@ -198,16 +223,6 @@ export function launchCrashRecovery(commands, { diagnosis, arm = 'stim', platfor
   const ordered = orderedCommands(commands);
   const diagnosisCommand = ordered.find((command) => command.id === diagnosis.commandId);
   const diagnosisEndedAt = timestamp(diagnosisCommand ?? {}, 'endedAt');
-  const repairedLaunch = ordered.find(
-    (command) =>
-      timestamp(command, 'startedAt') >= diagnosisEndedAt &&
-      successful(command) &&
-      launchCommand(command.command, arm, platform) &&
-      typeof command.output === 'string' &&
-      !command.output.includes('STIM_BENCH_LAUNCH_CRASH_') &&
-      (arm !== 'stim' || /\bOK:/.test(command.output)),
-  );
-  if (!repairedLaunch) return { valid: false, reason: 'launch-crash-repaired-relaunch-missing' };
   if (!screen?.valid) return { valid: false, reason: 'launch-crash-settings-proof-missing' };
   if (!screen.screenshotCommandId) {
     return { valid: false, reason: 'launch-crash-settings-command-missing' };
@@ -220,8 +235,35 @@ export function launchCrashRecovery(commands, { diagnosis, arm = 'stim', platfor
   ) {
     return { valid: false, reason: 'launch-crash-settings-command-invalid' };
   }
+  const screenshotStartedAt = timestamp(screenshot, 'startedAt');
+  const repairedLaunch = ordered.findLast(
+    (command) =>
+      timestamp(command, 'startedAt') >= diagnosisEndedAt &&
+      timestamp(command, 'endedAt') <= screenshotStartedAt &&
+      successful(command) &&
+      launchCommand(command.command, arm, platform) &&
+      typeof command.output === 'string' &&
+      !command.output.includes('STIM_BENCH_LAUNCH_CRASH_') &&
+      (arm !== 'stim' || /\bOK:/.test(command.output)),
+  );
+  if (!repairedLaunch) return { valid: false, reason: 'launch-crash-repaired-relaunch-missing' };
+  const relaunchEndedAt = timestamp(repairedLaunch, 'endedAt');
+  const laterCrashEvidence = ordered.find(
+    (command) =>
+      timestamp(command, 'startedAt') >= relaunchEndedAt &&
+      timestamp(command, 'endedAt') <= screenshotStartedAt &&
+      typeof command.output === 'string' &&
+      command.output.includes('STIM_BENCH_LAUNCH_CRASH_'),
+  );
+  if (laterCrashEvidence) {
+    return {
+      valid: false,
+      reason: 'launch-crash-token-observed-after-relaunch',
+      commandId: laterCrashEvidence.id,
+    };
+  }
   if (
-    timestamp(screenshot, 'startedAt') < timestamp(repairedLaunch, 'endedAt') ||
+    screenshotStartedAt < relaunchEndedAt ||
     timestamp({ endedAt: screen.observedAt }, 'endedAt') !== timestamp(screenshot, 'endedAt')
   ) {
     return { valid: false, reason: 'launch-crash-settings-proof-before-relaunch' };
