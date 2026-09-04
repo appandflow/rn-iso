@@ -63,12 +63,20 @@ function formatStage(stage) {
     .map((part, index) => {
       const releaseCandidate = part.match(/^rc(\d+)$/);
       if (releaseCandidate) return `rc.${releaseCandidate[1]}`;
+      if (part === 'android') return 'Android';
+      if (part === 'ios') return 'iOS';
       return index === 0 ? `${part.charAt(0).toUpperCase()}${part.slice(1)}` : part;
     })
     .join(' ');
 }
 
 function displaySimulator(meta) {
+  if (meta.platform === 'android') {
+    const expected = meta.expectedControlSimulator ?? meta.expectedStimDevice ?? {};
+    return [expected.deviceTypeIdentifier, expected.runtimeIdentifier, expected.systemImage]
+      .filter(Boolean)
+      .join(' / ');
+  }
   const parked = meta.preflight?.parkedSimulator ?? meta.expectedParkedSimulator;
   const model = parked?.deviceTypeIdentifier
     ?.replace('com.apple.CoreSimulator.SimDeviceType.', '')
@@ -83,6 +91,7 @@ function displaySimulator(meta) {
 
 export function benchmarkEnvironment(meta, machine = {}) {
   const actual = meta.preflight?.actual ?? {};
+  const androidEmulatorVersion = actual.ANDROID_EMULATOR_VERSION?.replace(/^(\d+\.\d+\.\d+)\.0\b/, '$1');
   return {
     machine: {
       model: machine.model ?? actual.MACHINE_MODEL ?? 'Not recorded',
@@ -94,9 +103,19 @@ export function benchmarkEnvironment(meta, machine = {}) {
         .filter(Boolean)
         .join(' ') || 'Not recorded',
     xcode:
-      [actual.XCODE_VERSION && `Xcode ${actual.XCODE_VERSION}`, actual.XCODE_BUILD && `(${actual.XCODE_BUILD})`]
-        .filter(Boolean)
-        .join(' ') || 'Not recorded',
+      meta.platform === 'android'
+        ? actual.ANDROID_SDK_VERSION
+          ? [
+              `Android SDK ${actual.ANDROID_SDK_VERSION}`,
+              androidEmulatorVersion && `Emulator ${androidEmulatorVersion}`,
+              actual.ADB_VERSION && `adb ${actual.ADB_VERSION}`,
+            ]
+              .filter(Boolean)
+              .join(' / ')
+          : 'Android SDK (version not recorded)'
+        : [actual.XCODE_VERSION && `Xcode ${actual.XCODE_VERSION}`, actual.XCODE_BUILD && `(${actual.XCODE_BUILD})`]
+            .filter(Boolean)
+            .join(' ') || 'Not recorded',
     node: actual.NODE_VERSION ? `Node ${actual.NODE_VERSION}` : 'Not recorded',
     simulator: displaySimulator(meta),
   };
@@ -338,10 +357,12 @@ export function summarizeRun(record, commands, backgroundProcesses) {
   const successfulCommands = commands.filter((command) => command.exitCode === 0);
   const commandText = successfulCommands.map((command) => command.command).join('\n');
   const preparedWorktree = /\bgit\s+worktree\b|\bstim\s+worktree\s+create\b/.test(commandText);
-  const copiedInputs = /\bcp\b[^\n]*(?:node_modules|ios\/Pods|ios\/build)/.test(commandText);
+  const copiedInputs = /\bcp\b[^\n]*(?:node_modules|ios\/Pods|ios\/build|android\/\.gradle|android\/app\/build)/.test(
+    commandText,
+  );
   const change =
     record.variant === 'native'
-      ? 'native iOS change'
+      ? `native ${record.platform === 'android' ? 'Android' : 'iOS'} change`
       : record.variant === 'launch-crash'
         ? 'JavaScript launch failure'
         : 'JavaScript change';
@@ -349,10 +370,13 @@ export function summarizeRun(record, commands, backgroundProcesses) {
     ? `Created an isolated worktree${copiedInputs ? ' and carried over dependencies or native outputs' : ''}`
     : 'Prepared the benchmark workspace';
   let launch = 'completed the app task';
-  if (/(?:^|\s)stim\s+ios(?:\s|$)/.test(commandText)) {
-    launch = "ran Stim's iOS workflow";
+  const stimPlatform = commandText.match(/(?:^|\s)stim\s+(ios|android)(?:\s|$)/)?.[1];
+  if (stimPlatform) {
+    launch = `ran Stim's ${stimPlatform === 'ios' ? 'iOS' : 'Android'} workflow`;
   } else if (/\bexpo\s+run:ios\b|\bxcodebuild\b/.test(commandText)) {
     launch = 'started the local Expo/Xcode workflow';
+  } else if (/\bexpo\s+run:android\b|\bgradlew\b/.test(commandText)) {
+    launch = 'started the local Expo/Android workflow';
   } else if (/\bexpo\s+start\b/.test(commandText)) {
     launch = 'started the local Expo dev server';
   } else if (/\bxcrun\s+simctl\s+launch\b/.test(commandText)) {
@@ -455,6 +479,146 @@ function validPng(path, expectedDimensions) {
   const width = bytes.readUInt32BE(16);
   const height = bytes.readUInt32BE(20);
   return width >= 300 && height >= 600 && width === expectedDimensions?.width && height === expectedDimensions?.height;
+}
+
+function validMp4(path) {
+  if (!existsSync(path)) return false;
+  const bytes = readFileSync(path);
+  return bytes.length >= 1_000 && bytes.subarray(4, 8).toString('ascii') === 'ftyp';
+}
+
+function recordMatchesMeta(record, meta) {
+  return (
+    record.runId === meta.runId &&
+    record.arm === meta.arm &&
+    record.variant === meta.variant &&
+    record.model === meta.model
+  );
+}
+
+function validateAndroidReadinessRecord(runDir, record, meta) {
+  const reject = (reason) => {
+    if (process.env.STIM_BENCH_EXPORT_DEBUG === '1') {
+      process.stderr.write(`${basename(runDir)}: ${reason}\n`);
+    }
+    return null;
+  };
+  const eventsPath = join(runDir, 'events.jsonl');
+  const proofPath = join(runDir, 'proof', 'settings.png');
+  const recordingPath = join(runDir, 'proof', 'session.mp4');
+  const transcriptPath = (record.runner ?? meta.runner) === 'claude' ? eventsPath : join(runDir, 'rollout.jsonl');
+  if (
+    !existsSync(eventsPath) ||
+    !existsSync(transcriptPath) ||
+    !validPng(proofPath, record.screen?.dimensions) ||
+    !validMp4(recordingPath)
+  ) {
+    return reject('invalid evidence files');
+  }
+  if (record.evidenceSha256?.events !== fileSha256(eventsPath)) return reject('events hash mismatch');
+  if (record.evidenceSha256?.settingsPng !== fileSha256(proofPath)) return reject('screenshot hash mismatch');
+  if (record.evidenceSha256?.transcript !== fileSha256(transcriptPath)) return reject('transcript hash mismatch');
+  if (record.evidenceSha256?.recording !== fileSha256(recordingPath)) return reject('recording hash mismatch');
+  if (!recordMatchesMeta(record, meta)) return reject('record metadata mismatch');
+
+  const commands = eventsFor(runDir, meta.dispatchAt, []).commands;
+  const screenIds = [
+    record.screen?.openCommandId,
+    record.screen?.recordStartCommandId,
+    record.screen?.waitCommandId,
+    record.screen?.screenshotCommandId,
+    record.screen?.copyCommandId,
+    record.screen?.recordStopCommandId,
+    record.screen?.closeCommandId,
+  ];
+  if (screenIds.some((id) => typeof id !== 'string')) return reject('screen command ids missing');
+  const screenCommands = screenIds.map((id) => commands.find((command) => command.id === id));
+  if (
+    screenCommands.some((command) => !command || command.exitCode !== 0) ||
+    screenCommands.some((command, index) => index > 0 && command.startSeconds < screenCommands[index - 1].endSeconds)
+  ) {
+    return reject('screen command graph invalid');
+  }
+  const screenReadySeconds = screenCommands[3].endSeconds;
+  const screenObservedAt = new Date(Date.parse(meta.dispatchAt) + screenReadySeconds * 1000).toISOString();
+  if (
+    record.screen.observedAt !== screenObservedAt ||
+    record.screen.dispatchToScreenReadySeconds !== screenReadySeconds ||
+    record.dispatchToScreenReadySeconds !== screenReadySeconds
+  ) {
+    return reject('screen metrics mismatch');
+  }
+  if (
+    record.recording?.valid !== true ||
+    record.recording?.target !== recordingPath ||
+    record.recording?.startCommandId !== screenIds[1] ||
+    record.recording?.stopCommandId !== screenIds[5] ||
+    record.recording?.startedAt !==
+      new Date(Date.parse(meta.dispatchAt) + screenCommands[1].endSeconds * 1000).toISOString() ||
+    record.recording?.endedAt !==
+      new Date(Date.parse(meta.dispatchAt) + screenCommands[5].endSeconds * 1000).toISOString()
+  ) {
+    return reject('recording evidence mismatch');
+  }
+
+  const appAlivePath = join(runDir, 'app-alive.json');
+  if (!existsSync(appAlivePath)) return reject('app-alive evidence missing');
+  const appAlive = readJson(appAlivePath);
+  if (
+    appAlive.error ||
+    appAlive.dispatchToAppAliveSeconds !== record.dispatchToAppAliveSeconds ||
+    appAlive.simulator?.udid !== record.simulator?.udid
+  ) {
+    return reject('app-alive evidence mismatch');
+  }
+
+  const recordedProofTarget = record.proof?.target;
+  if (!record.proof?.valid || typeof recordedProofTarget !== 'string') return reject('application proof missing');
+  const applicationProofPath = join(runDir, 'proof', basename(recordedProofTarget));
+  if (!existsSync(applicationProofPath) || record.evidenceSha256?.proof !== fileSha256(applicationProofPath)) {
+    return reject('application proof hash mismatch');
+  }
+  if (record.variant === 'javascript') {
+    if (
+      !applicationProofPath.endsWith('.bundle') ||
+      !readFileSync(applicationProofPath).includes(record.proof.expected)
+    ) {
+      return reject('JavaScript bundle proof mismatch');
+    }
+  } else if (record.variant === 'native') {
+    if (basename(applicationProofPath) !== 'native-application-label.txt') {
+      return reject('Android native label proof missing');
+    }
+    const labelProof = readFileSync(applicationProofPath, 'utf8');
+    const serial = labelProof.match(/^serial=(.*)$/m)?.[1];
+    const label = labelProof.match(/^application-label=(.*)$/m)?.[1];
+    if (serial !== record.simulator?.udid || label !== record.proof.expected || label !== record.proof.observed) {
+      return reject('Android native label proof mismatch');
+    }
+  }
+
+  const avdsBeforePath = join(runDir, 'avds-before.json');
+  const cleanupPath = join(runDir, 'cleanup.json');
+  if (!existsSync(avdsBeforePath) || !existsSync(cleanupPath)) return reject('cleanup evidence missing');
+  const avdsBefore = readJson(avdsBeforePath);
+  const cleanup = readJson(cleanupPath);
+  const actions = Array.isArray(cleanup.actions) ? cleanup.actions : [];
+  if (
+    !cleanup.cleanedAt ||
+    actions.some((action) => action.startsWith('failed:') || action.startsWith('skipped ')) ||
+    !actions.includes('verified benchmark agent-device sessions empty')
+  ) {
+    return reject('cleanup did not complete');
+  }
+  if (record.arm === 'stim') {
+    if (!actions.includes('stim worktree remove --force')) return reject('Stim cleanup missing');
+  } else {
+    const expectedName = meta.expectedControlSimulator?.name;
+    if (!expectedName || avdsBefore.includes(expectedName) || !actions.includes(`delete AVD ${expectedName}`)) {
+      return reject('control AVD cleanup not proven');
+    }
+  }
+  return { screenReadySeconds };
 }
 
 function nonShellActivitiesFor(runDir) {
@@ -594,7 +758,7 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
   const stage = basename(absoluteStageDir);
   const resultsRoot = dirname(absoluteStageDir);
   const coordinatorRoot = dirname(resultsRoot);
-  const proofCopies = [];
+  const artifactCopies = [];
   const runDirs = readdirSync(absoluteStageDir)
     .toSorted()
     .map((name) => join(absoluteStageDir, name))
@@ -607,13 +771,17 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
         runDir,
         record,
         meta,
+        readinessValidation:
+          record.variant !== 'launch-crash' && meta.platform === 'android'
+            ? validateAndroidReadinessRecord(runDir, record, meta)
+            : true,
         launchCrashValidation:
           record.variant === 'launch-crash' ? validateLaunchCrashRecord(runDir, record, meta) : null,
       };
     })
-    .filter(({ runDir, record, launchCrashValidation }) => {
+    .filter(({ runDir, record, readinessValidation, launchCrashValidation }) => {
       if (!record.valid || !record.screen?.valid || !existsSync(join(runDir, 'proof', 'settings.png'))) return false;
-      if (record.variant !== 'launch-crash') return true;
+      if (record.variant !== 'launch-crash') return readinessValidation !== null;
       return (
         record.diagnosis?.valid === true &&
         Number.isFinite(record.dispatchToDiagnosisSeconds) &&
@@ -663,7 +831,12 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
       const proofSource = join(runDir, 'proof', 'settings.png');
       const proofName = `${id}.png`;
       if (record.screen?.valid && existsSync(proofSource)) {
-        proofCopies.push([proofSource, join(proofDir, proofName)]);
+        artifactCopies.push([proofSource, join(proofDir, proofName)]);
+      }
+      const recordingSource = join(runDir, 'proof', 'session.mp4');
+      const recordingName = `${id}.mp4`;
+      if (record.recording?.valid && existsSync(recordingSource)) {
+        artifactCopies.push([recordingSource, join(proofDir, recordingName)]);
       }
       const totalSeconds = Math.max(
         record.dispatchToScreenReadySeconds ?? 0,
@@ -705,7 +878,7 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
         commandCount: record.commandCount,
         usage,
         estimatedTokenCostUsd: record.reportedCostUsd ?? estimateTokenCost(usage, record.model),
-        summary: summarizeRun(record, events.commands, backgroundProcesses),
+        summary: summarizeRun({ ...record, platform: meta.platform ?? 'ios' }, events.commands, backgroundProcesses),
         messages: events.messages,
         commands: events.commands,
         backgroundProcesses,
@@ -735,6 +908,12 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
               expected: record.screen.expected,
               width: record.screen.dimensions?.width,
               height: record.screen.dimensions?.height,
+            }
+          : null,
+        recording: record.recording?.valid
+          ? {
+              src: `benchmarks/${stage}/${recordingName}`,
+              bytes: record.recording.bytes,
             }
           : null,
       };
@@ -777,12 +956,12 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
   };
   assertPortable(payload);
   mkdirSync(proofDir, { recursive: true });
-  const expectedProofs = new Set(proofCopies.map(([, target]) => resolve(target)));
+  const expectedArtifacts = new Set(artifactCopies.map(([, target]) => resolve(target)));
   for (const entry of readdirSync(proofDir)) {
     const path = join(proofDir, entry);
-    if (entry.endsWith('.png') && !expectedProofs.has(resolve(path))) unlinkSync(path);
+    if (/\.(?:png|mp4)$/.test(entry) && !expectedArtifacts.has(resolve(path))) unlinkSync(path);
   }
-  for (const [source, target] of proofCopies) copyFileSync(source, target);
+  for (const [source, target] of artifactCopies) copyFileSync(source, target);
   mkdirSync(dirname(outputPath), { recursive: true });
   writeFileSync(outputPath, `${JSON.stringify(payload, null, 2)}\n`);
   return payload;

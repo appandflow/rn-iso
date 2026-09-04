@@ -1,9 +1,8 @@
-# Agent benchmark v4
+# Agent benchmark
 
-Date: 2026-09-03. Issue: #287. This protocol extends the v3 agent benchmark
-with rendered-screen readiness and published simulator-pool behavior. Its
-timings are a new, non-comparable block because v3 stopped at process liveness,
-did not navigate the app, and created a new simulator for every run.
+This protocol measures rendered-screen readiness with auditable device proof.
+Its timings are not comparable with the earlier process-liveness experiment,
+which stopped before navigating the app.
 
 ## Question and pilot gate
 
@@ -12,34 +11,32 @@ to a changed Trailhead app visibly ready on its Settings screen. JavaScript and
 native changes are different workloads and are never combined into one run or
 one headline number.
 
-The first pilot contains four sequential cells, all on `gpt-5.6-luna`:
+Each model and platform contains four sequential cells:
 
-| Change     | Arm     | Simulator state                     |
-| ---------- | ------- | ----------------------------------- |
-| JavaScript | Stim    | adopt the prepared parked simulator |
-| JavaScript | Control | create a new simulator              |
-| Native     | Stim    | adopt the prepared parked simulator |
-| Native     | Control | create a new simulator              |
+| Change     | Arm     | Device state                                                  |
+| ---------- | ------- | ------------------------------------------------------------- |
+| JavaScript | Stim    | adopt the prepared parked iOS simulator or create Android AVD |
+| JavaScript | Control | create a new simulator or AVD                                 |
+| Native     | Stim    | adopt the prepared parked iOS simulator or create Android AVD |
+| Native     | Control | create a new simulator or AVD                                 |
 
-Do not dispatch another model until the Luna report and visual evidence are
-reviewed. Later model blocks keep the same pins and cell definitions. Results
-from different change kinds, models, or deliberately changed pins remain
-separate.
+Results from different platforms, change kinds, models, or deliberately changed
+pins remain separate. Never pool iOS and Android timings into one number.
 
 ## Pins and preparation
 
 Pin the exact published `stim-cli` version and package integrity, fixture
-commit, Codex version, model, reasoning effort, service tier, `agent-device`
-version and executable hash, Node.js, CocoaPods, macOS, Xcode, iPhone model,
-and iOS runtime before preparing the block. The Luna pilot uses published
-`stim-cli@1.0.0-rc.12`, iPhone 17, and iOS 26.5.
+commit, runner version, model, reasoning effort, service tier, `agent-device`
+version and executable hash, Node.js, host machine, and platform toolchain
+before preparing the block. iOS also pins CocoaPods, Xcode, iPhone model, and
+runtime. Android pins the SDK tools, emulator, adb, and system-image package.
 
-Preparation runs outside the timer. It creates one Stim-owned simulator, warms
-the fixed fixture, removes its seed worktree, and verifies that cleanup parked
-the simulator. The golden must contain exactly one available, shut-down pool
-record whose device name starts with `stim-parked`, plus the matching iOS build
-artifact. Set the opt-in parked capacity explicitly for every command that uses
-the isolated benchmark `STIM_HOME`.
+Preparation runs outside the timer. On iOS it creates one Stim-owned simulator,
+warms the fixed fixture, removes its seed worktree, and verifies that cleanup
+parked the simulator. The iOS golden contains exactly one available, shut-down
+pool record whose device name starts with `stim-parked`, plus the matching build
+artifact. Android preparation warms the matching APK cache but retains no AVD;
+both Android arms create a fresh AVD during the timed run.
 
 Before each dispatch, verify the package version and integrity, fixture commit,
 clean main checkout, golden build artifact, exact parked simulator identity and
@@ -66,7 +63,7 @@ The JavaScript cell changes only the Settings Offline maps subtitle:
 +subtitle="Keep saved trail maps available offline"
 ```
 
-The native cell changes only `ios/Trailhead/AppDelegate.swift`, immediately
+The iOS native cell changes only `ios/Trailhead/AppDelegate.swift`, immediately
 after the existing window assignment:
 
 ```swift
@@ -77,6 +74,12 @@ The native marker must appear as the live app window label in the
 `agent-device` accessibility snapshot. This proves that the changed compiled
 AppDelegate executed; searching an optimized Swift executable for an ASCII
 literal is not sufficient.
+
+The Android native cell changes only the `app_name` string in
+`android/app/src/main/res/values/strings.xml` to `Trailhead <run-id>`. The live
+app is opened on the exact run emulator, and the installed APK's application
+label must equal that run marker. The collector preserves the label read from
+the installed APK before cleanup.
 
 ## Arm isolation
 
@@ -98,10 +101,13 @@ The Stim worktree must therefore use Git branch
 control creates the corresponding Git worktree using local Git. Both carry the
 same installed dependencies and native outputs from the fixture checkout.
 
-The Stim arm uses the inherited isolated `STIM_HOME`, invokes the pinned RC as
-exactly `stim`, requests iPhone 17 and iOS 26.5, and must report adoption of the
-prepared simulator. The control must not inspect that home or use Stim; it
-creates a new benchmark-named iPhone 17 on iOS 26.5.
+The Stim arm uses the inherited isolated `STIM_HOME` and invokes the pinned
+published CLI as exactly `stim`. On iOS it requests the pinned model/runtime and
+must report adoption of the prepared simulator. On Android it requests the
+pinned system image. The control must not inspect that home or use Stim; it
+creates a new benchmark-named device with the same platform configuration.
+Android control uses the same `avdmanager` default profile, 8 GiB data
+partition, system image, and no-snapshot boot flags as Stim.
 
 ## Settings readiness proof
 
@@ -115,22 +121,26 @@ sequence is:
 
 ```text
 env AGENT_DEVICE_STATE_DIR=<campaign-state> AGENT_DEVICE_SESSION=<run-id> agent-device open com.appandflow.trailhead --foreground --platform ios --udid <run-udid>
+env AGENT_DEVICE_STATE_DIR=<campaign-state> AGENT_DEVICE_SESSION=<run-id> agent-device record start <run-dir>/proof/session.mp4 --scope device --quality high --hide-touches
 <handle Expo onboarding if it appears and navigate by semantic label to Settings>
 env AGENT_DEVICE_STATE_DIR=<campaign-state> AGENT_DEVICE_SESSION=<run-id> agent-device wait text "<expected text>"
 env AGENT_DEVICE_STATE_DIR=<campaign-state> AGENT_DEVICE_SESSION=<run-id> agent-device screenshot /tmp/<run-id>-settings.png
 cp /tmp/<run-id>-settings.png <run-dir>/proof/settings.png
+env AGENT_DEVICE_STATE_DIR=<campaign-state> AGENT_DEVICE_SESSION=<run-id> agent-device record stop
 env AGENT_DEVICE_STATE_DIR=<campaign-state> AGENT_DEVICE_SESSION=<run-id> agent-device close
 ```
 
-Record each proof step as its own top-level shell command. Do not hide proof in
+The run-scoped MP4 captures Expo onboarding and Settings navigation for audit
+and promotional use. Every arm records with the same settings so capture
+overhead stays symmetric. Record each proof step as its own top-level shell command. Do not hide proof in
 an interactive shell, script, chained command, or redirected background job.
 Using a bare or mismatched agent-device state directory/session, or restarting
 its daemon inside the timed interval, invalidates the attempt. The collector
 also requires `open` and `close` output to name the exact run session; command
 shape alone is insufficient.
 
-The agent reads `<run-udid>` from the Stim result or control simulator-creation
-output. The explicit UDID prevents an existing automation session from
+The agent reads `<run-udid>` or `<run-serial>` from the platform launch output.
+The explicit device identifier prevents an existing automation session from
 selecting unrelated hardware; a bundle identifier alone is insufficient. The
 temporary screenshot path avoids Simulator write restrictions on external
 volumes. JavaScript waits for `Keep saved trail maps available offline`; native
@@ -139,16 +149,17 @@ waits for `Offline maps`.
 The collector accepts the screenshot only when the targeted open command names
 the same UDID recorded by the independent app watcher, all required commands
 completed in order after dispatch, the PNG has a valid signature and
-dimensions, its timestamps fit the run, and the copied file exists. The
-JavaScript source and captured Metro bundle must contain the changed subtitle.
-Native must have the exact run marker in the live window accessibility node.
+dimensions, its timestamps fit the run, and the copied file exists. It also
+requires an integrity-bound MP4 between the recorded start and stop commands.
+The JavaScript source and captured Metro bundle must contain the changed
+subtitle. iOS native must expose the exact run marker in the live window
+accessibility node; Android native must preserve the same marker from the
+installed APK application label.
 Missing proof makes the attempt invalid even when the app process is alive.
 
-The initial Luna pilot predated this UDID-binding correction. Its retained
-launch, watcher, command, and screenshot evidence shows the changed JavaScript
-subtitle or run-specific native accessibility marker on the intended
-simulator, so those four attempts remain valid. Any later block must use the
-explicit UDID command above.
+Android uses the same command sequence with `--platform android --serial
+<run-serial>`. Every current run must bind proof to the independently observed
+device identifier.
 
 ## Metrics and records
 
@@ -194,9 +205,9 @@ node scripts/export-benchmark-viewer.mjs \
 ```
 
 The optional machine JSON contains only `model`, `chip`, and `memory`. The
-exporter combines those fields with the recorded macOS, Xcode, Node, simulator
-model, and simulator runtime. Never include a hostname, serial number, hardware
-UUID, username, device UDID, or path in that file.
+exporter combines those fields with the recorded macOS, platform toolchain,
+Node, device model, and runtime. Never include a hostname, serial number,
+hardware UUID, username, device identifier, or path in that file.
 
 The exporter refuses data that still contains a local username or an absolute
 home, volume, temporary, or simulator path. It omits machine-global process,
@@ -216,12 +227,12 @@ After collection, close the exact run-scoped `agent-device` session and verify
 that the campaign session inventory is empty before a simulator can be parked
 or reused. If closure cannot be proven, stop and clean only the campaign-owned
 daemon. Remove the temporary screenshot and terminate only benchmark-owned
-processes. For Stim, run
-`stim stop` and `stim worktree remove --force`, then verify that the same
-simulator is shut down, renamed as parked, and is the sole pool record. For
+processes. For Stim, run `stim stop` and `stim worktree remove --force`. On iOS,
+then verify that the same simulator is shut down, renamed as parked, and is the
+sole pool record. Android follows Stim's owned-emulator teardown contract. For
 control, remove its worktree and branch and shut down and delete only the newly
-created benchmark simulator. Do not touch unrelated physical-device leases or
-automation sessions.
+created benchmark simulator or emulator. Do not touch unrelated physical-device
+leases or automation sessions.
 
 ## JavaScript launch-crash extension
 

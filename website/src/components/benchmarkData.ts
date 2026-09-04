@@ -72,6 +72,10 @@ export type BenchmarkRun = {
     width: number;
     height: number;
   } | null;
+  recording?: {
+    src: string;
+    bytes: number;
+  } | null;
 };
 
 export type BenchmarkData = {

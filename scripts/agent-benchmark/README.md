@@ -5,8 +5,8 @@ keeps machine-local pins, credentials, build artifacts, raw transcripts, and
 device identifiers outside the repository while keeping fixture preparation,
 dispatch, evidence collection, audit, cleanup, and reporting reviewable.
 
-The driver currently runs the iOS readiness and JavaScript launch-failure
-suites described in [`../../docs/agent-benchmark-v4.md`](../../docs/agent-benchmark-v4.md).
+The driver runs the iOS and Android readiness suites plus the iOS JavaScript
+launch-failure suite described in [`../../docs/agent-benchmark.md`](../../docs/agent-benchmark.md).
 Runs are sequential. Never dispatch two cells against the same benchmark root.
 
 ## Machine-local layout
@@ -44,8 +44,7 @@ export STIM_BENCH_SKILLS_ROOT=/path/to/skills
 
 ## Run a cell
 
-Prepare the golden artifact and parked simulator once, then dispatch, collect,
-and clean one cell:
+Prepare the platform golden, then dispatch, collect, and clean one cell:
 
 ```bash
 node scripts/agent-benchmark/driver.mjs preflight
@@ -54,6 +53,14 @@ node scripts/agent-benchmark/driver.mjs dispatch gpt-5.6-sol stim launch-crash s
 node scripts/agent-benchmark/driver.mjs collect /path/to/run-directory
 node scripts/agent-benchmark/driver.mjs cleanup /path/to/run-directory
 node scripts/agent-benchmark/driver.mjs report sol-launch-crash
+```
+
+Android is selected explicitly and remains a separate result block:
+
+```bash
+node scripts/agent-benchmark/driver.mjs preflight android
+node scripts/agent-benchmark/driver.mjs prepare android
+node scripts/agent-benchmark/driver.mjs dispatch gpt-5.6-sol stim javascript sol-android android
 ```
 
 `dispatch` creates and commits the broken fixture before the timed turn, gives
@@ -68,4 +75,5 @@ Run the self-tests before a campaign:
 node scripts/agent-benchmark/driver.mjs selftest-device-targeting
 node scripts/agent-benchmark/driver.mjs selftest-agent-device-isolation
 node scripts/agent-benchmark/driver.mjs selftest-launch-crash
+node scripts/agent-benchmark/driver.mjs selftest-android
 ```

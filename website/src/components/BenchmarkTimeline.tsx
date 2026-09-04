@@ -116,6 +116,7 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
   const breakdown = useMemo(() => timeBreakdown(run), [run]);
   const playbackCommand = useMemo(() => commandAtCursor(run.commands, cursorSeconds), [run.commands, cursorSeconds]);
   const proofSrc = useBaseUrl(run.proof?.src ?? '');
+  const recordingSrc = useBaseUrl(run.recording?.src ?? '');
   const ticks = [0, 0.25, 0.5, 0.75, 1];
   const timelineDimensions = timelineZoomDimensions(timelineViewport.width, timelineViewport.rootFontSize, zoom);
   const beginPinch = (event: ReactTouchEvent<HTMLDivElement>) => {
@@ -601,6 +602,21 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
           </div>
         </section>
       )}
+      {run.recording ? (
+        <section className={styles.recording}>
+          <div>
+            <span>Run recording</span>
+            <h2>Simulator playback</h2>
+            <p>The run-scoped recording starts after the app session opens and includes onboarding and navigation.</p>
+            <a href={recordingSrc} download>
+              Download MP4
+            </a>
+          </div>
+          <video controls preload="metadata" poster={proofSrc} aria-label={`Simulator recording for ${run.id}`}>
+            <source src={recordingSrc} type="video/mp4" />
+          </video>
+        </section>
+      ) : null}
     </div>
   );
 }

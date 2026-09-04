@@ -207,6 +207,25 @@ describe('benchmark viewer export', () => {
     );
   });
 
+  it('uses the recorded platform in native summaries', () => {
+    expect(
+      summarizeRun(
+        { variant: 'native', platform: 'android', screen: { valid: true } },
+        [
+          {
+            id: 'launch',
+            startSeconds: 0,
+            endSeconds: 1,
+            command: 'stim android',
+            output: '',
+            exitCode: 0,
+          },
+        ],
+        [],
+      ),
+    ).toBe("Prepared the benchmark workspace, worked on the native Android change, and ran Stim's Android workflow.");
+  });
+
   it('preserves a failed Claude Bash exit code when reconstructing events', () => {
     const root = mkdtempSync(join(tmpdir(), 'stim-claude-events-'));
     tempDirs.push(root);
@@ -434,6 +453,37 @@ describe('benchmark viewer export', () => {
     });
   });
 
+  it('reports the Android toolchain and exact system image', () => {
+    const environment = benchmarkEnvironment(
+      {
+        platform: 'android',
+        preflight: {
+          actual: {
+            MACOS_VERSION: '26.5.2',
+            MACOS_BUILD: '25F84',
+            ANDROID_SDK_VERSION: '20.0',
+            ANDROID_EMULATOR_VERSION: '36.4.9.0 (build_id 14788078) (CL:N/A)',
+            ADB_VERSION: '36.0.2-14143358',
+            NODE_VERSION: '26.7.0',
+          },
+        },
+        expectedStimDevice: {
+          runtimeIdentifier: 'Android-36',
+          systemImage: 'system-images;android-36;google_apis_playstore_ps16k;arm64-v8a',
+        },
+      },
+      { model: 'Mac mini', chip: 'Apple M4 Pro', memory: '64 GB' },
+    );
+
+    expect(environment).toEqual({
+      machine: { model: 'Mac mini', chip: 'Apple M4 Pro', memory: '64 GB' },
+      macos: 'macOS 26.5.2 (25F84)',
+      xcode: 'Android SDK 20.0 / Emulator 36.4.9 (build_id 14788078) (CL:N/A) / adb 36.0.2-14143358',
+      node: 'Node 26.7.0',
+      simulator: 'Android-36 / system-images;android-36;google_apis_playstore_ps16k;arm64-v8a',
+    });
+  });
+
   it('extracts Claude Bash commands, output, and text messages', () => {
     const dir = mkdtempSync(join(tmpdir(), 'stim-claude-events-'));
     tempDirs.push(dir);
@@ -531,6 +581,151 @@ describe('benchmark viewer export', () => {
     expect(payload.runs.map((run) => run.id)).toEqual(['native-control']);
     expect(payload.recordedOn).toBe('2026-09-03');
     expect(readdirSync(proofDir)).toEqual(['native-control.png']);
+  });
+
+  it('requires integrity-bound Android readiness and cleanup evidence', () => {
+    const root = mkdtempSync(join(tmpdir(), 'stim-android-export-'));
+    tempDirs.push(root);
+    const stageDir = join(root, 'results', 'sol-android');
+    const runDir = join(stageDir, 'private-run-id');
+    mkdirSync(join(runDir, 'proof'), { recursive: true });
+    const dispatchAt = '2026-09-04T12:00:00.000Z';
+    const commandEvents = [
+      ['open', 1, 2, 'agent-device open com.example.app', 'opened'],
+      ['record-start', 3, 4, 'agent-device record start proof/session.mp4', 'recording'],
+      ['wait', 5, 6, 'agent-device wait text "Keep saved trail maps available offline"', 'found'],
+      ['screenshot', 7, 8, 'agent-device screenshot /tmp/settings.png', 'saved'],
+      ['copy', 9, 10, 'cp /tmp/settings.png proof/settings.png', ''],
+      ['record-stop', 11, 12, 'agent-device record stop', 'saved'],
+      ['close', 13, 14, 'agent-device close', ''],
+    ];
+    writeFileSync(
+      join(runDir, 'events.jsonl'),
+      `${commandEvents
+        .flatMap(([id, start, end, command, output]) => [
+          stamp(new Date(Date.parse(dispatchAt) + start * 1000).toISOString(), {
+            type: 'item.started',
+            item: { id, type: 'command_execution', command },
+          }),
+          stamp(new Date(Date.parse(dispatchAt) + end * 1000).toISOString(), {
+            type: 'item.completed',
+            item: { id, type: 'command_execution', command, aggregated_output: output, exit_code: 0 },
+          }),
+        ])
+        .join('\n')}\n`,
+    );
+    const proofPath = join(runDir, 'proof', 'settings.png');
+    copyFileSync(join(process.cwd(), 'website/static/benchmarks/sol-launch-crash/launch-crash-stim.png'), proofPath);
+    const bundlePath = join(runDir, 'proof', 'metro-8081-at-app-alive.bundle');
+    writeFileSync(bundlePath, 'Keep saved trail maps available offline');
+    const recordingPath = join(runDir, 'proof', 'session.mp4');
+    copyFileSync(
+      join(process.cwd(), 'website/static/benchmarks/luna-rc12/javascript-stim-interaction.mp4'),
+      recordingPath,
+    );
+    const rolloutPath = join(runDir, 'rollout.jsonl');
+    writeFileSync(rolloutPath, '{}\n');
+    writeFileSync(join(runDir, 'avds-before.json'), '[]\n');
+    writeFileSync(
+      join(runDir, 'app-alive.json'),
+      JSON.stringify({ dispatchToAppAliveSeconds: 5, simulator: { udid: 'emulator-5554' } }),
+    );
+    writeFileSync(
+      join(runDir, 'cleanup.json'),
+      JSON.stringify({
+        cleanedAt: '2026-09-04T12:01:00.000Z',
+        actions: [
+          'verified benchmark agent-device sessions empty',
+          'delete AVD Trailhead_private-run-id',
+          'remove worktree worktree/private-run-id',
+        ],
+      }),
+    );
+    writeFileSync(
+      join(runDir, 'meta.json'),
+      JSON.stringify({
+        runId: 'private-run-id',
+        runner: 'codex',
+        model: 'gpt-5.6-sol',
+        arm: 'control',
+        variant: 'javascript',
+        platform: 'android',
+        dispatchAt,
+        finishedAt: '2026-09-04T12:01:00.000Z',
+        expectedControlSimulator: { name: 'Trailhead_private-run-id' },
+      }),
+    );
+    const recordPath = join(runDir, 'run.json');
+    const record = {
+      runId: 'private-run-id',
+      runner: 'codex',
+      model: 'gpt-5.6-sol',
+      variant: 'javascript',
+      arm: 'control',
+      valid: true,
+      invalidReasons: [],
+      dispatchToAppAliveSeconds: 5,
+      dispatchToScreenReadySeconds: 8,
+      simulator: { udid: 'emulator-5554' },
+      commandCount: 7,
+      proof: { valid: true, expected: 'Keep saved trail maps available offline', target: bundlePath },
+      screen: {
+        valid: true,
+        expected: 'Keep saved trail maps available offline',
+        dimensions: { width: 402, height: 874 },
+        observedAt: '2026-09-04T12:00:08.000Z',
+        dispatchToScreenReadySeconds: 8,
+        openCommandId: 'open',
+        recordStartCommandId: 'record-start',
+        waitCommandId: 'wait',
+        screenshotCommandId: 'screenshot',
+        copyCommandId: 'copy',
+        recordStopCommandId: 'record-stop',
+        closeCommandId: 'close',
+      },
+      recording: {
+        valid: true,
+        target: recordingPath,
+        bytes: readFileSync(recordingPath).length,
+        startedAt: '2026-09-04T12:00:04.000Z',
+        endedAt: '2026-09-04T12:00:12.000Z',
+        startCommandId: 'record-start',
+        stopCommandId: 'record-stop',
+      },
+      evidenceSha256: {
+        events: sha256(join(runDir, 'events.jsonl')),
+        settingsPng: sha256(proofPath),
+        transcript: sha256(rolloutPath),
+        proof: sha256(bundlePath),
+        recording: sha256(recordingPath),
+      },
+    };
+    writeFileSync(recordPath, JSON.stringify(record));
+
+    expect(exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'public-proof')).runs).toHaveLength(1);
+    for (const mutate of [
+      () => writeFileSync(bundlePath, 'tampered'),
+      () => writeFileSync(join(runDir, 'avds-before.json'), JSON.stringify(['Trailhead_private-run-id'])),
+      () => writeFileSync(join(runDir, 'cleanup.json'), JSON.stringify({ cleanedAt: 'now', actions: [] })),
+    ]) {
+      mutate();
+      expect(() => exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'public-proof'))).toThrow(
+        'no valid benchmark runs found',
+      );
+      writeFileSync(bundlePath, 'Keep saved trail maps available offline');
+      writeFileSync(join(runDir, 'avds-before.json'), '[]\n');
+      writeFileSync(
+        join(runDir, 'cleanup.json'),
+        JSON.stringify({
+          cleanedAt: '2026-09-04T12:01:00.000Z',
+          actions: [
+            'verified benchmark agent-device sessions empty',
+            'delete AVD Trailhead_private-run-id',
+            'remove worktree worktree/private-run-id',
+          ],
+        }),
+      );
+    }
   });
 
   it('refuses to publish a block with no valid attempts', () => {
