@@ -2428,7 +2428,8 @@ function selftestLaunchCrash() {
     'Before inspecting source or git diff',
     'stim logs --errors',
     'Make the smallest repair',
-    'stim ios` again',
+    'agent-device metro reload --metro-port <reported Metro port>',
+    'Do not run `stim ios` a second time',
   ]) {
     if (!prompt.includes(required)) {
       throw new Error(`launch-crash prompt is missing: ${required}`);
