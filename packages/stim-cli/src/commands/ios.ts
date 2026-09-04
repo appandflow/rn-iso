@@ -1313,8 +1313,8 @@ interface ReportIosResultArgs {
   installSkipped: boolean;
   elapsed: () => number;
   startedAt: string;
-  storeHash: string;
-  storeKey: string;
+  storeHash: string | null;
+  storeKey: string | null;
   cacheHit: CacheHitLevel;
   compilationCache: CompilationCacheActivity;
   useBuildCache: boolean;
@@ -1471,8 +1471,8 @@ interface FinishIosRunArgs {
   abandonedRemote: boolean;
   elapsed: () => number;
   startedAt: string;
-  storeHash: string;
-  storeKey: string;
+  storeHash: string | null;
+  storeKey: string | null;
   cacheHit: CacheHitLevel;
   compilationCache: CompilationCacheActivity;
   useBuildCache: boolean;
@@ -2202,8 +2202,8 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   let fingerprint = '';
   let fingerprintSources: FingerprintSource[] = [];
   let cacheKey = '';
-  let storeHash = '';
-  let storeKey = '';
+  let storeHash: string | null = null;
+  let storeKey: string | null = null;
   let storeSources: FingerprintSource[] = [];
   let appPath: string | null = null;
   let bundleId: string | null = null;
@@ -2746,7 +2746,19 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
             previousHash: fingerprint,
             fingerprint: d.fingerprintProject,
           });
-          if (after?.moved) {
+          if (!after) {
+            storeHash = null;
+            storeKey = null;
+            buildFailure = { ...buildFailure, fingerprint: null, cacheKey: null };
+            note(
+              chalk.yellow(
+                phaseLine(
+                  'fingerprint',
+                  `unavailable after ${mutatingSteps.join(', ')}; the build will be installed but not cached`,
+                ),
+              ),
+            );
+          } else if (after.moved) {
             storeHash = after.hash;
             storeSources = after.sources;
             storeKey = buildCacheKey(PLATFORM, after.hash, {
@@ -2804,19 +2816,25 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
           appPath = result.appPath ?? null;
           bundleId = result.bundleId ?? null;
 
-          try {
-            const stored = await storeTieredBuild({
-              local: filesystemBuildCapability({ resolve: d.resolveBuild, store: d.storeBuild, sources: storeSources }),
-              loadProvider,
-              target: { projectRoot: root, platform: PLATFORM, key: storeKey },
-              sourcePath: appPath!,
-              overwrite: !useBuildCache || swapFellBack,
-              warn: cacheWarn,
-            });
-            providerUpload = stored.providerUpload;
-            providerName = stored.providerName ?? providerName;
-          } catch (e) {
-            note(chalk.yellow(`Could not store the build in the shared cache: ${(e as Error)?.message || e}`));
+          if (storeKey) {
+            try {
+              const stored = await storeTieredBuild({
+                local: filesystemBuildCapability({
+                  resolve: d.resolveBuild,
+                  store: d.storeBuild,
+                  sources: storeSources,
+                }),
+                loadProvider,
+                target: { projectRoot: root, platform: PLATFORM, key: storeKey },
+                sourcePath: appPath!,
+                overwrite: !useBuildCache || swapFellBack,
+                warn: cacheWarn,
+              });
+              providerUpload = stored.providerUpload;
+              providerName = stored.providerName ?? providerName;
+            } catch (e) {
+              note(chalk.yellow(`Could not store the build in the shared cache: ${(e as Error)?.message || e}`));
+            }
           }
 
           if (physical) {
@@ -2825,7 +2843,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
             appPath = prepared;
           }
 
-          if (remote && !physical) {
+          if (remote && !physical && storeHash) {
             uploadPending = d.uploadRemote({
               logWriter: logWriter(),
               provider: remote.provider,
