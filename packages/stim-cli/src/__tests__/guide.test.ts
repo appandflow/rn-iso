@@ -963,12 +963,22 @@ test('the agent guide carries the normal workflow and safety rules', () => {
   expect(agent).toMatch(/give the user one compact result: exact device,[\s\S]*total duration/);
   expect(agent).toMatch(/whether stim logs\s+--errors passed/);
   expect(agent).toMatch(/Do not repeat the\s+phase transcript/);
-  expect(agent).toMatch(/Exit code 0 from logs --errors is the pass condition/);
+  expect(agent).toMatch(/requires exit code 0 AND no matching errors in\s+captured logs/);
+  expect(agent).toMatch(/Exit code 0 alone means the query succeeded, even when errors\s+were printed/);
+  expect(agent).toMatch(/does not prove launch or log\s+capture succeeded/);
   expect(agent).toContain('No matching log records');
   expect(agent).toContain('agent-device metro reload --metro-port <reported-port>');
   expect(agent).toMatch(/app error but also says the native process is alive,[\s\S]*app did not crash/);
   expect(agent).toMatch(/FATAL because the app process exited,[\s\S]*Metro cannot restart it/);
   expect(agent).toMatch(/Ordinary stim stop and an authorized clean\s+stim worktree remove do not need/);
+});
+
+test('the logs guide distinguishes query success from a clean captured timeline', () => {
+  const logs = renderTopic('logs');
+  assert(logs);
+  expect(logs).toContain('EXIT 0 MEANS THE QUERY SUCCEEDED, whether or not records matched');
+  expect(logs).toMatch(/requires exit code 0 AND no matching errors in\s+captured logs/);
+  expect(logs).toContain('a workspace with no log directory also returns an empty result');
 });
 
 test('the logs guide keeps Expo and bare React Native stack context on one human error record', () => {

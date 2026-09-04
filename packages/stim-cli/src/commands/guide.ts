@@ -78,9 +78,11 @@ RULES DURING THE LOOP
   still building" means Metro has not finished; wait and query the logs. For
   launch UNVERIFIED, follow the printed remedy before claiming success. JSON
   reports these as true, "bundling", and "unverified" in launched.
-- Exit code 0 from logs --errors is the pass condition. Human output can show
-  "No matching log records" on stderr. JSON mode prints zero bytes when no
-  records match. Do not read the NDJSON files directly.
+- A clean logs --errors check requires exit code 0 AND no matching errors in
+  captured logs. Exit code 0 alone means the query succeeded, even when errors
+  were printed. Human output shows "No matching log records" on stderr for
+  zero matches; JSON mode prints zero bytes. This does not prove launch or log
+  capture succeeded. Do not read the NDJSON files directly.
 - Use stim status when resuming a workspace or recovering missing device,
   port, server, or build facts. A normal start and platform run already print
   them. Use stim doctor when a build is unexpectedly slow or the environment
@@ -637,9 +639,12 @@ Reads every *.ndjson file in the global workspace logs directory, merges them in
 ordered by timestamp, prints what matches, and EXITS. The file set is
 discovered, not enumerated.
 
-NOTHING MATCHING IS EXIT 0. \`stim logs --errors\` finding nothing is the
-pass condition of a build loop, so an empty result must never read as a
-failure. Precisely what that looks like: STDOUT IS EMPTY, exit code 0, and
+EXIT 0 MEANS THE QUERY SUCCEEDED, whether or not records matched. A clean
+\`stim logs --errors\` check requires exit code 0 AND no matching errors in
+captured logs. An empty result does not prove launch or log capture succeeded;
+a workspace with no log directory also returns an empty result.
+
+For zero matches: STDOUT IS EMPTY, exit code 0, and
 one dim note on STDERR reading \`No matching log records in <logs dir>\`
 (human mode only -- \`--json\` prints nothing at all, on either stream).
 The only exit-1 paths are a malformed query and no project.
