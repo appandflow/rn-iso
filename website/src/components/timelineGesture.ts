@@ -33,3 +33,16 @@ export function installTimelineWheelZoom(
 export function timelineAnchoredScrollLeft(contentRatio: number, scrollWidth: number, viewportOffset: number): number {
   return contentRatio * scrollWidth - viewportOffset;
 }
+
+export function timelinePlaybackScrollLeft(
+  cursorRatio: number,
+  scrollWidth: number,
+  viewportWidth: number,
+  labelWidth: number,
+): number {
+  const trackWidth = Math.max(0, scrollWidth - labelWidth);
+  const viewportTrackWidth = Math.max(0, viewportWidth - labelWidth);
+  const playheadPosition = labelWidth + Math.min(1, Math.max(0, cursorRatio)) * trackWidth;
+  const followPosition = labelWidth + viewportTrackWidth * 0.7;
+  return Math.min(Math.max(0, scrollWidth - viewportWidth), Math.max(0, playheadPosition - followPosition));
+}

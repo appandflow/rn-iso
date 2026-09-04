@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   installTimelineWheelZoom,
   timelineAnchoredScrollLeft,
+  timelinePlaybackScrollLeft,
   timelinePinchGeometry,
   type TimelineWheelZoom,
 } from './timelineGesture';
@@ -45,6 +46,20 @@ describe('installTimelineWheelZoom', () => {
 describe('timelineAnchoredScrollLeft', () => {
   it('keeps the content ratio under the gesture midpoint after zoom', () => {
     expect(timelineAnchoredScrollLeft(0.5, 1600, 200)).toBe(600);
+  });
+});
+
+describe('timelinePlaybackScrollLeft', () => {
+  it('keeps the early playhead in view without scrolling', () => {
+    expect(timelinePlaybackScrollLeft(0.2, 2112, 1000, 112)).toBe(0);
+  });
+
+  it('follows the playhead after it crosses 70% of the visible track', () => {
+    expect(timelinePlaybackScrollLeft(0.5, 2112, 1000, 112)).toBeCloseTo(378.4);
+  });
+
+  it('stops at the end of the scrollable timeline', () => {
+    expect(timelinePlaybackScrollLeft(1, 2112, 1000, 112)).toBe(1112);
   });
 });
 

@@ -17,7 +17,12 @@ import {
   type BenchmarkCommand,
   type BenchmarkRun,
 } from './benchmarkData';
-import { installTimelineWheelZoom, timelineAnchoredScrollLeft, timelinePinchGeometry } from './timelineGesture';
+import {
+  installTimelineWheelZoom,
+  timelineAnchoredScrollLeft,
+  timelinePinchGeometry,
+  timelinePlaybackScrollLeft,
+} from './timelineGesture';
 import styles from './BenchmarkTimeline.module.css';
 
 function position(seconds: number, total: number): string {
@@ -171,6 +176,21 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
   }, [zoom]);
 
   useEffect(() => {
+    const scroller = timelineScroller.current;
+    if (!playing || !scroller) return;
+    scroller.scrollLeft = timelinePlaybackScrollLeft(
+      cursorSeconds / Math.max(1, run.totalSeconds),
+      scroller.scrollWidth,
+      scroller.clientWidth,
+      timelineDimensions.labelWidth,
+    );
+  }, [cursorSeconds, playing, run.totalSeconds, timelineDimensions.labelWidth]);
+
+  useEffect(() => {
+    if (playing && cursorSeconds >= run.totalSeconds) setPlaying(false);
+  }, [cursorSeconds, playing, run.totalSeconds]);
+
+  useEffect(() => {
     if (!playing) return;
     let frame = 0;
     let previous = performance.now();
@@ -178,9 +198,7 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
       const elapsed = ((now - previous) / 1000) * speed;
       previous = now;
       setCursorSeconds((current) => {
-        const next = Math.min(run.totalSeconds, current + elapsed);
-        if (next >= run.totalSeconds) setPlaying(false);
-        return next;
+        return Math.min(run.totalSeconds, current + elapsed);
       });
       frame = requestAnimationFrame(advance);
     };
