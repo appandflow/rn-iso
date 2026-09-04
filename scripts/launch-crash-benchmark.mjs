@@ -54,13 +54,6 @@ function launchCommand(command, arm, platform) {
   );
 }
 
-function metroReloadCommand(command) {
-  command = shellCommand(command);
-  return /^(?:env\s+(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*)?agent-device\s+metro\s+reload\s+--metro-port\s+\d+$/.test(
-    command,
-  );
-}
-
 function errorCaptureCommand(command, arm, platform) {
   command = shellCommand(command);
   if (arm === 'stim') return /(?:^|\s)stim\s+logs\s+--errors(?:\s|$)/.test(command);
@@ -237,7 +230,7 @@ export function launchCrashRepair(source, token, expectedSha256) {
   return { valid: true, sourceSha256 };
 }
 
-export function launchCrashRecovery(commands, { diagnosis, arm = 'stim', platform = 'ios', screen }) {
+export function launchCrashRecovery(commands, { diagnosis, screen }) {
   if (!diagnosis?.valid) return { valid: false, reason: 'launch-crash-diagnosis-missing' };
   const ordered = orderedCommands(commands);
   const diagnosisCommand = ordered.find((command) => command.id === diagnosis.commandId);
@@ -255,47 +248,14 @@ export function launchCrashRecovery(commands, { diagnosis, arm = 'stim', platfor
     return { valid: false, reason: 'launch-crash-settings-command-invalid' };
   }
   const screenshotStartedAt = timestamp(screenshot, 'startedAt');
-  const extraLaunch = ordered.find(
-    (command) =>
-      timestamp(command, 'startedAt') >= diagnosisEndedAt &&
-      timestamp(command, 'endedAt') <= screenshotStartedAt &&
-      launchCommand(command.command, arm, platform),
-  );
-  if (extraLaunch) {
-    return { valid: false, reason: 'launch-crash-extra-native-launch', commandId: extraLaunch.id };
-  }
-  const repairedReload = ordered.findLast(
-    (command) =>
-      timestamp(command, 'startedAt') >= diagnosisEndedAt &&
-      timestamp(command, 'endedAt') <= screenshotStartedAt &&
-      successful(command) &&
-      metroReloadCommand(command.command),
-  );
-  if (!repairedReload) return { valid: false, reason: 'launch-crash-repaired-reload-missing' };
-  const reloadEndedAt = timestamp(repairedReload, 'endedAt');
-  const laterCrashEvidence = ordered.find(
-    (command) =>
-      timestamp(command, 'startedAt') >= reloadEndedAt &&
-      timestamp(command, 'endedAt') <= screenshotStartedAt &&
-      typeof command.output === 'string' &&
-      command.output.includes('STIM_BENCH_LAUNCH_CRASH_'),
-  );
-  if (laterCrashEvidence) {
-    return {
-      valid: false,
-      reason: 'launch-crash-token-observed-after-reload',
-      commandId: laterCrashEvidence.id,
-    };
-  }
   if (
-    screenshotStartedAt < reloadEndedAt ||
+    screenshotStartedAt < diagnosisEndedAt ||
     timestamp({ endedAt: screen.observedAt }, 'endedAt') !== timestamp(screenshot, 'endedAt')
   ) {
-    return { valid: false, reason: 'launch-crash-settings-proof-before-reload' };
+    return { valid: false, reason: 'launch-crash-settings-proof-before-diagnosis' };
   }
   return {
     valid: true,
-    repairedReloadCommandId: repairedReload.id,
     screenshotCommandId: screen.screenshotCommandId,
   };
 }

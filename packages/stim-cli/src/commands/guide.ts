@@ -45,7 +45,9 @@ upstream gap.
   stim ios                             # or: stim android
   stim logs --errors
 
-  # JavaScript and TypeScript edits use Fast Refresh.
+  # JavaScript and TypeScript edits use Fast Refresh. If an error screen stays
+  # after the edit, reload the running app through its reported Metro port.
+  agent-device metro reload --metro-port <reported-port>
   stim logs --since 30s --level error
 
   stim stop
@@ -57,6 +59,11 @@ RULES DURING THE LOOP
   run stim start and retry.
 - Run ios or android again after a native input changes. A JavaScript-only
   change does not need one.
+- If launch reports an app error but also says the native process is alive,
+  the app did not crash. Fix JavaScript or TypeScript and use Fast Refresh; if
+  the error screen remains, reload through the reported Metro port. Do not run
+  ios or android again. If launch says FATAL because the app process exited,
+  fix the crash and run the platform command again; Metro cannot restart it.
 - A cold native build can outlive a shell timeout. Run the same command again:
   the second call joins the active build or returns its result.
 - ios and android install the app, launch it, and check readiness. Trust the

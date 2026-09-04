@@ -251,9 +251,9 @@ interval. The agent starts in the fixture checkout and creates its own isolated
 run worktree from that HEAD, so worktree setup remains part of the measured
 workflow. The agent must launch before inspecting source. An actionable
 diagnosis contains both the run's unique error token and the root-layout source
-location. A valid repair removes that token, reloads the existing app through
-its Metro port without another native launch, and reaches the unchanged Settings
-proof on the same explicitly targeted simulator. Report diagnosis and repair
+location. A valid repair removes that token and reaches the unchanged Settings
+proof on the same explicitly targeted simulator. The recovery mechanism is a
+measured agent choice, not a validity condition. Report diagnosis and repair
 timing separately; do not add crash-suite results to the readiness charts.
 
 Run the crash suite only after the four-cell readiness pilot is accepted. Keep

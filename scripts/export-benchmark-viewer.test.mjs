@@ -872,7 +872,7 @@ describe('benchmark viewer export', () => {
           reasoning_output_tokens: 200,
         },
         proof: { valid: true, expected: `${token} removed and original source restored` },
-        recovery: { valid: true, repairedReloadCommandId: 'reload', screenshotCommandId: 'screenshot' },
+        recovery: { valid: true, screenshotCommandId: 'screenshot' },
         screen: {
           valid: true,
           expected: 'Keep map tiles for saved trails on device',
@@ -905,7 +905,6 @@ describe('benchmark viewer export', () => {
         initialLaunchCommandId: 'launch',
         errorCaptureCommandId: 'logs',
         diagnosisCommandId: 'diagnosis',
-        repairedReloadCommandId: 'reload',
         screenshotCommandId: 'screenshot',
       },
       estimatedDiagnosisCostUsd: 0.132,

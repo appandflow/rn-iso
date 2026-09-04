@@ -434,7 +434,7 @@ describe('launch crash benchmark', () => {
     }
   });
 
-  it('requires an explicit zero exit code for every diagnosis and recovery phase', () => {
+  it('requires an explicit zero exit code for diagnosis and screenshot proof', () => {
     const token = launchCrashToken('run');
     const launch = {
       id: 'launch',
@@ -479,14 +479,6 @@ describe('launch crash benchmark', () => {
     ).toEqual({ valid: false, reason: 'actionable-launch-crash-diagnosis-missing' });
 
     const validDiagnosis = { valid: true, commandId: 'diagnosis' };
-    const reload = {
-      id: 'reload',
-      command: 'agent-device metro reload --metro-port 8082',
-      output: 'Reload broadcast sent',
-      exitCode: 0,
-      startedAt: '2026-09-04T12:00:15Z',
-      endedAt: '2026-09-04T12:00:20Z',
-    };
     const screenshot = {
       id: 'screenshot',
       command: 'agent-device screenshot /tmp/settings.png',
@@ -497,23 +489,14 @@ describe('launch crash benchmark', () => {
     };
     const screen = { valid: true, observedAt: screenshot.endedAt, screenshotCommandId: screenshot.id };
     expect(
-      launchCrashRecovery([diagnosis, { ...reload, exitCode: null }, screenshot], {
-        diagnosis: validDiagnosis,
-        screen,
-      }),
-    ).toEqual({
-      valid: false,
-      reason: 'launch-crash-repaired-reload-missing',
-    });
-    expect(
-      launchCrashRecovery([diagnosis, reload, { ...screenshot, exitCode: undefined }], {
+      launchCrashRecovery([diagnosis, { ...screenshot, exitCode: undefined }], {
         diagnosis: validDiagnosis,
         screen,
       }),
     ).toEqual({ valid: false, reason: 'launch-crash-settings-command-invalid' });
   });
 
-  it('requires a repaired Metro reload and Settings proof', () => {
+  it('requires Settings proof after diagnosis without prescribing recovery', () => {
     const diagnosis = { valid: true, commandId: 'diagnosis' };
     const commands = [
       {
@@ -525,20 +508,12 @@ describe('launch crash benchmark', () => {
         endedAt: '2026-09-04T12:00:10Z',
       },
       {
-        id: 'reload',
-        command: 'env AGENT_DEVICE_SESSION=run agent-device metro reload --metro-port 8082',
-        output: 'Reload broadcast sent',
-        exitCode: 0,
-        startedAt: '2026-09-04T12:00:11Z',
-        endedAt: '2026-09-04T12:00:20Z',
-      },
-      {
         id: 'screenshot',
         command: 'agent-device screenshot /tmp/settings.png',
         output: 'saved',
         exitCode: 0,
-        startedAt: '2026-09-04T12:00:20.500Z',
-        endedAt: '2026-09-04T12:00:21Z',
+        startedAt: '2026-09-04T12:00:11Z',
+        endedAt: '2026-09-04T12:00:12Z',
       },
     ];
     expect(launchCrashRecovery(commands, { diagnosis, screen: { valid: false } })).toEqual({
@@ -546,24 +521,33 @@ describe('launch crash benchmark', () => {
       reason: 'launch-crash-settings-proof-missing',
     });
     expect(
-      launchCrashRecovery(commands, {
-        diagnosis,
-        screen: { valid: true, observedAt: '2026-09-04T12:00:19Z', screenshotCommandId: 'screenshot' },
-      }),
-    ).toEqual({ valid: false, reason: 'launch-crash-settings-proof-before-reload' });
+      launchCrashRecovery(
+        [
+          commands[0],
+          {
+            ...commands[1],
+            startedAt: '2026-09-04T12:00:08Z',
+            endedAt: '2026-09-04T12:00:09Z',
+          },
+        ],
+        {
+          diagnosis,
+          screen: { valid: true, observedAt: '2026-09-04T12:00:09Z', screenshotCommandId: 'screenshot' },
+        },
+      ),
+    ).toEqual({ valid: false, reason: 'launch-crash-settings-proof-before-diagnosis' });
     expect(
       launchCrashRecovery(commands, {
         diagnosis,
-        screen: { valid: true, observedAt: '2026-09-04T12:00:21Z', screenshotCommandId: 'screenshot' },
+        screen: { valid: true, observedAt: '2026-09-04T12:00:12Z', screenshotCommandId: 'screenshot' },
       }),
     ).toEqual({
       valid: true,
-      repairedReloadCommandId: 'reload',
       screenshotCommandId: 'screenshot',
     });
   });
 
-  it('does not accept a second Stim platform run as JavaScript recovery', () => {
+  it('accepts a second Stim platform run when it reaches valid proof', () => {
     const diagnosis = { valid: true, commandId: 'diagnosis' };
     const commands = [
       {
@@ -580,14 +564,6 @@ describe('launch crash benchmark', () => {
         exitCode: 0,
         startedAt: '2026-09-04T12:00:11Z',
         endedAt: '2026-09-04T12:00:20Z',
-      },
-      {
-        id: 'reload',
-        command: 'agent-device metro reload --metro-port 8082',
-        output: 'Reload broadcast sent',
-        exitCode: 0,
-        startedAt: '2026-09-04T12:00:20.100Z',
-        endedAt: '2026-09-04T12:00:20.500Z',
       },
       {
         id: 'screenshot',
@@ -608,11 +584,7 @@ describe('launch crash benchmark', () => {
           screenshotCommandId: 'screenshot',
         },
       }),
-    ).toEqual({
-      valid: false,
-      reason: 'launch-crash-extra-native-launch',
-      commandId: 'second-ios',
-    });
+    ).toEqual({ valid: true, screenshotCommandId: 'screenshot' });
   });
 
   it('accepts a control Metro reload when later Settings proof succeeds', () => {
@@ -649,10 +621,10 @@ describe('launch crash benchmark', () => {
         arm: 'control',
         screen: { valid: true, observedAt: '2026-09-04T12:00:21Z', screenshotCommandId: 'screenshot' },
       }),
-    ).toEqual({ valid: true, repairedReloadCommandId: 'reload', screenshotCommandId: 'screenshot' });
+    ).toEqual({ valid: true, screenshotCommandId: 'screenshot' });
   });
 
-  it('rejects a reload without an explicit Metro port', () => {
+  it('accepts valid proof without recognizing a recovery command', () => {
     const diagnosis = { valid: true, commandId: 'diagnosis' };
     const commands = [
       {
@@ -686,10 +658,10 @@ describe('launch crash benchmark', () => {
         arm: 'control',
         screen: { valid: true, observedAt: '2026-09-04T12:00:14Z', screenshotCommandId: 'screenshot' },
       }),
-    ).toEqual({ valid: false, reason: 'launch-crash-repaired-reload-missing' });
+    ).toEqual({ valid: true, screenshotCommandId: 'screenshot' });
   });
 
-  it('rejects a chained command that masks a failed Metro reload', () => {
+  it('does not make recovery command shape a validity condition', () => {
     const diagnosis = { valid: true, commandId: 'diagnosis' };
     const commands = [
       {
@@ -726,10 +698,10 @@ describe('launch crash benchmark', () => {
           screenshotCommandId: 'screenshot',
         },
       }),
-    ).toEqual({ valid: false, reason: 'launch-crash-repaired-reload-missing' });
+    ).toEqual({ valid: true, screenshotCommandId: 'screenshot' });
   });
 
-  it('rejects crash evidence observed after the purported repaired reload', () => {
+  it('uses the final screen proof instead of inferring recovery from command output', () => {
     const diagnosis = { valid: true, commandId: 'diagnosis' };
     const commands = [
       {
@@ -771,7 +743,7 @@ describe('launch crash benchmark', () => {
         arm: 'control',
         screen: { valid: true, observedAt: '2026-09-04T12:00:16Z', screenshotCommandId: 'screenshot' },
       }),
-    ).toEqual({ valid: false, reason: 'launch-crash-token-observed-after-reload', commandId: 'crash' });
+    ).toEqual({ valid: true, screenshotCommandId: 'screenshot' });
   });
 
   it('rejects generic errors and verifies that the injected source was restored', () => {

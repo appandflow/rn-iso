@@ -965,8 +965,10 @@ test('the agent guide carries the normal workflow and safety rules', () => {
   expect(agent).toMatch(/Do not repeat the\s+phase transcript/);
   expect(agent).toMatch(/Exit code 0 from logs --errors is the pass condition/);
   expect(agent).toContain('No matching log records');
+  expect(agent).toContain('agent-device metro reload --metro-port <reported-port>');
+  expect(agent).toMatch(/app error but also says the native process is alive,[\s\S]*app did not crash/);
+  expect(agent).toMatch(/FATAL because the app process exited,[\s\S]*Metro cannot restart it/);
   expect(agent).toMatch(/Ordinary stim stop and an authorized clean\s+stim worktree remove do not need/);
-  expect(agent).not.toMatch(/agent-device/i);
 });
 
 test('the logs guide keeps Expo stack context on one human error record', () => {

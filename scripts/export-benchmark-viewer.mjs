@@ -745,7 +745,6 @@ function validateLaunchCrashRecord(runDir, record, meta) {
     record.diagnosis?.initialLaunchCommandId !== diagnosis.initialLaunchCommandId ||
     record.diagnosis?.errorCaptureCommandId !== diagnosis.errorCaptureCommandId ||
     record.diagnosis?.commandId !== diagnosis.commandId ||
-    record.recovery?.repairedReloadCommandId !== recovery.repairedReloadCommandId ||
     record.recovery?.screenshotCommandId !== recovery.screenshotCommandId
   ) {
     return reject('evidence command ids mismatch');
@@ -790,7 +789,6 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
         record.diagnosisCommandCount > 0 &&
         record.proof?.valid === true &&
         record.recovery?.valid === true &&
-        typeof record.recovery.repairedReloadCommandId === 'string' &&
         typeof record.recovery.screenshotCommandId === 'string' &&
         launchCrashValidation !== null
       );
@@ -868,7 +866,6 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
                 initialLaunchCommandId: record.diagnosis.initialLaunchCommandId,
                 errorCaptureCommandId: record.diagnosis.errorCaptureCommandId,
                 diagnosisCommandId: record.diagnosis.commandId,
-                repairedReloadCommandId: record.recovery.repairedReloadCommandId,
                 screenshotCommandId: record.recovery.screenshotCommandId,
               }
             : null,
