@@ -409,7 +409,7 @@ describe('benchmark viewer export', () => {
     const invalidRunDir = join(stageDir, 'private-invalid-run-id');
     const validRunDir = join(stageDir, 'private-valid-run-id');
     mkdirSync(join(invalidRunDir, 'proof'), { recursive: true });
-    mkdirSync(validRunDir, { recursive: true });
+    mkdirSync(join(validRunDir, 'proof'), { recursive: true });
     writeFileSync(
       join(invalidRunDir, 'meta.json'),
       JSON.stringify({ dispatchAt: '2026-09-03T20:00:00.000Z', finishedAt: '2026-09-03T20:00:01.000Z' }),
@@ -443,9 +443,10 @@ describe('benchmark viewer export', () => {
         invalidReasons: [],
         dispatchToScreenReadySeconds: 1,
         commandCount: 0,
-        screen: { valid: false },
+        screen: { valid: true, expected: 'Offline maps', dimensions: { width: 402, height: 874 } },
       }),
     );
+    writeFileSync(join(validRunDir, 'proof', 'settings.png'), 'valid proof');
 
     const proofDir = join(root, 'proof');
     mkdirSync(proofDir, { recursive: true });
@@ -458,7 +459,7 @@ describe('benchmark viewer export', () => {
 
     expect(payload.runs.map((run) => run.id)).toEqual(['native-control']);
     expect(payload.recordedOn).toBe('2026-09-03');
-    expect(readdirSync(proofDir)).toEqual([]);
+    expect(readdirSync(proofDir)).toEqual(['native-control.png']);
   });
 
   it('refuses to publish a block with no valid attempts', () => {
@@ -466,7 +467,7 @@ describe('benchmark viewer export', () => {
     tempDirs.push(root);
     const stageDir = join(root, 'results', 'test-rc1');
     const runDir = join(stageDir, 'private-invalid-run-id');
-    mkdirSync(runDir, { recursive: true });
+    mkdirSync(join(runDir, 'proof'), { recursive: true });
     writeFileSync(
       join(runDir, 'meta.json'),
       JSON.stringify({ dispatchAt: '2026-09-03T20:00:00.000Z', finishedAt: '2026-09-03T20:00:01.000Z' }),
@@ -494,7 +495,7 @@ describe('benchmark viewer export', () => {
     tempDirs.push(root);
     const stageDir = join(root, 'results', 'sol-launch-crash');
     const runDir = join(stageDir, 'private-run-id');
-    mkdirSync(runDir, { recursive: true });
+    mkdirSync(join(runDir, 'proof'), { recursive: true });
     writeFileSync(
       join(runDir, 'meta.json'),
       JSON.stringify({
@@ -520,7 +521,13 @@ describe('benchmark viewer export', () => {
           output_tokens: 1_000,
           reasoning_output_tokens: 100,
         },
-        diagnosis: { observedAt: '2026-09-04T12:01:30.000Z' },
+        diagnosis: {
+          valid: true,
+          observedAt: '2026-09-04T12:01:30.000Z',
+          commandId: 'diagnosis',
+          initialLaunchCommandId: 'launch',
+          errorCaptureCommandId: 'logs',
+        },
         dispatchToScreenReadySeconds: 150,
         commandCount: 10,
         usage: {
@@ -529,9 +536,16 @@ describe('benchmark viewer export', () => {
           output_tokens: 2_000,
           reasoning_output_tokens: 200,
         },
-        screen: { valid: false },
+        proof: { valid: true },
+        recovery: { valid: true, repairedLaunchCommandId: 'relaunch' },
+        screen: {
+          valid: true,
+          expected: 'Keep map tiles for saved trails on device',
+          dimensions: { width: 402, height: 874 },
+        },
       }),
     );
+    writeFileSync(join(runDir, 'proof', 'settings.png'), 'valid proof');
 
     const payload = exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'proof'));
 
@@ -545,6 +559,12 @@ describe('benchmark viewer export', () => {
       platform: 'ios',
       diagnosisSeconds: 90,
       diagnosisCommandCount: 5,
+      launchCrashAudit: {
+        initialLaunchCommandId: 'launch',
+        errorCaptureCommandId: 'logs',
+        diagnosisCommandId: 'diagnosis',
+        repairedLaunchCommandId: 'relaunch',
+      },
       estimatedDiagnosisCostUsd: 0.132,
     });
     expect(payload.runs[0].markers).toContainEqual({
@@ -553,5 +573,37 @@ describe('benchmark viewer export', () => {
       label: 'Actionable diagnosis',
       atSeconds: 90,
     });
+  });
+
+  it('refuses a launch-crash record without audited recovery proof', () => {
+    const root = mkdtempSync(join(tmpdir(), 'stim-launch-crash-invalid-'));
+    tempDirs.push(root);
+    const stageDir = join(root, 'results', 'sol-launch-crash');
+    const runDir = join(stageDir, 'private-run-id');
+    mkdirSync(join(runDir, 'proof'), { recursive: true });
+    writeFileSync(
+      join(runDir, 'meta.json'),
+      JSON.stringify({ dispatchAt: '2026-09-04T12:00:00.000Z', finishedAt: '2026-09-04T12:03:00.000Z' }),
+    );
+    writeFileSync(
+      join(runDir, 'run.json'),
+      JSON.stringify({
+        runId: 'private-run-id',
+        model: 'gpt-5.6-sol',
+        variant: 'launch-crash',
+        arm: 'stim',
+        valid: true,
+        dispatchToDiagnosisSeconds: 90,
+        diagnosisCommandCount: 5,
+        diagnosis: { valid: true },
+        proof: { valid: true },
+        screen: { valid: true },
+      }),
+    );
+    writeFileSync(join(runDir, 'proof', 'settings.png'), 'unverified proof');
+
+    expect(() => exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'proof'))).toThrow(
+      'no valid benchmark runs found',
+    );
   });
 });

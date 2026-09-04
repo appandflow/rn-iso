@@ -73,7 +73,11 @@ function ComparisonCard({
     <article className={styles.comparisonCard}>
       <h3>{modelLabel ? `${modelLabel}: ${displayVariant(variant)}` : displayVariant(variant)}</h3>
       <span className={`${styles.outcome} ${styles[isLaunchCrash ? 'neutral' : outcome.tone]}`}>
-        {isLaunchCrash ? 'Time to first actionable diagnosis' : outcome.label}
+        {isLaunchCrash
+          ? control
+            ? 'Time to first actionable diagnosis'
+            : 'Stim baseline / control pending'
+          : outcome.label}
       </span>
       {comparable.map((run) => {
         const endpoint = (isLaunchCrash ? run.diagnosisSeconds : run.settingsReadySeconds) ?? null;
@@ -109,6 +113,17 @@ function ComparisonCard({
           </div>
         );
       })}
+      {isLaunchCrash && !control ? (
+        <div className={styles.barRow}>
+          <div className={styles.barHead}>
+            <span>Control</span>
+            <strong>Not run</strong>
+          </div>
+          <div className={styles.barMeta}>
+            <span>This result is not a Stim-versus-control comparison yet.</span>
+          </div>
+        </div>
+      ) : null}
       {href ? <Link to={href}>Open the run audit</Link> : null}
     </article>
   );
@@ -287,9 +302,10 @@ export default function Benchmarks(): ReactNode {
                 What these numbers measure
               </Heading>
               <p>
-                Each pair uses the same clean app fixture, requested model, machine, and fixed code change. The primary
-                endpoint starts when the agent is dispatched and stops only after agent-device finds the expected text
-                on Settings and saves a screenshot.
+                Readiness comparisons use the same clean app fixture, requested model, machine, and fixed code change.
+                The primary endpoint starts when the agent is dispatched and stops only after agent-device finds the
+                expected text on Settings and saves a screenshot. Unmatched launch-failure runs are labeled as baselines
+                until both arms exist.
               </p>
               <a href="https://github.com/appandflow/stim/blob/main/docs/agent-benchmark-v4.md">
                 Read the full protocol
@@ -323,7 +339,12 @@ export default function Benchmarks(): ReactNode {
 
           <div className={styles.detailHeading}>
             <span className={styles.eyebrow}>Detailed audit</span>
-            <Heading as="h2">{benchmarkDisplayTitle(benchmark.title)}: Stim vs local toolchain</Heading>
+            <Heading as="h2">
+              {benchmarkDisplayTitle(benchmark.title)}
+              {benchmark.suite === 'launch-crash' && !benchmark.runs.some((run) => run.arm === 'control')
+                ? ': Stim baseline'
+                : ': Stim vs local toolchain'}
+            </Heading>
           </div>
 
           <nav className={styles.modelPicker} aria-label="Benchmark model">

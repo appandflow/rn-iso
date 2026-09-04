@@ -48,6 +48,12 @@ export type BenchmarkRun = {
   appAliveSeconds: number | null;
   diagnosisSeconds?: number | null;
   diagnosisCommandCount?: number | null;
+  launchCrashAudit?: {
+    initialLaunchCommandId: string;
+    errorCaptureCommandId: string;
+    diagnosisCommandId: string;
+    repairedLaunchCommandId: string;
+  } | null;
   diagnosisUsage?: BenchmarkUsage | null;
   estimatedDiagnosisCostUsd?: number | null;
   totalSeconds: number;

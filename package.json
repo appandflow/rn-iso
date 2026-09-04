@@ -18,6 +18,7 @@
     "build": "pnpm -r --filter \"./packages/*\" run build",
     "test:e2e": "node --test test/e2e/*.e2e.js",
     "knip": "knip",
+    "benchmark:agent": "node scripts/agent-benchmark/driver.mjs",
     "release:prep": "node scripts/release-prep.mjs",
     "preinstall": "npx only-allow pnpm"
   },

@@ -172,6 +172,13 @@ identifiers. Private raw results retain invalid attempts for diagnosis. The
 Markdown report is the machine-readable summary; the viewer is an audit view
 and does not redefine metrics.
 
+The executable coordinator and its machine-local setup contract live in
+[`scripts/agent-benchmark/`](../scripts/agent-benchmark/README.md). The driver
+prepares and commits launch-failure fixtures, dispatches Codex or Claude,
+collects and audits proof, writes `run.json`, cleans owned resources, and
+generates the private report. Credentials, pins, golden build state, and raw
+transcripts remain outside the repository.
+
 ![A benchmark timeline with separate shell and monitored background-process lanes](images/benchmark-background-process.png)
 
 ![A benchmark timeline expanded to 4x with its lane labels pinned during horizontal scrolling](images/benchmark-timeline-zoom.jpg)

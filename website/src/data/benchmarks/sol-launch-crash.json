@@ -39,6 +39,12 @@
       "appAliveSeconds": 85.006,
       "diagnosisSeconds": 104.461,
       "diagnosisCommandCount": 7,
+      "launchCrashAudit": {
+        "initialLaunchCommandId": "item_6",
+        "errorCaptureCommandId": "item_7",
+        "diagnosisCommandId": "item_9",
+        "repairedLaunchCommandId": "item_14"
+      },
       "diagnosisUsage": {
         "input_tokens": 171713,
         "cached_input_tokens": 151552,

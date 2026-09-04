@@ -400,7 +400,20 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
     .filter((runDir) => existsSync(join(runDir, 'run.json')) && existsSync(join(runDir, 'meta.json')));
   const records = runDirs
     .map((runDir) => ({ runDir, record: readJson(join(runDir, 'run.json')) }))
-    .filter(({ record }) => record.valid);
+    .filter(({ runDir, record }) => {
+      if (!record.valid || !record.screen?.valid || !existsSync(join(runDir, 'proof', 'settings.png'))) return false;
+      if (record.variant !== 'launch-crash') return true;
+      return (
+        record.diagnosis?.valid === true &&
+        Number.isFinite(record.dispatchToDiagnosisSeconds) &&
+        record.dispatchToDiagnosisSeconds >= 0 &&
+        Number.isInteger(record.diagnosisCommandCount) &&
+        record.diagnosisCommandCount > 0 &&
+        record.proof?.valid === true &&
+        record.recovery?.valid === true &&
+        typeof record.recovery.repairedLaunchCommandId === 'string'
+      );
+    });
   if (records.length === 0) throw new Error(`no valid benchmark runs found in ${absoluteStageDir}`);
   const validCounts = new Map();
   for (const { record } of records) {
@@ -456,6 +469,15 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
         appAliveSeconds: record.dispatchToAppAliveSeconds,
         diagnosisSeconds: record.dispatchToDiagnosisSeconds ?? null,
         diagnosisCommandCount: record.diagnosisCommandCount ?? null,
+        launchCrashAudit:
+          record.variant === 'launch-crash'
+            ? {
+                initialLaunchCommandId: record.diagnosis.initialLaunchCommandId,
+                errorCaptureCommandId: record.diagnosis.errorCaptureCommandId,
+                diagnosisCommandId: record.diagnosis.commandId,
+                repairedLaunchCommandId: record.recovery.repairedLaunchCommandId,
+              }
+            : null,
         diagnosisUsage: record.diagnosisUsage ?? null,
         estimatedDiagnosisCostUsd: estimateTokenCost(record.diagnosisUsage, record.model),
         totalSeconds,
