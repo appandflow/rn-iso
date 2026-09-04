@@ -194,11 +194,12 @@ test('the facts topic says Android artifacts use the post-Gradle fingerprint', (
 test('the one-line JSON sentence names every command whose --json payload is a single line', () => {
   const body = renderTopic('facts');
   assert(body);
-  const singleLineJsonCommands = ['start', 'ios', 'android', 'stop', 'status', 'stats', 'doctor'];
+  const singleLineJsonCommands = ['start', 'ios', 'android', 'reload', 'stop', 'status', 'stats', 'doctor'];
   const files: Record<string, string> = {
     start: 'start.ts',
     ios: 'ios.ts',
     android: 'android.ts',
+    reload: 'reload.ts',
     stop: 'stop.ts',
     status: 'status.ts',
     stats: 'stats.ts',
@@ -241,6 +242,7 @@ test('the flags the guide advertises are the flags the commands define', () => {
       '--device',
       '--remote',
     ],
+    'reload.ts': ['--json'],
     'stop.ts': ['--json', '--force'],
     'logs.ts': ['--errors', '--follow', '--since', '--grep', '--tail'],
     'gc.ts': ['--delete', '--older-than', '--cache'],
@@ -967,7 +969,8 @@ test('the agent guide carries the normal workflow and safety rules', () => {
   expect(agent).toMatch(/Exit code 0 alone means the query succeeded, even when errors\s+were printed/);
   expect(agent).toMatch(/does not prove launch or log\s+capture succeeded/);
   expect(agent).toContain('No matching log records');
-  expect(agent).toContain('agent-device metro reload --metro-port <reported-port>');
+  expect(agent).toContain('stim reload');
+  expect(agent).not.toContain('agent-device metro reload --metro-port <reported-port>');
   expect(agent).toMatch(/app error but also says the native process is alive,[\s\S]*app did not crash/);
   expect(agent).toMatch(/FATAL because the app process exited,[\s\S]*Metro cannot restart it/);
   expect(agent).toMatch(/Ordinary stim stop and an authorized clean\s+stim worktree remove do not need/);
@@ -1093,12 +1096,35 @@ test('the binary command surface remains intentional', () => {
     'guide',
     'ios',
     'logs',
+    'reload',
     'start',
     'stats',
     'status',
     'stop',
     'worktree',
   ]);
+});
+
+test('the guide defines reload as a JavaScript-only live-app recovery', () => {
+  const agent = renderTopic('agent');
+  const facts = renderTopic('facts');
+  const lifecycle = renderTopic('lifecycle');
+  const errors = renderTopic('errors');
+  assert(agent);
+  assert(facts);
+  assert(lifecycle);
+  assert(errors);
+
+  expect(agent).toContain('stim reload');
+  expect(lifecycle).toMatch(/never builds, installs, boots, or cold-launches/);
+  expect(lifecycle).toMatch(/owned local simulator or emulator/);
+  expect(lifecycle).toMatch(/stim reload ios \/ stim reload android/);
+  expect(facts).toContain('stim reload [ios|android] --json');
+  expect(facts).toMatch(/platform[\s\S]*deviceId[\s\S]*metroPort[\s\S]*strategy/);
+  expect(errors).toContain('STIM_RELOAD_AMBIGUOUS');
+  expect(errors).toContain('STIM_RELOAD_RELEASE');
+  expect(errors).toContain('STIM_RELOAD_FAILED');
+  expect(lifecycle).toMatch(/does not\s+take over\s+that stateful session/);
 });
 
 test('the guide documents the project cache provider as the tier between local and Expo', () => {

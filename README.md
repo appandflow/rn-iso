@@ -25,6 +25,7 @@ Then ask your coding agent to build and run the app. The normal loop is:
 stim doctor
 stim start
 stim ios                  # or: stim android
+stim reload               # after a JS-only edit when Fast Refresh needs help
 stim logs --errors
 stim stop
 ```
