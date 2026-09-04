@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { useMemo } from 'react';
 import { useHistory, useLocation } from '@docusaurus/router';
 import useIsBrowser from '@docusaurus/useIsBrowser';
+import Link from '@docusaurus/Link';
 import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
 import BenchmarkTimeline from '@site/src/components/BenchmarkTimeline';
@@ -78,6 +79,71 @@ function ComparisonCard({
   );
 }
 
+function OverviewChart({
+  variant,
+  benchmarks: allBenchmarks,
+}: {
+  variant: BenchmarkRun['variant'];
+  benchmarks: BenchmarkData[];
+}): ReactNode {
+  const rows = allBenchmarks.map((candidate) => ({
+    benchmark: candidate,
+    runs: comparableRuns(candidate.runs).filter((run) => run.variant === variant),
+  }));
+  const maxSeconds = Math.max(1, ...rows.flatMap(({ runs }) => runs.map((run) => run.settingsReadySeconds)));
+  return (
+    <article className={styles.overviewChart}>
+      <div className={styles.overviewChartHead}>
+        <h3>{displayVariant(variant)}</h3>
+        <span>Settings-ready time</span>
+      </div>
+      <div className={styles.overviewLegend} aria-hidden="true">
+        <span className={styles.stimKey}>Stim</span>
+        <span className={styles.controlKey}>Control</span>
+      </div>
+      {rows.map(({ benchmark: candidate, runs }) => (
+        <div className={styles.overviewModel} key={candidate.stage}>
+          <strong>{candidate.title}</strong>
+          <div className={styles.overviewBars}>
+            {(['stim', 'control'] as const).map((arm) => {
+              const run = runs.find((candidateRun) => candidateRun.arm === arm);
+              if (!run) {
+                return (
+                  <span className={styles.missingBar} key={arm}>
+                    <span>{arm === 'stim' ? 'Stim' : 'Control'}</span>
+                    <span>No valid run</span>
+                  </span>
+                );
+              }
+              const href = `/benchmarks${benchmarkSelectionSearch(
+                { stage: candidate.stage, runId: run.id },
+                allBenchmarks,
+              )}#audit-title`;
+              return (
+                <Link
+                  className={styles.overviewBarLink}
+                  key={arm}
+                  to={href}
+                  aria-label={`${candidate.title} ${displayVariant(variant)}, ${arm}, ${formatSeconds(run.settingsReadySeconds)}. Open run audit.`}
+                >
+                  <span>{arm === 'stim' ? 'Stim' : 'Control'}</span>
+                  <span className={styles.overviewTrack} aria-hidden="true">
+                    <span
+                      className={`${styles.overviewBar} ${arm === 'control' ? styles.controlBar : ''}`}
+                      style={{ width: `${(run.settingsReadySeconds / maxSeconds) * 100}%` }}
+                    />
+                  </span>
+                  <strong>{formatSeconds(run.settingsReadySeconds)}</strong>
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </article>
+  );
+}
+
 export default function Benchmarks(): ReactNode {
   const history = useHistory();
   const location = useLocation();
@@ -128,12 +194,67 @@ export default function Benchmarks(): ReactNode {
         <div className="container">
           <header className={styles.hero}>
             <div className={styles.eyebrow}>Agent benchmark / protocol v{benchmark.protocolVersion}</div>
-            <Heading as="h1">{benchmark.title}: Stim vs local toolchain</Heading>
+            <Heading as="h1">Stim agent benchmarks</Heading>
             <p>
-              One matched run per arm. The sole performance endpoint is elapsed time from agent dispatch to a validated
-              Settings screenshot; lower is better. Every command and proof image remains available below for audit.
+              Compare how coding agents launch the same React Native app with Stim and the local Expo/Apple toolchain.
+              Results are split into JavaScript and native tasks, and every published time links to its command-level
+              audit and Settings-screen proof.
             </p>
           </header>
+
+          <section className={styles.overview} aria-labelledby="overview-title">
+            <div className={styles.sectionHeading}>
+              <div>
+                <Heading as="h2" id="overview-title">
+                  Performance across models
+                </Heading>
+                <p>One matched pilot run per arm and task. Lower Settings-ready time is better.</p>
+              </div>
+            </div>
+            <div className={styles.overviewGrid}>
+              {(['javascript', 'native'] as const).map((variant) => (
+                <OverviewChart key={variant} variant={variant} benchmarks={benchmarks} />
+              ))}
+            </div>
+          </section>
+
+          <section className={styles.methodology} aria-labelledby="methodology-title">
+            <div>
+              <span className={styles.eyebrow}>Methodology</span>
+              <Heading as="h2" id="methodology-title">
+                What these numbers measure
+              </Heading>
+              <p>
+                Each pair uses the same clean app fixture, requested model, machine, and fixed code change. The primary
+                endpoint starts when the agent is dispatched and stops only after agent-device finds the expected text
+                on Settings and saves a screenshot.
+              </p>
+              <a href="https://github.com/appandflow/stim/blob/main/docs/agent-benchmark-v4.md">Read the full protocol</a>
+            </div>
+            <dl>
+              <div>
+                <dt>Two tasks</dt>
+                <dd>JavaScript-only and native changes run as separate benchmark passes.</dd>
+              </div>
+              <div>
+                <dt>Two arms</dt>
+                <dd>Stim uses its pinned RC and parked simulator; control uses local Expo and Apple tooling.</dd>
+              </div>
+              <div>
+                <dt>Proof, not process liveness</dt>
+                <dd>The reported time is the validated Settings screenshot, not the earlier app-process marker.</dd>
+              </div>
+              <div>
+                <dt>Audited attempts</dt>
+                <dd>Transcript rules, device identity, isolation, and proof are checked; invalid runs are excluded.</dd>
+              </div>
+            </dl>
+          </section>
+
+          <div className={styles.detailHeading}>
+            <span className={styles.eyebrow}>Detailed audit</span>
+            <Heading as="h2">{benchmark.title}: Stim vs local toolchain</Heading>
+          </div>
 
           <nav className={styles.modelPicker} aria-label="Benchmark model">
             <span>Model</span>
