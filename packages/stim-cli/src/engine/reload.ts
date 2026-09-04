@@ -80,12 +80,26 @@ export function reloadIosThroughMetro(
       }
       if (message.id !== requestId) return;
       if (message.result && typeof message.result === 'object') {
-        const peers = Object.keys(message.result).length;
-        if (peers === 0) {
-          finish({ failed: true, peers, reason: `No React Native app is connected to Metro on port ${port}.` });
+        const entries = Object.entries(message.result);
+        const peers = entries.length;
+        const iosPeers = entries.filter(([, metadata]) => {
+          if (!metadata || typeof metadata !== 'object') return false;
+          const role = (metadata as { role?: unknown }).role;
+          return typeof role === 'string' && role.toLowerCase() === 'ios';
+        });
+        if (iosPeers.length === 0) {
+          finish({ failed: true, peers, reason: `No iOS React Native app is connected to Metro on port ${port}.` });
           return;
         }
-        socket.send(JSON.stringify({ version: 2, method: 'reload' }));
+        if (iosPeers.length > 1) {
+          finish({
+            failed: true,
+            peers,
+            reason: `Metro has ${iosPeers.length} iOS apps connected on port ${port} and cannot identify the target app.`,
+          });
+          return;
+        }
+        socket.send(JSON.stringify({ version: 2, method: 'reload', target: iosPeers[0]![0] }));
         finish({ ok: true, peers });
         return;
       }
@@ -93,9 +107,10 @@ export function reloadIosThroughMetro(
         typeof message.error === 'string' &&
         /Cannot read properties of undefined \(reading ['"]url['"]\)/.test(message.error)
       ) {
-        // @react-native-community/cli-server-api 20 reads ws.upgradeReq.url while enumerating a connected peer.
-        socket.send(JSON.stringify({ version: 2, method: 'reload' }));
-        finish({ ok: true });
+        finish({
+          failed: true,
+          reason: `Metro could not identify the connected iOS app on port ${port}.`,
+        });
         return;
       }
       finish({ failed: true, reason: `Metro could not enumerate connected apps on port ${port}.` });

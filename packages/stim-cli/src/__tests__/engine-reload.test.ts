@@ -49,7 +49,7 @@ test('iOS deep-link reload targets the exact simulator', () => {
   ]);
 });
 
-test('Metro reload requires a connected peer and sends the version 2 reload broadcast', async () => {
+test('Metro reload targets the sole iOS peer without reloading another platform', async () => {
   const messages: unknown[] = [];
   let sawReload!: () => void;
   const reloadSeen = new Promise<void>((resolve) => {
@@ -62,7 +62,16 @@ test('Metro reload requires a connected peer and sends the version 2 reload broa
       const message = JSON.parse(raw.toString()) as { id?: string; method?: string };
       messages.push(message);
       if (message.method === 'getpeers') {
-        socket.send(JSON.stringify({ version: 2, id: message.id, result: { 'client#1': { platform: 'ios' } } }));
+        socket.send(
+          JSON.stringify({
+            version: 2,
+            id: message.id,
+            result: {
+              'client#1': { role: 'ios' },
+              'client#2': { device: 'emulator', app: 'com.example.android' },
+            },
+          }),
+        );
       }
       if (message.method === 'reload') sawReload();
     });
@@ -71,18 +80,18 @@ test('Metro reload requires a connected peer and sends the version 2 reload broa
   if (!address || typeof address === 'string') throw new Error('expected a TCP address');
 
   try {
-    await expect(reloadIosThroughMetro(address.port)).resolves.toEqual({ ok: true, peers: 1 });
+    await expect(reloadIosThroughMetro(address.port)).resolves.toEqual({ ok: true, peers: 2 });
     await reloadSeen;
     expect(messages).toEqual([
       expect.objectContaining({ version: 2, method: 'getpeers', target: 'server' }),
-      { version: 2, method: 'reload' },
+      { version: 2, method: 'reload', target: 'client#1' },
     ]);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });
 
-test('Metro reload reports that no app is connected without broadcasting', async () => {
+test('Metro reload reports that no iOS app is connected without sending a reload', async () => {
   const messages: unknown[] = [];
   const server = new WebSocketServer({ host: '127.0.0.1', port: 0, path: '/message' });
   await new Promise<void>((resolve) => server.once('listening', resolve));
@@ -100,7 +109,7 @@ test('Metro reload reports that no app is connected without broadcasting', async
     await expect(reloadIosThroughMetro(address.port)).resolves.toEqual({
       failed: true,
       peers: 0,
-      reason: `No React Native app is connected to Metro on port ${address.port}.`,
+      reason: `No iOS React Native app is connected to Metro on port ${address.port}.`,
     });
     expect(messages).toHaveLength(1);
   } finally {
@@ -108,12 +117,8 @@ test('Metro reload reports that no app is connected without broadcasting', async
   }
 });
 
-test('Metro reload tolerates the CLI 20 peer enumeration error when an app is connected', async () => {
+test('Metro reload fails closed when CLI 20 cannot identify a connected peer', async () => {
   const messages: unknown[] = [];
-  let sawReload!: () => void;
-  const reloadSeen = new Promise<void>((resolve) => {
-    sawReload = resolve;
-  });
   const server = new WebSocketServer({ host: '127.0.0.1', port: 0, path: '/message' });
   await new Promise<void>((resolve) => server.once('listening', resolve));
   server.on('connection', (socket) => {
@@ -129,19 +134,49 @@ test('Metro reload tolerates the CLI 20 peer enumeration error when an app is co
           }),
         );
       }
-      if (message.method === 'reload') sawReload();
     });
   });
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('expected a TCP address');
 
   try {
-    await expect(reloadIosThroughMetro(address.port)).resolves.toEqual({ ok: true });
-    await reloadSeen;
-    expect(messages).toEqual([
-      expect.objectContaining({ version: 2, method: 'getpeers', target: 'server' }),
-      { version: 2, method: 'reload' },
-    ]);
+    await expect(reloadIosThroughMetro(address.port)).resolves.toEqual({
+      failed: true,
+      reason: `Metro could not identify the connected iOS app on port ${address.port}.`,
+    });
+    expect(messages).toEqual([expect.objectContaining({ version: 2, method: 'getpeers', target: 'server' })]);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test('Metro reload refuses multiple iOS peers without sending a reload', async () => {
+  const messages: unknown[] = [];
+  const server = new WebSocketServer({ host: '127.0.0.1', port: 0, path: '/message' });
+  await new Promise<void>((resolve) => server.once('listening', resolve));
+  server.on('connection', (socket) => {
+    socket.on('message', (raw) => {
+      const message = JSON.parse(raw.toString()) as { id?: string; method?: string };
+      messages.push(message);
+      socket.send(
+        JSON.stringify({
+          version: 2,
+          id: message.id,
+          result: { 'client#1': { role: 'ios' }, 'client#2': { role: 'ios' } },
+        }),
+      );
+    });
+  });
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('expected a TCP address');
+
+  try {
+    await expect(reloadIosThroughMetro(address.port)).resolves.toEqual({
+      failed: true,
+      peers: 2,
+      reason: `Metro has 2 iOS apps connected on port ${address.port} and cannot identify the target app.`,
+    });
+    expect(messages).toHaveLength(1);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }

@@ -163,10 +163,10 @@ are live.
 
 Expo and dev-client apps reopen the exact project deep link recorded at launch.
 Bare Android apps receive their package-scoped React Native reload broadcast.
-Bare iOS apps reload through the workspace Metro websocket when connected; a
-startup overlay returns instructions to continue in the agent's existing
-automation session on the exact simulator. Stim does not take over that
-stateful session.
+Bare iOS apps reload through the workspace Metro websocket when it can identify
+one iOS peer. Otherwise the command returns instructions to continue in the
+agent's existing automation session on the exact simulator. Stim does not take
+over that stateful session.
 
 The command refuses release builds, stopped or unowned devices, a missing or
 foreign Metro server, and ambiguous selection. `--json` prints one object with
