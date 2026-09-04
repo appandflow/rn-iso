@@ -927,6 +927,8 @@ test('the skill description names the task phrases an agent sees', () => {
     'emulator',
     'device',
     'redbox',
+    'runtime',
+    'logs',
     'parallel worktrees',
   ]) {
     expect(description).toContain(trigger);
