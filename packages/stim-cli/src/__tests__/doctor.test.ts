@@ -623,6 +623,17 @@ describe('a directory that is not an app', () => {
     expect(reported.fix).toMatch(/app directory/);
   });
 
+  test('runDoctor reports a package.json that does not parse as its own finding', () => {
+    writeFileSync(join(project, 'package.json'), '{ "name": "app", "dependencies": { "react-native": "0.81.0"');
+    const reported = findings().find((f) => /does not parse/.test(f.title));
+    assert(reported);
+    expect(reported.level).toBe('cost');
+    expect(reported.detail).toContain(join(project, 'package.json'));
+    expect(reported.detail).not.toMatch(/neither react-native nor expo/);
+    expect(reported.fix).toMatch(/Fix the JSON/);
+    expect(findings().some((f) => /not a React Native or Expo app/.test(f.title))).toBe(false);
+  });
+
   test('runDoctor stays silent when the package.json depends on react-native', () => {
     writeFileSync(join(project, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.81.0' } }));
     expect(findings().some((f) => /not a React Native or Expo app/.test(f.title))).toBe(false);

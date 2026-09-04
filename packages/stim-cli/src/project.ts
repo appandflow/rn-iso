@@ -115,20 +115,27 @@ export function findProjectRoot(startDir: string): string | null {
   }
 }
 
-function readPackageJson(projectRoot: string): PackageJson | null {
+function loadPackageJson(projectRoot: string): { pkg: PackageJson | null; parseError: string | null } {
   const p = join(projectRoot, 'package.json');
-  if (!existsSync(p)) return null;
+  if (!existsSync(p)) return { pkg: null, parseError: null };
   try {
-    return JSON.parse(readFileSync(p, 'utf-8'));
-  } catch {
-    return null;
+    return { pkg: JSON.parse(readFileSync(p, 'utf-8')), parseError: null };
+  } catch (error) {
+    return { pkg: null, parseError: (error as Error)?.message || String(error) };
   }
+}
+
+function readPackageJson(projectRoot: string): PackageJson | null {
+  return loadPackageJson(projectRoot).pkg;
 }
 
 const APP_DEPENDENCIES = ['react-native', 'expo'];
 
-export const NOT_AN_APP_REMEDY =
-  'Run this from the app directory -- the one whose package.json depends on react-native or expo -- or from that directory inside a worktree.';
+export interface AppProjectProblem {
+  kind: 'not-an-app' | 'unreadable';
+  message: string;
+  remedy: string;
+}
 
 export function declaresAppDependency(pkg: unknown): boolean {
   if (!pkg || typeof pkg !== 'object') return false;
@@ -137,12 +144,22 @@ export function declaresAppDependency(pkg: unknown): boolean {
   return APP_DEPENDENCIES.some((name) => name in deps);
 }
 
-export function isAppProject(projectRoot: string): boolean {
-  return declaresAppDependency(readPackageJson(projectRoot));
-}
-
-export function notAnAppMessage(projectRoot: string): string {
-  return `${join(projectRoot, 'package.json')} depends on neither react-native nor expo, so this is not a React Native or Expo app.`;
+export function appProjectProblem(projectRoot: string): AppProjectProblem | null {
+  const file = join(projectRoot, 'package.json');
+  const { pkg, parseError } = loadPackageJson(projectRoot);
+  if (parseError)
+    return {
+      kind: 'unreadable',
+      message: `${file} is not valid JSON (${parseError}), so Stim cannot tell whether this is a React Native or Expo app.`,
+      remedy: `Fix the JSON in ${file} -- an unfinished edit or a merge conflict leaves it unparseable -- then run the command again.`,
+    };
+  if (declaresAppDependency(pkg)) return null;
+  return {
+    kind: 'not-an-app',
+    message: `${file} depends on neither react-native nor expo, so this is not a React Native or Expo app.`,
+    remedy:
+      'Run this from the app directory -- the one whose package.json depends on react-native or expo -- or from that directory inside a worktree.',
+  };
 }
 
 export function detectIsExpo(projectRoot: string): boolean {

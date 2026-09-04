@@ -392,7 +392,23 @@ describe('the project gate', () => {
     expect(payload.message).toMatch(/neither react-native nor expo/);
     expect(payload.remedy).toBeTruthy();
     expect(calls.order).toEqual([]);
-    expect(errs.join('\n')).toMatch(/STIM_NO_PROJECT/);
+    expect(errs.join('\n')).toContain(phaseLine('error', payload.message as string));
+    expect(errs.join('\n')).toContain(phaseLine('failed', 'STIM_NO_PROJECT'));
+  });
+
+  test('a package.json that does not parse is refused as unreadable, not as a missing app dependency', async () => {
+    reserve();
+    writeFileSync(join(root, 'package.json'), '{ "name": "app", "dependencies": { "react-native": "0.81.0"');
+    const { exitCode, logs, errs, calls } = await run({ json: true });
+    expect(exitCode).toBe(1);
+    const payload = parseFirst(logs);
+    expect(payload.code).toBe('STIM_NO_PROJECT');
+    expect(payload.message).toContain(join(root, 'package.json'));
+    expect(payload.message).toMatch(/is not valid JSON/);
+    expect(payload.message).not.toMatch(/neither react-native nor expo/);
+    expect(payload.remedy).toMatch(/Fix the JSON/);
+    expect(calls.order).toEqual([]);
+    expect(errs.join('\n')).toContain(phaseLine('failed', 'STIM_NO_PROJECT'));
   });
 });
 

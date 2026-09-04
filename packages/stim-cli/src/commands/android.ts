@@ -48,13 +48,11 @@ import { createNdjsonWriter } from '../ndjson.ts';
 import { isPidAlive, resolveProjectMetro } from '../metro.ts';
 import { emulatorLogFile, workspaceDir, workspaceLogsDir } from '../paths.ts';
 import {
-  NOT_AN_APP_REMEDY,
+  appProjectProblem,
   detectAndroidPackage,
   detectBundleId,
   detectIsExpo,
   findProjectRoot,
-  isAppProject,
-  notAnAppMessage,
   projectShortcut,
 } from '../project.ts';
 import {
@@ -1770,12 +1768,13 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   } = resolveRunAndroidOptions(options);
   const started = now();
   const startedAt = new Date(started).toISOString();
-  if (!isAppProject(root)) {
-    const message = notAnAppMessage(root);
+  const projectProblem = appProjectProblem(root);
+  if (projectProblem) {
+    const { message, remedy } = projectProblem;
     out(phaseLine('error', chalk.red(`STIM_NO_PROJECT: ${message}`)));
-    out(phaseLine('remedy', NOT_AN_APP_REMEDY));
-    if (json) emit(JSON.stringify({ code: 'STIM_NO_PROJECT', message, remedy: NOT_AN_APP_REMEDY }));
-    return { ok: false, error: { code: 'STIM_NO_PROJECT', message, remedy: NOT_AN_APP_REMEDY } };
+    out(phaseLine('remedy', remedy));
+    if (json) emit(JSON.stringify({ code: 'STIM_NO_PROJECT', message, remedy }));
+    return { ok: false, error: { code: 'STIM_NO_PROJECT', message, remedy } };
   }
   try {
     await ensureStorage(root, { note: out });

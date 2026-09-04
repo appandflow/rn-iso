@@ -1786,6 +1786,22 @@ describe('the error contract', () => {
     expect(existsSync(workspaceMetadataFile(root))).toBe(false);
   });
 
+  test('a package.json that does not parse is refused as unreadable, not as a missing app dependency', async () => {
+    setExecutor(metroExecutor({ listeners: {} }));
+    writeFileSync(join(root, 'package.json'), '{ "name": "app", "dependencies": { "react-native": "0.81.0"');
+    const result = await runAction({ json: true });
+    expect(result.exitCode).toBe(1);
+    expect(result.logs.length).toBe(1);
+    const facts = JSON.parse(result.logs[0] ?? '');
+    expect(facts.code).toBe('STIM_NO_PROJECT');
+    expect(facts.message).toContain(join(root, 'package.json'));
+    expect(facts.message).toMatch(/is not valid JSON/);
+    expect(facts.message).not.toMatch(/neither react-native nor expo/);
+    expect(facts.remedy).toMatch(/Fix the JSON/);
+    expect(getProject(root)).toBeNull();
+    expect(existsSync(workspaceMetadataFile(root))).toBe(false);
+  });
+
   test('without --json a failure keeps stdout free of JSON and names the code', async () => {
     setExecutor(metroExecutor({ listeners: {} }));
     const result = await runAction({ wait: 'soon' });

@@ -2,9 +2,9 @@ import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { resolve, join } from 'path';
 import {
+  appProjectProblem,
   declaresAppDependency,
   findProjectRoot,
-  isAppProject,
   detectIsExpo,
   detectBundleId,
   detectAndroidPackage,
@@ -39,16 +39,36 @@ test('declaresAppDependency rejects a package.json that depends on neither', () 
   expect(declaresAppDependency('not an object')).toBe(false);
 });
 
-test('isAppProject reads the nearest package.json', () => {
-  expect(isAppProject(EXPO_PROJ)).toBe(true);
-  expect(isAppProject(BARE_PROJ)).toBe(true);
+test('appProjectProblem stays silent for an app, reading the nearest package.json', () => {
+  expect(appProjectProblem(EXPO_PROJ)).toBe(null);
+  expect(appProjectProblem(BARE_PROJ)).toBe(null);
 });
 
-test('isAppProject is false for a directory whose package.json is not an app', () => {
+test('appProjectProblem names the package.json of a directory that is not an app', () => {
   const tmp = mkdtempSync(join(tmpdir(), 'stim-app-'));
   try {
     writeFileSync(join(tmp, 'package.json'), JSON.stringify({ name: 'monorepo', devDependencies: { vitest: '5' } }));
-    expect(isAppProject(tmp)).toBe(false);
+    const problem = appProjectProblem(tmp);
+    expect(problem?.kind).toBe('not-an-app');
+    expect(problem?.message).toContain(join(tmp, 'package.json'));
+    expect(problem?.message).toMatch(/neither react-native nor expo/);
+    expect(problem?.remedy).toMatch(/app directory/);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('appProjectProblem separates a package.json that does not parse from one with no app dependency', () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'stim-app-'));
+  try {
+    writeFileSync(join(tmp, 'package.json'), '{ "name": "app", "dependencies": { "react-native": "0.81.0"');
+    const problem = appProjectProblem(tmp);
+    expect(problem?.kind).toBe('unreadable');
+    expect(problem?.message).toContain(join(tmp, 'package.json'));
+    expect(problem?.message).toMatch(/is not valid JSON/);
+    expect(problem?.message).not.toMatch(/neither react-native nor expo/);
+    expect(problem?.remedy).toMatch(/Fix the JSON/);
+    expect(problem?.remedy).not.toMatch(/app directory/);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }

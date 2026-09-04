@@ -1379,6 +1379,20 @@ describe('the other refusals', () => {
     expect(h.stdout).toEqual([]);
   });
 
+  test('a package.json that does not parse is refused as unreadable, not as a missing app dependency', async () => {
+    writeFileSync(join(root, 'package.json'), '{ "name": "app", "dependencies": { "react-native": "0.81.0"');
+    const h = harness({ ensureDevice: never('the device'), build: never('the build') });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('STIM_NO_PROJECT');
+    expect(result.error?.message).toContain(join(root, 'package.json'));
+    expect(result.error?.message).toMatch(/is not valid JSON/);
+    expect(result.error?.message).not.toMatch(/neither react-native nor expo/);
+    expect(result.error?.remedy).toMatch(/Fix the JSON/);
+    expect(h.calls.ensureStorage).toEqual([]);
+    expect(h.stdout).toEqual([]);
+  });
+
   test('a fingerprint with no hash refuses without a package-install remedy', async () => {
     const h = harness({
       fingerprint: async () => null,

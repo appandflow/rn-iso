@@ -113,9 +113,9 @@ test('the errors topic states that the stale-carry line only prints on a real di
 test('the errors topic covers a directory that is not a React Native or Expo app', () => {
   const body = renderTopic('errors');
   assert(body);
-  expect(body).toMatch(/whose nearest package.json depends on\s+neither react-native nor expo/);
-  expect(body).toMatch(/the refusal\s+names that package.json/);
-  expect(body).toMatch(/`doctor` reports the same directory as a\s+finding/);
+  expect(body).toMatch(/whose nearest package.json does not\s+parse or depends on neither react-native nor expo/);
+  expect(body).toMatch(/the refusal names that package.json and says which of the two it\s+is/);
+  expect(body).toMatch(/`doctor` reports the same directory as a finding/);
   expect(body).toMatch(/These errors are caught before the port is reserved/);
 });
 

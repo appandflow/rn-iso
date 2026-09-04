@@ -154,13 +154,11 @@ import { NOT_OURS_FOREIGN_CWD, isPidAlive, resolveProjectMetro } from '../metro.
 import { createNdjsonWriter, type NdjsonWriter } from '../ndjson.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../paths.ts';
 import {
-  NOT_AN_APP_REMEDY,
+  appProjectProblem,
   detectBundleId,
   detectIsExpo,
   findProjectRoot,
-  isAppProject,
   isPackageResolvable,
-  notAnAppMessage,
   projectShortcut,
 } from '../project.ts';
 import {
@@ -1879,11 +1877,13 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     return null;
   }
   const root = foundRoot;
-  if (!isAppProject(root)) {
-    const message = notAnAppMessage(root);
-    note(chalk.red(phaseLine('error', `STIM_NO_PROJECT: ${message}`)));
-    note(chalk.dim(phaseLine('remedy', NOT_AN_APP_REMEDY)));
-    if (json) console.log(JSON.stringify({ code: 'STIM_NO_PROJECT', message, remedy: NOT_AN_APP_REMEDY }));
+  const projectProblem = appProjectProblem(root);
+  if (projectProblem) {
+    const { message, remedy } = projectProblem;
+    note(chalk.red(phaseLine('error', message)));
+    note(chalk.dim(phaseLine('remedy', remedy)));
+    note(chalk.red(phaseLine('failed', 'STIM_NO_PROJECT')));
+    if (json) console.log(JSON.stringify({ code: 'STIM_NO_PROJECT', message, remedy }));
     process.exit(1);
     return null;
   }
