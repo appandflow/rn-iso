@@ -18,6 +18,7 @@ reference that ships with the installed version.
 code={`stim doctor
 stim start
 stim ios                 # or: stim android
+stim reload              # after a JS-only edit when Fast Refresh needs help
 stim logs --errors
 stim stop`}
 />
@@ -148,6 +149,26 @@ the app, opens it, and checks launch logs.
 - `--json` prints one stable result object on stdout.
 
 A variant that ends in `Release` embeds its JavaScript bundle and skips Metro.
+
+## `reload`
+
+```text
+stim reload [ios|android] [--json]
+```
+
+Reloads JavaScript in the live app on this workspace's owned local simulator
+or emulator. It never builds, installs, boots, or cold-launches. Omit the
+platform when exactly one owned app is live; name it when both iOS and Android
+are live.
+
+Expo and dev-client apps reopen the exact project deep link recorded at launch.
+Bare Android apps receive their package-scoped React Native reload broadcast.
+Bare iOS apps reload through the workspace Metro websocket when connected; a
+startup overlay falls back to `agent-device` on the exact simulator.
+
+The command refuses release builds, stopped or unowned devices, a missing or
+foreign Metro server, and ambiguous selection. `--json` prints one object with
+`platform`, `deviceId`, `deviceName`, `appId`, `metroPort`, and `strategy`.
 
 ## `logs`
 

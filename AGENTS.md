@@ -13,11 +13,11 @@ logs.
 The normal flow is:
 
 ```text
-worktree create -> start -> ios|android -> logs --errors -> stop -> worktree remove
+worktree create -> start -> ios|android -> reload -> logs --errors -> stop -> worktree remove
 ```
 
 The command surface is `doctor`, `worktree create|remove`, `start`, `stop`,
-`ios`, `android`, `device lock|unlock`, `logs`, `status`, `stats`, `gc`, and
+`ios`, `android`, `reload`, `device lock|unlock`, `logs`, `status`, `stats`, `gc`, and
 `guide`. Do not add commands or flags without an explicit product decision.
 Projects can wrap Stim when they need custom behavior.
 

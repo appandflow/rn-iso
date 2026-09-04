@@ -11,9 +11,21 @@ export interface WorkspaceState {
   supervisor?: Record<string, unknown>;
   collectors?: Record<string, unknown>;
   lastBuild?: Record<string, unknown>;
+  launches?: Partial<Record<WorkspaceLaunchPlatform, WorkspaceLaunchRecord>>;
   remoteDevice?: Record<string, unknown>;
   metroTunnel?: Record<string, unknown>;
   [key: string]: unknown;
+}
+
+export type WorkspaceLaunchPlatform = 'ios' | 'android';
+
+export interface WorkspaceLaunchRecord {
+  appId: string;
+  deviceId: string;
+  metroPort: number | null;
+  release: boolean;
+  deepLinkUrl: string | null;
+  launchedAt: string;
 }
 
 interface ExpoTunnelRecord {
@@ -79,6 +91,38 @@ export function readWorkspaceState(root: string): WorkspaceState | null {
   } catch {
     return null;
   }
+}
+
+function parseWorkspaceLaunchRecord(value: unknown): WorkspaceLaunchRecord | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Partial<WorkspaceLaunchRecord>;
+  if (typeof record.appId !== 'string' || record.appId.length === 0) return null;
+  if (typeof record.deviceId !== 'string' || record.deviceId.length === 0) return null;
+  if (record.metroPort !== null && typeof record.metroPort !== 'number') return null;
+  if (typeof record.release !== 'boolean') return null;
+  if (record.deepLinkUrl !== null && typeof record.deepLinkUrl !== 'string') return null;
+  if (typeof record.launchedAt !== 'string') return null;
+  return record as WorkspaceLaunchRecord;
+}
+
+export function readWorkspaceLaunches(root: string): Partial<Record<WorkspaceLaunchPlatform, WorkspaceLaunchRecord>> {
+  const launches = readWorkspaceState(root)?.launches;
+  if (!launches || typeof launches !== 'object' || Array.isArray(launches)) return {};
+  const ios = parseWorkspaceLaunchRecord(launches.ios);
+  const android = parseWorkspaceLaunchRecord(launches.android);
+  return { ...(ios ? { ios } : {}), ...(android ? { android } : {}) };
+}
+
+export function writeWorkspaceLaunch(
+  root: string,
+  platform: WorkspaceLaunchPlatform,
+  record: WorkspaceLaunchRecord,
+): void {
+  withWorkspaceStateLock(root, () => {
+    const state = readWorkspaceState(root) ?? {};
+    const launches = state.launches && typeof state.launches === 'object' ? state.launches : {};
+    replaceWorkspaceState(root, { ...state, launches: { ...launches, [platform]: record } });
+  });
 }
 
 export function readRemoteSession(root: string): RemoteSessionRecord | null {

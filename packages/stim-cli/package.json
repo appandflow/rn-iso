@@ -50,10 +50,12 @@
     "@stim-cli/core": "workspace:^",
     "@stim-cli/metro": "workspace:^",
     "chalk": "^5.4.1",
-    "commander": "^13.1.0"
+    "commander": "^13.1.0",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
-    "@stim-cli/expo-build-cache": "workspace:*"
+    "@stim-cli/expo-build-cache": "workspace:*",
+    "@types/ws": "^8.18.1"
   },
   "engines": {
     "node": "^20.19.4 || >=22.12.0"
