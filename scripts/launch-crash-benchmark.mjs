@@ -1,7 +1,5 @@
 import { createHash } from 'node:crypto';
 
-export const launchCrashVariant = 'launch-crash';
-
 export function launchCrashToken(runId) {
   const digest = createHash('sha256').update(runId).digest('hex').slice(0, 12).toUpperCase();
   return `STIM_BENCH_LAUNCH_CRASH_${digest}`;
