@@ -175,6 +175,28 @@
   white-space: nowrap;
 }
 
+.zoomControl {
+  display: flex;
+  gap: 0.65rem;
+  align-items: center;
+  justify-content: flex-end;
+  margin: -0.25rem 0 0.75rem;
+  color: var(--bench-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.zoomControl input {
+  width: min(14rem, 45vw);
+}
+
+.zoomControl output {
+  min-width: 2.2rem;
+  color: var(--ifm-font-color-base);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
 .valid::before,
 .invalid::before {
   display: inline-block;
@@ -261,6 +283,14 @@
 .axisLabel,
 .axis {
   height: 2.5rem;
+}
+
+.axisLabel,
+.laneLabel {
+  position: sticky;
+  z-index: 5;
+  left: 0;
+  background: var(--ifm-background-color);
 }
 
 .axis {

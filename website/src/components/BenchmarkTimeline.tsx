@@ -94,6 +94,7 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
   const [playing, setPlaying] = useState(false);
   const [cursorSeconds, setCursorSeconds] = useState(0);
   const [speed, setSpeed] = useState(20);
+  const [zoom, setZoom] = useState(1);
   const { commands, laneCount } = useMemo(() => assignCommandLanes(run.commands), [run.commands]);
   const breakdown = useMemo(() => timeBreakdown(run), [run]);
   const playbackCommand = useMemo(() => commandAtCursor(run.commands, cursorSeconds), [run.commands, cursorSeconds]);
@@ -218,6 +219,7 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
             setPlaying(false);
             setPlaybackMode(true);
             setCursorSeconds(0);
+            setZoom(1);
           }}
         >
           Reset
@@ -252,8 +254,25 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
         </select>
       </div>
 
+      <label className={styles.zoomControl}>
+        <span>Timeline zoom</span>
+        <input
+          type="range"
+          min={1}
+          max={4}
+          step={0.5}
+          value={zoom}
+          aria-valuetext={`${zoom} times`}
+          onChange={(event) => setZoom(Number(event.currentTarget.value))}
+        />
+        <output>{zoom}x</output>
+      </label>
+
       <div className={styles.timelineScroller} tabIndex={0} aria-label="Benchmark command timeline">
-        <div className={styles.timeline}>
+        <div
+          className={styles.timeline}
+          style={{ width: zoom === 1 ? '100%' : `max(${49.5 * zoom}rem, ${zoom * 100}%)` }}
+        >
           <div className={styles.axisLabel} />
           <div className={styles.axis}>
             {ticks.map((tick) => (
