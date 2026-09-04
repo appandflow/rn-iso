@@ -39,6 +39,7 @@ import {
   acquireBuildLock,
   releaseBuildLock,
   takeoverLine,
+  WAIT_CEILING_MS,
   waitForBuild as waitForOtherBuild,
   type BuildLockHandle,
   type WaitForBuildResult,
@@ -2330,7 +2331,10 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
 
     let waitedForBuild: WaitedForBuild | null = null;
     async function waitForSharedBuild(): Promise<boolean> {
-      if (!apkPath && useBuildCache) {
+      if (!useBuildCache) return true;
+      const waitStarted = now();
+      let failedHolder: BuildLockHandle['held'];
+      while (!apkPath) {
         let attempt: BuildLockHandle | null = null;
         try {
           attempt = acquireLock({ platform: PLATFORM, key: cacheKey, root, logFile: buildLog });
@@ -2343,7 +2347,9 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
 
         if (attempt?.acquired) {
           buildLock = attempt;
-          if (attempt.tookOver) phase('build', chalk.yellow(takeoverLine(attempt.tookOver)));
+          const previous = attempt.tookOver ?? failedHolder;
+          if (previous) phase('build', chalk.yellow(takeoverLine(previous)));
+          break;
         } else if (attempt?.held) {
           const holder = attempt.held;
           const who = holder.projectRoot || 'another workspace';
@@ -2355,7 +2361,19 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
 
           let waited: WaitForBuildResult | null = null;
           try {
-            waited = await waitForBuild({ platform: PLATFORM, key: cacheKey, out });
+            const ceilingMs = WAIT_CEILING_MS - (now() - waitStarted);
+            if (ceilingMs <= 0) {
+              throw Object.assign(
+                new Error(
+                  `Waited ${formatDuration(now() - waitStarted)} for shared builds without an artifact; ${who} (pid ${holder.pid}) holds ${attempt.path}.`,
+                ),
+                {
+                  code: 'STIM_BUILD_WAIT_TIMEOUT',
+                  lockPath: attempt.path,
+                },
+              );
+            }
+            waited = await waitForBuild({ platform: PLATFORM, key: cacheKey, out, ceilingMs });
           } catch (err) {
             const wtErr = err as Error & { code?: string; lockPath?: string };
             if (wtErr?.code !== 'STIM_BUILD_WAIT_TIMEOUT') throw err;
@@ -2376,14 +2394,14 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
           } else {
             phase(
               'build',
-              chalk.yellow(`${who}'s build ended without an artifact (${waited?.builderFailed}); building here`),
+              chalk.yellow(
+                `${who}'s build ended without an artifact (${waited?.builderFailed}); retrying the build lock`,
+              ),
             );
-            try {
-              const takeover = acquireLock({ platform: PLATFORM, key: cacheKey, root, logFile: buildLog });
-              if (takeover?.acquired) buildLock = takeover;
-            } catch {}
-            phase('build', chalk.yellow(takeoverLine(holder)));
+            failedHolder = holder;
           }
+        } else {
+          break;
         }
       }
       return true;
