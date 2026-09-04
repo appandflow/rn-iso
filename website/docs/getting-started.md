@@ -27,8 +27,13 @@ so upgrading Stim does not require reinstalling the skill.
 
 Give the agent an outcome, not a command sequence:
 
-<PromptBox title="Build and run">
-  {`Build and run the app on iOS. Fix any build or launch errors.`}
+<PromptBox
+title="Build and run"
+response={'Trailhead launched on stim-trailhead (iPhone 17 / iOS 26.5).\ncom.appandflow.trailhead · ready · cache hit · 58.8s · errors clean'}
+
+>
+
+{`Run the app on iOS.`}
 </PromptBox>
 
 You normally do not need to name Stim. Installing the skill lets a compatible
@@ -56,29 +61,53 @@ build-performance details when you want history across runs.
 
 ## Common prompts
 
-Each prompt has a copy button.
+Each prompt has a copy button and a simulated response based on Trailhead.
 
 <PromptGrid>
-  <PromptBox title="Choose an iOS simulator">
-    {`Build and run the app on an iPhone 17 simulator with iOS 26.5. Fix any build or launch errors.`}
+  <PromptBox
+    title="Choose an iOS simulator"
+response={`Trailhead launched on stim-trailhead (iPhone 17 / iOS 26.5).
+com.appandflow.trailhead · ready · cache hit · 58.8s · errors clean`}
+  >
+    {`Run the app on an iPhone 17 simulator with iOS 26.5.`}
   </PromptBox>
-  <PromptBox title="Run on a connected phone">
-    {`Build and run the app on my connected iPhone. Tell me if I need to approve anything on the phone.`}
+  <PromptBox
+    title="Run on a connected phone"
+    response={`Trailhead launched on the connected iPhone.
+com.appandflow.trailhead · ready · device lease released · errors clean`}
+  >
+    {`Run the app on my connected iPhone.`}
   </PromptBox>
-  <PromptBox title="Inspect recent errors">
-    {`Show me the app errors from the last 10 minutes and explain which ones need action.`}
+  <PromptBox title="Inspect recent errors" response={`No Trailhead app errors in the last 10 minutes.`}>
+    {`Show app errors from the last 10 minutes.`}
   </PromptBox>
-  <PromptBox title="Check the environment">
-    {`Tell me which app build, device, and Metro server are active for this workspace.`}
+  <PromptBox
+    title="Check the environment"
+    response={`Trailhead is active on stim-trailhead (iPhone 17 / iOS 26.5).
+com.appandflow.trailhead · Metro 8083 · launch ready`}
+  >
+    {`What is running for this workspace?`}
   </PromptBox>
-  <PromptBox title="Review build performance">
-    {`Compare this project's iOS build performance: run count, cache hit rate, mean cold and cached duration, and estimated time saved.`}
+  <PromptBox
+    title="Review build performance"
+    response={`iOS · 2 runs · 100% cache hits · cached average 46s · estimated savings ~0s`}
+  >
+    {`Show iOS build performance.`}
   </PromptBox>
-  <PromptBox title="Work in parallel">
-    {`Make this change in a separate worktree, run it on iOS, and preserve the branch when you finish.`}
+  <PromptBox
+    title="Work in parallel"
+    response={`Implemented on @janic/example in an isolated worktree.
+Trailhead · iPhone 17 / iOS 26.5 · ready · cache hit · errors clean
+Branch preserved.`}
+  >
+    {`Make this change in a separate worktree and validate it on iOS.`}
   </PromptBox>
-  <PromptBox title="Record PR validation">
-    {`Fix this issue in a separate worktree. Use agent-device to record the affected flow before the change, implement and run the fix on iOS, then record the same flow after the change. Open a PR with the Before and After recordings in a table and summarize the validation.`}
+  <PromptBox
+    title="Record PR validation"
+    response={`Validated the Trailhead Settings flow on iPhone 17 / iOS 26.5.
+Before and After recordings captured; named assertion passed; PR opened with the comparison table.`}
+  >
+    {`Fix this in a separate worktree. Record the affected flow before and after on iOS with agent-device, then open a PR with the recordings in a Before/After table.`}
   </PromptBox>
 </PromptGrid>
 
