@@ -8,6 +8,7 @@
     "docusaurus": "docusaurus",
     "start": "docusaurus start",
     "build": "docusaurus build",
+    "render:benchmark-video": "node scripts/render-benchmark-video.mjs",
     "swizzle": "docusaurus swizzle",
     "deploy": "docusaurus deploy",
     "clear": "docusaurus clear",
@@ -30,7 +31,10 @@
     "@docusaurus/module-type-aliases": "3.10.2",
     "@docusaurus/tsconfig": "3.10.2",
     "@docusaurus/types": "3.10.2",
+    "@remotion/cli": "4.0.520",
+    "@remotion/media": "4.0.520",
     "@types/react": "^19.0.0",
+    "remotion": "4.0.520",
     "typescript": "~6.0.2"
   },
   "browserslist": {

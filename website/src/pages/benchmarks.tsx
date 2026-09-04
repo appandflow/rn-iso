@@ -6,6 +6,7 @@ import Link from '@docusaurus/Link';
 import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
 import BenchmarkTimeline from '@site/src/components/BenchmarkTimeline';
+import BenchmarkVideo from '@site/src/components/BenchmarkVideo';
 import {
   benchmarkDisplayTitle,
   comparableRuns,
@@ -247,6 +248,8 @@ export default function Benchmarks(): ReactNode {
               </div>
             </dl>
           </section>
+
+          <BenchmarkVideo />
 
           <div className={styles.detailHeading}>
             <span className={styles.eyebrow}>Detailed audit</span>
