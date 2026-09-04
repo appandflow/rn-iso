@@ -3,7 +3,7 @@ import { homedir, tmpdir } from 'os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'path';
 import chalk from 'chalk';
 import { InvalidArgumentError, type Command } from 'commander';
-import { clearDevice, getConfigDir, loadConfig } from '../config.ts';
+import { clearDevice, getConfigDir, loadConfig, removeProject } from '../config.ts';
 import { formatLongDuration, plural, shortUdid } from '../command-output.ts';
 import { directorySize, formatBytes, isOnMountedVolume, listMountedVolumes, volumeRootFor } from '../fs-util.ts';
 import { listBuildLocks, readBuildLock } from '../engine/build-lock.ts';
@@ -24,7 +24,7 @@ import { resolveEasCliBin } from '../engine/remote-cache.ts';
 import { getExecutor } from '../exec.ts';
 import { isPidAlive } from '../metro.ts';
 import { detectIsExpo, findProjectRoot } from '../project.ts';
-import { reclaimProject } from '../reclaim.ts';
+import { describeDereferenced, reclaimProject } from '../reclaim.ts';
 import { SETTING_SHAPE_REMEDY } from '../settings.ts';
 import { listAllIosSims, listIosDeviceTypes, parseRuntimeVersion, type IosSimRecord } from '../sim/ios.ts';
 import { dropParked, parkedMaxSetting, POOL_SETTING_REMEDY, readParked, type ParkedSim } from '../sim-pool.ts';
@@ -109,6 +109,7 @@ export interface ParkedSimReport {
 interface GcReport {
   skipped: GcSkip[];
   deadProjects: string[];
+  invalidProjects: string[];
   parkedSims: ParkedSimReport[];
   orphanedDevices: OrphanedDevice[];
   staleDevices: StaleProjectDevice[];
@@ -659,10 +660,22 @@ function formatParkedSimReport(parkedSims: readonly ParkedSimReport[], now: numb
   return lines;
 }
 
+function projectEntryLines(header: string, paths: string[]): string[] {
+  return paths.length ? [header, ...paths.map((path) => `  ${path}`)] : [];
+}
+
+function removeInvalidProjectEntries(invalidProjects: string[]): void {
+  for (const path of invalidProjects) {
+    removeProject(path);
+    console.log(chalk.green(`Removed the invalid registry entry ${path}`));
+  }
+}
+
 export function formatGcReport(
   {
     skipped = [],
     deadProjects = [],
+    invalidProjects = [],
     parkedSims = [],
     orphanedDevices = [],
     staleDevices = [],
@@ -688,6 +701,7 @@ export function formatGcReport(
     lines.push(`Cache scope: "${cacheScope}". Devices, project entries and locks were not inspected.`);
   } else if (
     deadProjects.length === 0 &&
+    invalidProjects.length === 0 &&
     parkedSims.length === 0 &&
     orphanedDevices.length === 0 &&
     staleDevices.length === 0 &&
@@ -714,10 +728,13 @@ export function formatGcReport(
     }
   }
 
-  if (deadProjects.length) {
-    lines.push(`Dead project entries (${deadProjects.length}):`);
-    for (const path of deadProjects) lines.push(`  ${path}`);
-  }
+  lines.push(...projectEntryLines(`Dead project entries (${deadProjects.length}):`, deadProjects));
+  lines.push(
+    ...projectEntryLines(
+      `Invalid project entries (${invalidProjects.length}) - the key is not an absolute path:`,
+      invalidProjects,
+    ),
+  );
 
   lines.push(...formatParkedSimReport(parkedSims, now));
 
@@ -1098,6 +1115,7 @@ export async function collectGcReport(
     return {
       skipped: [],
       deadProjects: [],
+      invalidProjects: [],
       orphanedDevices: [],
       staleDevices: [],
       staleDeviceRecords: [],
@@ -1131,8 +1149,21 @@ export async function collectGcReport(
   }
   const parkedSims = collectParkedSims(deps);
   const deadProjects: string[] = [];
+  const invalidProjects: string[] = [];
   const skipped: GcSkip[] = [];
-  for (const path of Object.keys(cfg?.projects || {})) {
+  for (const [path, project] of Object.entries(cfg?.projects || {})) {
+    if (!isAbsolute(path)) {
+      const claimed = describeDereferenced(project);
+      if (claimed.length) {
+        skipped.push({
+          dir: path,
+          reason: `not an absolute path, so this record is invalid; kept because it still claims ${claimed.join(' and ')}`,
+        });
+      } else {
+        invalidProjects.push(path);
+      }
+      continue;
+    }
     if (existsSync(path)) continue;
     if (!isOnMountedVolume(path, mountedVolumes)) {
       const volume = volumeRootFor(path);
@@ -1228,6 +1259,7 @@ export async function collectGcReport(
   return {
     skipped,
     deadProjects,
+    invalidProjects,
     parkedSims,
     orphanedDevices,
     staleDevices,
@@ -1356,6 +1388,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
 
   const {
     deadProjects,
+    invalidProjects,
     orphanedDevices,
     staleDevices,
     staleDeviceRecords,
@@ -1366,7 +1399,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
     caches,
   } = report;
   const actionable =
-    deadProjects.length > 0 ||
+    deadProjects.length + invalidProjects.length > 0 ||
     report.parkedSims.length > 0 ||
     orphanedDevices.length > 0 ||
     staleDevices.length > 0 ||
@@ -1391,6 +1424,8 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<void
   }
 
   let deleteFailures = deleteParkedSims(report.parkedSims, deps);
+
+  removeInvalidProjectEntries(invalidProjects);
 
   for (const path of deadProjects) {
     const result = await reclaimProject(path);

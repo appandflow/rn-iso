@@ -1881,6 +1881,82 @@ test('a dead project on an unmounted volume is not unregistered', async () => {
   expect(cfg.projects[localDeadPath]).toBe(undefined);
 });
 
+describe('a registry key that is not an absolute path', () => {
+  const relativeKey = '.claude/stim-worktrees/nestrel';
+
+  test('is an invalid record, not an unmounted volume', async () => {
+    saveConfig({
+      version: 2,
+      projects: { [relativeKey]: { metroPort: 8100, platforms: {} } },
+      repos: {},
+    });
+    installExecutor();
+
+    const report = await collectGcReport();
+
+    expect(report.invalidProjects).toEqual([relativeKey]);
+    expect(report.deadProjects).toEqual([]);
+    expect(report.skipped).toEqual([]);
+  });
+
+  test('is kept, with the real reason, while it still records a device', async () => {
+    saveConfig({
+      version: 2,
+      projects: {
+        [relativeKey]: { metroPort: 8100, platforms: { ios: { deviceUdid: 'UDID-1', owned: true } } },
+      },
+      repos: {},
+    });
+    installExecutor();
+
+    const report = await collectGcReport();
+
+    expect(report.invalidProjects).toEqual([]);
+    expect(report.deadProjects).toEqual([]);
+    expect(report.skipped).toHaveLength(1);
+    expect(report.skipped[0]?.dir).toBe(relativeKey);
+    expect(report.skipped[0]?.reason).toMatch(/not an absolute path/);
+    expect(report.skipped[0]?.reason).toMatch(/UDID-1/);
+    expect(report.skipped[0]?.reason).not.toMatch(/not mounted/);
+  });
+
+  test('the report names it as an invalid record', () => {
+    const lines = formatGcReport({ invalidProjects: [relativeKey] }).join('\n');
+    expect(lines).toMatch(/Invalid project entries \(1\)/);
+    expect(lines).toMatch(/not an absolute path/);
+    expect(lines).toMatch(new RegExp(relativeKey.replace(/\./g, '\\.')));
+    expect(lines).not.toMatch(/Nothing to reclaim/);
+  });
+
+  test('--delete removes it when it claims no device', async () => {
+    saveConfig({
+      version: 2,
+      projects: { [relativeKey]: { metroPort: 8100, platforms: {} } },
+      repos: {},
+    });
+    installExecutor();
+
+    await cli(['--delete']);
+
+    expect(currentConfig().projects[relativeKey]).toBe(undefined);
+  });
+
+  test('--delete keeps it while it claims a device', async () => {
+    saveConfig({
+      version: 2,
+      projects: {
+        [relativeKey]: { metroPort: 8100, platforms: { ios: { deviceUdid: 'UDID-1', owned: true } } },
+      },
+      repos: {},
+    });
+    installExecutor();
+
+    await cli(['--delete']);
+
+    expect(currentConfig().projects[relativeKey]?.platforms?.ios?.deviceUdid).toBe('UDID-1');
+  });
+});
+
 interface DeviceSpec {
   udid: string;
   name: string;
