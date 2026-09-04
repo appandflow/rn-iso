@@ -26,7 +26,7 @@ import {
   launchCrashToken,
 } from '../launch-crash-benchmark.mjs';
 import { matchesExpectedIosSimulator } from './watch-app-selection.mjs';
-import { durableRunRecord } from './run-record.mjs';
+import { completedCleanupRecord, durableRunRecord } from './run-record.mjs';
 
 const launchCrashVariant = 'launch-crash';
 const scriptRoot = dirname(fileURLToPath(import.meta.url));
@@ -1549,6 +1549,16 @@ function proofFor(meta, appAlive, runDir, worktree, commandItems) {
   return { valid: false, reason: 'changed-metro-bundle-not-found' };
 }
 
+function completedCleanup(runDir) {
+  const cleanupPath = join(runDir, 'cleanup.json');
+  if (!existsSync(cleanupPath)) return false;
+  try {
+    return completedCleanupRecord(JSON.parse(readFileSync(cleanupPath, 'utf8')));
+  } catch {
+    return false;
+  }
+}
+
 function collect(runDir) {
   const meta = JSON.parse(readFileSync(join(runDir, 'meta.json'), 'utf8'));
   const appAlivePath = join(runDir, 'app-alive.json');
@@ -1657,7 +1667,7 @@ function collect(runDir) {
   };
   const runRecordPath = join(runDir, 'run.json');
   const previousRunRecord = existsSync(runRecordPath) ? JSON.parse(readFileSync(runRecordPath, 'utf8')) : null;
-  const runRecord = durableRunRecord(previousRunRecord, nextRunRecord);
+  const runRecord = durableRunRecord(previousRunRecord, nextRunRecord, completedCleanup(runDir));
   writeFileSync(runRecordPath, `${JSON.stringify(runRecord, null, 2)}\n`);
   process.stdout.write(`${JSON.stringify(runRecord, null, 2)}\n`);
 }

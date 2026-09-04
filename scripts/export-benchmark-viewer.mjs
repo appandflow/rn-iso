@@ -22,7 +22,11 @@ const modelPricing = {
 };
 
 const absolutePathPattern =
-  /\/(?:Applications|Library|System|Users|Volumes|private|tmp|var|opt|Pods\.build|XPCServices)(?![A-Za-z0-9._+-])(?:\/[^\s'"`,;()<>[\]]+)*/g;
+  /(?<![A-Za-z0-9._/])\/(?:Applications|Library|System|Users|Volumes|private|tmp|var|opt|Pods\.build|XPCServices)(?![A-Za-z0-9._+-])(?:\/[^\s'"`,;()<>[\]]+)*/g;
+const compilerFlagAbsolutePathPattern =
+  /(-[FLI])((?:\/(?:Applications|Library|System|Users|Volumes|private|tmp|var|opt))(?![A-Za-z0-9._+-])(?:\/[^\s'"`,;()<>[\]]+)*)/g;
+const fileUrlAbsolutePathPattern =
+  /file:\/\/(\/(?:Applications|Library|System|Users|Volumes|private|tmp|var|opt)(?![A-Za-z0-9._+-])(?:\/[^\s'"`,;()<>[\]]+)*)/g;
 const systemAbsolutePathPattern = /(?<![A-Za-z0-9._/-])\/(?:usr\/(?:s?bin)|bin|sbin)\/[A-Za-z0-9._+-]+/g;
 const homebrewExecutablePattern = /\/opt\/homebrew\/bin\/([A-Za-z0-9._+-]+)/g;
 const shellPathPattern = /\bPATH=(?:"[^"]*"|'[^']*'|[^\s]+)/g;
@@ -131,6 +135,8 @@ export function sanitizeBenchmarkText(value, replacements = []) {
   text = text.replace(shellPathPattern, 'PATH=<toolchain-path>');
   text = text.replace(homebrewExecutablePattern, '$1');
   text = text.replace(agentDeviceBundlePattern, '<agent-device-helper>');
+  text = text.replace(fileUrlAbsolutePathPattern, (_match, path) => `file:///${replacementLabel(path)}`);
+  text = text.replace(compilerFlagAbsolutePathPattern, (_match, flag, path) => `${flag}${replacementLabel(path)}`);
   text = text.replace(absolutePathPattern, (path) => replacementLabel(path));
   text = text.replace(systemAbsolutePathPattern, (path) => replacementLabel(path));
   text = text.replace(remoteBranchUserPattern, '$1@<user>');
@@ -375,6 +381,10 @@ export function summarizeRun(record, commands, backgroundProcesses) {
 
 function assertPortable(payload) {
   const serialized = JSON.stringify(collectPublicStrings(payload));
+  const leakedFileUrl = serialized.match(fileUrlAbsolutePathPattern)?.[0];
+  if (leakedFileUrl) {
+    throw new Error(`benchmark export contains an absolute machine file URL: ${leakedFileUrl}`);
+  }
   const leakedRoot = [
     '/Applications',
     '/Library',
@@ -382,12 +392,18 @@ function assertPortable(payload) {
     '/Users',
     '/Volumes',
     '/private',
-    '/var/',
-    '/tmp/',
-    '/opt/',
+    '/var',
+    '/tmp',
+    '/opt',
     '/Pods.build',
     '/XPCServices',
-  ].find((root) => serialized.includes(root));
+  ].find((root) => {
+    const escaped = root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return (
+      new RegExp(`(?<![A-Za-z0-9._/])${escaped}(?![A-Za-z0-9._+-])`).test(serialized) ||
+      new RegExp(`-[FLI]${escaped}(?![A-Za-z0-9._+-])`).test(serialized)
+    );
+  });
   if (leakedRoot) {
     const at = serialized.indexOf(leakedRoot);
     const field = serialized.slice(Math.max(0, at - 80), Math.min(serialized.length, at + 240));

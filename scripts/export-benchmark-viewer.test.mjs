@@ -318,6 +318,12 @@ describe('benchmark viewer export', () => {
     );
   });
 
+  it('preserves URL path separators while sanitizing hosts', () => {
+    expect(sanitizeBenchmarkText('http://127.0.0.1:8081/tmp/foo')).toBe('http://<local-ip>:8081/tmp/foo');
+    expect(sanitizeBenchmarkText('https://example.com/opt/page')).toBe('https://example.com/opt/page');
+    expect(sanitizeBenchmarkText('file:///Users/alice/project/index.js:4')).toBe('file:///workspace/index.js:4');
+  });
+
   it('strips terminal color codes before making machine paths relative', () => {
     const coloredPath =
       '\u001b[331m/\u001b[339mVolumes\u001b[49m\u001b[331m/\u001b[3103mExternalSSD\u001b[49m\u001b[331m/\u001b[3103mDeveloper\u001b[49m\u001b[331m/\u001b[3103mstim-bench\u001b[49m';
