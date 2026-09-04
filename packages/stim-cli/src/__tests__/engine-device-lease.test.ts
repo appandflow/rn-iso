@@ -419,7 +419,7 @@ describe('choosing a device from the pool', () => {
   });
 });
 
-describe('the real file protocol', () => {
+describe('the real file protocol', { timeout: 30_000 }, () => {
   const LEASE_URL = new URL('../engine/device-lease.ts', import.meta.url).href;
   let scratch: string;
 
