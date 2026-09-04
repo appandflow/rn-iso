@@ -90,6 +90,9 @@ function recordingExec({
     runQuiet() {
       throw new Error('app-install must use runFile, not the shell');
     },
+    runFileQuiet() {
+      throw new Error('app-install must use runFile, not runFileQuiet');
+    },
     spawn() {
       throw new Error('app-install does not spawn');
     },
@@ -1271,6 +1274,7 @@ describe('installAndroidApp: the uninstall-and-retry, exactly once', () => {
       },
       run: () => '',
       runQuiet: () => null,
+      runFileQuiet: () => null,
       spawn: () => {
         throw new Error('not used');
       },

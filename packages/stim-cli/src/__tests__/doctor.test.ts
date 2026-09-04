@@ -124,6 +124,7 @@ test('checkMainCheckout runs its expensive probes only when their preconditions 
   setExecutor({
     run: () => '',
     runQuiet: () => null,
+    runFileQuiet: () => null,
     runFile: (file: string, args: string[] = []) => {
       calls.push([file, ...args]);
       return '';
@@ -363,6 +364,7 @@ test('detectXcodeMajor reports unknown rather than throwing when xcodebuild is m
       throw new Error('not found');
     },
     runQuiet: () => null,
+    runFileQuiet: () => null,
     spawn: () => {},
   });
   try {
@@ -1166,6 +1168,10 @@ test('doctor --platform android does not invoke Xcode tooling', async () => {
     runFile: (file: string, args: string[]) => {
       calls.push([file, ...args].join(' '));
       return '';
+    },
+    runFileQuiet: (file: string, args: string[]) => {
+      calls.push([file, ...args].join(' '));
+      return null;
     },
     spawn: () => {
       throw new Error('unexpected spawn');

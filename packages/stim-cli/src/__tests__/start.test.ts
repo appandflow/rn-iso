@@ -102,6 +102,7 @@ interface MetroExecutorMock {
   run(): string;
   runFile(): string;
   runQuiet(cmd: string): string;
+  runFileQuiet(): string;
   spawn(cmd: string, args: readonly string[], opts: SpawnOptions): ChildStub;
 }
 
@@ -132,6 +133,9 @@ function metroExecutor({
       if (listening) return listeners[listening[1] ?? ''] ? String(listeners[listening[1] ?? '']) : '';
       if (/lsof -a -p \d+ -d cwd/.test(cmd)) return `p1\nfcwd\nn${cwd}`;
       if (/ps -o pgid=/.test(cmd)) return '777';
+      return '';
+    },
+    runFileQuiet() {
       return '';
     },
     spawn(cmd, args, opts) {

@@ -237,23 +237,27 @@ function makeExecutor({
     },
     runQuiet(cmd: string) {
       runQuietCalls.push(cmd);
-      const revMatch = cmd.match(/^git -C "(.+)" rev-parse --path-format=absolute --git-dir --git-common-dir$/);
-      if (revMatch) {
-        const p = revMatch[1] ?? '';
-        return mainTrees.includes(p) ? `${p}/.git\n${p}/.git` : null;
-      }
-      if (/status --porcelain/.test(cmd)) return dirty;
-      const diffMatch = cmd.match(/ diff -- "(.+)"$/);
-      if (diffMatch) return diffs[diffMatch[1] ?? ''] ?? '';
-      if (/ checkout -- /.test(cmd)) return '';
-      if (/log --oneline HEAD --not --remotes/.test(cmd)) return unpushed;
-      if (/worktree list --porcelain/.test(cmd)) return worktrees;
-      if (cmd.endsWith('remote')) return remote;
       const spawnMatch = cmd.match(/simctl spawn (\S+) launchctl list/);
       if (spawnMatch) {
         const udid = spawnMatch[1] ?? '';
         return occupied[udid] ? '082a\t0\tUIKitApplication:com.example.MyAppUITests.xctrunner[082a][rb-legacy]' : '';
       }
+      return null;
+    },
+    runFileQuiet(file: string, args: string[] = []) {
+      const cmd = [file, ...args].join(' ');
+      runQuietCalls.push(cmd);
+      if (args.includes('--git-dir') && args.includes('--git-common-dir')) {
+        const p = args[1] ?? '';
+        return mainTrees.includes(p) ? `${p}/.git\n${p}/.git` : null;
+      }
+      if (/status --porcelain/.test(cmd)) return dirty;
+      const diffMatch = cmd.match(/ diff -- (.+)$/);
+      if (diffMatch) return diffs[diffMatch[1] ?? ''] ?? '';
+      if (/ checkout -- /.test(cmd)) return '';
+      if (/log --oneline HEAD --not --remotes/.test(cmd)) return unpushed;
+      if (/worktree list --porcelain/.test(cmd)) return worktrees;
+      if (cmd.endsWith('remote')) return remote;
       return null;
     },
     spawn() {},
@@ -757,10 +761,10 @@ test('action: a branch deletion failure keeps ownership state and exits unsucces
   rmSync(wtDir, { recursive: true, force: true });
   process.exitCode = 0;
   const changedExec = makeExecutor({ refSha: 'def456' });
-  const changedRunQuiet = changedExec.runQuiet.bind(changedExec);
-  changedExec.runQuiet = (cmd) => {
-    if (/rev-parse --verify --quiet/.test(cmd)) return 'def456';
-    return changedRunQuiet(cmd);
+  const changedRunFileQuiet = changedExec.runFileQuiet.bind(changedExec);
+  changedExec.runFileQuiet = (file, args = []) => {
+    if (/rev-parse --verify --quiet/.test([file, ...args].join(' '))) return 'def456';
+    return changedRunFileQuiet(file, args);
   };
   setExecutor(changedExec);
 
@@ -772,10 +776,10 @@ test('action: a branch deletion failure keeps ownership state and exits unsucces
 
   process.exitCode = 0;
   const retryExec = makeExecutor({ refSha: 'abc123' });
-  const originalRunQuiet = retryExec.runQuiet.bind(retryExec);
-  retryExec.runQuiet = (cmd) => {
-    if (/rev-parse --verify --quiet/.test(cmd)) return 'abc123';
-    return originalRunQuiet(cmd);
+  const originalRunFileQuiet = retryExec.runFileQuiet.bind(retryExec);
+  retryExec.runFileQuiet = (file, args = []) => {
+    if (/rev-parse --verify --quiet/.test([file, ...args].join(' '))) return 'abc123';
+    return originalRunFileQuiet(file, args);
   };
   setExecutor(retryExec);
 
@@ -800,10 +804,10 @@ test('action: pending cleanup keeps a branch that another worktree checks out', 
     worktrees: porcelain([{ path: mainDir, branch: 'worktree-feat-x' }]),
     mainTrees: [mainDir],
   });
-  const originalRunQuiet = exec.runQuiet.bind(exec);
-  exec.runQuiet = (cmd) => {
-    if (/rev-parse --verify --quiet/.test(cmd)) return 'abc123';
-    return originalRunQuiet(cmd);
+  const originalRunFileQuiet = exec.runFileQuiet.bind(exec);
+  exec.runFileQuiet = (file, args = []) => {
+    if (/rev-parse --verify --quiet/.test([file, ...args].join(' '))) return 'abc123';
+    return originalRunFileQuiet(file, args);
   };
   setExecutor(exec);
 
@@ -1171,10 +1175,10 @@ test('action: an unregistered nested remote start cannot bypass the worktree rem
       { path: wtDir, branch: 'feat-x' },
     ]),
   });
-  const originalRunQuiet = exec.runQuiet.bind(exec);
-  exec.runQuiet = (cmd) => {
-    if (cmd.includes('rev-parse --show-toplevel')) return wtDir;
-    return originalRunQuiet(cmd);
+  const originalRunFileQuiet = exec.runFileQuiet.bind(exec);
+  exec.runFileQuiet = (file, args = []) => {
+    if ([file, ...args].join(' ').includes('rev-parse --show-toplevel')) return wtDir;
+    return originalRunFileQuiet(file, args);
   };
   let nestedStart: Promise<void> | null = null;
   const originalRunFile = exec.runFile.bind(exec);
