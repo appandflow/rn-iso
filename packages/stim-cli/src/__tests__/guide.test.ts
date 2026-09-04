@@ -125,8 +125,8 @@ test('the facts topic documents the fields each --json payload actually carries'
   assert(body);
   const sources = {
     start: readFileSync(new URL('../commands/start.ts', import.meta.url), 'utf-8'),
-    ios: readFileSync(new URL('../commands/ios.ts', import.meta.url), 'utf-8'),
-    android: readFileSync(new URL('../commands/android.ts', import.meta.url), 'utf-8'),
+    ios: readFileSync(new URL('../commands/ios/result.ts', import.meta.url), 'utf-8'),
+    android: readFileSync(new URL('../commands/android/result.ts', import.meta.url), 'utf-8'),
   };
   const fields = {
     start: ['port', 'supervisorPid', 'mode', 'logsDir', 'alreadyRunning'],
@@ -300,7 +300,7 @@ test('the guide says what a verified launch does not prove, in the words the com
   expect(facts).toMatch(/first screen may still be\s+rendering/);
   expect(facts).toMatch(/Poll the UI before you trust a\s+screenshot/);
   for (const command of ['ios', 'android']) {
-    const src = readFileSync(new URL(`../commands/${command}.ts`, import.meta.url), 'utf-8');
+    const src = readFileSync(new URL(`../commands/${command}/launch.ts`, import.meta.url), 'utf-8');
     expect(src.includes('the first screen may still be rendering')).toBeTruthy();
     expect(src.includes('ready: bundle loaded')).toBeFalsy();
   }
