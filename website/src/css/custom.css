@@ -31,6 +31,9 @@
 }
 
 .stimQuickStart {
+  --ifm-tabs-color: var(--ifm-color-white);
+  --ifm-tabs-color-active: var(--ifm-color-primary-lightest);
+  --ifm-tabs-color-active-border: var(--ifm-color-primary-lightest);
   max-width: 760px;
   margin: 0 auto;
   text-align: left;

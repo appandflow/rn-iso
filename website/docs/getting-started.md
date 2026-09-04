@@ -9,8 +9,8 @@ import PromptBox, { PromptGrid } from '@site/src/components/PromptBox';
 
 ## Install Stim
 
-Install the CLI once. The package name remains `stim-cli`, but the installed
-command is `stim`.
+Install the CLI globally or run it with npx. The package is `stim-cli`; the
+installed command is `stim`.
 
 <StimInstallTabs />
 
@@ -25,7 +25,7 @@ so upgrading Stim does not require reinstalling the skill.
 
 ## Ask the agent to run the app
 
-Give the agent an outcome, not a command sequence:
+Ask for the outcome:
 
 <PromptBox
 title="Build and run"
@@ -139,10 +139,14 @@ cache entries created by the main checkout or another worktree.
 
 ## What success means
 
-`stim ios` and `stim android` exit after the app is installed, opened, and
-checked for three seconds after Metro finishes the bundle. The final summary
-reports the exact device, app identifier, cache result, Metro state, launch
-state, and log path.
+`stim ios` and `stim android` install and open the app, then report launch
+evidence. The summary includes the exact device, app identifier, cache result,
+Metro state, launch state, and log path.
+
+An OK summary without a launch qualifier confirms a bundle request or a live
+release process. `bundle requested, still building` means Metro is still
+working. For `launch UNVERIFIED`, follow the printed remedy before claiming
+success. None of these checks proves that the screen rendered correctly.
 
 Use a device automation tool only when the task requires visual interaction or
 a screenshot. Stim owns the build and launch. It does not require a separate

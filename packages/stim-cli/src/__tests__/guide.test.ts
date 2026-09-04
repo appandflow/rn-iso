@@ -971,6 +971,8 @@ test('the agent guide carries the normal workflow and safety rules', () => {
   expect(agent).toMatch(/app error but also says the native process is alive,[\s\S]*app did not crash/);
   expect(agent).toMatch(/FATAL because the app process exited,[\s\S]*Metro cannot restart it/);
   expect(agent).toMatch(/Ordinary stim stop and an authorized clean\s+stim worktree remove do not need/);
+  expect(agent).toContain('It records a temporary lease, not an owned-device registry entry');
+  expect(agent).toMatch(/On a physical\s+iPhone, stop also closes the app by ending its log collector/);
 });
 
 test('the logs and lifecycle guides distinguish query success from a clean captured timeline', () => {
@@ -1239,6 +1241,9 @@ test('the guide documents the pool an id-less --device picks from', () => {
   expect(lifecycle).not.toMatch(/refuses with the candidate\s+list/);
   expect(lifecycle).toMatch(/no serial it takes the first device it can lease/);
   expect(lifecycle).toMatch(/with no UDID it takes the\s+first device it can lease/);
+  expect(lifecycle).toMatch(
+    /On a physical iPhone that also closes the app, because its collector owns\s+the devicectl launch session/,
+  );
 });
 
 test('the option surface lists the model and runtime flags on both platforms', () => {

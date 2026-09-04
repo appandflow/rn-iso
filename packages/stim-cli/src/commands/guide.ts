@@ -100,13 +100,17 @@ entries and keeps failures; see guide lifecycle. First launch on a physical
 iPhone can need the one-time taps named by the remedy.
 
 stim android --device [serial] and stim ios --device [udid] install on a
-connected physical device. Stim never creates, boots, or deletes hardware and
-records nothing about it, so stop and gc leave it alone.
+connected physical device. Stim never creates, boots, shuts down, or deletes
+hardware. It records a temporary lease, not an owned-device registry entry.
 
 A --device run leases that device for the run. stim device lock ios --for 10m
 holds it across runs; stim device unlock gives it back. Never delete another
 workspace's lease file under ~/.stim/device-locks; gc --delete removes expired
 ones.
+
+stop and worktree remove release this workspace's leases. On a physical
+iPhone, stop also closes the app by ending its log collector; it does not
+shut down the phone or uninstall the app.
 
 Treat a refusal as an ownership or state mismatch: read its code and remedy.
 Never reach for --force first.
@@ -1898,16 +1902,16 @@ OPTIONAL SIMSLIM PROFILE
   shutdowns and reboots. Removing the setting restores stock services when
   Stim applied the profile. Stim never changes an unowned or remote simulator.
 
-NOTHING ABOVE NEEDS A CHANGE TO THE REPO
+RUNTIME STATE AND BUILD INPUTS
 Runtime state is stored outside the project tree under
 $STIM_HOME/workspaces/<project>--<digest>/ (default ~/.stim/workspaces/).
 The aggregate run counters \`stats\` prints live beside it in
 $STIM_HOME/stats.json, one bucket per project and platform plus a machine-wide
 one; nothing per run is kept there.
 No .gitignore entry is created or required.
-Stim runs on a clean checkout. Runtime state is stored outside the project tree.
-runtime state lives under $STIM_HOME/workspaces/<project>--<digest>, and the performance caches ride on the command
-lines Stim composes rather than on files the project owns:
+Native preparation can change project files: expo prebuild generates native
+sources, and pod install can update Podfile.lock. Review those changes before
+committing. The shared caches need no project-file edits:
 
   ios      xcodebuild carries COMPILATION_CACHE_ENABLE_CACHING, a shared
            COMPILATION_CACHE_CAS_PATH and a clang prefix mapping of this
@@ -1925,13 +1929,10 @@ lines Stim composes rather than on files the project owns:
            \`sharedCacheStores()\` from @stim-cli/metro in its own metro
            config also gets the \`cache.provider\` tier behind that store.
 
-Each says so in one dim line. There is nothing to install, wire or commit, and
-no setup skill to run. \`stim doctor\` is the second opinion when
-something IS blocked or slow: it reports only what Stim cannot handle itself
+Each reports its cache setup. \`stim doctor\` checks missing or stale setup
+when a build is blocked or slow. It reports what Stim cannot handle itself
 (a missing dev client, ccache, a fingerprint no fresh worktree reproduces, a
-provider on a key this SDK ignores) plus the project-side settings that matter
-solely for builds you make OUTSIDE Stim. A clean doctor means there is
-nothing Stim needs from this repo.
+provider on a key this SDK ignores) and settings for builds outside Stim.
 
 THE BUILD CACHE HAS THREE LEVELS
   1. Stim's own, on this machine: a directory under ~/.stim shared by
@@ -2147,8 +2148,8 @@ THE OPTION SURFACE, IN FULL
 
   The build, the fingerprint, the build cache and the Metro port gate are
   unchanged. What is skipped is everything that manages an owned device:
-  no capacity check, no AVD creation, no boot wait, and no device record --
-  so \`stop\` and \`gc\` never touch the phone. The app is pointed at
+  no capacity check, no AVD creation, no boot wait, and no owned-device
+  registry entry. The app is pointed at
   localhost:<port>, which the adb reverse serves, instead of the emulator's
   10.0.2.2. Stim never creates, boots, shuts down, or deletes hardware.
 
@@ -2158,8 +2159,13 @@ THE OPTION SURFACE, IN FULL
   that is unpaired or has Developer Mode off is refused with the fix. It
   cannot be combined with --remote, and it never creates, boots, or deletes
   hardware -- there is no capacity check, no simulator creation, no boot wait,
-  and no device record, so \`stop\` and \`gc\` never see the phone. Like
+  and no owned-device registry entry. Like
   \`android --device\`, it leases the phone for the run (below).
+
+  \`stop\` releases this workspace's leases and stops its log collectors.
+  On a physical iPhone that also closes the app, because its collector owns
+  the devicectl launch session. \`gc --delete\` removes expired lease files;
+  neither command shuts down the phone or uninstalls the app.
 
 THE DEVICE LEASE ON A \`--device\` RUN
   A physical device is shared, so a \`--device\` run takes a lease on it. The

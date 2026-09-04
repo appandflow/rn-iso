@@ -28,7 +28,7 @@ builds embed the JavaScript bundle and skip that requirement.
 ## `doctor`
 
 ```text
-stim doctor [--json] [--fix]
+stim doctor [--platform <ios|android>] [--json] [--fix]
 ```
 
 Inspects the main checkout. It reports missing or stale dependencies, CocoaPods
@@ -36,6 +36,9 @@ state, cache conflicts, device capacity, and remote session problems. On a
 checkout without installed dependencies, it also reports fingerprint
 differences against a fresh worktree. The check is read-only unless `--fix` is
 passed.
+
+`--platform ios` or `--platform android` limits native findings to that
+platform while keeping shared project checks.
 
 `doctor` also flags when an agent harness sandboxes shell commands and Stim is
 not allowed through it, which shows up as unrelated-looking failures against
@@ -65,7 +68,7 @@ project is reused.
 
 ```text
 stim ios [--configuration <name>] [--device-type <name>] [--runtime <version>]
-         [--device [udid]] [--remote <proxy|eas>]
+         [--device [udid]] [--wait <seconds> | --no-wait] [--remote <proxy|eas>]
          [--no-metro-check] [--no-build-cache] [--json]
 ```
 
@@ -82,7 +85,13 @@ machine, including remote-device workflows.
   (`iOS 26.5`), exactly.
 - `--device [udid]` builds, installs, and launches on a connected iPhone instead
   of the owned simulator. With no UDID it takes the first connected device it
-  can lease. Stim never creates, boots, or deletes hardware.
+  can lease. It cannot be combined with `--remote`. Stim never creates, boots,
+  or deletes hardware.
+- `--wait <seconds>` bounds the wait for a physical-device lease (default 60;
+  `0` refuses immediately if busy). Only with `--device`.
+- `--no-wait` bypasses leasing, including when another workspace holds the
+  device. Installing the same app terminates that workspace's running app.
+  Only with `--device`; cannot be combined with `--wait`.
 - `--remote proxy` uses a configured Agent Device daemon.
 - `--remote eas` uses an EAS remote simulator.
 - `--no-metro-check` skips the Debug dev-server gate.
@@ -122,14 +131,14 @@ that too. Until it is granted, `launched` comes back `unverified`. Run
 `stim guide errors` for the signature and the full recovery.
 
 A `--device` run in a Release configuration builds fresh every time: a cached
-Release app carries its builder's JavaScript, and the device JS swap lands with
-a later phase of [#178](https://github.com/appandflow/stim/issues/178).
+Release app carries its builder's JavaScript, and Stim does not swap JavaScript
+into cached iOS physical-device builds.
 
 ## `android`
 
 ```text
 stim android [--variant <name>] [--system-image <id>] [--device [serial]]
-             [--remote <proxy|eas>]
+             [--wait <seconds> | --no-wait] [--remote <proxy|eas>]
              [--no-metro-check] [--no-build-cache] [--json]
 ```
 
@@ -141,6 +150,14 @@ the app, opens it, and checks launch logs.
   package id, overriding `android.systemImage` for one invocation; an id this
   SDK has not installed refuses with `STIM_BAD_ARG` and prints the installed
   ids.
+- `--device [serial]` installs and launches on a connected physical device.
+  With no serial it selects a connected device this workspace can lease. It
+  cannot be combined with `--remote`.
+- `--wait <seconds>` bounds the physical-device lease wait (default 60;
+  `0` refuses immediately if busy). Only with `--device`.
+- `--no-wait` bypasses leasing, including another workspace's lease. Installing
+  the same app terminates that workspace's running app. Only with `--device`;
+  cannot be combined with `--wait`.
 - `--remote proxy` uses a configured Agent Device daemon.
 - `--remote eas` uses an EAS remote emulator.
 - `--no-metro-check` skips the Debug dev-server gate.
@@ -161,7 +178,9 @@ stim logs [--source <metro|client|device|build|all...>]
 Queries the workspace log timeline. No matching records is a successful empty
 result.
 
-- `--errors` selects app, bundle, and build errors after the last bundle marker.
+- `--errors` selects errors and fatals from Metro, client, and build logs since
+  the last launch marker. A completed bundle attempt resets only older Metro
+  errors. Device logs require an explicit `--source device` or `--source all`.
 - `--source device` includes operating-system device logs.
 - `--follow` streams new matching records.
 - `--json` writes NDJSON. Zero matches writes zero bytes.
@@ -255,14 +274,16 @@ stim worktree create <name> [--base <head|fresh|ref>] [--dir <path>]
 
 Creates a git worktree and prints its absolute path.
 
-- `--base head` uses the current checkout's `HEAD`. This is the default.
+- `--base head` uses the current checkout's `HEAD`, the default when
+  `worktree.baseRef` is unset.
 - `--base fresh` uses `origin/HEAD`.
 - `--base <ref>` accepts any branch, tag, or commit that git resolves.
 - `--dir <path>` creates the worktree under that directory instead of the
   `worktreeDir` setting or the default `<repo>-worktrees/` sibling. A relative
   path resolves against the current directory, while a relative `worktreeDir`
-  setting resolves against the repository root. The worktree lands at
-  `<dir>/<name>`.
+  setting resolves against the repository root. Slash-separated names keep
+  their branch hierarchy but use a flat directory under that path:
+  `feature/settings` becomes `feature+settings`.
 - `--label` sets the short Stim name used by the environment and device.
 - `--carry-ignored` copies safe ignored files and compatible uncommitted changes.
 
@@ -297,9 +318,9 @@ stale locks, and shared cache sizes. It does not change anything without
 stim guide [topic]
 ```
 
-Prints version-matched reference text. Topics are facts, Metro, logs, errors,
-lifecycle, cleanup, and settings. Cache mechanics, remote devices, and release
-builds are covered inside those topics rather than as topics of their own.
+Prints version-matched reference text. Topics are agent, facts, metro, logs,
+errors, lifecycle, cleanup, and settings. Those topics also cover caches,
+remote devices, and release builds.
 
 ## Structured output and exit codes
 
