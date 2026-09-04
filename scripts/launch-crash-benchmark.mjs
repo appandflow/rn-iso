@@ -235,7 +235,7 @@ export function launchCrashRepair(source, token, expectedSha256) {
   return { valid: true, sourceSha256 };
 }
 
-export function launchCrashRecovery(commands, { diagnosis, screen }) {
+export function launchCrashRecovery(commands, { diagnosis, arm = 'stim', platform = 'ios', screen }) {
   if (!diagnosis?.valid) return { valid: false, reason: 'launch-crash-diagnosis-missing' };
   const ordered = orderedCommands(commands);
   const diagnosisCommand = ordered.find((command) => command.id === diagnosis.commandId);
@@ -253,6 +253,15 @@ export function launchCrashRecovery(commands, { diagnosis, screen }) {
     return { valid: false, reason: 'launch-crash-settings-command-invalid' };
   }
   const screenshotStartedAt = timestamp(screenshot, 'startedAt');
+  const extraLaunch = ordered.find(
+    (command) =>
+      timestamp(command, 'startedAt') >= diagnosisEndedAt &&
+      timestamp(command, 'endedAt') <= screenshotStartedAt &&
+      launchCommand(command.command, arm, platform),
+  );
+  if (extraLaunch) {
+    return { valid: false, reason: 'launch-crash-extra-native-launch', commandId: extraLaunch.id };
+  }
   const repairedReload = ordered.findLast(
     (command) =>
       timestamp(command, 'startedAt') >= diagnosisEndedAt &&

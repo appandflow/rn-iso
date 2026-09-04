@@ -196,7 +196,7 @@ function isExpoErrorContext(record: NdjsonRecord, event: unknown): boolean {
   );
 }
 
-export function attachExpoErrorContext(all: NdjsonRecord[], matched: NdjsonRecord[]): NdjsonRecord[] {
+function attachExpoErrorContext(all: NdjsonRecord[], matched: NdjsonRecord[]): NdjsonRecord[] {
   return matched.map((record) => {
     if (
       record.src !== 'metro' ||

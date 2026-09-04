@@ -582,6 +582,14 @@ describe('launch crash benchmark', () => {
         endedAt: '2026-09-04T12:00:20Z',
       },
       {
+        id: 'reload',
+        command: 'agent-device metro reload --metro-port 8082',
+        output: 'Reload broadcast sent',
+        exitCode: 0,
+        startedAt: '2026-09-04T12:00:20.100Z',
+        endedAt: '2026-09-04T12:00:20.500Z',
+      },
+      {
         id: 'screenshot',
         command: 'agent-device screenshot /tmp/settings.png',
         output: 'saved',
@@ -600,7 +608,11 @@ describe('launch crash benchmark', () => {
           screenshotCommandId: 'screenshot',
         },
       }),
-    ).toEqual({ valid: false, reason: 'launch-crash-repaired-reload-missing' });
+    ).toEqual({
+      valid: false,
+      reason: 'launch-crash-extra-native-launch',
+      commandId: 'second-ios',
+    });
   });
 
   it('accepts a control Metro reload when later Settings proof succeeds', () => {
