@@ -2603,12 +2603,14 @@ DISK
 
   Android AVDs normally live under ~/.android/avd, and a booted owned AVD can
   use several GB. \`worktree remove\` deletes the workspace's owned AVD; plain
-  \`stop\` only shuts it down for reuse. Stim uses Android's default Quick Boot:
-  the first boot and a boot after the emulator, system image, or AVD settings
-  change are cold, while later boots load the one automatic snapshot saved on
-  exit. \`stop\` waits for that snapshot save and the emulator process to finish.
+  \`stop\` only shuts it down for reuse. Stim uses Android's default Quick Boot
+  unless displayless Linux requires software rendering, where snapshots are
+  disabled. The first boot and a boot after the emulator, system image, or AVD
+  settings change are cold, while later supported boots load the one automatic
+  snapshot saved on exit. \`stop\` waits for the emulator process and, when
+  enabled, the snapshot save to finish.
   New owned AVDs default to an 8 GiB data partition, though project settings can
-  change it. Quick Boot keeps one automatic snapshot, and \`worktree remove\`
+  change it. When enabled, Quick Boot keeps one automatic snapshot, and \`worktree remove\`
   deletes the whole AVD.
   \`gc\` prints the on-disk size beside an orphaned or stale owned Android AVD
   when its content directory can be read.

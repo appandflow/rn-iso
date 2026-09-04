@@ -12,6 +12,7 @@ import {
   type IosSimRecord,
 } from './sim/ios.ts';
 import {
+  assertOwnedAvdStopped,
   resolveOwnedAvdSerial,
   shutdownAndroidEmulator,
   waitForAndroidEmulatorShutdown,
@@ -144,19 +145,37 @@ export function teardownOwnedAvd(
   {
     del = false,
     waitForShutdown = waitForAndroidEmulatorShutdown,
-  }: { del?: boolean; waitForShutdown?: typeof waitForAndroidEmulatorShutdown } = {},
+    assertStopped = assertOwnedAvdStopped,
+    resolveAvd = resolveOwnedAvdSerial,
+  }: {
+    del?: boolean;
+    waitForShutdown?: typeof waitForAndroidEmulatorShutdown;
+    assertStopped?: typeof assertOwnedAvdStopped;
+    resolveAvd?: typeof resolveOwnedAvdSerial;
+  } = {},
 ): TeardownOutcome {
   try {
-    const resolved = resolveOwnedAvdSerial(avdName);
+    const resolved = resolveAvd(avdName);
     if (resolved.notOwned) {
       return { status: 'skipped', kind: 'not-owned', reason: `AVD ${avdName} is not Stim-owned by name` };
     }
     if (resolved.missing) return { status: 'missing' };
     const serial = resolved.serial;
     if (serial) {
-      waitForShutdown(avdName, () => shutdownAndroidEmulator(serial));
+      waitForShutdown(avdName, (timeoutMs) => shutdownAndroidEmulator(serial, timeoutMs));
+    } else {
+      assertStopped(avdName);
     }
-    if (del) deleteAvd(avdName);
+    if (del) {
+      const current = resolveAvd(avdName);
+      if (current.notOwned) {
+        return { status: 'skipped', kind: 'not-owned', reason: `AVD ${avdName} is not Stim-owned by name` };
+      }
+      if (current.missing) return { status: 'missing' };
+      if (current.serial) throw new Error(`Owned AVD ${avdName} started again before deletion.`);
+      assertStopped(avdName);
+      deleteAvd(avdName);
+    }
     return { status: 'torn-down', label: avdName, serial: resolved.serial ?? null };
   } catch (e) {
     return { status: 'failed', reason: String((e as Error)?.message || e) };

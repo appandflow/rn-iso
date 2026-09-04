@@ -452,7 +452,15 @@ export function headlessEmulatorArgs(
 ): string[] {
   const args: string[] = [];
   if (platform === 'linux' && !env.DISPLAY && !env.WAYLAND_DISPLAY) {
-    args.push('-no-window', '-noaudio', '-no-boot-anim', '-gpu', 'swiftshader_indirect');
+    args.push(
+      '-no-window',
+      '-noaudio',
+      '-no-boot-anim',
+      '-gpu',
+      'swiftshader_indirect',
+      '-no-snapshot-save',
+      '-no-snapshot-load',
+    );
   }
   return args;
 }
@@ -707,12 +715,15 @@ export async function waitForBoot(
   };
 }
 
-export function shutdownAndroidEmulator(serial: string): void {
-  getExecutor().runQuiet(`${androidTool('adb')} -s ${serial} emu kill`);
-}
-
 const ANDROID_EMULATOR_SHUTDOWN_TIMEOUT_MS = 60_000;
 const ANDROID_EMULATOR_SHUTDOWN_POLL_MS = 100;
+
+export function shutdownAndroidEmulator(
+  serial: string,
+  timeoutMs: number = ANDROID_EMULATOR_SHUTDOWN_TIMEOUT_MS,
+): void {
+  getExecutor().runQuiet(`${androidTool('adb')} -s ${serial} emu kill`, { timeoutMs });
+}
 
 function sleepSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
@@ -734,9 +745,48 @@ function readAvdProcessId(path: string): number | null {
   }
 }
 
+function resolveAvdProcess(
+  avdName: string,
+  {
+    platform = process.platform,
+    resolveDirectory = ownedAvdDirectory,
+    readProcessId = readAvdProcessId,
+  }: {
+    platform?: NodeJS.Platform;
+    resolveDirectory?: typeof ownedAvdDirectory;
+    readProcessId?: (path: string) => number | null;
+  } = {},
+): { directory: string; processId: number | null } {
+  const directory = resolveDirectory(avdName);
+  if (!directory) throw new Error(`Could not resolve the content directory for owned AVD ${avdName}.`);
+  for (const lockPath of avdProcessLockPaths(directory, platform)) {
+    const processId = readProcessId(lockPath);
+    if (processId !== null) return { directory, processId };
+  }
+  return { directory, processId: null };
+}
+
+export function assertOwnedAvdStopped(
+  avdName: string,
+  {
+    processAlive = isPidAlive,
+    ...resolveOptions
+  }: {
+    platform?: NodeJS.Platform;
+    resolveDirectory?: typeof ownedAvdDirectory;
+    readProcessId?: (path: string) => number | null;
+    processAlive?: (pid: number) => boolean;
+  } = {},
+): void {
+  const { processId } = resolveAvdProcess(avdName, resolveOptions);
+  if (processId !== null && processAlive(processId)) {
+    throw new Error(`Owned AVD ${avdName} still has a live emulator process (${processId}).`);
+  }
+}
+
 export function waitForAndroidEmulatorShutdown(
   avdName: string,
-  shutdown: () => void,
+  shutdown: (timeoutMs: number) => void,
   {
     timeoutMs = ANDROID_EMULATOR_SHUTDOWN_TIMEOUT_MS,
     pollMs = ANDROID_EMULATOR_SHUTDOWN_POLL_MS,
@@ -759,18 +809,16 @@ export function waitForAndroidEmulatorShutdown(
     sleep?: (ms: number) => void;
   } = {},
 ): void {
-  const directory = resolveDirectory(avdName);
-  if (!directory) throw new Error(`Could not resolve the content directory for owned AVD ${avdName}.`);
-  let processId: number | null = null;
-  for (const lockPath of avdProcessLockPaths(directory, platform)) {
-    processId = readProcessId(lockPath);
-    if (processId !== null) break;
-  }
+  const { directory, processId } = resolveAvdProcess(avdName, { platform, resolveDirectory, readProcessId });
   if (processId === null) {
     throw new Error(`Could not find the emulator process lock for owned AVD ${avdName}.`);
   }
-  shutdown();
   const deadline = now() + timeoutMs;
+  const shutdownTimeoutMs = deadline - now();
+  if (shutdownTimeoutMs <= 0) {
+    throw new Error(`Owned AVD ${avdName} did not finish shutting down within ${Math.ceil(timeoutMs / 1000)}s.`);
+  }
+  shutdown(shutdownTimeoutMs);
   while (processAlive(processId)) {
     const remaining = deadline - now();
     if (remaining <= 0) {
@@ -793,7 +841,11 @@ export function resolveOwnedAvdSerial(avdName: string): ResolvedAvdSerial {
   if (!listAvds().includes(avdName)) return { missing: true };
   if (!avdName?.startsWith('stim-')) return { notOwned: true };
   const adb = listAdbDevices();
-  const match = adb.emulators.find((e) => getAvdNameForSerial(e.serial) === avdName);
+  const candidates = [
+    ...adb.emulators,
+    ...adb.unhealthy.filter((entry) => entry.kind === 'emulator' && entry.consolePort !== undefined),
+  ];
+  const match = candidates.find((e) => getAvdNameForSerial(e.serial) === avdName);
   if (match) return { serial: match.serial };
   return { notRunning: true };
 }
