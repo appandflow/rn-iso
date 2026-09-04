@@ -849,7 +849,7 @@ describe('launch verification', () => {
     );
     const text = errs.join('\n');
     expect(text).toMatch(/native app is still running/);
-    expect(text).toContain('agent-device metro reload --metro-port 8082');
+    expect(text).toContain('stim reload ios');
     expect(text).toMatch(/Do not run `stim ios` unless native inputs changed or the app process exits/);
   });
 
@@ -911,7 +911,7 @@ describe('launch verification', () => {
     const text = errs.join('\n');
     expect(exitCode).toBe(1);
     expect(text).toMatch(/native app is still running/);
-    expect(text).toContain('agent-device metro reload --metro-port 8082');
+    expect(text).toContain('stim reload ios');
     expect(text).toMatch(/Do not run `stim ios` unless native inputs changed or the app process exits/);
   });
 
@@ -3221,6 +3221,14 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
     const state = readWorkspaceState(root) as WorkspaceState;
     expect(state.lastBuild?.fingerprint).toBeNull();
     expect(state.lastBuild?.cacheKey).toBeNull();
+    expect(state.launches?.ios).toEqual({
+      appId: 'com.example.app',
+      deviceId: UDID,
+      metroPort: 8082,
+      release: false,
+      deepLinkUrl: null,
+      launchedAt: expect.any(String),
+    });
     expect(stderr).toContain(`unavailable after ${mutation}; the build will be installed but not cached`);
   });
 

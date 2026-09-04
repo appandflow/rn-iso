@@ -78,7 +78,7 @@ export function clearSupervisorState(root: string): void {
   try {
     rmSync(supervisorPidFile(root), { force: true });
   } catch {}
-  clearWorkspaceStateKeys(root, ['supervisor']);
+  clearWorkspaceStateKeys(root, ['supervisor', 'launches']);
 }
 
 export function clearCollectorState(root: string): void {

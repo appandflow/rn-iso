@@ -178,10 +178,16 @@ importers:
       commander:
         specifier: ^13.1.0
         version: 13.1.0
+      ws:
+        specifier: ^8.21.3
+        version: 8.21.3
     devDependencies:
       '@stim-cli/expo-build-cache':
         specifier: workspace:*
         version: link:../expo-build-cache
+      '@types/ws':
+        specifier: ^8.18.1
+        version: 8.18.1
 
   website:
     dependencies:

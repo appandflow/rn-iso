@@ -174,7 +174,13 @@ import {
   unknownSettingKeys,
   type SettingsObject,
 } from '../settings.ts';
-import { MODE_BARE, MODE_EXPO, readWorkspaceState, writeWorkspaceState } from '../supervisor/state.ts';
+import {
+  MODE_BARE,
+  MODE_EXPO,
+  readWorkspaceState,
+  writeWorkspaceLaunch,
+  writeWorkspaceState,
+} from '../supervisor/state.ts';
 import { gitCommonDir, repoRoot } from '../worktree.ts';
 
 export { formatDuration, phaseLine, shortHash, shortUdid } from '../command-output.ts';
@@ -925,6 +931,7 @@ interface IosDeps {
   ensureWorkspaceStorage: typeof ensureWorkspaceStorageSafely;
   replaceCollector: typeof replaceCollector;
   stopPreviousCollector: typeof stopPreviousCollector;
+  writeWorkspaceLaunch: typeof writeWorkspaceLaunch;
   writeWorkspaceState: typeof writeWorkspaceState;
   createWriter: typeof createNdjsonWriter;
   recordStats: typeof recordRunStats;
@@ -1004,6 +1011,7 @@ const DEFAULT_DEPS: IosDeps = {
   ensureWorkspaceStorage: ensureWorkspaceStorageSafely,
   replaceCollector,
   stopPreviousCollector,
+  writeWorkspaceLaunch,
   writeWorkspaceState,
   createWriter: createNdjsonWriter,
   recordStats: recordRunStats,
@@ -1188,7 +1196,7 @@ async function verifyIosRun({
         chalk.yellow(
           phaseLine(
             'remedy',
-            `The native app is still running. Fix the JavaScript or TypeScript error, then run \`agent-device metro reload --metro-port ${metroPort}\`. Do not run \`stim ios\` unless native inputs changed or the app process exits.`,
+            `The native app is still running. Fix the JavaScript or TypeScript error, then run ${physical || remoteDevice ? `\`agent-device metro reload --metro-port ${metroPort}\`` : '`stim reload ios`'}. Do not run \`stim ios\` unless native inputs changed or the app process exits.`,
           ),
         ),
       );
@@ -1209,7 +1217,7 @@ async function verifyIosRun({
         chalk.yellow(
           phaseLine(
             'remedy',
-            `The native app is still running. Fix the JavaScript or TypeScript error; Fast Refresh should apply the edit. If the error screen remains, run \`agent-device metro reload --metro-port ${metroPort}\`. Do not run \`stim ios\` unless native inputs changed or the app process exits.`,
+            `The native app is still running. Fix the JavaScript or TypeScript error; Fast Refresh should apply the edit. If the error screen remains, run ${physical || remoteDevice ? `\`agent-device metro reload --metro-port ${metroPort}\`` : '`stim reload ios`'}. Do not run \`stim ios\` unless native inputs changed or the app process exits.`,
           ),
         ),
       );
@@ -1537,6 +1545,47 @@ function readRunExecutable(d: IosDeps, appPath: string | null, note: (line: stri
   return executable;
 }
 
+function recordIosReloadTarget({
+  d,
+  root,
+  physical,
+  remoteDevice,
+  bundleId,
+  udid,
+  metroPort,
+  release,
+  launched,
+  launchedAt,
+  note,
+}: {
+  d: IosDeps;
+  root: string;
+  physical: boolean;
+  remoteDevice: boolean;
+  bundleId: string;
+  udid: string;
+  metroPort: number | null;
+  release: boolean;
+  launched: ReturnType<IosDeps['launchIosApp']>;
+  launchedAt: number;
+  note: (line: string) => void;
+}): void {
+  if (physical || remoteDevice) return;
+  const deepLinkUrl = 'url' in launched && typeof launched.url === 'string' ? launched.url : null;
+  try {
+    d.writeWorkspaceLaunch(root, 'ios', {
+      appId: bundleId,
+      deviceId: udid,
+      metroPort,
+      release,
+      deepLinkUrl,
+      launchedAt: new Date(launchedAt).toISOString(),
+    });
+  } catch (error) {
+    note(chalk.yellow(phaseLine('state', `could not record iOS launch: ${(error as Error)?.message || error}`)));
+  }
+}
+
 async function finishIosRun({
   d,
   root,
@@ -1759,6 +1808,20 @@ async function finishIosRun({
     }
     phase('launch', `${bundleId!} ${launchTimer()}`);
   }
+
+  recordIosReloadTarget({
+    d,
+    root,
+    physical,
+    remoteDevice: Boolean(remoteDevice),
+    bundleId: bundleId!,
+    udid,
+    metroPort,
+    release,
+    launched: launched!,
+    launchedAt,
+    note,
+  });
 
   logWriter().write({
     src: 'build',
