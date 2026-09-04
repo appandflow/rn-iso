@@ -7,10 +7,15 @@
 
 .promptBox {
   min-width: 0;
+  margin-bottom: 1.5rem;
   padding: 1rem;
   border: 1px solid var(--ifm-color-emphasis-300);
   border-radius: 0.75rem;
   background: var(--ifm-background-surface-color);
+}
+
+.promptGrid > .promptBox {
+  margin-bottom: 0;
 }
 
 .promptTitle {
