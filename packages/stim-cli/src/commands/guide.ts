@@ -1672,8 +1672,9 @@ STIM_CONFIG_CORRUPT  ("Stim config at <path> is not valid JSON")
     install     from cache (3s)
     launch      com.example.app (1s)
 
-  # 4. Did it work? Exit 0 is the pass condition. Human mode prints a
-  #    "No matching log records" note on stderr when the result is clean.
+  # 4. Check captured errors: require exit 0 AND no matching errors.
+  #    Human mode prints "No matching log records" on stderr for zero matches.
+  #    Exit 0 alone means the query succeeded, even when it printed errors.
   stim logs --errors
 
   # 5. Edit the JS. Fast Refresh applies it; no Stim command is involved.

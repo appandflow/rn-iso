@@ -973,12 +973,16 @@ test('the agent guide carries the normal workflow and safety rules', () => {
   expect(agent).toMatch(/Ordinary stim stop and an authorized clean\s+stim worktree remove do not need/);
 });
 
-test('the logs guide distinguishes query success from a clean captured timeline', () => {
+test('the logs and lifecycle guides distinguish query success from a clean captured timeline', () => {
   const logs = renderTopic('logs');
   assert(logs);
   expect(logs).toContain('EXIT 0 MEANS THE QUERY SUCCEEDED, whether or not records matched');
   expect(logs).toMatch(/requires exit code 0 AND no matching errors in\s+captured logs/);
   expect(logs).toContain('a workspace with no log directory also returns an empty result');
+  const lifecycle = renderTopic('lifecycle');
+  assert(lifecycle);
+  expect(lifecycle).toContain('Check captured errors: require exit 0 AND no matching errors');
+  expect(lifecycle).toContain('Exit 0 alone means the query succeeded, even when it printed errors');
 });
 
 test('the logs guide keeps Expo and bare React Native stack context on one human error record', () => {
