@@ -789,7 +789,13 @@ describe('benchmark viewer export', () => {
         `rg ${token} app/_layout.tsx`,
         `${token}\napp/_layout.tsx:28 in RootLayout`,
       ],
-      ['relaunch', '2026-09-04T12:01:40.000Z', '2026-09-04T12:02:00.000Z', 'stim ios', 'OK: com.example.app'],
+      [
+        'reload',
+        '2026-09-04T12:01:40.000Z',
+        '2026-09-04T12:02:00.000Z',
+        'agent-device metro reload --metro-port 8082',
+        'Reload broadcast sent',
+      ],
       [
         'screenshot',
         '2026-09-04T12:02:29.000Z',
@@ -866,7 +872,7 @@ describe('benchmark viewer export', () => {
           reasoning_output_tokens: 200,
         },
         proof: { valid: true, expected: `${token} removed and original source restored` },
-        recovery: { valid: true, repairedLaunchCommandId: 'relaunch', screenshotCommandId: 'screenshot' },
+        recovery: { valid: true, repairedReloadCommandId: 'reload', screenshotCommandId: 'screenshot' },
         screen: {
           valid: true,
           expected: 'Keep map tiles for saved trails on device',
@@ -899,7 +905,7 @@ describe('benchmark viewer export', () => {
         initialLaunchCommandId: 'launch',
         errorCaptureCommandId: 'logs',
         diagnosisCommandId: 'diagnosis',
-        repairedLaunchCommandId: 'relaunch',
+        repairedReloadCommandId: 'reload',
         screenshotCommandId: 'screenshot',
       },
       estimatedDiagnosisCostUsd: 0.132,

@@ -178,6 +178,7 @@ export default function logsCommand(program: Command): void {
         grep: opts.grep,
         tail,
         errorsOnly: Boolean(opts.errors),
+        errorContext: Boolean(opts.errors && !opts.json && !opts.follow),
       };
 
       const emit = (record: NdjsonRecord) => {

@@ -269,6 +269,40 @@ describe('logs command', () => {
     expect(parsedMsgs(out)).toEqual(['fresh']);
   });
 
+  test('--errors keeps Expo code and call-stack lines with their error in human output', () => {
+    const event = 'expo_stdout';
+    const error = {
+      ts: 1,
+      src: 'metro',
+      level: 'error',
+      raw: true,
+      event,
+      msg: 'ERROR  [Error: STIM_BENCH_LAUNCH_CRASH_1427F780936F]',
+    };
+    writeLog('metro.ndjson', [
+      error,
+      { ts: 2, src: 'metro', level: 'info', raw: true, event, msg: 'Code: _layout.tsx' },
+      { ts: 3, src: 'metro', level: 'info', raw: true, event, msg: '> 27 |   throw new Error(...)' },
+      { ts: 4, src: 'metro', level: 'info', raw: true, event, msg: '     |                  ^' },
+      { ts: 5, src: 'metro', level: 'info', raw: true, event, msg: 'Call Stack' },
+      { ts: 6, src: 'metro', level: 'info', raw: true, event, msg: '  RootLayout (app/_layout.tsx:27:18)' },
+      { ts: 7, src: 'metro', level: 'info', raw: true, event, msg: '  at app/index.tsx:1:1' },
+      { ts: 8, src: 'metro', level: 'info', raw: true, event, msg: 'iOS Bundled 50ms' },
+    ]);
+
+    run({ errors: true });
+    expect(out).toHaveLength(1);
+    expect(out[0]).toContain('Code: _layout.tsx');
+    expect(out[0]).toContain('RootLayout (app/_layout.tsx:27:18)');
+    expect(out[0]).toContain('at app/index.tsx:1:1');
+    expect(out[0]).not.toContain('iOS Bundled');
+
+    out.length = 0;
+    run({ errors: true, json: true });
+    expect(out).toHaveLength(1);
+    expect(parseNdjsonLine(out[0])).toEqual(error);
+  });
+
   test('--source, --level, --grep and --tail reach the query', () => {
     writeLog('metro.ndjson', [
       { ts: 1, src: 'metro', level: 'debug', msg: 'noise' },

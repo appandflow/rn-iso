@@ -54,6 +54,11 @@ function launchCommand(command, arm, platform) {
   );
 }
 
+function metroReloadCommand(command) {
+  command = shellCommand(command);
+  return /(?:^|\s)agent-device\s+metro\s+reload\s+--metro-port\s+\d+(?:\s|$)/.test(command);
+}
+
 function errorCaptureCommand(command, arm, platform) {
   command = shellCommand(command);
   if (arm === 'stim') return /(?:^|\s)stim\s+logs\s+--errors(?:\s|$)/.test(command);
@@ -230,7 +235,7 @@ export function launchCrashRepair(source, token, expectedSha256) {
   return { valid: true, sourceSha256 };
 }
 
-export function launchCrashRecovery(commands, { diagnosis, arm = 'stim', platform = 'ios', screen }) {
+export function launchCrashRecovery(commands, { diagnosis, screen }) {
   if (!diagnosis?.valid) return { valid: false, reason: 'launch-crash-diagnosis-missing' };
   const ordered = orderedCommands(commands);
   const diagnosisCommand = ordered.find((command) => command.id === diagnosis.commandId);
@@ -248,21 +253,18 @@ export function launchCrashRecovery(commands, { diagnosis, arm = 'stim', platfor
     return { valid: false, reason: 'launch-crash-settings-command-invalid' };
   }
   const screenshotStartedAt = timestamp(screenshot, 'startedAt');
-  const repairedLaunch = ordered.findLast(
+  const repairedReload = ordered.findLast(
     (command) =>
       timestamp(command, 'startedAt') >= diagnosisEndedAt &&
       timestamp(command, 'endedAt') <= screenshotStartedAt &&
       successful(command) &&
-      launchCommand(command.command, arm, platform) &&
-      typeof command.output === 'string' &&
-      !command.output.includes('STIM_BENCH_LAUNCH_CRASH_') &&
-      (arm !== 'stim' || /\bOK:/.test(command.output)),
+      metroReloadCommand(command.command),
   );
-  if (!repairedLaunch) return { valid: false, reason: 'launch-crash-repaired-relaunch-missing' };
-  const relaunchEndedAt = timestamp(repairedLaunch, 'endedAt');
+  if (!repairedReload) return { valid: false, reason: 'launch-crash-repaired-reload-missing' };
+  const reloadEndedAt = timestamp(repairedReload, 'endedAt');
   const laterCrashEvidence = ordered.find(
     (command) =>
-      timestamp(command, 'startedAt') >= relaunchEndedAt &&
+      timestamp(command, 'startedAt') >= reloadEndedAt &&
       timestamp(command, 'endedAt') <= screenshotStartedAt &&
       typeof command.output === 'string' &&
       command.output.includes('STIM_BENCH_LAUNCH_CRASH_'),
@@ -270,19 +272,19 @@ export function launchCrashRecovery(commands, { diagnosis, arm = 'stim', platfor
   if (laterCrashEvidence) {
     return {
       valid: false,
-      reason: 'launch-crash-token-observed-after-relaunch',
+      reason: 'launch-crash-token-observed-after-reload',
       commandId: laterCrashEvidence.id,
     };
   }
   if (
-    screenshotStartedAt < relaunchEndedAt ||
+    screenshotStartedAt < reloadEndedAt ||
     timestamp({ endedAt: screen.observedAt }, 'endedAt') !== timestamp(screenshot, 'endedAt')
   ) {
-    return { valid: false, reason: 'launch-crash-settings-proof-before-relaunch' };
+    return { valid: false, reason: 'launch-crash-settings-proof-before-reload' };
   }
   return {
     valid: true,
-    repairedLaunchCommandId: repairedLaunch.id,
+    repairedReloadCommandId: repairedReload.id,
     screenshotCommandId: screen.screenshotCommandId,
   };
 }

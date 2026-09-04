@@ -969,6 +969,13 @@ test('the agent guide carries the normal workflow and safety rules', () => {
   expect(agent).not.toMatch(/agent-device/i);
 });
 
+test('the logs guide keeps Expo stack context on one human error record', () => {
+  const logs = renderTopic('logs');
+  assert(logs);
+  expect(logs).toMatch(/Expo error also includes its immediately\s+following code frame and Call Stack lines/);
+  expect(logs).toMatch(/do not change the error count or the raw records returned by\s+--json/);
+});
+
 test('the agent guide routes to every detailed topic', () => {
   const agent = renderTopic('agent');
   assert(agent);
