@@ -195,9 +195,9 @@ Stops the supervisor and log collectors. It shuts down the owned local device,
 ends an owned remote session, and frees the port. A local device stays assigned
 for reuse. `--force` can stop an unverified listener on the reserved port.
 
-On a physical iPhone the device log collector is the launch, so stopping it
-closes the running app on the phone. Nothing is uninstalled and nothing about
-the phone is recorded or deleted.
+On a physical iPhone, stopping the log collector closes the running app.
+`stop` also releases this workspace's device leases. It never uninstalls the
+app or shuts down the phone; hardware has no owned-device registry entry.
 
 ## `device lock` and `device unlock`
 

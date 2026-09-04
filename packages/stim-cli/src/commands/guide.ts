@@ -180,9 +180,10 @@ line by design (see \`guide logs\`), not this single-payload contract.
 
   platform        "ios"
   udid            the owned simulator this workspace installed onto, or the
-                  phone's UDID on \`--device\` -- reported, never recorded: a
-                  physical device gets no config entry, so \`stop\` and \`gc\`
-                  never see it
+                  phone's UDID on \`--device\`. A physical device gets no
+                  owned-device registry entry; its ID is stored in a temporary
+                  lease. \`stop\` releases workspace leases and \`gc --delete\`
+                  removes expired lease files
   deviceName      its name, or null
   deviceType      the owned simulator's MODEL, as
                   \`xcrun simctl list devicetypes\` names it ("iPad Pro 13-inch
@@ -2319,8 +2320,9 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   not while starting its own, because an upgrade install terminates the running
   app -- which would end that collector's devicectl non-zero and record a
   failure for a normal reinstall. Unplugging the phone ends devicectl, which
-  ends the collector: it removes its own registration and exits, leaving
-  nothing for \`gc\` to find, because a phone is never recorded as a device. Whether it closes with collector_stopped or
+  ends the collector: it removes its own registration and exits. A separately
+  held \`device lock\` lease survives collector exit until released or expired;
+  \`gc --delete\` can remove its expired lease file. Whether it closes with collector_stopped or
   collector_failed follows devicectl's exit code, which no one has watched a
   cable-pull produce yet. See \`guide logs\` for what the device stream can
   and cannot carry, and appandflow/stim#179.
@@ -2328,8 +2330,9 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   THE APP RUNS FOR AS LONG AS THE COLLECTOR DOES. Because the collector is the
   launch, the app is attached to it: \`stop\` (and any other end of that
   collector -- a crash, the host sleeping, the cable coming out) closes the app
-  on the phone. It stays INSTALLED and Stim still records nothing about the
-  device; only the running process goes. See \`guide cleanup\`.
+  on the phone. It stays INSTALLED. Collector exit removes the collector's
+  registration, not a separately held device lease; \`stop\` also releases
+  this workspace's leases. See \`guide cleanup\`.
 
   THERE IS NO INSTALL SKIP ON A PHONE. The simulator path skips the install
   when the device already holds the same bundle byte for byte, which it proves
@@ -2514,13 +2517,14 @@ WHAT ELSE STOP REAPS
   ends the collector ends the APP ON THE PHONE: \`stop\`, \`gc --delete\`,
   \`worktree remove\`, a fresh \`ios --device\` run stopping its predecessor,
   a crash, the host sleeping, or the cable coming out. Measured: SIGTERM to the
-  collector alone terminates the app. \`stop\` therefore leaves no RECORD of the
-  phone -- it never had one -- but it does close the app that was running on it.
+  collector alone terminates the app. The phone has no owned-device registry
+  entry. \`stop\` closes the app and releases this workspace's leases.
   Nothing is uninstalled, and the next \`ios --device\` starts it again.
 
   Unplugging the phone ends devicectl, which ends the collector: it unregisters
-  itself and exits either way, so \`gc\` has nothing to find, because a phone is
-  never recorded as a device.
+  itself and exits either way. A separately held \`device lock\` lease survives
+  collector exit until released or expired; \`gc --delete\` can remove its
+  expired lease file.
   WHICH record it writes on the way out depends on devicectl's exit code, and
   that code is unverified until someone pulls a cable: a zero exit is
   collector_stopped, a non-zero one is collector_failed, because on hardware

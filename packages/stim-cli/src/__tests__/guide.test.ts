@@ -585,7 +585,8 @@ test('the guide says a phone loses its running app when the collector ends', () 
 
   expect(cleanup).toMatch(/THE APP'S LIFETIME IS BOUND TO THAT COLLECTOR/);
   expect(cleanup).toMatch(/anything that\s+ends the collector ends the APP ON THE PHONE/);
-  expect(cleanup).toMatch(/leaves no RECORD of the\s+phone -- it never had one -- but it does close the app/);
+  expect(cleanup).toMatch(/phone has no owned-device registry\s+entry/);
+  expect(cleanup).toContain("`stop` closes the app and releases this workspace's leases");
   expect(cleanup).toMatch(/Nothing is uninstalled/);
   expect(lifecycle).toMatch(/THE APP RUNS FOR AS LONG AS THE COLLECTOR DOES/);
   expect(lifecycle).toMatch(/stays INSTALLED/);
@@ -973,6 +974,20 @@ test('the agent guide carries the normal workflow and safety rules', () => {
   expect(agent).toMatch(/Ordinary stim stop and an authorized clean\s+stim worktree remove do not need/);
   expect(agent).toContain('It records a temporary lease, not an owned-device registry entry');
   expect(agent).toMatch(/On a physical\s+iPhone, stop also closes the app by ending its log collector/);
+});
+
+test('physical-device guidance separates collector cleanup from device leases', () => {
+  for (const topic of ['lifecycle', 'cleanup']) {
+    const body = renderTopic(topic);
+    assert(body);
+    expect(body).toMatch(/`device lock` lease survives\s+collector exit until released or expired/);
+    expect(body).toMatch(/`gc --delete` can remove its\s+expired lease file/);
+  }
+  const facts = renderTopic('facts');
+  assert(facts);
+  expect(facts).toMatch(/ID is stored in a temporary\s+lease/);
+  const website = readFileSync(new URL('../../../../website/docs/commands.md', import.meta.url), 'utf-8');
+  expect(website).toContain("`stop` also releases this workspace's device leases");
 });
 
 test('the logs and lifecycle guides distinguish query success from a clean captured timeline', () => {
