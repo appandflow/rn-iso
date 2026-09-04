@@ -9,13 +9,7 @@ import {
   useCurrentFrame,
   useVideoConfig,
 } from 'remotion';
-
-type BenchmarkCommand = {
-  command: string;
-  startSeconds: number;
-  endSeconds: number;
-  output: string;
-};
+import { terminalRows, type BenchmarkCommand } from './terminalRows';
 
 type BenchmarkMessage = {
   atSeconds: number;
@@ -86,60 +80,6 @@ function clock(seconds: number) {
   const minutes = Math.floor(seconds / 60);
   const remainder = seconds - minutes * 60;
   return `${String(minutes).padStart(2, '0')}:${remainder.toFixed(1).padStart(4, '0')}`;
-}
-
-function compactCommand(command: string) {
-  if (command.includes('agent-device/SKILL.md')) return 'read skill: agent-device';
-  if (command.includes('stim/SKILL.md')) return 'read skill: stim';
-  return command
-    .replaceAll('results/luna-rc12/javascript-stim/', '')
-    .replaceAll('worktree/bench+javascript-stim', '<worktree>')
-    .replaceAll('<simulator-udid>', '<owned-udid>');
-}
-
-function outputFor(entry: BenchmarkCommand) {
-  const lines = entry.output
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean);
-  if (entry.command.includes('/SKILL.md')) return 'loaded';
-  if (entry.command.startsWith('stim doctor')) return lines[0] ?? 'complete';
-  if (entry.command.startsWith('stim worktree')) {
-    return lines.filter((line) => /branch|carry|ready/.test(line)).join(' | ');
-  }
-  if (entry.command.startsWith('rg ')) return lines[0] ?? 'match found';
-  if (entry.command === 'stim start') return lines.find((line) => line.startsWith('OK:')) ?? 'Metro ready';
-  if (entry.command === 'stim ios') {
-    return lines
-      .filter((line) => /fingerprint|adopted|install\s+unchanged|launch\s+|verify\s+|cache\s+from/.test(line))
-      .join(' | ');
-  }
-  if (entry.command.startsWith('agent-device open')) return 'Opened Trailhead | Snapshot: 32 visible nodes';
-  if (entry.command.startsWith('agent-device click')) {
-    return 'Tapped Settings | + text: "Keep saved trail maps available offline"';
-  }
-  if (entry.command.startsWith('agent-device wait')) return 'Expected text found';
-  if (entry.command.startsWith('agent-device screenshot')) return lines[0] ?? 'Screenshot saved';
-  if (entry.command.startsWith('cp ')) return 'Proof copied';
-  if (entry.command.startsWith('test -s')) return lines[0] ?? 'Proof verified';
-  if (entry.command === 'agent-device close') return lines[0] ?? 'Session closed';
-  return lines[0] ?? 'complete';
-}
-
-function terminalRows(commands: BenchmarkCommand[], sourceSeconds: number) {
-  return commands
-    .filter((entry) => entry.startSeconds <= sourceSeconds)
-    .flatMap((entry) => {
-      const active = sourceSeconds < entry.endSeconds;
-      return [
-        { kind: 'command' as const, text: `$ ${compactCommand(entry.command)}` },
-        {
-          kind: active ? ('active' as const) : ('output' as const),
-          text: active ? `running ${Math.max(0, sourceSeconds - entry.startSeconds).toFixed(1)}s` : outputFor(entry),
-        },
-      ];
-    })
-    .slice(-12);
 }
 
 function currentMessage(messages: BenchmarkMessage[], sourceSeconds: number) {
@@ -367,7 +307,15 @@ export function BenchmarkReplay({
             agent / trailhead
           </div>
         </div>
-        <div style={{ padding: social ? '22px 24px' : '26px 30px' }}>
+        <div
+          style={{
+            display: 'flex',
+            height: terminalHeight - 58,
+            flexDirection: 'column',
+            padding: social ? '22px 24px' : '26px 30px',
+            boxSizing: 'border-box',
+          }}
+        >
           {message ? (
             <div
               style={{
@@ -386,27 +334,44 @@ export function BenchmarkReplay({
           ) : null}
           <div
             style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: social ? 8 : 10,
-              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-              fontSize: social ? 15 : 18,
-              lineHeight: 1.3,
+              position: 'relative',
+              flex: 1,
+              minHeight: 0,
+              overflow: 'hidden',
             }}
           >
-            {rows.map((row, index) => (
-              <div
-                key={`${row.text}-${index}`}
-                style={{
-                  color: row.kind === 'command' ? colors.text : row.kind === 'active' ? colors.orange : colors.green,
-                  opacity: row.kind === 'command' ? 1 : 0.82,
-                  overflowWrap: 'anywhere',
-                }}
-              >
-                {row.kind === 'active' ? '  * ' : row.kind === 'output' ? '  -> ' : ''}
-                {row.text}
-              </div>
-            ))}
+            <div
+              style={{
+                position: 'absolute',
+                right: 0,
+                bottom: 0,
+                left: 0,
+                display: 'flex',
+                minHeight: '100%',
+                flexDirection: 'column',
+                gap: social ? 8 : 10,
+                paddingBottom: ready && !social ? 64 : 0,
+                boxSizing: 'border-box',
+                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                fontSize: social ? 15 : 18,
+                lineHeight: 1.3,
+              }}
+            >
+              {rows.map((row, index) => (
+                <div
+                  key={`${row.text}-${index}`}
+                  style={{
+                    color: row.kind === 'command' ? colors.text : row.kind === 'active' ? colors.orange : colors.green,
+                    opacity: row.kind === 'command' ? 1 : 0.82,
+                    overflowWrap: 'anywhere',
+                    whiteSpace: 'pre-wrap',
+                  }}
+                >
+                  {row.kind === 'active' ? '  * ' : row.kind === 'output' ? '  -> ' : ''}
+                  {row.kind === 'output' ? row.text.replaceAll('\n', '\n     ') : row.text}
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </div>
