@@ -1,5 +1,5 @@
-import type { CSSProperties, ReactNode } from 'react';
-import { useEffect, useMemo, useState } from 'react';
+import type { CSSProperties, ReactNode, TouchEvent as ReactTouchEvent } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import useBaseUrl from '@docusaurus/useBaseUrl';
 import {
   assignCommandLanes,
@@ -8,6 +8,7 @@ import {
   formatSeconds,
   formatTokens,
   initialAuditSelection,
+  timelineZoomFromPinch,
   timeBreakdown,
   totalTokens,
   type BenchmarkAuditSelection,
@@ -15,6 +16,7 @@ import {
   type BenchmarkCommand,
   type BenchmarkRun,
 } from './benchmarkData';
+import { installTimelineWheelZoom, timelineAnchoredScrollLeft, timelinePinchGeometry } from './timelineGesture';
 import styles from './BenchmarkTimeline.module.css';
 
 function position(seconds: number, total: number): string {
@@ -88,6 +90,10 @@ function TerminalDetail({
   );
 }
 
+function pinchGeometry(event: ReactTouchEvent<HTMLDivElement>): ReturnType<typeof timelinePinchGeometry> {
+  return timelinePinchGeometry(Array.from(event.touches, ({ clientX, clientY }) => ({ clientX, clientY })));
+}
+
 export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): ReactNode {
   const [selected, setSelected] = useState<BenchmarkAuditSelection | null>(() => initialAuditSelection(run));
   const [playbackMode, setPlaybackMode] = useState(false);
@@ -95,11 +101,56 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
   const [cursorSeconds, setCursorSeconds] = useState(0);
   const [speed, setSpeed] = useState(20);
   const [zoom, setZoom] = useState(1);
+  const pinch = useRef<{ distance: number; zoom: number } | null>(null);
+  const timelineScroller = useRef<HTMLDivElement>(null);
+  const zoomAnchor = useRef<{ contentRatio: number; viewportOffset: number } | null>(null);
   const { commands, laneCount } = useMemo(() => assignCommandLanes(run.commands), [run.commands]);
   const breakdown = useMemo(() => timeBreakdown(run), [run]);
   const playbackCommand = useMemo(() => commandAtCursor(run.commands, cursorSeconds), [run.commands, cursorSeconds]);
   const proofSrc = useBaseUrl(run.proof?.src ?? '');
   const ticks = [0, 0.25, 0.5, 0.75, 1];
+  const beginPinch = (event: ReactTouchEvent<HTMLDivElement>) => {
+    const gesture = pinchGeometry(event);
+    if (!gesture) return;
+    pinch.current = { distance: gesture.distance, zoom };
+  };
+  const updatePinch = (event: ReactTouchEvent<HTMLDivElement>) => {
+    const gesture = pinchGeometry(event);
+    if (!gesture || !pinch.current) return;
+    const scroller = timelineScroller.current;
+    if (scroller) {
+      const viewportOffset = gesture.midpointX - scroller.getBoundingClientRect().left;
+      zoomAnchor.current = {
+        contentRatio: (scroller.scrollLeft + viewportOffset) / scroller.scrollWidth,
+        viewportOffset,
+      };
+    }
+    setZoom(timelineZoomFromPinch(pinch.current.zoom, pinch.current.distance, gesture.distance));
+  };
+  const finishPinch = (event: ReactTouchEvent<HTMLDivElement>) => {
+    if (event.touches.length < 2) pinch.current = null;
+  };
+
+  useEffect(() => {
+    const scroller = timelineScroller.current;
+    if (!scroller) return;
+    return installTimelineWheelZoom(scroller, ({ clientX, scale }) => {
+      const viewportOffset = clientX - scroller.getBoundingClientRect().left;
+      zoomAnchor.current = {
+        contentRatio: (scroller.scrollLeft + viewportOffset) / scroller.scrollWidth,
+        viewportOffset,
+      };
+      setZoom((current) => timelineZoomFromPinch(current, 1, scale));
+    });
+  }, []);
+
+  useEffect(() => {
+    const scroller = timelineScroller.current;
+    const anchor = zoomAnchor.current;
+    if (!scroller || !anchor) return;
+    scroller.scrollLeft = timelineAnchoredScrollLeft(anchor.contentRatio, scroller.scrollWidth, anchor.viewportOffset);
+    zoomAnchor.current = null;
+  }, [zoom]);
 
   useEffect(() => {
     if (!playing) return;
@@ -263,12 +314,21 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
           step={0.5}
           value={zoom}
           aria-valuetext={`${zoom} times`}
-          onChange={(event) => setZoom(Number(event.currentTarget.value))}
+          onInput={(event) => setZoom(Number(event.currentTarget.value))}
         />
         <output>{zoom}x</output>
       </label>
 
-      <div className={styles.timelineScroller} tabIndex={0} aria-label="Benchmark command timeline">
+      <div
+        ref={timelineScroller}
+        className={styles.timelineScroller}
+        tabIndex={0}
+        aria-label="Benchmark command timeline"
+        onTouchStart={beginPinch}
+        onTouchMove={updatePinch}
+        onTouchEnd={finishPinch}
+        onTouchCancel={finishPinch}
+      >
         <div
           className={styles.timeline}
           style={{ width: zoom === 1 ? '100%' : `max(${49.5 * zoom}rem, ${zoom * 100}%)` }}

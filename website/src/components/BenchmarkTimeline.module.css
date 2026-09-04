@@ -218,6 +218,7 @@
   border-top: 1px solid var(--bench-line);
   border-bottom: 1px solid var(--bench-line);
   overscroll-behavior-inline: contain;
+  touch-action: pan-x pan-y;
   -webkit-overflow-scrolling: touch;
 }
 
