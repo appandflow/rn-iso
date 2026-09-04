@@ -200,7 +200,7 @@ export default function Benchmarks(): ReactNode {
                 <Heading as="h2" id="overview-title">
                   Performance across models
                 </Heading>
-                <p>One matched pilot run per arm and task. Lower Settings-ready time is better.</p>
+                <p>Each bar is one valid pilot run; missing or invalid cells are labeled. Lower time is better.</p>
               </div>
             </div>
             <div className={styles.overviewGrid}>
