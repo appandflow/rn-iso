@@ -463,7 +463,7 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
             </>
           ) : null}
 
-          <div className={styles.laneLabel}>App/device</div>
+          <div className={styles.laneLabel}>Events</div>
           <div className={styles.dotTrack}>
             {run.markers.map((marker) => (
               <button
