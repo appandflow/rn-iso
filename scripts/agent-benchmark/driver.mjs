@@ -25,6 +25,7 @@ import {
   launchCrashRepair,
   launchCrashToken,
 } from '../launch-crash-benchmark.mjs';
+import { matchesExpectedIosSimulator } from './watch-app-selection.mjs';
 
 const launchCrashVariant = 'launch-crash';
 const scriptRoot = dirname(fileURLToPath(import.meta.url));
@@ -834,6 +835,11 @@ async function dispatch(model, arm, variant, stage = 'pilot') {
   const expectedIosCache = verifyGoldenIosCache();
   const expectedParkedSimulator = verifyGoldenParkedSimulator();
   const runId = `${stage}-${model.replaceAll('.', '-')}-${variant}-${arm}-${Date.now()}`;
+  const expectedControlSimulator = {
+    name: `Trailhead ${runId}`,
+    deviceTypeIdentifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-17',
+    runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
+  };
   const runDir = join(results, stage, runId);
   mkdirSync(join(runDir, 'proof'), { recursive: true });
   mkdirSync(join(runDir, 'raw'), { recursive: true });
@@ -886,6 +892,7 @@ async function dispatch(model, arm, variant, stage = 'pilot') {
     profile: { ...profile, claudeGuidance },
     expectedIosCache,
     expectedParkedSimulator,
+    expectedControlSimulator,
     agentDevice,
     crash,
   };
@@ -901,6 +908,9 @@ async function dispatch(model, arm, variant, stage = 'pilot') {
       variant === launchCrashVariant ? 'native' : variant,
       arm,
       expectedParkedSimulator.udid,
+      expectedControlSimulator.name,
+      expectedControlSimulator.deviceTypeIdentifier,
+      expectedControlSimulator.runtimeIdentifier,
     ],
     { cwd: main, env, stdio: ['ignore', 'pipe', 'pipe'] },
   );
@@ -1587,6 +1597,9 @@ function collect(runDir) {
       : []),
     ...(meta.arm === 'stim' && appAlive.simulator?.udid !== meta.expectedParkedSimulator?.udid
       ? ['stim-did-not-use-prepared-parked-simulator']
+      : []),
+    ...(meta.arm === 'control' && !matchesExpectedIosSimulator(appAlive.simulator, meta.expectedControlSimulator ?? {})
+      ? ['control-simulator-mismatch']
       : []),
     ...commandAudit.invalidReasons,
     ...(git('status', '--short') === '' ? [] : ['main-checkout-dirty']),

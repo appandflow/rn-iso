@@ -298,6 +298,20 @@ describe('benchmark viewer export', () => {
     ).toBe('-Lworktree/native-control/DerivedData/Build/Products');
   });
 
+  it('makes Xcode, system-tool, and root-relative build paths portable', () => {
+    expect(
+      sanitizeBenchmarkText(
+        '/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang ' +
+          '/usr/bin/screen /bin/sh /Library/Frameworks/universal ' +
+          '/Pods.build/Debug-iphonesimulator/App.build/object.o /XPCServices',
+      ),
+    ).toBe(
+      'Xcode/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang screen sh ' +
+        'system/Library/Frameworks/universal build/Pods.build/Debug-iphonesimulator/App.build/object.o ' +
+        'app/XPCServices',
+    );
+  });
+
   it('strips terminal color codes before making machine paths relative', () => {
     const coloredPath =
       '\u001b[331m/\u001b[339mVolumes\u001b[49m\u001b[331m/\u001b[3103mExternalSSD\u001b[49m\u001b[331m/\u001b[3103mDeveloper\u001b[49m\u001b[331m/\u001b[3103mstim-bench\u001b[49m';

@@ -21,7 +21,9 @@ const modelPricing = {
   },
 };
 
-const absolutePathPattern = /\/(?:Users|Volumes|private|tmp|var\/folders|opt\/homebrew)\/[^\s'"`,;()<>[\]]+/g;
+const absolutePathPattern =
+  /\/(?:Applications|Library|System|Users|Volumes|private|tmp|var|opt|Pods\.build|XPCServices)(?:\/[^\s'"`,;()<>[\]]+)*/g;
+const systemAbsolutePathPattern = /(?<![A-Za-z0-9._/-])\/(?:usr\/(?:s?bin)|bin|sbin)\/[A-Za-z0-9._+-]+/g;
 const homebrewExecutablePattern = /\/opt\/homebrew\/bin\/([A-Za-z0-9._+-]+)/g;
 const shellPathPattern = /\bPATH=(?:"[^"]*"|'[^']*'|[^\s]+)/g;
 const ipAddressPattern = /(?:\d{1,3}\.){3}\d{1,3}/g;
@@ -97,6 +99,13 @@ export function benchmarkEnvironment(meta, machine = {}) {
 }
 
 function replacementLabel(path) {
+  if (path.startsWith('/Applications/Xcode.app/Contents/Developer/')) {
+    return `Xcode/${path.slice('/Applications/Xcode.app/Contents/Developer/'.length)}`;
+  }
+  if (/^\/(?:usr\/)?(?:s?bin)\/[^/]+$/.test(path)) return basename(path);
+  if (path.startsWith('/Pods.build/')) return `build/${path.slice(1)}`;
+  if (path === '/XPCServices' || path.startsWith('/XPCServices/')) return `app${path}`;
+  if (path.startsWith('/Library/') || path.startsWith('/System/')) return `system/${path.slice(1)}`;
   const parts = path.split('/').filter(Boolean);
   const worktreeIndex = parts.findIndex((part) => part.includes('worktree'));
   if (worktreeIndex >= 0) return `worktree/${parts.slice(worktreeIndex + 1).join('/') || 'project'}`;
@@ -123,6 +132,7 @@ export function sanitizeBenchmarkText(value, replacements = []) {
   text = text.replace(homebrewExecutablePattern, '$1');
   text = text.replace(agentDeviceBundlePattern, '<agent-device-helper>');
   text = text.replace(absolutePathPattern, (path) => replacementLabel(path));
+  text = text.replace(systemAbsolutePathPattern, (path) => replacementLabel(path));
   text = text.replace(remoteBranchUserPattern, '$1@<user>');
   text = text.replaceAll(userInfo().username, '<local-user>');
   return text
@@ -365,13 +375,27 @@ export function summarizeRun(record, commands, backgroundProcesses) {
 
 function assertPortable(payload) {
   const serialized = JSON.stringify(collectPublicStrings(payload));
-  const leakedRoot = ['/Users', '/Volumes', '/private', '/var/folders', '/tmp/', '/opt/homebrew'].find((root) =>
-    serialized.includes(root),
-  );
+  const leakedRoot = [
+    '/Applications',
+    '/Library',
+    '/System',
+    '/Users',
+    '/Volumes',
+    '/private',
+    '/var/',
+    '/tmp/',
+    '/opt/',
+    '/Pods.build',
+    '/XPCServices',
+  ].find((root) => serialized.includes(root));
   if (leakedRoot) {
     const at = serialized.indexOf(leakedRoot);
     const field = serialized.slice(Math.max(0, at - 80), Math.min(serialized.length, at + 240));
     throw new Error(`benchmark export contains an absolute machine path root: ${leakedRoot}\n${field}`);
+  }
+  const leakedSystemPath = serialized.match(systemAbsolutePathPattern)?.[0];
+  if (leakedSystemPath) {
+    throw new Error(`benchmark export contains an absolute system path: ${leakedSystemPath}`);
   }
   const leakedPath = serialized.match(absolutePathPattern)?.[0];
   if (leakedPath) {

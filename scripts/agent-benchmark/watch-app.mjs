@@ -1,9 +1,25 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { iosDevicesFromSimctl, selectIosCandidate } from './watch-app-selection.mjs';
 
-const [baselinePath, outputPath, dispatchIso, variant, arm, parkedUdid] = process.argv.slice(2);
+const [
+  baselinePath,
+  outputPath,
+  dispatchIso,
+  variant,
+  arm,
+  parkedUdid,
+  expectedControlName,
+  expectedControlDeviceType,
+  expectedControlRuntime,
+] = process.argv.slice(2);
 const baseline = new Set(JSON.parse(readFileSync(baselinePath, 'utf8')));
+const expectedControl = {
+  name: expectedControlName,
+  deviceTypeIdentifier: expectedControlDeviceType,
+  runtimeIdentifier: expectedControlRuntime,
+};
 const deadline = Date.now() + 20 * 60 * 1000;
 let firstAlive = null;
 
@@ -16,8 +32,7 @@ function simctl(...args) {
 }
 
 function devices() {
-  const parsed = JSON.parse(simctl('list', 'devices', '--json'));
-  return Object.values(parsed.devices).flat();
+  return iosDevicesFromSimctl(JSON.parse(simctl('list', 'devices', '--json')));
 }
 
 function alive(udid) {
@@ -66,18 +81,20 @@ function captureJavascriptProof() {
 
 while (Date.now() < deadline) {
   try {
-    const candidates = devices().filter((device) => {
-      if (!device.isAvailable) return false;
-      return arm === 'stim' ? device.udid === parkedUdid : !baseline.has(device.udid);
+    const selection = selectIosCandidate(devices(), {
+      arm,
+      baseline,
+      parkedUdid,
+      expectedControl,
     });
-    if (candidates.length > 1) {
-      writeFileSync(outputPath, `${JSON.stringify({ error: 'multiple-candidate-simulators', candidates }, null, 2)}\n`);
+    if (selection.error) {
+      writeFileSync(outputPath, `${JSON.stringify(selection, null, 2)}\n`);
       process.exit(2);
     }
-    if (candidates.length === 1 && alive(candidates[0].udid)) {
+    if (selection.candidate && alive(selection.candidate.udid)) {
       firstAlive ??= {
         observedAt: new Date().toISOString(),
-        simulator: candidates[0],
+        simulator: selection.candidate,
       };
       const proof = variant === 'javascript' ? captureJavascriptProof() : null;
       if (variant === 'javascript' && !proof.valid) {
