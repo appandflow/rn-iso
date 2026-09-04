@@ -40,6 +40,7 @@ motivation, setup, concepts, command reference, and settings reference.
 The installed version also includes its own reference:
 
 ```bash
+stim guide agent
 stim guide
 stim guide lifecycle
 stim guide settings

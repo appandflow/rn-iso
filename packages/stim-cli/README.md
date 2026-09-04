@@ -56,6 +56,7 @@ human workflow and all commands.
 The installed CLI contains version-matched operational guidance:
 
 ```bash
+stim guide agent
 stim --help
 stim <command> --help
 stim guide

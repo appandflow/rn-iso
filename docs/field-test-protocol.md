@@ -18,11 +18,11 @@ build step:
 candidate_cli="$PWD/packages/stim-cli/dist/cli.mjs"
 stim() { node "$candidate_cli" "$@"; }
 stim --version
+stim guide agent
 stim guide lifecycle
 stim guide settings
 ```
 
-Read the candidate's local `packages/stim-cli/skill/SKILL.md` before starting.
 The candidate path is absolute so the function still uses that build after you
 change into an app or worktree.
 
@@ -32,7 +32,8 @@ For a standalone field pass of the published release:
 published_version=$(npm view stim-cli version)
 stim() { npx "stim-cli@$published_version" "$@"; }
 test "$(stim --version)" = "$published_version"
-npx skills add appandflow/stim # then READ the installed skill before starting
+npx skills add appandflow/stim
+stim guide agent
 stim guide lifecycle
 stim guide settings
 ```

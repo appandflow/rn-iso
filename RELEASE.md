@@ -152,6 +152,7 @@ preparation, `git status --short` may show only the draft
    pnpm run test:e2e
    pnpm run test:runtime
    node packages/stim-cli/dist/cli.mjs --help
+   node packages/stim-cli/dist/cli.mjs guide agent
    test "$(node packages/stim-cli/dist/cli.mjs --version)" = "X.Y.Z"
    ```
 
@@ -303,6 +304,7 @@ Before continuing:
    ```bash
    version=X.Y.Z
    cd /tmp && npx "stim-cli@$version" --version
+   cd /tmp && npx "stim-cli@$version" guide agent >/dev/null
    npm view "stim-cli@$version" readme | head -c 200        # NOT "No README data found!"
    npm view "@stim-cli/core@$version" version
    npm view "@stim-cli/cache@$version" version
