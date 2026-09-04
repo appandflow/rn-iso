@@ -7,6 +7,7 @@ import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
 import BenchmarkTimeline from '@site/src/components/BenchmarkTimeline';
 import {
+  benchmarkDisplayTitle,
   comparableRuns,
   benchmarkOverview,
   benchmarkSelectionFromSearch,
@@ -100,7 +101,7 @@ function OverviewChart({
       </div>
       {overview.rows.map((row) => (
         <div className={styles.overviewModel} key={row.stage}>
-          <strong>{row.title}</strong>
+          <strong>{benchmarkDisplayTitle(row.title)}</strong>
           <div className={styles.overviewBars}>
             {row.arms.map((arm) => {
               if (!arm.run || !arm.href) {
@@ -116,7 +117,7 @@ function OverviewChart({
                   className={styles.overviewBarLink}
                   key={arm.arm}
                   to={arm.href}
-                  aria-label={`${row.title} ${displayVariant(variant)}, ${arm.arm}, ${formatSeconds(arm.run.settingsReadySeconds)}. Open run audit.`}
+                  aria-label={`${benchmarkDisplayTitle(row.title)} ${displayVariant(variant)}, ${arm.arm}, ${formatSeconds(arm.run.settingsReadySeconds)}. Open run audit.`}
                 >
                   <span>{arm.label}</span>
                   <span className={styles.overviewTrack} aria-hidden="true">
@@ -185,7 +186,7 @@ export default function Benchmarks(): ReactNode {
       <main className={styles.page}>
         <div className="container">
           <header className={styles.hero}>
-            <div className={styles.eyebrow}>Agent benchmark / protocol v{benchmark.protocolVersion}</div>
+            <div className={styles.eyebrow}>Agent benchmark</div>
             <Heading as="h1">Stim agent benchmarks</Heading>
             <p>
               Compare how coding agents launch the same React Native app with Stim and the local Expo/Apple toolchain.
@@ -232,7 +233,9 @@ export default function Benchmarks(): ReactNode {
               </div>
               <div>
                 <dt>Two arms</dt>
-                <dd>Stim uses its pinned RC and parked simulator; control uses local Expo and Apple tooling.</dd>
+                <dd>
+                  Stim uses its pinned published build and parked simulator; control uses local Expo and Apple tooling.
+                </dd>
               </div>
               <div>
                 <dt>Proof, not process liveness</dt>
@@ -247,7 +250,7 @@ export default function Benchmarks(): ReactNode {
 
           <div className={styles.detailHeading}>
             <span className={styles.eyebrow}>Detailed audit</span>
-            <Heading as="h2">{benchmark.title}: Stim vs local toolchain</Heading>
+            <Heading as="h2">{benchmarkDisplayTitle(benchmark.title)}: Stim vs local toolchain</Heading>
           </div>
 
           <nav className={styles.modelPicker} aria-label="Benchmark model">
@@ -261,7 +264,7 @@ export default function Benchmarks(): ReactNode {
                   navigateTo(candidate.stage, defaultRun(candidate)?.id ?? '');
                 }}
               >
-                {candidate.title}
+                {benchmarkDisplayTitle(candidate.title)}
               </button>
             ))}
           </nav>

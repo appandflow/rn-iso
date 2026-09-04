@@ -184,6 +184,10 @@ export function totalTokens(usage: BenchmarkUsage): number {
   return usage.input_tokens + usage.output_tokens;
 }
 
+export function benchmarkDisplayTitle(title: string): string {
+  return title.replace(/\s+(?:rc\.?\d+(?:\.\d+)*|v\d+(?:\.\d+)*)$/i, '');
+}
+
 export function comparableRuns(runs: BenchmarkRun[]): Array<BenchmarkRun & { settingsReadySeconds: number }> {
   return runs.filter(
     (run): run is BenchmarkRun & { settingsReadySeconds: number } => run.valid && run.settingsReadySeconds !== null,
