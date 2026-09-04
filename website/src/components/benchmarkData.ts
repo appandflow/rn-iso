@@ -123,6 +123,25 @@ export type BenchmarkRouteSelection = {
   runId: string;
 };
 
+export type BenchmarkOverviewArm = {
+  arm: BenchmarkRun['arm'];
+  label: 'Stim' | 'Control';
+  run: (BenchmarkRun & { settingsReadySeconds: number }) | null;
+  widthPercent: number;
+  href: string | null;
+};
+
+export type BenchmarkOverviewRow = {
+  stage: string;
+  title: string;
+  arms: BenchmarkOverviewArm[];
+};
+
+export type BenchmarkOverview = {
+  maxSeconds: number;
+  rows: BenchmarkOverviewRow[];
+};
+
 function orderedCopy<T>(values: T[], compare: (a: T, b: T) => number): T[] {
   const result: T[] = [];
   for (const value of values) {
@@ -193,6 +212,31 @@ export function benchmarkSelectionSearch(selection: BenchmarkRouteSelection, ben
 export function timelineZoomFromPinch(initialZoom: number, initialDistance: number, distance: number): number {
   if (initialDistance <= 0 || distance <= 0) return Math.min(4, Math.max(1, initialZoom));
   return Number(Math.min(4, Math.max(1, initialZoom * (distance / initialDistance))).toFixed(2));
+}
+
+export function benchmarkOverview(benchmarks: BenchmarkData[], variant: BenchmarkRun['variant']): BenchmarkOverview {
+  const candidates = benchmarks.map((benchmark) => ({
+    benchmark,
+    runs: comparableRuns(benchmark.runs).filter((run) => run.variant === variant),
+  }));
+  const maxSeconds = Math.max(1, ...candidates.flatMap(({ runs }) => runs.map((run) => run.settingsReadySeconds)));
+  const rows = candidates.map(({ benchmark, runs }) => ({
+    stage: benchmark.stage,
+    title: benchmark.title,
+    arms: (['stim', 'control'] as const).map((arm) => {
+      const run = runs.find((candidate) => candidate.arm === arm) ?? null;
+      return {
+        arm,
+        label: arm === 'stim' ? 'Stim' : 'Control',
+        run,
+        widthPercent: run ? (run.settingsReadySeconds / maxSeconds) * 100 : 0,
+        href: run
+          ? `/benchmarks${benchmarkSelectionSearch({ stage: benchmark.stage, runId: run.id }, benchmarks)}#audit-title`
+          : null,
+      };
+    }),
+  }));
+  return { maxSeconds, rows };
 }
 
 export function comparisonOutcome(

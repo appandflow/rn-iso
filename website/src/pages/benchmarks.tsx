@@ -8,6 +8,7 @@ import Heading from '@theme/Heading';
 import BenchmarkTimeline from '@site/src/components/BenchmarkTimeline';
 import {
   comparableRuns,
+  benchmarkOverview,
   benchmarkSelectionFromSearch,
   benchmarkSelectionSearch,
   comparisonOutcome,
@@ -86,11 +87,7 @@ function OverviewChart({
   variant: BenchmarkRun['variant'];
   benchmarks: BenchmarkData[];
 }): ReactNode {
-  const rows = allBenchmarks.map((candidate) => ({
-    benchmark: candidate,
-    runs: comparableRuns(candidate.runs).filter((run) => run.variant === variant),
-  }));
-  const maxSeconds = Math.max(1, ...rows.flatMap(({ runs }) => runs.map((run) => run.settingsReadySeconds)));
+  const overview = benchmarkOverview(allBenchmarks, variant);
   return (
     <article className={styles.overviewChart}>
       <div className={styles.overviewChartHead}>
@@ -101,39 +98,34 @@ function OverviewChart({
         <span className={styles.stimKey}>Stim</span>
         <span className={styles.controlKey}>Control</span>
       </div>
-      {rows.map(({ benchmark: candidate, runs }) => (
-        <div className={styles.overviewModel} key={candidate.stage}>
-          <strong>{candidate.title}</strong>
+      {overview.rows.map((row) => (
+        <div className={styles.overviewModel} key={row.stage}>
+          <strong>{row.title}</strong>
           <div className={styles.overviewBars}>
-            {(['stim', 'control'] as const).map((arm) => {
-              const run = runs.find((candidateRun) => candidateRun.arm === arm);
-              if (!run) {
+            {row.arms.map((arm) => {
+              if (!arm.run || !arm.href) {
                 return (
-                  <span className={styles.missingBar} key={arm}>
-                    <span>{arm === 'stim' ? 'Stim' : 'Control'}</span>
+                  <span className={styles.missingBar} key={arm.arm}>
+                    <span>{arm.label}</span>
                     <span>No valid run</span>
                   </span>
                 );
               }
-              const href = `/benchmarks${benchmarkSelectionSearch(
-                { stage: candidate.stage, runId: run.id },
-                allBenchmarks,
-              )}#audit-title`;
               return (
                 <Link
                   className={styles.overviewBarLink}
-                  key={arm}
-                  to={href}
-                  aria-label={`${candidate.title} ${displayVariant(variant)}, ${arm}, ${formatSeconds(run.settingsReadySeconds)}. Open run audit.`}
+                  key={arm.arm}
+                  to={arm.href}
+                  aria-label={`${row.title} ${displayVariant(variant)}, ${arm.arm}, ${formatSeconds(arm.run.settingsReadySeconds)}. Open run audit.`}
                 >
-                  <span>{arm === 'stim' ? 'Stim' : 'Control'}</span>
+                  <span>{arm.label}</span>
                   <span className={styles.overviewTrack} aria-hidden="true">
                     <span
-                      className={`${styles.overviewBar} ${arm === 'control' ? styles.controlBar : ''}`}
-                      style={{ width: `${(run.settingsReadySeconds / maxSeconds) * 100}%` }}
+                      className={`${styles.overviewBar} ${arm.arm === 'control' ? styles.controlBar : ''}`}
+                      style={{ width: `${arm.widthPercent}%` }}
                     />
                   </span>
-                  <strong>{formatSeconds(run.settingsReadySeconds)}</strong>
+                  <strong>{formatSeconds(arm.run.settingsReadySeconds)}</strong>
                 </Link>
               );
             })}
