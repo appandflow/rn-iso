@@ -22,7 +22,7 @@ const modelPricing = {
 };
 
 const absolutePathPattern =
-  /\/(?:Applications|Library|System|Users|Volumes|private|tmp|var|opt|Pods\.build|XPCServices)(?:\/[^\s'"`,;()<>[\]]+)*/g;
+  /\/(?:Applications|Library|System|Users|Volumes|private|tmp|var|opt|Pods\.build|XPCServices)(?![A-Za-z0-9._+-])(?:\/[^\s'"`,;()<>[\]]+)*/g;
 const systemAbsolutePathPattern = /(?<![A-Za-z0-9._/-])\/(?:usr\/(?:s?bin)|bin|sbin)\/[A-Za-z0-9._+-]+/g;
 const homebrewExecutablePattern = /\/opt\/homebrew\/bin\/([A-Za-z0-9._+-]+)/g;
 const shellPathPattern = /\bPATH=(?:"[^"]*"|'[^']*'|[^\s]+)/g;

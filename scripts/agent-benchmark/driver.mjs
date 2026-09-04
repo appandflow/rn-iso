@@ -26,6 +26,7 @@ import {
   launchCrashToken,
 } from '../launch-crash-benchmark.mjs';
 import { matchesExpectedIosSimulator } from './watch-app-selection.mjs';
+import { durableRunRecord } from './run-record.mjs';
 
 const launchCrashVariant = 'launch-crash';
 const scriptRoot = dirname(fileURLToPath(import.meta.url));
@@ -886,6 +887,7 @@ async function dispatch(model, arm, variant, stage = 'pilot') {
     arm,
     variant,
     platform: 'ios',
+    worktreeParent,
     deviceTargetingRequired: true,
     dispatchAt,
     preflight: preflightReport,
@@ -1312,7 +1314,13 @@ function screenEvidence(meta, appAlive, commands, runDir) {
   };
 }
 
-function findRunWorktree(runId) {
+function runWorktreeParent(meta) {
+  return resolve(
+    meta.worktreeParent ?? (meta.crash?.fixtureCheckout ? dirname(meta.crash.fixtureCheckout) : worktreeParent),
+  );
+}
+
+function findRunWorktree(runId, parent = worktreeParent) {
   const entries = git('worktree', 'list', '--porcelain').split('\n\n');
   for (const entry of entries) {
     const lines = entry.split('\n');
@@ -1321,16 +1329,16 @@ function findRunWorktree(runId) {
     if (
       path &&
       (branch === `refs/heads/bench/${runId}` || branch === `refs/heads/worktree-bench/${runId}`) &&
-      validRunWorktree(path, runId)
+      validRunWorktree(path, runId, parent)
     )
       return path;
   }
   return null;
 }
 
-function validRunWorktree(path, runId) {
+function validRunWorktree(path, runId, parent = worktreeParent) {
   const absolute = resolve(path);
-  const prefix = `${worktreeParent}/`;
+  const prefix = `${parent}/`;
   if (!absolute.startsWith(prefix)) return false;
   const segments = absolute.slice(prefix.length).split('/');
   return segments.some(
@@ -1342,9 +1350,9 @@ function validRunWorktree(path, runId) {
   );
 }
 
-function worktreeFromEvents(eventsPath, runId) {
+function worktreeFromEvents(eventsPath, runId, parent = worktreeParent) {
   if (!existsSync(eventsPath)) return null;
-  const prefix = `${worktreeParent}/`;
+  const prefix = `${parent}/`;
   const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const pathPattern = new RegExp(`${escapedPrefix}[^\\s'"]+`, 'g');
   const candidates = new Set();
@@ -1384,7 +1392,7 @@ function worktreeFromEvents(eventsPath, runId) {
             end = index;
         }
         if (end >= 0) {
-          candidates.add(join(worktreeParent, ...segments.slice(0, end + 1)));
+          candidates.add(join(parent, ...segments.slice(0, end + 1)));
         }
       }
     }
@@ -1396,14 +1404,15 @@ function worktreeFromEvents(eventsPath, runId) {
 }
 
 function worktreeEvidence(runDir, meta, eventsPath) {
-  const live = findRunWorktree(meta.runId);
+  const parent = runWorktreeParent(meta);
+  const live = findRunWorktree(meta.runId, parent);
   if (live) return { path: live, source: 'live-git-worktree' };
-  const events = worktreeFromEvents(eventsPath, meta.runId);
+  const events = worktreeFromEvents(eventsPath, meta.runId, parent);
   if (events) return { path: events, source: 'stamped-events' };
   const recordPath = join(runDir, 'run.json');
   if (existsSync(recordPath)) {
     const preserved = JSON.parse(readFileSync(recordPath, 'utf8')).worktree;
-    if (preserved && validRunWorktree(preserved, meta.runId)) {
+    if (preserved && validRunWorktree(preserved, meta.runId, parent)) {
       return { path: preserved, source: 'preserved-run-record' };
     }
   }
@@ -1604,7 +1613,7 @@ function collect(runDir) {
     ...commandAudit.invalidReasons,
     ...(git('status', '--short') === '' ? [] : ['main-checkout-dirty']),
   ];
-  const runRecord = {
+  const nextRunRecord = {
     schemaVersion: 1,
     runId: meta.runId,
     stage: meta.stage,
@@ -1646,7 +1655,10 @@ function collect(runDir) {
     commandCount: commandAudit.commands.length,
     collectedAt: new Date().toISOString(),
   };
-  writeFileSync(join(runDir, 'run.json'), `${JSON.stringify(runRecord, null, 2)}\n`);
+  const runRecordPath = join(runDir, 'run.json');
+  const previousRunRecord = existsSync(runRecordPath) ? JSON.parse(readFileSync(runRecordPath, 'utf8')) : null;
+  const runRecord = durableRunRecord(previousRunRecord, nextRunRecord);
+  writeFileSync(runRecordPath, `${JSON.stringify(runRecord, null, 2)}\n`);
   process.stdout.write(`${JSON.stringify(runRecord, null, 2)}\n`);
 }
 
@@ -1654,7 +1666,7 @@ function cleanup(runDir) {
   const meta = JSON.parse(readFileSync(join(runDir, 'meta.json'), 'utf8'));
   const appAlivePath = join(runDir, 'app-alive.json');
   const appAlive = existsSync(appAlivePath) ? JSON.parse(readFileSync(appAlivePath, 'utf8')) : {};
-  const worktree = findRunWorktree(meta.runId);
+  const worktree = findRunWorktree(meta.runId, runWorktreeParent(meta));
   const branch = meta.arm === 'stim' ? `worktree-bench/${meta.runId}` : `bench/${meta.runId}`;
   const actions = [];
   const agentDeviceEnv = agentDeviceEnvironment(meta.agentDevice?.session ?? meta.runId);
@@ -1774,7 +1786,7 @@ function cleanup(runDir) {
       } catch {}
     }
   }
-  if (!findRunWorktree(meta.runId)) {
+  if (!findRunWorktree(meta.runId, runWorktreeParent(meta))) {
     try {
       run('git', ['branch', '-D', branch], { cwd: main });
       actions.push(`delete branch ${branch}`);

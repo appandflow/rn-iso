@@ -312,6 +312,12 @@ describe('benchmark viewer export', () => {
     );
   });
 
+  it('does not mistake ordinary slash-prefixed words for filesystem roots', () => {
+    expect(sanitizeBenchmarkText('/variant /options /variable /optional')).toBe(
+      '/variant /options /variable /optional',
+    );
+  });
+
   it('strips terminal color codes before making machine paths relative', () => {
     const coloredPath =
       '\u001b[331m/\u001b[339mVolumes\u001b[49m\u001b[331m/\u001b[3103mExternalSSD\u001b[49m\u001b[331m/\u001b[3103mDeveloper\u001b[49m\u001b[331m/\u001b[3103mstim-bench\u001b[49m';
