@@ -5,6 +5,18 @@ export function launchCrashToken(runId) {
   return `STIM_BENCH_LAUNCH_CRASH_${digest}`;
 }
 
+export function changedPathsFromGitOutputs(...outputs) {
+  return [
+    ...new Set(
+      outputs.flatMap((output) =>
+        String(output ?? '')
+          .split('\0')
+          .filter(Boolean),
+      ),
+    ),
+  ].toSorted();
+}
+
 export function injectRootRenderCrash(source, token) {
   if (!/^STIM_BENCH_LAUNCH_CRASH_[0-9A-F]{12}$/.test(token)) {
     throw new Error('launch-crash token has an unexpected format');

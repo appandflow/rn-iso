@@ -18,6 +18,7 @@ import { createHash } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  changedPathsFromGitOutputs,
   injectRootRenderCrash,
   launchCrashDiagnosis,
   launchCrashRecovery,
@@ -1430,7 +1431,10 @@ function proofFor(meta, appAlive, runDir, worktree, commandItems) {
     const repair = launchCrashRepair(source, meta.crash.token, meta.crash.originalSha256);
     if (!repair.valid) return { ...repair, sourcePath };
     const sourceSha256 = repair.sourceSha256;
-    const changedPaths = run('git', ['diff', '--name-only'], { cwd: worktree }).split('\n').filter(Boolean);
+    const changedPaths = changedPathsFromGitOutputs(
+      run('git', ['diff', '--name-only', '-z', 'HEAD'], { cwd: worktree }),
+      run('git', ['ls-files', '--others', '--exclude-standard', '-z'], { cwd: worktree }),
+    );
     if (changedPaths.length !== 1 || changedPaths[0] !== meta.crash.sourceRelative) {
       return {
         valid: false,

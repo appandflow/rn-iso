@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  changedPathsFromGitOutputs,
   injectRootRenderCrash,
   launchCrashDiagnosis,
   launchCrashRecovery,
@@ -8,6 +9,15 @@ import {
 } from './launch-crash-benchmark.mjs';
 
 describe('launch crash benchmark', () => {
+  it('combines staged, unstaged, and untracked repair paths', () => {
+    expect(changedPathsFromGitOutputs('app/_layout.tsx\0', '')).toEqual(['app/_layout.tsx']);
+    expect(changedPathsFromGitOutputs('app/_layout.tsx\0', 'notes.txt\0')).toEqual(['app/_layout.tsx', 'notes.txt']);
+    expect(changedPathsFromGitOutputs('src/native.ts\0app/_layout.tsx\0', 'src/native.ts\0')).toEqual([
+      'app/_layout.tsx',
+      'src/native.ts',
+    ]);
+  });
+
   it('injects a unique deterministic exception at the root render', () => {
     const token = launchCrashToken('sol-stim-123');
     const source = 'const value = 1;\n\nexport default function RootLayout() {\n  return value;\n}\n';
