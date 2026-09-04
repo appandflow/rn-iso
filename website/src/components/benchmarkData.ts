@@ -118,6 +118,11 @@ export type BenchmarkComparison = {
   tone: 'gain' | 'loss' | 'neutral';
 };
 
+export type BenchmarkRouteSelection = {
+  stage: string;
+  runId: string;
+};
+
 function orderedCopy<T>(values: T[], compare: (a: T, b: T) => number): T[] {
   const result: T[] = [];
   for (const value of values) {
@@ -164,6 +169,25 @@ export function comparableRuns(runs: BenchmarkRun[]): Array<BenchmarkRun & { set
   return runs.filter(
     (run): run is BenchmarkRun & { settingsReadySeconds: number } => run.valid && run.settingsReadySeconds !== null,
   );
+}
+
+export function benchmarkSelectionFromSearch(search: string, benchmarks: BenchmarkData[]): BenchmarkRouteSelection {
+  const params = new URLSearchParams(search);
+  const requestedStage = params.get('benchmark');
+  const requestedRun = requestedStage ? params.get('run') : null;
+  const benchmark = benchmarks.find((candidate) => candidate.stage === requestedStage) ?? benchmarks[0];
+  const validRuns = benchmark?.runs.filter((run) => run.valid) ?? [];
+  const run = validRuns.find((candidate) => candidate.id === requestedRun) ?? validRuns[0];
+  return { stage: benchmark?.stage ?? '', runId: run?.id ?? '' };
+}
+
+export function benchmarkSelectionSearch(selection: BenchmarkRouteSelection, benchmarks: BenchmarkData[]): string {
+  const defaults = benchmarkSelectionFromSearch('', benchmarks);
+  if (selection.stage === defaults.stage && selection.runId === defaults.runId) return '';
+  const params = new URLSearchParams();
+  params.set('benchmark', selection.stage);
+  params.set('run', selection.runId);
+  return `?${params.toString()}`;
 }
 
 export function comparisonOutcome(

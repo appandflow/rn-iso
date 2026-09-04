@@ -1,10 +1,14 @@
 import type { ReactNode } from 'react';
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
+import { useHistory, useLocation } from '@docusaurus/router';
+import useIsBrowser from '@docusaurus/useIsBrowser';
 import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
 import BenchmarkTimeline from '@site/src/components/BenchmarkTimeline';
 import {
   comparableRuns,
+  benchmarkSelectionFromSearch,
+  benchmarkSelectionSearch,
   comparisonOutcome,
   formatCost,
   formatSeconds,
@@ -75,11 +79,23 @@ function ComparisonCard({
 }
 
 export default function Benchmarks(): ReactNode {
-  const [stage, setStage] = useState(benchmarks[0]?.stage ?? '');
+  const history = useHistory();
+  const location = useLocation();
+  const isBrowser = useIsBrowser();
+  const search = isBrowser ? location.search : '';
+  const selection = useMemo(() => benchmarkSelectionFromSearch(search, benchmarks), [search]);
+  const stage = selection.stage;
   const benchmark = benchmarks.find((candidate) => candidate.stage === stage) ?? benchmarks[0];
   const publishedRuns = useMemo(() => benchmark?.runs.filter((run) => run.valid) ?? [], [benchmark]);
-  const [activeId, setActiveId] = useState(defaultRun(benchmark)?.id ?? '');
+  const activeId = selection.runId;
   const activeRun = publishedRuns.find((run) => run.id === activeId) ?? defaultRun(benchmark);
+  const navigateTo = (nextStage: string, nextRunId: string) => {
+    history.push({
+      pathname: location.pathname,
+      search: benchmarkSelectionSearch({ stage: nextStage, runId: nextRunId }, benchmarks),
+      hash: location.hash,
+    });
+  };
   const grouped = useMemo(
     () =>
       (['javascript', 'native'] as const).map((variant) => ({
@@ -127,8 +143,7 @@ export default function Benchmarks(): ReactNode {
                 type="button"
                 aria-pressed={candidate.stage === benchmark.stage}
                 onClick={() => {
-                  setStage(candidate.stage);
-                  setActiveId(defaultRun(candidate)?.id ?? '');
+                  navigateTo(candidate.stage, defaultRun(candidate)?.id ?? '');
                 }}
               >
                 {candidate.title}
@@ -193,7 +208,7 @@ export default function Benchmarks(): ReactNode {
                   key={run.id}
                   type="button"
                   aria-pressed={run.id === activeRun.id}
-                  onClick={() => setActiveId(run.id)}
+                  onClick={() => navigateTo(benchmark.stage, run.id)}
                 >
                   {run.variant} / {run.arm}
                 </button>
