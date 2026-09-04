@@ -941,12 +941,16 @@ test('the website offers copyable outcome prompts and explains skill activation'
 
   expect(promptBox).toContain("import CodeBlock from '@theme/CodeBlock'");
   expect(promptBox).toContain('<CodeBlock language="text">');
+  expect(promptBox).toContain('Run example');
+  expect(promptBox).toContain('Example agent response');
   expect(gettingStarted).toContain('You normally do not need to name Stim');
   expect(gettingStarted).toContain('The current checkout is the default');
-  expect(gettingStarted).toContain('Build and run the app on an iPhone 17 simulator with iOS 26.5');
-  expect(gettingStarted).toContain('cache hit rate, mean cold and cached duration');
-  expect(gettingStarted).toContain('Use agent-device to record the affected flow before the change');
-  expect(gettingStarted).toContain('Before and After recordings in a table');
+  expect(gettingStarted).toContain('illustrative agent response');
+  expect(gettingStarted).toContain('Run the app on an iPhone 17 simulator with iOS 26.5');
+  expect(gettingStarted).toContain('Show iOS build performance');
+  expect(gettingStarted).toContain('Record the affected flow before and after on iOS with agent-device');
+  expect(gettingStarted).toContain('Before/After table');
+  expect(gettingStarted).not.toContain('Fix any build or launch errors');
   expect(agentSkills).toMatch(/requests match\s+the skill without naming Stim/);
 });
 

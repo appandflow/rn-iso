@@ -34,6 +34,8 @@
     "@remotion/cli": "4.0.520",
     "@remotion/media": "4.0.520",
     "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.2.7",
+    "jsdom": "^29.1.1",
     "remotion": "4.0.520",
     "typescript": "~6.0.2"
   },

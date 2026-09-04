@@ -42,6 +42,96 @@
   overflow-wrap: anywhere;
 }
 
+.simulation {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.runButton {
+  justify-self: start;
+  padding: 0.4rem 0.7rem;
+  border: 1px solid var(--ifm-color-primary);
+  border-radius: 0.45rem;
+  background: transparent;
+  color: var(--ifm-color-primary);
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.runButton:hover,
+.runButton:focus-visible {
+  background: color-mix(in srgb, var(--ifm-color-primary) 10%, transparent);
+}
+
+.runButton:focus-visible {
+  outline: 2px solid var(--ifm-color-primary);
+  outline-offset: 2px;
+}
+
+.runButton:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.running {
+  color: var(--ifm-color-emphasis-700);
+  font-size: 0.8rem;
+}
+
+.running i {
+  display: inline-block;
+  width: 0.7rem;
+  height: 0.7rem;
+  margin-right: 0.4rem;
+  border: 2px solid var(--ifm-color-emphasis-400);
+  border-top-color: var(--ifm-color-primary);
+  border-radius: 50%;
+  animation: prompt-spin 0.8s linear infinite;
+  vertical-align: -0.08rem;
+}
+
+.response {
+  overflow: hidden;
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 0.55rem;
+  background: var(--ifm-background-color);
+}
+
+.response > span {
+  display: block;
+  padding: 0.55rem 0.7rem;
+  border-bottom: 1px solid var(--ifm-color-emphasis-300);
+  color: var(--ifm-color-emphasis-700);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.response pre {
+  margin: 0;
+  padding: 0.75rem;
+  background: transparent;
+  color: var(--ifm-font-color-base);
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+@keyframes prompt-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .running i {
+    animation: none;
+  }
+}
+
 @media (max-width: 768px) {
   .promptGrid {
     grid-template-columns: 1fr;
