@@ -68,7 +68,7 @@ describe('launch crash benchmark', () => {
     const commands = [
       {
         id: 'inspect',
-        command: 'sed -n 1,80p app/_layout.tsx',
+        command: "node -e \"console.log(require('fs').readFileSync('app/_layout.tsx', 'utf8'))\"",
         output: `${token}\napp/_layout.tsx:28 in RootLayout`,
         exitCode: 0,
         endedAt: '2026-09-04T12:00:01.000Z',
@@ -91,24 +91,134 @@ describe('launch crash benchmark', () => {
 
     expect(launchCrashDiagnosis(commands, { dispatchAt: '2026-09-04T12:00:00.000Z', token })).toEqual({
       valid: false,
-      reason: 'launch-crash-source-inspected-before-error-capture',
+      reason: 'launch-crash-pre-capture-command-not-allowed',
+      commandId: 'inspect',
     });
   });
 
   it('requires a repaired relaunch and Settings proof', () => {
     const diagnosis = { valid: true, commandId: 'diagnosis' };
     const commands = [
-      { id: 'diagnosis', command: 'rg TOKEN app/_layout.tsx', output: 'app/_layout.tsx', exitCode: 0 },
-      { id: 'relaunch', command: 'stim ios', output: 'OK: com.example.app', exitCode: 0 },
+      {
+        id: 'diagnosis',
+        command: 'rg TOKEN app/_layout.tsx',
+        output: 'app/_layout.tsx',
+        exitCode: 0,
+        startedAt: '2026-09-04T12:00:09Z',
+        endedAt: '2026-09-04T12:00:10Z',
+      },
+      {
+        id: 'relaunch',
+        command: 'stim ios',
+        output: 'OK: com.example.app',
+        exitCode: 0,
+        startedAt: '2026-09-04T12:00:11Z',
+        endedAt: '2026-09-04T12:00:20Z',
+      },
+      {
+        id: 'screenshot',
+        command: 'agent-device screenshot /tmp/settings.png',
+        output: 'saved',
+        exitCode: 0,
+        startedAt: '2026-09-04T12:00:20.500Z',
+        endedAt: '2026-09-04T12:00:21Z',
+      },
     ];
     expect(launchCrashRecovery(commands, { diagnosis, screen: { valid: false } })).toEqual({
       valid: false,
       reason: 'launch-crash-settings-proof-missing',
     });
-    expect(launchCrashRecovery(commands, { diagnosis, screen: { valid: true } })).toEqual({
+    expect(
+      launchCrashRecovery(commands, {
+        diagnosis,
+        screen: { valid: true, observedAt: '2026-09-04T12:00:19Z', screenshotCommandId: 'screenshot' },
+      }),
+    ).toEqual({ valid: false, reason: 'launch-crash-settings-proof-before-relaunch' });
+    expect(
+      launchCrashRecovery(commands, {
+        diagnosis,
+        screen: { valid: true, observedAt: '2026-09-04T12:00:21Z', screenshotCommandId: 'screenshot' },
+      }),
+    ).toEqual({
       valid: true,
       repairedLaunchCommandId: 'relaunch',
+      screenshotCommandId: 'screenshot',
     });
+  });
+
+  it('accepts control relaunch output when later Settings proof succeeds', () => {
+    const diagnosis = { valid: true, commandId: 'diagnosis' };
+    const commands = [
+      {
+        id: 'diagnosis',
+        command: 'rg TOKEN app/_layout.tsx',
+        output: 'app/_layout.tsx',
+        exitCode: 0,
+        endedAt: '2026-09-04T12:00:10Z',
+      },
+      {
+        id: 'relaunch',
+        command: 'npx expo run:ios --device SIMULATOR',
+        output: 'com.appandflow.trailhead: 90210',
+        exitCode: 0,
+        startedAt: '2026-09-04T12:00:11Z',
+        endedAt: '2026-09-04T12:00:20Z',
+      },
+      {
+        id: 'screenshot',
+        command: 'agent-device screenshot /tmp/settings.png',
+        output: 'saved',
+        exitCode: 0,
+        startedAt: '2026-09-04T12:00:20.500Z',
+        endedAt: '2026-09-04T12:00:21Z',
+      },
+    ];
+
+    expect(
+      launchCrashRecovery(commands, {
+        diagnosis,
+        arm: 'control',
+        screen: { valid: true, observedAt: '2026-09-04T12:00:21Z', screenshotCommandId: 'screenshot' },
+      }),
+    ).toEqual({ valid: true, repairedLaunchCommandId: 'relaunch', screenshotCommandId: 'screenshot' });
+  });
+
+  it('accepts a control dev-client URL relaunch', () => {
+    const diagnosis = { valid: true, commandId: 'diagnosis' };
+    const commands = [
+      {
+        id: 'diagnosis',
+        command: 'tail logs/initial.log',
+        output: 'STIM_BENCH_LAUNCH_CRASH_TOKEN app/_layout.tsx',
+        exitCode: 0,
+        endedAt: '2026-09-04T12:00:10Z',
+      },
+      {
+        id: 'relaunch',
+        command:
+          "xcrun simctl openurl SIMULATOR 'com.example.app://expo-development-client/?url=http://localhost:8081'",
+        output: '',
+        exitCode: 0,
+        startedAt: '2026-09-04T12:00:11Z',
+        endedAt: '2026-09-04T12:00:12Z',
+      },
+      {
+        id: 'screenshot',
+        command: 'agent-device screenshot /tmp/settings.png',
+        output: 'saved',
+        exitCode: 0,
+        startedAt: '2026-09-04T12:00:13Z',
+        endedAt: '2026-09-04T12:00:14Z',
+      },
+    ];
+
+    expect(
+      launchCrashRecovery(commands, {
+        diagnosis,
+        arm: 'control',
+        screen: { valid: true, observedAt: '2026-09-04T12:00:14Z', screenshotCommandId: 'screenshot' },
+      }),
+    ).toEqual({ valid: true, repairedLaunchCommandId: 'relaunch', screenshotCommandId: 'screenshot' });
   });
 
   it('rejects generic errors and verifies that the injected source was restored', () => {

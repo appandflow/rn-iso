@@ -21,41 +21,86 @@ function successful(command) {
   return command.exitCode === undefined || command.exitCode === null || command.exitCode === 0;
 }
 
+function shellCommand(command) {
+  const value = String(command ?? '').trim();
+  const match = value.match(/^\/bin\/(?:zsh|bash|sh) -lc (["'])([\s\S]*)\1$/);
+  return (match?.[2] ?? value).trim();
+}
+
 function launchCommand(command, arm, platform) {
+  command = shellCommand(command);
   if (arm === 'stim') return new RegExp(`(?:^|\\s)stim\\s+${platform}(?:\\s|$)`).test(command);
   if (platform === 'android') {
-    return /\bexpo\s+run:android\b|\bgradlew\b|\badb\s+shell\s+am\s+start\b/.test(command);
+    return /\bexpo\s+run:android\b|\bgradlew\b[^\n]*(?:install|connected)\w*|\badb\s+shell\s+am\s+start\b/.test(
+      command,
+    );
   }
-  return /\bexpo\s+run:ios\b|\bxcodebuild\b|\bxcrun\s+simctl\s+launch\b/.test(command);
+  return /\bexpo\s+run:ios\b|\bxcrun\s+simctl\s+(?:launch|openurl)\b/.test(command);
 }
 
 function errorCaptureCommand(command, arm, platform) {
+  command = shellCommand(command);
   if (arm === 'stim') return /(?:^|\s)stim\s+logs\s+--errors(?:\s|$)/.test(command);
   if (platform === 'android') return /\badb\s+logcat\b|\btail\b|\brg\b|\bgrep\b/.test(command);
   return /\bxcrun\s+simctl\s+spawn\b|\blog\s+(?:show|stream)\b|\btail\b|\brg\b|\bgrep\b/.test(command);
 }
 
-function sourceInspectionCommand(command, token) {
-  if (/(?:^|\s)git\s+(?:diff|show)(?:\s|$)/.test(command)) return true;
+function timestamp(command, field) {
+  const value = Date.parse(command[field] ?? command.endedAt);
+  return Number.isFinite(value) ? value : Number.POSITIVE_INFINITY;
+}
+
+function orderedCommands(commands) {
+  return commands
+    .map((command, originalIndex) => ({ ...command, originalIndex }))
+    .toSorted(
+      (left, right) =>
+        timestamp(left, 'startedAt') - timestamp(right, 'startedAt') || left.originalIndex - right.originalIndex,
+    );
+}
+
+function allowedBeforeErrorCapture(command, arm, platform) {
+  const value = shellCommand(command);
+  if (
+    /app\/_layout\.tsx|RootLayout|STIM_BENCH_LAUNCH_CRASH_/.test(value) &&
+    !errorCaptureCommand(value, arm, platform)
+  ) {
+    return false;
+  }
+  if (/\/(?:skills|skill)\/[^\s]+\/SKILL\.md\b/.test(value) && /(?:^|\s)(?:cat|sed|head)(?:\s|$)/.test(value)) {
+    return true;
+  }
+  if (/^(?:pwd|ls(?:\s|$)|du(?:\s|$)|git\s+status(?:\s|$)|git\s+worktree\s+add(?:\s|$)|mkdir(?:\s|$))/.test(value)) {
+    return true;
+  }
+  if (/^cp\b/.test(value) && /(?:node_modules|ios\/Pods|ios\/build|android\/(?:\.gradle|app\/build))/.test(value)) {
+    return true;
+  }
+  if (arm === 'stim') {
+    return new RegExp(`^stim\\s+(?:worktree\\s+create|start|${platform}|logs\\s+--errors)(?:\\s|$)`).test(value);
+  }
   return (
-    /(?:^|\s)(?:rg|grep|sed|cat|head|tail)(?:\s|$)/.test(command) &&
-    (command.includes(token) || /app\/_layout\.tsx|RootLayout/.test(command))
+    /^(?:open\s+-a\s+Simulator|xcrun\s+simctl\s+(?:create|boot|bootstatus|install|launch|openurl)|npx\s+expo\s+(?:start|run:ios|run:android)|xcodebuild\b|\.\/gradlew\b|adb\b|nohup\b|ps\b|sleep\b|tail\b)/.test(
+      value,
+    ) ||
+    launchCommand(value, arm, platform) ||
+    errorCaptureCommand(value, arm, platform)
   );
 }
 
-export function launchCrashDiagnosis(commands, { dispatchAt, token, arm = 'stim', platform = 'ios' }) {
+export function launchCrashDiagnosis(commands, { dispatchAt, token, arm = 'stim', platform = 'ios', activities = [] }) {
+  const ordered = orderedCommands(commands);
   const sourceMarkers = ['app/_layout.tsx', 'RootLayout'];
-  const initialLaunchIndex = commands.findIndex(
+  const initialLaunchIndex = ordered.findIndex(
     (command) =>
       successful(command) &&
       launchCommand(command.command, arm, platform) &&
-      typeof command.output === 'string' &&
-      command.output.includes(token),
+      (arm !== 'stim' || (typeof command.output === 'string' && command.output.includes(token))),
   );
   if (initialLaunchIndex === -1) {
     return { valid: false, reason: 'launch-crash-initial-launch-evidence-missing' };
   }
-  const errorCaptureIndex = commands.findIndex(
+  const errorCaptureIndex = ordered.findIndex(
     (command, index) =>
       index > initialLaunchIndex &&
       successful(command) &&
@@ -66,15 +111,24 @@ export function launchCrashDiagnosis(commands, { dispatchAt, token, arm = 'stim'
   if (errorCaptureIndex === -1) {
     return { valid: false, reason: 'launch-crash-error-capture-missing' };
   }
-  const earlyInspection = commands.findIndex(
-    (command, index) => index < errorCaptureIndex && sourceInspectionCommand(command.command, token),
+  const captureEndedAt = timestamp(ordered[errorCaptureIndex], 'endedAt');
+  const preCaptureActivity = [...ordered, ...activities].toSorted(
+    (left, right) => timestamp(left, 'startedAt') - timestamp(right, 'startedAt'),
   );
-  if (earlyInspection !== -1) {
-    return { valid: false, reason: 'launch-crash-source-inspected-before-error-capture' };
+  const disallowedBeforeCapture = preCaptureActivity.find(
+    (command) =>
+      timestamp(command, 'startedAt') < captureEndedAt && !allowedBeforeErrorCapture(command.command, arm, platform),
+  );
+  if (disallowedBeforeCapture) {
+    return {
+      valid: false,
+      reason: 'launch-crash-pre-capture-command-not-allowed',
+      commandId: disallowedBeforeCapture.id,
+    };
   }
-  const index = commands.findIndex(
-    (command, commandIndex) =>
-      commandIndex >= errorCaptureIndex &&
+  const index = ordered.findIndex(
+    (command) =>
+      timestamp(command, 'startedAt') >= captureEndedAt &&
       successful(command) &&
       typeof command.output === 'string' &&
       command.output.includes(token) &&
@@ -83,7 +137,7 @@ export function launchCrashDiagnosis(commands, { dispatchAt, token, arm = 'stim'
   if (index === -1) {
     return { valid: false, reason: 'actionable-launch-crash-diagnosis-missing' };
   }
-  const command = commands[index];
+  const command = ordered[index];
   const observedAt = command.endedAt;
   const dispatchToDiagnosisSeconds = (Date.parse(observedAt) - Date.parse(dispatchAt)) / 1000;
   if (!Number.isFinite(dispatchToDiagnosisSeconds) || dispatchToDiagnosisSeconds < 0) {
@@ -93,11 +147,11 @@ export function launchCrashDiagnosis(commands, { dispatchAt, token, arm = 'stim'
     valid: true,
     observedAt,
     dispatchToDiagnosisSeconds,
-    commandCount: index + 1,
+    commandCount: ordered.filter((candidate) => timestamp(candidate, 'endedAt') <= Date.parse(observedAt)).length,
     commandId: command.id,
     command: command.command,
-    initialLaunchCommandId: commands[initialLaunchIndex].id,
-    errorCaptureCommandId: commands[errorCaptureIndex].id,
+    initialLaunchCommandId: ordered[initialLaunchIndex].id,
+    errorCaptureCommandId: ordered[errorCaptureIndex].id,
   };
 }
 
@@ -113,16 +167,40 @@ export function launchCrashRepair(source, token, expectedSha256) {
 
 export function launchCrashRecovery(commands, { diagnosis, arm = 'stim', platform = 'ios', screen }) {
   if (!diagnosis?.valid) return { valid: false, reason: 'launch-crash-diagnosis-missing' };
-  const diagnosisIndex = commands.findIndex((command) => command.id === diagnosis.commandId);
-  const repairedLaunch = commands.find(
-    (command, index) =>
-      index > diagnosisIndex &&
+  const ordered = orderedCommands(commands);
+  const diagnosisCommand = ordered.find((command) => command.id === diagnosis.commandId);
+  const diagnosisEndedAt = timestamp(diagnosisCommand ?? {}, 'endedAt');
+  const repairedLaunch = ordered.find(
+    (command) =>
+      timestamp(command, 'startedAt') >= diagnosisEndedAt &&
       successful(command) &&
       launchCommand(command.command, arm, platform) &&
       typeof command.output === 'string' &&
-      /\bOK:/.test(command.output),
+      !command.output.includes('STIM_BENCH_LAUNCH_CRASH_') &&
+      (arm !== 'stim' || /\bOK:/.test(command.output)),
   );
   if (!repairedLaunch) return { valid: false, reason: 'launch-crash-repaired-relaunch-missing' };
   if (!screen?.valid) return { valid: false, reason: 'launch-crash-settings-proof-missing' };
-  return { valid: true, repairedLaunchCommandId: repairedLaunch.id };
+  if (!screen.screenshotCommandId) {
+    return { valid: false, reason: 'launch-crash-settings-command-missing' };
+  }
+  const screenshot = ordered.find((command) => command.id === screen.screenshotCommandId);
+  if (
+    !screenshot ||
+    !successful(screenshot) ||
+    !/(?:^|\s)agent-device\s+screenshot(?:\s|$)/.test(shellCommand(screenshot.command))
+  ) {
+    return { valid: false, reason: 'launch-crash-settings-command-invalid' };
+  }
+  if (
+    timestamp(screenshot, 'startedAt') < timestamp(repairedLaunch, 'endedAt') ||
+    timestamp({ endedAt: screen.observedAt }, 'endedAt') !== timestamp(screenshot, 'endedAt')
+  ) {
+    return { valid: false, reason: 'launch-crash-settings-proof-before-relaunch' };
+  }
+  return {
+    valid: true,
+    repairedLaunchCommandId: repairedLaunch.id,
+    screenshotCommandId: screen.screenshotCommandId,
+  };
 }

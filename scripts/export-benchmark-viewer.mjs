@@ -1,8 +1,10 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { userInfo } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { stripVTControlCharacters } from 'node:util';
+import { launchCrashDiagnosis, launchCrashRecovery } from './launch-crash-benchmark.mjs';
 
 const modelPricing = {
   'gpt-5.6-luna': {
@@ -388,6 +390,94 @@ function assertPortable(payload) {
   }
 }
 
+function fileSha256(path) {
+  return createHash('sha256').update(readFileSync(path)).digest('hex');
+}
+
+function validPng(path, expectedDimensions) {
+  if (!existsSync(path)) return false;
+  const bytes = readFileSync(path);
+  if (bytes.length < 24 || bytes.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a') return false;
+  const width = bytes.readUInt32BE(16);
+  const height = bytes.readUInt32BE(20);
+  return width >= 300 && height >= 600 && width === expectedDimensions?.width && height === expectedDimensions?.height;
+}
+
+function nonShellActivitiesFor(runDir) {
+  const eventsPath = join(runDir, 'events.jsonl');
+  if (!existsSync(eventsPath)) return [];
+  const activities = [];
+  for (const record of readFileSync(eventsPath, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse)) {
+    let event;
+    try {
+      event = JSON.parse(record.line);
+    } catch {
+      continue;
+    }
+    const item = event.item;
+    if (event.type === 'item.started' && item?.type && item.type !== 'command_execution') {
+      activities.push({
+        id: item.id,
+        command: `tool:${item.type} ${JSON.stringify(item.changes ?? item)}`,
+        startedAt: record.arrivedAt,
+        endedAt: record.arrivedAt,
+      });
+    }
+    for (const block of event.message?.content ?? []) {
+      if (event.type === 'assistant' && block.type === 'tool_use' && block.name !== 'Bash') {
+        activities.push({
+          id: block.id,
+          command: `tool:${block.name} ${JSON.stringify(block.input ?? {})}`,
+          startedAt: record.arrivedAt,
+          endedAt: record.arrivedAt,
+        });
+      }
+    }
+  }
+  return activities;
+}
+
+function validLaunchCrashRecord(runDir, record, meta) {
+  const eventsPath = join(runDir, 'events.jsonl');
+  const proofPath = join(runDir, 'proof', 'settings.png');
+  if (!existsSync(eventsPath) || !validPng(proofPath, record.screen?.dimensions)) return false;
+  if (record.evidenceSha256?.events !== fileSha256(eventsPath)) return false;
+  if (record.evidenceSha256?.settingsPng !== fileSha256(proofPath)) return false;
+  const eventData = eventsFor(runDir, meta.dispatchAt, []);
+  const commands = eventData.commands.map((command) =>
+    Object.assign({}, command, {
+      startedAt: new Date(Date.parse(meta.dispatchAt) + command.startSeconds * 1000).toISOString(),
+      endedAt: new Date(Date.parse(meta.dispatchAt) + command.endSeconds * 1000).toISOString(),
+    }),
+  );
+  const token = [record.proof?.expected, ...commands.map((command) => command.output)]
+    .join('\n')
+    .match(/STIM_BENCH_LAUNCH_CRASH_[0-9A-F]{12}/)?.[0];
+  if (!token) return false;
+  const diagnosis = launchCrashDiagnosis(commands, {
+    dispatchAt: meta.dispatchAt,
+    token,
+    arm: record.arm,
+    platform: meta.platform ?? 'ios',
+    activities: nonShellActivitiesFor(runDir),
+  });
+  const recovery = launchCrashRecovery(commands, {
+    diagnosis,
+    arm: record.arm,
+    platform: meta.platform ?? 'ios',
+    screen: record.screen,
+  });
+  return (
+    diagnosis.valid &&
+    recovery.valid &&
+    record.diagnosis?.initialLaunchCommandId === diagnosis.initialLaunchCommandId &&
+    record.diagnosis?.errorCaptureCommandId === diagnosis.errorCaptureCommandId &&
+    record.diagnosis?.commandId === diagnosis.commandId &&
+    record.recovery?.repairedLaunchCommandId === recovery.repairedLaunchCommandId &&
+    record.recovery?.screenshotCommandId === recovery.screenshotCommandId
+  );
+}
+
 export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
   const absoluteStageDir = resolve(stageDir);
   const stage = basename(absoluteStageDir);
@@ -399,8 +489,12 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
     .map((name) => join(absoluteStageDir, name))
     .filter((runDir) => existsSync(join(runDir, 'run.json')) && existsSync(join(runDir, 'meta.json')));
   const records = runDirs
-    .map((runDir) => ({ runDir, record: readJson(join(runDir, 'run.json')) }))
-    .filter(({ runDir, record }) => {
+    .map((runDir) => ({
+      runDir,
+      record: readJson(join(runDir, 'run.json')),
+      meta: readJson(join(runDir, 'meta.json')),
+    }))
+    .filter(({ runDir, record, meta }) => {
       if (!record.valid || !record.screen?.valid || !existsSync(join(runDir, 'proof', 'settings.png'))) return false;
       if (record.variant !== 'launch-crash') return true;
       return (
@@ -411,7 +505,9 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
         record.diagnosisCommandCount > 0 &&
         record.proof?.valid === true &&
         record.recovery?.valid === true &&
-        typeof record.recovery.repairedLaunchCommandId === 'string'
+        typeof record.recovery.repairedLaunchCommandId === 'string' &&
+        typeof record.recovery.screenshotCommandId === 'string' &&
+        validLaunchCrashRecord(runDir, record, meta)
       );
     });
   if (records.length === 0) throw new Error(`no valid benchmark runs found in ${absoluteStageDir}`);
@@ -476,6 +572,7 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
                 errorCaptureCommandId: record.diagnosis.errorCaptureCommandId,
                 diagnosisCommandId: record.diagnosis.commandId,
                 repairedLaunchCommandId: record.recovery.repairedLaunchCommandId,
+                screenshotCommandId: record.recovery.screenshotCommandId,
               }
             : null,
         diagnosisUsage: record.diagnosisUsage ?? null,

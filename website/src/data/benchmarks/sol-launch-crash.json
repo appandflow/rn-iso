@@ -43,7 +43,8 @@
         "initialLaunchCommandId": "item_6",
         "errorCaptureCommandId": "item_7",
         "diagnosisCommandId": "item_9",
-        "repairedLaunchCommandId": "item_14"
+        "repairedLaunchCommandId": "item_14",
+        "screenshotCommandId": "item_19"
       },
       "diagnosisUsage": {
         "input_tokens": 171713,

@@ -565,7 +565,7 @@ function promptFor(arm, variant, runId, runDir, crash = null) {
     const launch =
       arm === 'stim'
         ? 'Use the Stim skill and only the pinned published command available on PATH as exactly `stim`. Keep the inherited STIM_HOME unchanged. Before inspecting source or git diff, run `stim start` and then `stim ios` so the benchmark observes the failure. Preserve that launch output, then immediately run `stim logs --errors` as its own command. Diagnose the launch failure from those results. Only after the diagnostic commands may you inspect and edit source. Make the smallest repair, run `stim ios` again to prove a repaired launch on the same adopted simulator, and leave Metro and the app running until screenshot proof is complete. Do not use npx, an absolute Stim path, raw Expo launch commands, or stop Stim.'
-        : "Before inspecting source or git diff, launch the app with the project's local Expo and Apple tooling so the benchmark observes the failure. Preserve Metro and simulator logs, diagnose the launch failure from them, make the smallest repair, and relaunch on the same newly created simulator. Do not use Stim.";
+        : "Use the project's local Expo and Apple tooling and do not use Stim. Create a new iPhone 17 simulator running iOS 26.5 with the exact required name; do not substitute another device type or runtime and do not use an existing simulator. Before inspecting source or git diff, start Metro as a detached process with its PID and log under /tmp. Start the initial native build/install/launch as a detached shell process with its PID and log under /tmp, then poll it with short foreground shell commands. Once the app has launched and failed, run a separate foreground `tail`, `rg`, or simulator-log command that completes and prints the crash token and source location. Only after that explicit error-capture command completes may you inspect or edit source. Make the smallest repair, relaunch on the same simulator, and leave Metro and the app running until screenshot proof is complete. Do not use a long-running foreground shell command, concurrent shell tool calls, or rely on streamed output from a command that is still running as diagnosis evidence.";
     return (
       worktree +
       'The app has a deterministic JavaScript failure during its initial root render. Diagnose and repair that launch failure without making unrelated product changes. ' +
@@ -928,7 +928,7 @@ async function dispatch(model, arm, variant, stage = 'pilot') {
           '--append-system-prompt-file',
           claudeGuidance.path,
           '--allowedTools',
-          'Bash,Edit,Read',
+          variant === launchCrashVariant ? 'Bash' : 'Bash,Edit,Read',
         ]
       : [
           '--ask-for-approval',
@@ -1053,11 +1053,12 @@ function tokensFromUsage(usage) {
 
 function commandEvidence(meta, eventsPath, runDir) {
   if (!existsSync(eventsPath)) {
-    return { commands: [], completedEvents: [], invalidReasons: [] };
+    return { commands: [], activities: [], completedEvents: [], invalidReasons: [] };
   }
   const stamped = readFileSync(eventsPath, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);
   const started = new Map();
   const commands = [];
+  const activities = [];
   const completedEvents = [];
   const completeCommand = (id, item, record, offset) => {
     const begin = started.get(id);
@@ -1085,6 +1086,14 @@ function commandEvidence(meta, eventsPath, runDir) {
     }
     if (meta.runner === 'claude') {
       for (const block of event.message?.content ?? []) {
+        if (event.type === 'assistant' && block.type === 'tool_use' && block.name !== 'Bash') {
+          activities.push({
+            id: block.id,
+            command: `tool:${block.name} ${JSON.stringify(block.input ?? {})}`,
+            startedAt: record.arrivedAt,
+            endedAt: record.arrivedAt,
+          });
+        }
         if (event.type === 'assistant' && block.type === 'tool_use' && block.name === 'Bash') {
           started.set(block.id, {
             offset,
@@ -1115,6 +1124,14 @@ function commandEvidence(meta, eventsPath, runDir) {
       continue;
     }
     const item = event.item;
+    if (event.type === 'item.started' && item?.type && item.type !== 'command_execution') {
+      activities.push({
+        id: item.id,
+        command: `tool:${item.type} ${JSON.stringify(item.changes ?? item)}`,
+        startedAt: record.arrivedAt,
+        endedAt: record.arrivedAt,
+      });
+    }
     if (event.type === 'item.started' && item?.type === 'command_execution') {
       started.set(item.id, { offset, at: record.arrivedAt, command: item.command });
     }
@@ -1154,35 +1171,7 @@ function commandEvidence(meta, eventsPath, runDir) {
   if (agentDeviceCommands.some((command) => !command.startsWith(expectedAgentDevicePrefix))) {
     invalidReasons.push('agent-device-run-session-not-applied');
   }
-  if (meta.variant === launchCrashVariant && meta.arm === 'stim') {
-    const initialLaunch = commands.findIndex((command) =>
-      /(?:^|\s)stim\s+ios(?:\s|$)/.test(topLevelShellCommand(command.command)),
-    );
-    const inspectedSourceBeforeLaunch = commands.some(
-      (command, index) =>
-        index < initialLaunch &&
-        /(?:app\/_layout\.tsx|(?:^|\s)git\s+(?:diff|show|status)\b)/.test(topLevelShellCommand(command.command)),
-    );
-    const errorLogs = commands.findIndex(
-      (command, index) =>
-        index > initialLaunch &&
-        topLevelShellCommand(command.command) === 'stim logs --errors' &&
-        command.exitCode === 0 &&
-        command.output.includes(meta.crash.token),
-    );
-    const repairedLaunch = commands.findIndex(
-      (command, index) =>
-        index > errorLogs &&
-        /(?:^|\s)stim\s+ios(?:\s|$)/.test(topLevelShellCommand(command.command)) &&
-        command.exitCode === 0 &&
-        !command.output.includes(meta.crash.token),
-    );
-    if (initialLaunch === -1) invalidReasons.push('launch-crash-initial-stim-ios-missing');
-    if (inspectedSourceBeforeLaunch) invalidReasons.push('launch-crash-source-inspected-before-launch');
-    if (errorLogs === -1) invalidReasons.push('launch-crash-stim-error-logs-missing');
-    if (repairedLaunch === -1) invalidReasons.push('launch-crash-repaired-stim-ios-missing');
-  }
-  return { commands, completedEvents, invalidReasons };
+  return { commands, activities, completedEvents, invalidReasons };
 }
 
 function topLevelShellCommand(command) {
@@ -1310,6 +1299,11 @@ function screenEvidence(meta, appAlive, commands, runDir) {
     bytes: statSync(target).size,
     dimensions,
     observedAt: screenshotCommand.endedAt,
+    openCommandId: commands[indexes[0]].id,
+    waitCommandId: commands[indexes[1]].id,
+    screenshotCommandId: screenshotCommand.id,
+    copyCommandId: commands[indexes[3]].id,
+    closeCommandId: commands[indexes[4]].id,
     dispatchToScreenReadySeconds: (Date.parse(screenshotCommand.endedAt) - Date.parse(meta.dispatchAt)) / 1000,
     commands: [openCommand, ...required],
   };
@@ -1348,6 +1342,8 @@ function validRunWorktree(path, runId) {
 function worktreeFromEvents(eventsPath, runId) {
   if (!existsSync(eventsPath)) return null;
   const prefix = `${worktreeParent}/`;
+  const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pathPattern = new RegExp(`${escapedPrefix}[^\\s'"]+`, 'g');
   const candidates = new Set();
   const lines = readFileSync(eventsPath, 'utf8').trim().split('\n').filter(Boolean);
   for (const line of lines) {
@@ -1357,12 +1353,21 @@ function worktreeFromEvents(eventsPath, runId) {
     } catch {
       continue;
     }
-    for (const text of [event.item?.command, event.item?.aggregated_output, event.item?.text]) {
+    const claudeBlocks = event.message?.content ?? [];
+    const texts = [
+      event.item?.command,
+      event.item?.aggregated_output,
+      event.item?.text,
+      event.result,
+      ...claudeBlocks.flatMap((block) => [
+        block.input?.command,
+        typeof block.content === 'string' ? block.content : JSON.stringify(block.content ?? ''),
+      ]),
+    ];
+    for (const text of texts) {
       if (typeof text !== 'string') continue;
-      for (const token of text.matchAll(
-        /\/Volumes\/ExternalSSD\/Developer\/stim-bench-coordinator\/trailhead-v4-worktrees\/[^\s'"`]+/g,
-      )) {
-        const absolute = resolve(token[0]);
+      for (const token of text.matchAll(pathPattern)) {
+        const absolute = resolve(token[0].replace(/[`)\]}>.,]+$/, ''));
         if (!absolute.startsWith(prefix)) continue;
         const segments = absolute.slice(prefix.length).split('/');
         let end = -1;
@@ -1554,6 +1559,7 @@ function collect(runDir) {
           token: meta.crash.token,
           arm: meta.arm,
           platform: meta.platform ?? 'ios',
+          activities: commandAudit.activities,
         })
       : null;
   const recovery =
@@ -1616,6 +1622,10 @@ function collect(runDir) {
     worktreeEvidence: worktreeRecord,
     proof,
     screen,
+    evidenceSha256: {
+      events: existsSync(eventsPath) ? sha256(eventsPath) : null,
+      settingsPng: screen.valid && existsSync(screen.target) ? sha256(screen.target) : null,
+    },
     reportedCostUsd: runnerMetrics?.reportedCostUsd ?? null,
     modelUsage: runnerMetrics?.modelUsage ?? null,
     runnerTerminalReason: runnerMetrics?.terminalReason ?? null,

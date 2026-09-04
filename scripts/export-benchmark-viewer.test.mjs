@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
 import { tmpdir, userInfo } from 'node:os';
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   backgroundProcessesFor,
@@ -17,6 +18,10 @@ const tempDirs = [];
 
 function stamp(arrivedAt, event) {
   return JSON.stringify({ arrivedAt, stream: 'stdout', line: JSON.stringify(event) });
+}
+
+function sha256(path) {
+  return createHash('sha256').update(readFileSync(path)).digest('hex');
 }
 
 afterEach(() => {
@@ -504,6 +509,48 @@ describe('benchmark viewer export', () => {
         platform: 'ios',
       }),
     );
+    const token = 'STIM_BENCH_LAUNCH_CRASH_ABCDEF123456';
+    const commandEvents = [
+      [
+        'skill',
+        '2026-09-04T12:00:01.000Z',
+        '2026-09-04T12:00:02.000Z',
+        'sed -n 1,200p /bench/skills/stim/SKILL.md',
+        'skill',
+      ],
+      ['worktree', '2026-09-04T12:00:03.000Z', '2026-09-04T12:00:05.000Z', 'stim worktree create bench/run', 'ready'],
+      ['launch', '2026-09-04T12:00:10.000Z', '2026-09-04T12:00:20.000Z', 'stim ios', token],
+      ['logs', '2026-09-04T12:00:25.000Z', '2026-09-04T12:00:30.000Z', 'stim logs --errors', token],
+      [
+        'diagnosis',
+        '2026-09-04T12:01:29.000Z',
+        '2026-09-04T12:01:30.000Z',
+        `rg ${token} app/_layout.tsx`,
+        `${token}\napp/_layout.tsx:28 in RootLayout`,
+      ],
+      ['relaunch', '2026-09-04T12:01:40.000Z', '2026-09-04T12:02:00.000Z', 'stim ios', 'OK: com.example.app'],
+      [
+        'screenshot',
+        '2026-09-04T12:02:29.000Z',
+        '2026-09-04T12:02:30.000Z',
+        'agent-device screenshot /tmp/settings.png',
+        'saved',
+      ],
+    ];
+    writeFileSync(
+      join(runDir, 'events.jsonl'),
+      `${commandEvents
+        .flatMap(([id, startedAt, endedAt, command, output]) => [
+          stamp(startedAt, { type: 'item.started', item: { id, type: 'command_execution', command } }),
+          stamp(endedAt, {
+            type: 'item.completed',
+            item: { id, type: 'command_execution', command, aggregated_output: output, exit_code: 0 },
+          }),
+        ])
+        .join('\n')}\n`,
+    );
+    const proofPath = join(runDir, 'proof', 'settings.png');
+    copyFileSync(join(process.cwd(), 'website/static/benchmarks/sol-launch-crash/launch-crash-stim.png'), proofPath);
     writeFileSync(
       join(runDir, 'run.json'),
       JSON.stringify({
@@ -536,16 +583,21 @@ describe('benchmark viewer export', () => {
           output_tokens: 2_000,
           reasoning_output_tokens: 200,
         },
-        proof: { valid: true },
-        recovery: { valid: true, repairedLaunchCommandId: 'relaunch' },
+        proof: { valid: true, expected: `${token} removed and original source restored` },
+        recovery: { valid: true, repairedLaunchCommandId: 'relaunch', screenshotCommandId: 'screenshot' },
         screen: {
           valid: true,
           expected: 'Keep map tiles for saved trails on device',
           dimensions: { width: 402, height: 874 },
+          observedAt: '2026-09-04T12:02:30.000Z',
+          screenshotCommandId: 'screenshot',
+        },
+        evidenceSha256: {
+          events: sha256(join(runDir, 'events.jsonl')),
+          settingsPng: sha256(proofPath),
         },
       }),
     );
-    writeFileSync(join(runDir, 'proof', 'settings.png'), 'valid proof');
 
     const payload = exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'proof'));
 
@@ -564,6 +616,7 @@ describe('benchmark viewer export', () => {
         errorCaptureCommandId: 'logs',
         diagnosisCommandId: 'diagnosis',
         repairedLaunchCommandId: 'relaunch',
+        screenshotCommandId: 'screenshot',
       },
       estimatedDiagnosisCostUsd: 0.132,
     });
