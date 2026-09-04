@@ -24,7 +24,7 @@ const benchmarks = (
 ).filter((benchmark) => benchmark.runs.some((run) => run.valid));
 
 function defaultRun(benchmark: BenchmarkData | undefined): BenchmarkRun | undefined {
-  return benchmark?.runs[0];
+  return benchmark?.runs.find((run) => run.valid);
 }
 
 function displayVariant(variant: BenchmarkRun['variant']): string {
