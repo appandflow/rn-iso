@@ -1,7 +1,7 @@
 ---
 title: 'Devices and cleanup'
 sidebar_position: 3
-description: 'Owned local and remote devices with safe teardown'
+description: 'Owned devices, physical-device leases, and cleanup'
 ---
 
 Commands use `stim`. If it is not installed globally, replace `stim` with

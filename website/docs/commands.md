@@ -274,6 +274,9 @@ stim worktree create <name> [--base <head|fresh|ref>] [--dir <path>]
 
 Creates a git worktree and prints its absolute path.
 
+Slash-separated names keep their branch hierarchy but use a flat directory
+under the worktree root: `feature/settings` becomes `feature+settings`.
+
 - `--base head` uses the current checkout's `HEAD`, the default when
   `worktree.baseRef` is unset.
 - `--base fresh` uses `origin/HEAD`.
@@ -281,9 +284,7 @@ Creates a git worktree and prints its absolute path.
 - `--dir <path>` creates the worktree under that directory instead of the
   `worktreeDir` setting or the default `<repo>-worktrees/` sibling. A relative
   path resolves against the current directory, while a relative `worktreeDir`
-  setting resolves against the repository root. Slash-separated names keep
-  their branch hierarchy but use a flat directory under that path:
-  `feature/settings` becomes `feature+settings`.
+  setting resolves against the repository root.
 - `--label` sets the short Stim name used by the environment and device.
 - `--carry-ignored` copies safe ignored files and compatible uncommitted changes.
 
