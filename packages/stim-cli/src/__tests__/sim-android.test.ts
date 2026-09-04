@@ -37,6 +37,7 @@ import {
   parseAvdSystemImage,
   deleteAvd,
   resolveOwnedAvdSerial,
+  shutdownAndroidEmulator,
   physicalDeviceModel,
   resolvePhysicalDevice,
   waitForBoot,
@@ -445,6 +446,42 @@ test('resolveOwnedAvdSerial reports notRunning when the recorded port is held by
     spawn: () => null,
   });
   expect(resolveOwnedAvdSerial('stim-mine')).toEqual({ notRunning: true });
+});
+
+test('shutdownAndroidEmulator flushes guest writes before killing the emulator', () => {
+  const calls: string[] = [];
+  setExecutor({
+    runQuiet: (cmd: string) => {
+      calls.push(cmd);
+      return '';
+    },
+  });
+
+  shutdownAndroidEmulator('emulator-5554');
+
+  expect(calls).toEqual(['adb -s emulator-5554 shell sync', 'adb -s emulator-5554 emu kill']);
+});
+
+test('shutdownAndroidEmulator warns and still kills the emulator when sync fails', () => {
+  const calls: string[] = [];
+  const errors: string[] = [];
+  const originalError = console.error;
+  console.error = (message) => errors.push(String(message));
+  setExecutor({
+    runQuiet: (cmd: string) => {
+      calls.push(cmd);
+      return cmd.includes('shell sync') ? null : '';
+    },
+  });
+
+  try {
+    shutdownAndroidEmulator('emulator-5554');
+  } finally {
+    console.error = originalError;
+  }
+
+  expect(calls).toEqual(['adb -s emulator-5554 shell sync', 'adb -s emulator-5554 emu kill']);
+  expect(errors).toEqual(['warning: could not flush emulator-5554 before shutdown; shutting it down anyway']);
 });
 
 test('waitForBoot keeps polling while adb still fails', async () => {

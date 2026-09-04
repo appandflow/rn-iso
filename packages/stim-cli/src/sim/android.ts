@@ -707,7 +707,11 @@ export async function waitForBoot(
 }
 
 export function shutdownAndroidEmulator(serial: string): void {
-  getExecutor().runQuiet(`${androidTool('adb')} -s ${serial} emu kill`);
+  const exec = getExecutor();
+  if (exec.runQuiet(`${androidTool('adb')} -s ${serial} shell sync`) === null) {
+    console.error(`warning: could not flush ${serial} before shutdown; shutting it down anyway`);
+  }
+  exec.runQuiet(`${androidTool('adb')} -s ${serial} emu kill`);
 }
 
 export function getAvdNameForSerial(serial: string): string | null {
