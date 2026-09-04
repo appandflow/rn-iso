@@ -706,12 +706,13 @@ FLAGS
   the safe direction: a client redbox that Fast Refresh already fixed keeps
   being reported until the next launch.
 
-  OUTPUT. --errors prints at most 20 records and then a "... and N more" line.
-  N is exactly what \`--tail N\` prints, because what was held back IS the
-  tail. In non-follow human output, an Expo error also includes its immediately
-  following code frame and Call Stack lines. Those lines remain context for one
-  error: they do not change the error count or the raw records returned by
-  --json. --json is never capped, and neither is an explicit --tail.
+  OUTPUT. --errors prints at most 20 error records, plus any stack context, and
+  then a "... and N more" line. N is exactly what \`--tail N\` prints, because
+  what was held back IS the tail. In non-follow human output, an Expo error includes its immediately
+  following code frame and Call Stack lines. Bare React Native symbolication is
+  shown as separate context because Metro does not provide an error correlation
+  identifier. Context does not change the error count or the raw error records
+  returned by --json. --json is never capped, and neither is an explicit --tail.
 
   In --follow mode the marker window is dropped -- every error arriving from
   then on is by definition after the last marker seen.

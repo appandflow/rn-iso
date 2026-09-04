@@ -971,11 +971,12 @@ test('the agent guide carries the normal workflow and safety rules', () => {
   expect(agent).toMatch(/Ordinary stim stop and an authorized clean\s+stim worktree remove do not need/);
 });
 
-test('the logs guide keeps Expo stack context on one human error record', () => {
+test('the logs guide keeps Expo and bare React Native stack context on one human error record', () => {
   const logs = renderTopic('logs');
   assert(logs);
-  expect(logs).toMatch(/Expo error also includes its immediately\s+following code frame and Call Stack lines/);
-  expect(logs).toMatch(/do not change the error count or the raw records returned by\s+--json/);
+  expect(logs).toMatch(/Expo error includes its immediately\s+following code frame and Call Stack lines/);
+  expect(logs).toMatch(/Bare React Native symbolication is\s+shown as separate context/);
+  expect(logs).toMatch(/Context does not change the error count or the raw error records\s+returned by --json/);
 });
 
 test('the agent guide routes to every detailed topic', () => {

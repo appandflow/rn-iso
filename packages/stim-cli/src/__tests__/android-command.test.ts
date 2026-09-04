@@ -2497,6 +2497,22 @@ describe('launch verification', () => {
     expect(h.stderr.join('\n')).toMatch(/run `stim android` again.*Metro reload cannot restart an exited app/);
   });
 
+  test('a Metro build failure with a live native process recommends reload instead of another native run', async () => {
+    const h = harness({
+      verifyLaunched: async () => ({
+        fatal: true,
+        processAlive: true,
+        errors: [{ src: 'metro', msg: 'Unable to resolve module ./missing' }],
+      }),
+    });
+    const result = await h.run();
+    const text = h.stderr.join('\n');
+    expect(result.ok).toBe(false);
+    expect(text).toMatch(/native app is still running/);
+    expect(text).toContain('agent-device metro reload --metro-port 8082');
+    expect(text).toMatch(/Do not run `stim android` unless native inputs changed or the app process exits/);
+  });
+
   test('the picker: no bundle request makes it launched: "unverified", still exit ok', async () => {
     const h = harness({ verifyLaunched: async () => ({ verified: false, timedOut: true, waitedMs: 20000 }) });
     const result = await h.run();

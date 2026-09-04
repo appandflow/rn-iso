@@ -949,6 +949,13 @@ async function verifyAndroidRun({
         'remedy',
         chalk.yellow('Fix the crash, then run `stim android` again. A Metro reload cannot restart an exited app.'),
       );
+    } else if (verification.processAlive === true && metroPort !== null) {
+      phase(
+        'remedy',
+        chalk.yellow(
+          `The native app is still running. Fix the JavaScript or TypeScript error, then run \`agent-device metro reload --metro-port ${metroPort}\`. Do not run \`stim android\` unless native inputs changed or the app process exits.`,
+        ),
+      );
     }
     return LAUNCH_FATAL;
   }

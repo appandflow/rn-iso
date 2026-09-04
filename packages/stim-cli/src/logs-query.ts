@@ -219,6 +219,31 @@ function attachExpoErrorContext(all: NdjsonRecord[], matched: NdjsonRecord[]): N
   });
 }
 
+function includeBareErrorContext(
+  all: NdjsonRecord[],
+  matched: NdjsonRecord[],
+  launchTs: number | null,
+  sinceTs: number | undefined,
+): NdjsonRecord[] {
+  const hasClientError = matched.some(
+    (record) => record.src === 'client' && (record.level === 'error' || record.level === 'fatal'),
+  );
+  if (!hasClientError) return matched;
+  const renderedContext: NdjsonRecord[] = [];
+  for (const record of all) {
+    if (record.src !== 'client' || record.event !== 'client_symbolication') continue;
+    const ts = tsOf(record);
+    if (launchTs !== null && (ts === null || ts <= launchTs)) continue;
+    if (sinceTs !== undefined && (ts === null || ts < sinceTs)) continue;
+    renderedContext.push({
+      ...record,
+      msg: `Metro symbolication context (not correlated to a specific client error)\n${String(record.msg ?? '')}`,
+      errorContext: true,
+    });
+  }
+  return sortByTs([...matched, ...renderedContext]);
+}
+
 export function queryLogs({
   dir,
   sources,
@@ -259,7 +284,9 @@ export function queryLogs({
   if (typeof tail === 'number' && tail >= 0 && matched.length > tail) {
     matched = matched.slice(matched.length - tail);
   }
-  return errorContext ? attachExpoErrorContext(all, matched) : matched;
+  return errorContext
+    ? includeBareErrorContext(all, attachExpoErrorContext(all, matched), launchTs, criteria.sinceTs)
+    : matched;
 }
 
 export function tailRead(prev: TailState | null | undefined, size: number): { start: number; prev: TailState } {

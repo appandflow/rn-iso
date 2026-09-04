@@ -21,6 +21,7 @@ import {
   reporterLogger,
   resolveBareDeps,
   startBareServer,
+  symbolicationReporterMiddleware,
 } from '../supervisor/server-bare.ts';
 import type { NdjsonRecord, NdjsonWriter } from '../ndjson.ts';
 import { asRequire, makeError, makeWriter } from './_factories.ts';
@@ -211,6 +212,46 @@ describe('the dev-middleware logger', () => {
   });
 });
 
+describe('the symbolication reporter middleware', () => {
+  test('passes Metro symbolication responses to the reporter without changing the response', () => {
+    const events: unknown[] = [];
+    const middleware = symbolicationReporterMiddleware({ update: (event: unknown) => events.push(event) });
+    const calls: unknown[][] = [];
+    const response = {
+      end(this: unknown, ...args: unknown[]) {
+        calls.push(args);
+        return 'ended';
+      },
+    };
+    let next = 0;
+    middleware({ url: '/symbolicate' }, response, () => {
+      next += 1;
+    });
+    const payload = JSON.stringify({ codeFrame: { content: 'frame' }, stack: [{ file: 'App.tsx' }] });
+    expect(response.end(payload, 'utf8')).toBe('ended');
+    expect(next).toBe(1);
+    expect(calls).toEqual([[payload, 'utf8']]);
+    expect(events).toEqual([
+      {
+        type: 'client_symbolication',
+        codeFrame: { content: 'frame' },
+        stack: [{ file: 'App.tsx' }],
+      },
+    ]);
+  });
+
+  test('ignores unrelated and malformed responses', () => {
+    const events: unknown[] = [];
+    const reporter = { update: (event: unknown) => events.push(event) };
+    const unrelated = { end() {} };
+    symbolicationReporterMiddleware(reporter)({ url: '/status' }, unrelated, () => {});
+    const malformed = { end(..._args: unknown[]) {} };
+    symbolicationReporterMiddleware(reporter)({ url: '/symbolicate?x=1' }, malformed, () => {});
+    malformed.end('not json');
+    expect(events).toEqual([]);
+  });
+});
+
 describe('loadNdjsonReporter', () => {
   test('resolves the one shared implementation from @stim-cli/metro', () => {
     const factory = loadNdjsonReporter(root);
@@ -336,7 +377,9 @@ describe('startBareServer wiring', () => {
     expect(calls.createDevServerMiddleware).toEqual({ host: 'localhost', port: 8100, watchFolders: ['/w'] });
     expect(calls.createDevMiddleware.serverBaseUrl).toBe('http://localhost:8100');
     expect(typeof calls.createDevMiddleware.logger.error).toBe('function');
-    expect(calls.runServer.options.unstable_extraMiddleware).toEqual(['community-mw', 'dev-mw']);
+    const middlewares = calls.runServer.options.unstable_extraMiddleware as unknown[];
+    expect(typeof middlewares[0]).toBe('function');
+    expect(middlewares.slice(1)).toEqual(['community-mw', 'dev-mw']);
     expect(calls.runServer.options.websocketEndpoints).toEqual({ '/message': 'm', '/inspector': 'i' });
     expect('host' in calls.runServer.options).toBe(false);
   });
