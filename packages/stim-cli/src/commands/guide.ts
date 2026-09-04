@@ -63,6 +63,10 @@ RULES DURING THE LOOP
   exact device, app, Metro, and launch facts in the final summary. Use the full
   reported device ID. Never assume a simulator named booted belongs to this
   workspace.
+- After each ios or android run, give the user one compact result: exact device,
+  app id, launch state, cache result, total duration, and whether stim logs
+  --errors passed. Include a remedy only when action remains. Do not repeat the
+  phase transcript.
 - An OK summary with no launch qualifier proves the launch. "bundle requested,
   still building" means Metro has not finished; wait and query the logs. For
   launch UNVERIFIED, follow the printed remedy before claiming success. JSON

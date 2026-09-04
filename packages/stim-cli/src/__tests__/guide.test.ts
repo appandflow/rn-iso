@@ -934,12 +934,31 @@ test('website command tabs synchronize with Global as the default', () => {
   expect(tabs).toContain("const npxPrefix = 'npx stim-cli'");
 });
 
+test('the website offers copyable outcome prompts and explains skill activation', () => {
+  const promptBox = readFileSync(new URL('../../../../website/src/components/PromptBox.tsx', import.meta.url), 'utf-8');
+  const gettingStarted = readFileSync(new URL('../../../../website/docs/getting-started.md', import.meta.url), 'utf-8');
+  const agentSkills = readFileSync(new URL('../../../../website/docs/agent-skills.md', import.meta.url), 'utf-8');
+
+  expect(promptBox).toContain("import CodeBlock from '@theme/CodeBlock'");
+  expect(promptBox).toContain('<CodeBlock language="text">');
+  expect(gettingStarted).toContain('You normally do not need to name Stim');
+  expect(gettingStarted).toContain('The current checkout is the default');
+  expect(gettingStarted).toContain('Build and run the app on an iPhone 17 simulator with iOS 26.5');
+  expect(gettingStarted).toContain('cache hit rate, mean cold and cached duration');
+  expect(gettingStarted).toContain('Use agent-device to record the affected flow before the change');
+  expect(gettingStarted).toContain('Before and After recordings in a table');
+  expect(agentSkills).toMatch(/requests match\s+the skill without naming Stim/);
+});
+
 test('the agent guide carries the normal workflow and safety rules', () => {
   const agent = renderTopic('agent');
   assert(agent);
   expect(agent).toContain('stim doctor --platform ios');
   expect(agent).toContain('stim worktree create <name> --carry-ignored');
   expect(agent).toMatch(/ios and android install the app, launch it, and check readiness/);
+  expect(agent).toMatch(/give the user one compact result: exact device,[\s\S]*total duration/);
+  expect(agent).toMatch(/whether stim logs\s+--errors passed/);
+  expect(agent).toMatch(/Do not repeat the\s+phase transcript/);
   expect(agent).toMatch(/Exit code 0 from logs --errors is the pass condition/);
   expect(agent).toContain('No matching log records');
   expect(agent).toMatch(/Ordinary stim stop and an authorized clean\s+stim worktree remove do not need/);
