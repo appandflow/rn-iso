@@ -10,6 +10,7 @@ import {
   commandAtCursor,
   formatSeconds,
   initialAuditSelection,
+  timelineZoomDimensions,
   timelineZoomFromPinch,
   timeBreakdown,
   type BenchmarkData,
@@ -145,14 +146,18 @@ describe('benchmarkOverview', () => {
 
     expect(overview.maxSeconds).toBe(200);
     expect(overview.rows[0]?.arms.map(({ arm, widthPercent, href }) => ({ arm, widthPercent, href }))).toEqual([
-      { arm: 'stim', widthPercent: 25, href: '/benchmarks#audit-title' },
-      { arm: 'control', widthPercent: 50, href: '/benchmarks?benchmark=first&run=first-control#audit-title' },
+      { arm: 'stim', widthPercent: 25, href: '/benchmarks/details#audit-title' },
+      {
+        arm: 'control',
+        widthPercent: 50,
+        href: '/benchmarks/details?benchmark=first&run=first-control#audit-title',
+      },
     ]);
     expect(overview.rows[1]?.arms[0]).toMatchObject({
       arm: 'stim',
       label: 'Stim',
       widthPercent: 100,
-      href: '/benchmarks?benchmark=second&run=second-stim#audit-title',
+      href: '/benchmarks/details?benchmark=second&run=second-stim#audit-title',
     });
     expect(overview.rows[1]?.arms[1]).toEqual({
       arm: 'control',
@@ -205,6 +210,29 @@ describe('timelineZoomFromPinch', () => {
     expect(timelineZoomFromPinch(2, 100, 150)).toBe(3);
     expect(timelineZoomFromPinch(3, 100, 200)).toBe(4);
     expect(timelineZoomFromPinch(2, 100, 20)).toBe(1);
+  });
+});
+
+describe('timelineZoomDimensions', () => {
+  it('keeps the label fixed while scaling the full time track', () => {
+    expect(timelineZoomDimensions(1200, 16, 1)).toEqual({
+      labelWidth: 112,
+      trackWidth: 1088,
+      totalWidth: 1200,
+    });
+    expect(timelineZoomDimensions(1200, 16, 2)).toEqual({
+      labelWidth: 112,
+      trackWidth: 2176,
+      totalWidth: 2288,
+    });
+  });
+
+  it('preserves the minimum track width on a narrow viewport', () => {
+    expect(timelineZoomDimensions(600, 16, 2)).toEqual({
+      labelWidth: 112,
+      trackWidth: 1440,
+      totalWidth: 1552,
+    });
   });
 });
 

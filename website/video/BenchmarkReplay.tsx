@@ -45,11 +45,11 @@ export type BenchmarkReplayProps = {
 
 const segments = [
   { videoStart: 0, videoEnd: 4.5, sourceStart: 0, sourceEnd: 0, label: 'task' },
-  { videoStart: 4.5, videoEnd: 11.5, sourceStart: 0, sourceEnd: 52.387, label: '7.5x setup' },
-  { videoStart: 11.5, videoEnd: 18.5, sourceStart: 52.387, sourceEnd: 100.394, label: '6.9x build' },
-  { videoStart: 18.5, videoEnd: 51.963, sourceStart: 100.394, sourceEnd: 133.857, label: '1x device' },
-  { videoStart: 51.963, videoEnd: 56.5, sourceStart: 133.857, sourceEnd: 159.853, label: '5.7x wrap-up' },
-  { videoStart: 56.5, videoEnd: 61.5, sourceStart: 159.853, sourceEnd: 159.853, label: 'complete' },
+  { videoStart: 4.5, videoEnd: 14.9774, sourceStart: 0, sourceEnd: 52.387, label: '5x setup' },
+  { videoStart: 14.9774, videoEnd: 24.5788, sourceStart: 52.387, sourceEnd: 100.394, label: '5x build' },
+  { videoStart: 24.5788, videoEnd: 41.3103, sourceStart: 100.394, sourceEnd: 133.857, label: '2x device' },
+  { videoStart: 41.3103, videoEnd: 45.871, sourceStart: 133.857, sourceEnd: 159.853, label: '5.7x wrap-up' },
+  { videoStart: 45.871, videoEnd: 50.871, sourceStart: 159.853, sourceEnd: 159.853, label: 'complete' },
 ] as const;
 
 const colors = {
@@ -184,7 +184,7 @@ export function BenchmarkReplay({
     config: { damping: 20, stiffness: 100 },
   });
   const clipStart = Math.round(videoTime(112.99) * fps);
-  const clipDuration = 20 * fps;
+  const clipDuration = 10 * fps;
   const clipEnd = clipStart + clipDuration;
   const ready = sourceSeconds >= run.settingsReadySeconds;
   const finishIn = spring({
@@ -254,9 +254,9 @@ export function BenchmarkReplay({
           <div
             style={{
               padding: social ? '10px 13px' : '11px 17px',
-              border: `1px solid ${segment.label === '1x device' ? colors.green : colors.line}`,
+              border: `1px solid ${segment.label === '2x device' ? colors.green : colors.line}`,
               borderRadius: 999,
-              color: segment.label === '1x device' ? colors.green : colors.muted,
+              color: segment.label === '2x device' ? colors.green : colors.muted,
               background: 'rgba(7,16,25,0.86)',
               fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
               fontSize: social ? 15 : 18,
@@ -442,6 +442,7 @@ export function BenchmarkReplay({
             <Video
               src={staticFile(interactionSrc)}
               muted
+              playbackRate={2}
               style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
             />
           </Sequence>
@@ -489,7 +490,7 @@ export function BenchmarkReplay({
             {ready
               ? 'Verified proof'
               : sourceSeconds >= 100.394
-                ? 'Recreated interaction / 1x'
+                ? 'Recreated interaction / 2x'
                 : 'Stim-owned simulator'}
           </div>
         </div>

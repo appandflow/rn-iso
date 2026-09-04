@@ -28,7 +28,7 @@ export function BenchmarkRoot() {
       <Composition
         id="BenchmarkLandscape"
         component={BenchmarkReplay}
-        durationInFrames={1845}
+        durationInFrames={1527}
         fps={30}
         width={1920}
         height={1080}
@@ -37,7 +37,7 @@ export function BenchmarkRoot() {
       <Composition
         id="BenchmarkSocial"
         component={BenchmarkReplay}
-        durationInFrames={1845}
+        durationInFrames={1527}
         fps={30}
         width={1080}
         height={1350}
