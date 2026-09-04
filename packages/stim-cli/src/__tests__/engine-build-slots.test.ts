@@ -101,8 +101,11 @@ describe('waitForFile', () => {
   test('resolves once the file appears', async () => {
     const path = join(tmpHome, 'late');
     const timer = setTimeout(() => writeFileSync(path, ''), 30);
-    await waitForFile(path);
-    clearTimeout(timer);
+    try {
+      await waitForFile(path);
+    } finally {
+      clearTimeout(timer);
+    }
     expect(existsSync(path)).toBe(true);
   });
 

@@ -397,6 +397,8 @@ describe('waitingLine', () => {
 describe('a real race between real processes', { timeout: 30_000 }, () => {
   const LOCK_URL = new URL('../engine/build-lock.ts', import.meta.url).href;
   const CACHE_URL = new URL('../build-cache.ts', import.meta.url).href;
+  const CHILD_TIMEOUT_MS = 20_000;
+  const HANDSHAKE_MS = 10_000;
 
   function script(name: string, body: string) {
     const path = join(root, name);
@@ -411,9 +413,10 @@ describe('a real race between real processes', { timeout: 30_000 }, () => {
         [path, ...args],
         {
           env: { ...process.env, STIM_HOME: home, ...env },
-          timeout: 60000,
+          timeout: CHILD_TIMEOUT_MS,
         },
         (err, stdout, stderr) => {
+          if (err?.killed) return reject(new Error(`${path} was killed after ${CHILD_TIMEOUT_MS}ms (${err.signal})`));
           if (err && err.code === undefined) return reject(err);
           resolve({ code: err?.code ?? 0, stdout: String(stdout), stderr: String(stderr) });
         },
@@ -460,18 +463,29 @@ describe('a real race between real processes', { timeout: 30_000 }, () => {
       [
         `const { acquireBuildLock, releaseBuildLock } = await import(${JSON.stringify(LOCK_URL)});`,
         `const { storeBuild } = await import(${JSON.stringify(CACHE_URL)});`,
-        'const { mkdirSync, writeFileSync } = await import("node:fs");',
+        'const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");',
         'const { join } = await import("node:path");',
         `const got = acquireBuildLock({ platform: "ios", key: ${JSON.stringify(key)}, root: process.argv[2], logFile: join(process.argv[2], "build.ndjson") });`,
         'if (!got.acquired) { console.log(JSON.stringify({ raced: true })); process.exit(0); }',
         'writeFileSync(join(process.argv[2], "lock-ready"), "");',
+        'const lost = process.argv[3];',
         'try {',
-        '  await new Promise(r => setTimeout(r, 900));',
-        '  const app = join(process.argv[2], "Fixture.app");',
-        '  mkdirSync(app, { recursive: true });',
-        '  writeFileSync(join(app, "Fixture"), "binary");',
-        `  const stored = storeBuild("ios", ${JSON.stringify(key)}, app);`,
-        '  console.log(JSON.stringify({ built: true, stored }));',
+        `  const deadline = Date.now() + ${HANDSHAKE_MS};`,
+        '  let seen = false;',
+        '  for (;;) {',
+        '    if (existsSync(lost)) { seen = true; break; }',
+        '    if (Date.now() >= deadline) break;',
+        '    await new Promise(r => setTimeout(r, 20));',
+        '  }',
+        '  if (!seen) {',
+        '    console.log(JSON.stringify({ built: false, missing: lost }));',
+        '  } else {',
+        '    const app = join(process.argv[2], "Fixture.app");',
+        '    mkdirSync(app, { recursive: true });',
+        '    writeFileSync(join(app, "Fixture"), "binary");',
+        `    const stored = storeBuild("ios", ${JSON.stringify(key)}, app);`,
+        '    console.log(JSON.stringify({ built: true, stored }));',
+        '  }',
         '} finally {',
         '  releaseBuildLock(got);',
         '}',
@@ -482,8 +496,10 @@ describe('a real race between real processes', { timeout: 30_000 }, () => {
       'waiter.mjs',
       [
         `const { acquireBuildLock, waitForBuild } = await import(${JSON.stringify(LOCK_URL)});`,
+        'const { writeFileSync } = await import("node:fs");',
         `const got = acquireBuildLock({ platform: "ios", key: ${JSON.stringify(key)}, root: process.argv[2], logFile: null });`,
         'if (got.acquired) { console.log(JSON.stringify({ wonInstead: true })); process.exit(0); }',
+        'writeFileSync(process.argv[3], "");',
         `const result = await waitForBuild({ platform: "ios", key: ${JSON.stringify(key)}, intervalMs: 50, out: (l) => console.error(l) });`,
         'console.log(JSON.stringify({ ...result, held: got.held }));',
       ].join('\n'),
@@ -491,16 +507,17 @@ describe('a real race between real processes', { timeout: 30_000 }, () => {
 
     const buildRoot = join(root, 'builder');
     mkdirSync(buildRoot, { recursive: true });
-    const started = runNode(builder, [buildRoot]);
+    const lost = join(buildRoot, 'waiter-lost');
+    const started = runNode(builder, [buildRoot, lost]);
     const ready = join(buildRoot, 'lock-ready');
     for (let attempts = 0; attempts < 400 && !existsSync(ready); attempts += 1) {
       await new Promise((r) => setTimeout(r, 20));
     }
     expect(existsSync(ready), `the builder never wrote ${ready}`).toBe(true);
-    const [built, waited] = await Promise.all([started, runNode(waiter, [join(root, 'waiter')])]);
+    const [built, waited] = await Promise.all([started, runNode(waiter, [join(root, 'waiter'), lost])]);
 
     const builderOut = JSON.parse(built.stdout.trim());
-    expect(builderOut.built).toBe(true);
+    expect(builderOut.built, `the builder gave up waiting for ${lost}`).toBe(true);
     const waiterOut = JSON.parse(waited.stdout.trim());
     expect(waiterOut.wonInstead).toBe(undefined);
     expect(waiterOut.hit).toBe(builderOut.stored);

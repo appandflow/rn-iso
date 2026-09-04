@@ -80,7 +80,7 @@ function state() {
 
 async function until<T>(
   predicate: () => T | null | undefined,
-  { timeoutMs = 8000, label = 'condition' } = {},
+  { timeoutMs = 6000, label = 'condition' } = {},
 ): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
@@ -91,10 +91,17 @@ async function until<T>(
   }
 }
 
-function exited(child: ChildProcess) {
-  return new Promise<{ code: number | null; signal: string | null }>((resolve) =>
-    child.on('exit', (code, signal) => resolve({ code, signal })),
-  );
+function exited(child: ChildProcess, timeoutMs = 6000) {
+  return new Promise<{ code: number | null; signal: string | null }>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`timed out after ${timeoutMs}ms waiting for the collector (pid ${child.pid}) to exit`)),
+      timeoutMs,
+    );
+    child.on('exit', (code, signal) => {
+      clearTimeout(timer);
+      resolve({ code, signal });
+    });
+  });
 }
 
 describe('parseArgs', () => {
