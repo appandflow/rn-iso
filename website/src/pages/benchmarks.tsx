@@ -19,6 +19,12 @@ import styles from './benchmarks.module.css';
 
 const readinessBenchmarks = benchmarks.filter((benchmark) => benchmark.suite !== 'launch-crash');
 const launchCrashBenchmarks = benchmarks.filter((benchmark) => benchmark.suite === 'launch-crash');
+const readinessPlatforms = (['ios', 'android'] as const)
+  .map((platform) => ({
+    platform,
+    benchmarks: readinessBenchmarks.filter((benchmark) => (benchmark.platform ?? 'ios') === platform),
+  }))
+  .filter(({ benchmarks: platformBenchmarks }) => platformBenchmarks.length > 0);
 
 function LaunchCrashCard({ benchmark }: { benchmark: BenchmarkData }): ReactNode {
   const runs = benchmark.runs.filter((run) => run.valid && run.diagnosisSeconds !== null);
@@ -125,27 +131,29 @@ export default function Benchmarks(): ReactNode {
             <div className={styles.eyebrow}>Agent benchmark</div>
             <Heading as="h1">Stim agent benchmarks</Heading>
             <p>
-              Compare how coding agents launch the same React Native app with Stim and the local Expo/Apple toolchain.
-              Results are split into JavaScript and native tasks, and every published time links to its command-level
-              audit and Settings-screen proof.
+              Compare how coding agents launch the same React Native app with Stim and the local Expo/native toolchain.
+              Platforms and JavaScript/native tasks are measured separately, and every published time links to its
+              command-level audit and Settings-screen proof.
             </p>
           </header>
 
-          <section className={styles.overview} aria-labelledby="overview-title">
-            <div className={styles.sectionHeading}>
-              <div>
-                <Heading as="h2" id="overview-title">
-                  Performance across models
-                </Heading>
-                <p>Each bar is one valid pilot run; missing or invalid cells are labeled. Lower time is better.</p>
+          {readinessPlatforms.map(({ platform, benchmarks: platformBenchmarks }) => (
+            <section className={styles.overview} aria-labelledby={`${platform}-overview-title`} key={platform}>
+              <div className={styles.sectionHeading}>
+                <div>
+                  <Heading as="h2" id={`${platform}-overview-title`}>
+                    {platform === 'ios' ? 'iOS' : 'Android'} performance across models
+                  </Heading>
+                  <p>Each bar is one valid run; missing or invalid cells are labeled. Lower time is better.</p>
+                </div>
               </div>
-            </div>
-            <div className={styles.overviewGrid}>
-              {(['javascript', 'native'] as const).map((variant) => (
-                <OverviewChart key={variant} variant={variant} benchmarks={readinessBenchmarks} />
-              ))}
-            </div>
-          </section>
+              <div className={styles.overviewGrid}>
+                {(['javascript', 'native'] as const).map((variant) => (
+                  <OverviewChart key={variant} variant={variant} benchmarks={platformBenchmarks} />
+                ))}
+              </div>
+            </section>
+          ))}
 
           {launchCrashBenchmarks.length ? (
             <section className={styles.overview} aria-labelledby="launch-crash-title">
@@ -177,11 +185,10 @@ export default function Benchmarks(): ReactNode {
               <p>
                 Readiness comparisons use the same clean app fixture, requested model, machine, and fixed code change.
                 The primary endpoint starts when the agent is dispatched and stops only after agent-device finds the
-                expected text on Settings and saves a screenshot.
+                expected text on Settings and saves a screenshot. Each current run also records onboarding and
+                navigation from the exact run device.
               </p>
-              <a href="https://github.com/appandflow/stim/blob/main/docs/agent-benchmark-v4.md">
-                Read the full protocol
-              </a>
+              <a href="https://github.com/appandflow/stim/blob/main/docs/agent-benchmark.md">Read the full protocol</a>
             </div>
             <dl>
               <div>
@@ -191,7 +198,8 @@ export default function Benchmarks(): ReactNode {
               <div>
                 <dt>Two arms</dt>
                 <dd>
-                  Stim uses its pinned published build and parked simulator; control uses local Expo and Apple tooling.
+                  Stim uses its pinned published build; control uses local Expo and native platform tooling. iOS reuses
+                  a prepared parked simulator, while both Android arms create a fresh matched AVD.
                 </dd>
               </div>
               <div>
@@ -217,7 +225,10 @@ export default function Benchmarks(): ReactNode {
               <Heading as="h2" id="detail-cta-title">
                 Inspect every benchmark run
               </Heading>
-              <p>Compare environments, play each command timeline, inspect terminal output, and open proof images.</p>
+              <p>
+                Compare environments, play each command timeline, inspect terminal output, and open proof images and
+                simulator recordings.
+              </p>
             </div>
             <Link className="button button--primary" to="/benchmarks/details">
               Explore detailed audits

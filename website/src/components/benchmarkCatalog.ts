@@ -3,10 +3,18 @@ import benchmarkJson from '@site/src/data/benchmarks/luna-rc12.json';
 import opusBenchmarkJson from '@site/src/data/benchmarks/opus-rc12.json';
 import sonnetBenchmarkJson from '@site/src/data/benchmarks/sonnet-rc12.json';
 import solBenchmarkJson from '@site/src/data/benchmarks/sol-rc12.json';
+import solAndroidBenchmarkJson from '@site/src/data/benchmarks/sol-android.json';
 import solLaunchCrashJson from '@site/src/data/benchmarks/sol-launch-crash.json';
 
 export const benchmarks = (
-  [benchmarkJson, solBenchmarkJson, sonnetBenchmarkJson, opusBenchmarkJson, solLaunchCrashJson] as BenchmarkData[]
+  [
+    benchmarkJson,
+    solBenchmarkJson,
+    solAndroidBenchmarkJson,
+    sonnetBenchmarkJson,
+    opusBenchmarkJson,
+    solLaunchCrashJson,
+  ] as BenchmarkData[]
 ).filter((benchmark) => benchmark.runs.some((run) => run.valid));
 
 export function defaultRun(benchmark: BenchmarkData | undefined): BenchmarkRun | undefined {

@@ -1,7 +1,14 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { iosDevicesFromSimctl, selectIosCandidate } from './watch-app-selection.mjs';
+import {
+  androidApplicationLabelFromBadging,
+  androidDevicesFromAdb,
+  iosDevicesFromSimctl,
+  selectAndroidCandidate,
+  selectIosCandidate,
+} from './watch-app-selection.mjs';
 
 const [
   baselinePath,
@@ -13,12 +20,17 @@ const [
   expectedControlName,
   expectedControlDeviceType,
   expectedControlRuntime,
+  platform = 'ios',
+  expectedStimName,
+  expectedSystemImage,
+  expectedNativeLabel,
 ] = process.argv.slice(2);
 const baseline = new Set(JSON.parse(readFileSync(baselinePath, 'utf8')));
 const expectedControl = {
   name: expectedControlName,
   deviceTypeIdentifier: expectedControlDeviceType,
   runtimeIdentifier: expectedControlRuntime,
+  ...(expectedSystemImage ? { systemImage: expectedSystemImage } : {}),
 };
 const deadline = Date.now() + 20 * 60 * 1000;
 let firstAlive = null;
@@ -31,12 +43,47 @@ function simctl(...args) {
   });
 }
 
+function adb(...args) {
+  return execFileSync('adb', args, {
+    encoding: 'utf8',
+    timeout: 15_000,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+}
+
 function devices() {
+  if (platform === 'android') {
+    return androidDevicesFromAdb(adb('devices', '-l'), (serial) => {
+      const name = adb('-s', serial, 'shell', 'getprop', 'ro.boot.qemu.avd_name').trim();
+      const configPath = join(
+        process.env.ANDROID_AVD_HOME ?? join(homedir(), '.android', 'avd'),
+        `${name}.avd`,
+        'config.ini',
+      );
+      const config = existsSync(configPath) ? readFileSync(configPath, 'utf8') : '';
+      const systemImage = config
+        .match(/^image\.sysdir\.1=(.+)$/m)?.[1]
+        ?.trim()
+        .replace(/\/+$/, '')
+        .replaceAll('/', ';');
+      return {
+        name,
+        deviceTypeIdentifier:
+          config.match(/^hw\.device\.name=(.+)$/m)?.[1]?.trim() ??
+          adb('-s', serial, 'shell', 'getprop', 'ro.product.device').trim(),
+        runtimeIdentifier: `Android-${adb('-s', serial, 'shell', 'getprop', 'ro.build.version.sdk').trim()}`,
+        systemImage,
+      };
+    });
+  }
   return iosDevicesFromSimctl(JSON.parse(simctl('list', 'devices', '--json')));
 }
 
 function alive(udid) {
   try {
+    if (platform === 'android') {
+      return adb('-s', udid, 'shell', 'pidof', 'com.appandflow.trailhead').trim().length > 0;
+    }
     simctl('get_app_container', udid, 'com.appandflow.trailhead', 'app');
     const processes = execFileSync('ps', ['-A', '-o', 'command='], {
       encoding: 'utf8',
@@ -65,7 +112,7 @@ function captureJavascriptProof() {
           '60',
           '--output',
           target,
-          `http://127.0.0.1:${port}/.expo/.virtual-metro-entry.bundle?platform=ios&dev=true&minify=false`,
+          `http://127.0.0.1:${port}/.expo/.virtual-metro-entry.bundle?platform=${platform}&dev=true&minify=false`,
         ],
         { timeout: 70_000 },
       );
@@ -79,14 +126,66 @@ function captureJavascriptProof() {
   return { valid: false, reason: 'changed-metro-bundle-not-found-at-app-alive' };
 }
 
+function androidBuildTool(name) {
+  const sdk = process.env.ANDROID_HOME ?? process.env.ANDROID_SDK_ROOT;
+  if (!sdk) return null;
+  const buildTools = join(sdk, 'build-tools');
+  if (!existsSync(buildTools)) return null;
+  return readdirSync(buildTools)
+    .toSorted((left, right) => right.localeCompare(left, undefined, { numeric: true }))
+    .map((version) => join(buildTools, version, name))
+    .find((path) => existsSync(path));
+}
+
+function captureAndroidNativeProof(serial) {
+  const aapt = androidBuildTool('aapt');
+  if (!aapt) return { valid: false, reason: 'android-native-proof-tool-missing' };
+  const packagePath = adb('-s', serial, 'shell', 'pm', 'path', 'com.appandflow.trailhead')
+    .split('\n')
+    .find((line) => line.startsWith('package:') && line.endsWith('/base.apk'))
+    ?.slice('package:'.length);
+  if (!packagePath) return { valid: false, reason: 'android-installed-apk-missing' };
+  const safeLabel = expectedNativeLabel.replaceAll(/[^a-zA-Z0-9.-]/g, '-');
+  const temporaryApk = join('/tmp', `${safeLabel}-base.apk`);
+  const target = join(dirname(outputPath), 'proof', 'native-application-label.txt');
+  try {
+    adb('-s', serial, 'pull', packagePath, temporaryApk);
+    const label = androidApplicationLabelFromBadging(
+      execFileSync(aapt, ['dump', 'badging', temporaryApk], {
+        encoding: 'utf8',
+        timeout: 30_000,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }),
+    );
+    writeFileSync(target, `serial=${serial}\napplication-label=${label ?? ''}\n`);
+    return {
+      valid: label === expectedNativeLabel,
+      kind: 'installed-android-apk-label-at-app-alive',
+      expected: expectedNativeLabel,
+      observed: label,
+      target,
+    };
+  } finally {
+    if (existsSync(temporaryApk)) rmSync(temporaryApk);
+  }
+}
+
 while (Date.now() < deadline) {
   try {
-    const selection = selectIosCandidate(devices(), {
-      arm,
-      baseline,
-      parkedUdid,
-      expectedControl,
-    });
+    const selection =
+      platform === 'android'
+        ? selectAndroidCandidate(devices(), {
+            arm,
+            baseline,
+            expectedControl,
+            expectedStim: { ...expectedControl, name: undefined, namePrefix: expectedStimName },
+          })
+        : selectIosCandidate(devices(), {
+            arm,
+            baseline,
+            parkedUdid,
+            expectedControl,
+          });
     if (selection.error) {
       writeFileSync(outputPath, `${JSON.stringify(selection, null, 2)}\n`);
       process.exit(2);
@@ -96,8 +195,13 @@ while (Date.now() < deadline) {
         observedAt: new Date().toISOString(),
         simulator: selection.candidate,
       };
-      const proof = variant === 'javascript' ? captureJavascriptProof() : null;
-      if (variant === 'javascript' && !proof.valid) {
+      const proof =
+        variant === 'javascript'
+          ? captureJavascriptProof()
+          : variant === 'native' && platform === 'android'
+            ? captureAndroidNativeProof(selection.candidate.udid)
+            : null;
+      if (proof && !proof.valid) {
         await new Promise((resolve) => setTimeout(resolve, 1000));
         continue;
       }

@@ -1,0 +1,1774 @@
+{
+  "schemaVersion": 1,
+  "stage": "sol-android",
+  "title": "Sol Android",
+  "suite": "readiness",
+  "platform": "android",
+  "protocolVersion": 4,
+  "recordedOn": "2026-09-04",
+  "primaryMetric": "Dispatch to validated Settings screenshot",
+  "pricing": {
+    "model": "gpt-5.6-sol",
+    "inputPerMillion": 4,
+    "cachedInputPerMillion": 0.4,
+    "outputPerMillion": 20,
+    "source": "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
+    "estimateNote": "API-equivalent token estimate from aggregate counters. It excludes long-context multipliers, cache-write premiums, tool fees, and subscription pricing."
+  },
+  "environment": {
+    "machine": {
+      "model": "Mac mini",
+      "chip": "Apple M4 (10-core)",
+      "memory": "16 GB"
+    },
+    "macos": "macOS 26.5.2 (25F84)",
+    "xcode": "Android SDK 20.0 / Emulator 36.4.9 (build_id 14788078) (CL:N/A) / adb 36.0.2-14143358",
+    "node": "Node 26.7.0",
+    "simulator": "emu64a16k / Android-36 / system-images;android-36;google_apis_playstore_ps16k;arm64-v8a"
+  },
+  "runs": [
+    {
+      "id": "javascript-stim",
+      "model": "gpt-5.6-sol",
+      "platform": "android",
+      "variant": "javascript",
+      "arm": "stim",
+      "valid": true,
+      "invalidReasons": [],
+      "settingsReadySeconds": 149.357,
+      "appAliveSeconds": 100.208,
+      "diagnosisSeconds": null,
+      "diagnosisCommandCount": null,
+      "launchCrashAudit": null,
+      "diagnosisUsage": null,
+      "estimatedDiagnosisCostUsd": null,
+      "totalSeconds": 185.356,
+      "commandCount": 17,
+      "usage": {
+        "input_tokens": 474607,
+        "cached_input_tokens": 447104,
+        "output_tokens": 4348,
+        "reasoning_output_tokens": 1012
+      },
+      "estimatedTokenCostUsd": 0.37581359999999997,
+      "summary": "Created an isolated worktree, worked on the JavaScript change, and ran Stim's Android workflow. It reached Settings and captured valid agent-device proof.",
+      "messages": [
+        {
+          "id": "item_0",
+          "atSeconds": 5.287,
+          "text": "I’m using the Stim skill to create and launch the isolated Android run, then the agent-device skill to navigate and capture the required proof. I’ll keep all project edits inside the printed worktree and leave Metro plus the app running after the screenshot is saved."
+        },
+        {
+          "id": "item_2",
+          "atSeconds": 10.319,
+          "text": "The Stim skill requires its installed, version-matched workflow guide before any run commands, so I’m loading that now with the pinned `stim` executable."
+        },
+        {
+          "id": "item_5",
+          "atSeconds": 19.967,
+          "text": "Both skill instructions are loaded. I’m creating the requested isolated worktree now with the exact command; after it prints the path, every project operation will use that directory."
+        },
+        {
+          "id": "item_7",
+          "atSeconds": 47.969,
+          "text": "The run worktree is `worktree/bench+javascript-stim`. I’m locating and changing only the requested subtitle there."
+        },
+        {
+          "id": "item_11",
+          "atSeconds": 61.612,
+          "text": "The diff is exactly the one-line subtitle replacement. I’m starting the isolated Metro server now, followed by the required Android 36 play-store 16 KB system image."
+        },
+        {
+          "id": "item_14",
+          "atSeconds": 101.037,
+          "text": "The dedicated <simulator-udid-prefix> has booted as `<simulator-udid>`; the cached native build is still finishing installation and readiness checks. I’m staying with that launch until Stim returns its final app/launch facts."
+        },
+        {
+          "id": "item_15",
+          "atSeconds": 119.563,
+          "text": "Stim reports `com.appandflow.trailhead` launched successfully on the run-owned `<simulator-udid>` with Metro on port 8082 and a cache hit. I’m opening the isolated agent-device session on that exact serial, then immediately starting the required device-scoped recording."
+        },
+        {
+          "id": "item_18",
+          "atSeconds": 133.186,
+          "text": "The isolated session opened cleanly and recording is active at the required proof path. No Expo onboarding is present; the Settings tab is exposed as semantic ref `@e62`, so I’m selecting it now."
+        },
+        {
+          "id": "item_20",
+          "atSeconds": 140.133,
+          "text": "Settings is open and the updated subtitle is visible in the semantic snapshot. I’m now executing the five required proof commands individually and in the specified order: wait, screenshot, copy, recording stop, and session close."
+        },
+        {
+          "id": "item_26",
+          "atSeconds": 176.194,
+          "text": "The required wait succeeded, the screenshot was copied, recording stop reported the saved `session.mp4`, and the isolated agent-device session is closed. I’m doing one final read-only existence check on the copied proof image; Metro and the launched app remain running."
+        },
+        {
+          "id": "item_28",
+          "atSeconds": 185.211,
+          "text": "Updated the Settings offline-map subtitle and verified it in the running app on `<simulator-udid>`.\n\n- Worktree: `worktree/bench+javascript-stim`\n- Screenshot: [settings.png](results/sol-android/javascript-stim/proof/settings.png)\n- Video: [session.mp4](results/sol-android/javascript-stim/proof/session.mp4)\n\nThe text wait succeeded, screenshot exists, recording saved successfully, and Metro/app remain running."
+        }
+      ],
+      "commands": [
+        {
+          "id": "item_1",
+          "startSeconds": 6.92,
+          "endSeconds": 6.92,
+          "command": "sed -n '1,240p' results/sol-android/javascript-stim/runner-home/.codex/skills/stim/SKILL.md",
+          "output": "---\nname: stim\ndescription: The React Native / Expo CLI for AI agents. Use when an agent needs an isolated Metro server and simulator or <simulator-udid-prefix>, must build and launch an app, inspect build or runtime errors, create a parallel worktree, or identify the correct device for UI interaction.\n---\n\n# Stim\n\nBefore using Stim, load the workflow guide from the installed CLI:\n\n```bash\nstim guide agent\n```\n\nFollow the version-matched instructions it prints.\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_3",
+          "startSeconds": 11.176,
+          "endSeconds": 11.29,
+          "command": "stim guide agent",
+          "output": "Commands use `stim`. If it is not installed globally, replace `stim` with `npx stim-cli`.\n\nAGENT WORKFLOW\n\nUse Stim to run React Native and Expo apps without sharing a Metro port or\ndevice with another workspace. Prefer plain output: it streams each phase and\nends with the facts the next step needs. Use --json only when a script must\nparse a stable payload.\n\nNORMAL WORKFLOW\n\nWork in the current checkout by default. When the task needs another branch or\nan isolated environment, create a worktree and carry its dependencies and\nnative outputs.\n\nBefore native worktree work, run doctor for the platform in scope. It checks\nthe main checkout from a linked worktree. Fix relevant findings and inspect the\nupstream gap.\n\n  stim doctor --platform ios          # or: --platform android\n\n  # In the main checkout, seed the shared build caches when more native\n  # worktrees are coming. Skip this for one-off or JavaScript-only work.\n  stim start\n  stim ios                             # or: stim android\n  stim stop\n\n  # Branches from HEAD. --carry-ignored carries installed dependencies and\n  # native output. Pass it on the first creation, never on a retry. The command\n  # prints the new absolute path.\n  stim worktree create <name> --carry-ignored\n  cd <printed-path>\n\n  stim start\n  stim ios                             # or: stim android\n  stim logs --errors\n\n  # JavaScript and TypeScript edits use Fast Refresh.\n  stim logs --since 30s --level error\n\n  stim stop\n  stim worktree remove\n\nRULES DURING THE LOOP\n\n- Run start before a debug ios or android build. If it returns STIM_NO_METRO,\n  run stim start and retry.\n- Run ios or android again after a native input changes. A JavaScript-only\n  change does not need one.\n- A cold native build can outlive a shell timeout. Run the same command again:\n  the second call joins the active build or returns its result.\n- ios and android install the app, launch it, and check readiness. Trust the\n  exact device, app, Metro, and launch facts in the final summary. Use the full\n  reported device ID. Never assume a simulator named booted belongs to this\n  workspace.\n- After each ios or android run, give the user one compact result: exact device,\n  app id, launch state, cache result, total duration, and whether stim logs\n  --errors passed. Include a remedy only when action remains. Do not repeat the\n  phase transcript.\n- An OK summary with no launch qualifier proves the launch. \"bundle requested,\n  still building\" means Metro has not finished; wait and query the logs. For\n  launch UNVERIFIED, follow the printed remedy before claiming success. JSON\n  reports these as true, \"bundling\", and \"unverified\" in launched.\n- Exit code 0 from logs --errors is the pass condition. Human output can show\n  \"No matching log records\" on stderr. JSON mode prints zero bytes when no\n  records match. Do not read the NDJSON files directly.\n- Use stim status when resuming a workspace or recovering missing device,\n  port, server, or build facts. A normal start and platform run already print\n  them. Use stim doctor when a build is unexpectedly slow or the environment\n  looks incomplete.\n\nOWNERSHIP AND DELETION\n\nStim creates, boots, and deletes only devices it created. Owned simulators use\nthe stim-<label> (<model> <runtime>) name. Never point Stim at a user-created\n<simulator-udid-prefix> or simulator.\n\nworktree remove parks the workspace's simulator for later adoption. A parked\nsimulator is Stim-owned: never delete one by hand. gc --delete clears verified\nentries and keeps failures; see guide lifecycle. First launch on a physical\niPhone can need the one-time taps named by the remedy.\n\nstim android --device [serial] and stim ios --device [udid] install on a\nconnected physical device. Stim never creates, boots, or deletes hardware and\nrecords nothing about it, so stop and gc leave it alone.\n\nA --device run leases that device for the run. stim device lock ios --for 10m\nholds it across runs; stim device unlock gives it back. Never delete another\nworkspace's lease file under ~/.stim/device-locks; gc --delete removes expired\nones.\n\nTreat a refusal as an ownership or state mismatch: read its code and remedy.\nNever reach for --force first.\n\nAsk the user before these actions:\n\n- worktree remove, because it deletes the worktree, its Stim-created branch\n  when it has no unique commits, and gives up its owned device.\n- worktree remove --force, because it also discards uncommitted and untracked\n  files.\n- gc --delete, because it deletes orphaned resources. gc --delete --cache all\n  empties the shared build caches instead; it inspects nothing else.\n- stop when the workspace owns an EAS session, because it irreversibly ends\n  that remote session. For a local device, stop shuts it down but does not\n  delete it. An explicit stop shuts down a Stim-owned simulator even when\n  another process uses it. It never shuts down an unowned simulator.\n\nSANDBOXES\n\nAn agent harness that sandboxes shell commands usually permits writes inside\nthe project and little else. Stim also needs writes to STIM_HOME (~/.stim by\ndefault), simulator service access, and local access to the adb server. When\nthose sit outside the harness allowlist, the failure looks like an unwritable\ndirectory or unavailable device service rather than a broken machine. Decide\nat the start of a session whether to run Stim outside the sandbox or ask the\nuser to allow those operations. guide errors lists the exact requirements.\n\nLOAD ADVANCED GUIDANCE WHEN NEEDED\n\n  stim guide             # list topics\n  stim guide lifecycle   # full flow, flags, worktrees, builds, and capacity\n  stim guide facts       # JSON payload fields\n  stim guide metro       # supervisor, custom Metro, tunnels, and remote devices\n  stim guide logs        # filters, record shape, and capture limits\n  stim guide errors      # error codes and remedies\n  stim guide cleanup     # destructive behavior and disk cleanup\n  stim guide settings    # configuration files and supported keys\n\nRead the relevant topic before release configurations or Android variants;\nremote devices; custom Metro processes or tunnels; cache misses, bypasses, or\nconcurrent builds; capacity limits; cache statistics from stim stats; worktree\ncarry-over; fingerprint exclusions; gc; --force; cleanup failures; or\nunfamiliar states and error codes. Ordinary stim stop and an authorized clean\nstim worktree remove do not need the cleanup guide.\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_4",
+          "startSeconds": 15.479,
+          "endSeconds": 15.48,
+          "command": "sed -n '1,320p' results/sol-android/javascript-stim/runner-home/.codex/skills/agent-device/SKILL.md",
+          "output": "---\nname: agent-device\ndescription: Automates Apple-platform apps (iOS, tvOS, macOS), Android devices, and Amazon Vega OS TV apps in Vega Virtual Devices. Use when navigating apps, taking snapshots/screenshots where supported, driving TV remotes, tapping, typing, scrolling, extracting UI info, collecting evidence, or planning agent-device CLI commands.\n---\n\n# agent-device\n\nFor a normal app-driving task, start immediately. Do not probe first with `--help`, `--version`, `devices`, `appstate`, `snapshot`, or `screenshot`:\n\n```bash\nagent-device open <app> --foreground\n```\n\nThat starts the session and returns the initial interactive snapshot with `@refs`.\n\nLoop: act with `press|click|fill|longpress <target> ... --settle`, `scroll <direction> --settle`, or `back --settle`; continue from the printed diff, verify the named expectation (`wait text \"...\"`, `is`, `get`, or `find`), then run `agent-device close`.\n\nCopy refs byte-for-byte: `@e12`, `@e12~s4` — keep the `@` and any `~sN`. Prefer current refs, then `id`/`label`/`role` selectors; coordinates are a last resort. If snapshot reports sparse/AX-unavailable, its refs and selectors are invalid: run `agent-device screenshot`, inspect the image, use coordinates, then retry `snapshot -i` after navigating. Otherwise run `snapshot -i` only when the diff lacks the next target.\n\nError output includes corrective hints; follow them instead of re-planning. Only when the task is specialized (for example gestures, scripting, TV, macOS, remote, or debugging) or a command shape is unclear, run `agent-device help <topic>`. `agent-device --help` lists topics, but is not a startup step.\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_6",
+          "startSeconds": 21.399,
+          "endSeconds": 44.34,
+          "command": "stim worktree create bench/javascript-stim --dir worktree/project --carry-ignored",
+          "output": "  branch      worktree-bench/javascript-stim from HEAD (63fe92c)\n  carry       node_modules, Pods, native build output (APFS clone)\n  ready       worktree/bench+javascript-stim\nworktree/bench+javascript-stim\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_8",
+          "startSeconds": 49.304,
+          "endSeconds": 49.304,
+          "command": "rg -n -F 'Keep map tiles for saved trails on device' .",
+          "output": "./app/(tabs)/settings.tsx:112:            subtitle=\"Keep map tiles for saved trails on device\"\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_10",
+          "startSeconds": 58.267,
+          "endSeconds": 58.268,
+          "command": "git diff -- app/'(tabs)'/settings.tsx",
+          "output": "diff --git a/app/(tabs)/settings.tsx b/app/(tabs)/settings.tsx\nindex 2f3d8a7..3bdee54 100644\n--- a/app/(tabs)/settings.tsx\n+++ b/app/(tabs)/settings.tsx\n@@ -109,7 +109,7 @@ export default function SettingsScreen() {\n           <RowLabel\n             icon=\"cloud-offline-outline\"\n             title=\"Offline maps\"\n-            subtitle=\"Keep map tiles for saved trails on device\"\n+            subtitle=\"Keep saved trail maps available offline\"\n           />\n           <Switch\n             value={offlineMaps}\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_12",
+          "startSeconds": 63.791,
+          "endSeconds": 65.75,
+          "command": "stim start",
+          "output": "  metro       starting on port 8082 (expo-child, supervisor pid 96875)\nOK: dev server on port 8082, supervisor pid 96875 (expo-child) (1.7s)\n  logs        results/sol-android/javascript-stim/stim-home/workspaces/bench-sol-android-gpt-5-6-sol-javascript-stim-17--32a25ce2accaa311/logs\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_13",
+          "startSeconds": 68.874,
+          "endSeconds": 112.647,
+          "command": "stim android --system-image \"system-images;android-36;google_apis_playstore_ps16k;arm64-v8a\"",
+          "output": "  metro       port 8082 (pid 96878)\n  device      waiting for <simulator-udid> to finish booting\n  device      stim-6c077565-bench-javascript-stim created (22.5s)\n  fingerprint 932aa4.. hit (3.9s)\n  device      stim-6c077565-bench-javascript-stim (<simulator-udid>) booted (98ms)\n  install     app-debug.apk -> <simulator-udid> (4.1s)\n  launch      com.appandflow.trailhead (181ms)\n  metro       debug_http_host <local-ip>:8082 + adb reverse tcp:8082->tcp:8082\n  logs        results/sol-android/javascript-stim/stim-home/workspaces/bench-sol-android-gpt-5-6-sol-javascript-stim-17--32a25ce2accaa311/logs (collector pid 97518)\n  verify      bundle loaded, process alive, stable for 3s -- the first screen may still be rendering (12.8s total)\nOK: com.appandflow.trailhead launched on <simulator-udid>, Metro port 8082 (cache hit)\n  device      stim-6c077565-bench-javascript-stim (<simulator-udid>)\n  app         com.appandflow.trailhead\n  metro       running on port 8082\n  cache       cache hit\n  logs        results/sol-android/javascript-stim/stim-home/workspaces/bench-sol-android-gpt-5-6-sol-javascript-stim-17--32a25ce2accaa311/logs\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_16",
+          "startSeconds": 123.01,
+          "endSeconds": 125.759,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-stim agent-device open com.appandflow.trailhead --foreground --platform android --serial <simulator-udid>",
+          "output": "Opened: com.appandflow.trailhead\nSession state: ./state/agent-device/sessions/javascript-stim\nPage: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 22 visible nodes (64 total)\nCollapsed 42 Android helper nodes from the agent-facing text snapshot; use --raw or --json for the full hierarchy.\n@e1 [scroll-area] [scrollable]\n@e2 [text-field] \"Search trails, regions, tags\" [editable]\n@e3 [horizontalscrollview] \"Bas-Saint-Laurent, Adirondacks, All regions\" [scrollable]\n@e4 [button] \"All regions\"\n@e6 [button] \"Adirondacks\"\n@e8 [button] \"Bas-Saint-Laurent\"\n@e10 [horizontalscrollview] \"Hard, Moderate, Easy, Any level\" [scrollable]\n@e11 [button] \"Any level\"\n@e13 [button] \"Easy\"\n@e15 [button] \"Moderate\"\n@e17 [button] \"Hard\"\n@e19 [button] \"Expert\"\n@e20 [button] \"Sort by name\"\n@e22 [button] \"Sort by distance\"\n@e24 [button] \"Sort by rating\"\n@e26 [scroll-area] \"Belvedere de la Tour Bleu, Mont-Tremblant, , 1.9 km, , 701 m, , 1:31:00, Hard, , 5.0, (609), Belvedere de la Chute, Gaspesie, 11 km, 1106 m, 4:16:00, Moderate, 3.8, (837)\" [scrollable]\n  [content above scroll-area hidden]\n  [content below scroll-area hidden]\n@e27 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n@e40 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n@e53 [group] \", Trails\"\n@e56 [group] \", Record\"\n@e59 [group] \", History\"\n@e62 [group] \", Settings\"\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_17",
+          "startSeconds": 129.295,
+          "endSeconds": 130.471,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-stim agent-device record start results/sol-android/javascript-stim/proof/session.mp4 --scope device --quality high --hide-touches",
+          "output": "results/sol-android/javascript-stim/proof/session.mp4\nSession state: ./state/agent-device/sessions/javascript-stim\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_19",
+          "startSeconds": 134.96,
+          "endSeconds": 136.632,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-stim agent-device click @e62 --settle",
+          "output": "Tapped @e62 (280, 592)\nsettled after 1139ms: +18 -50 (~14 unchanged)\n- @e2 [text-field] \"Search trails, regions, tags\"\n- @e3 [horizontalscrollview]\n- @e4 [button] \"All regions\"\n- @e5 [text] \"All regions\"\n- @e6 [button] \"Adirondacks\"\n- @e7 [text] \"Adirondacks\"\n- @e8 [button] \"Bas-Saint-Laurent\"\n- @e9 [text] \"Bas-Saint-Laurent\"\n- @e10 [horizontalscrollview]\n- @e11 [button] \"Any level\"\n- @e12 [text] \"Any level\"\n- @e13 [button] \"Easy\"\n- @e14 [text] \"Easy\"\n- @e15 [button] \"Moderate\"\n- @e16 [text] \"Moderate\"\n- @e17 [button] \"Hard\"\n- @e18 [text] \"Hard\"\n- @e19 [button] \"Expert\"\n- @e20 [button] \"Sort by name\"\n- @e21 [text] \"Name\"\n- @e22 [button] \"Sort by distance\"\n- @e23 [text] \"Distance\"\n- @e24 [button] \"Sort by rating\"\n- @e25 [text] \"Rating\"\n- @e27 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e28 [text] \"Belvedere de la Chute\"\n- @e29 [text] \"Gaspesie\"\n- @e30 [text] \"\"\n- @e31 [text] \"11 km\"\n- @e32 [text] \"\"\n- @e33 [text] \"1106 m\"\n- @e34 [text] \"\"\n- @e35 [text] \"4:16:00\"\n- @e36 [text] \"Moderate\"\n- @e37 [text] \"\"\n- @e38 [text] \"3.8\"\n- @e39 [text] \"(837)\"\n- @e40 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n- @e41 [text] \"Belvedere de la Tour Bleu\"\n- @e42 [text] \"Mont-Tremblant\"\n- @e43 [text] \"\"\n- @e44 [text] \"1.9 km\"\n- @e45 [text] \"\"\n- @e46 [text] \"701 m\"\n- @e47 [text] \"\"\n- @e48 [text] \"1:31:00\"\n- @e49 [text] \"Hard\"\n- @e50 [text] \"\"\n- @e51 [text] \"5.0\"\n- @e52 [text] \"(609)\"\n+ @e3~s608234 [text] \"UNITS\"\n+ @e4~s608234 [text] \"Distance\"\n+ @e5~s608234 [text] \"\"\n+ @e6~s608234 [text] \"Used across the whole app\"\n+ @e7~s608234 [button] \"Metric units\"\n+ @e8~s608234 [text] \"Metric\"\n+ @e9~s608234 [button] \"Imperial units\"\n+ @e10~s608234 [text] \"Imperial\"\n+ @e11~s608234 [text] \"PREFERENCES\"\n+ @e12~s608234 [text] \"\"\n+ @e13~s608234 [text] \"Hike reminders\"\n+ @e14~s608234 [text] \"Nudge me when I have not hiked in a while\"\n+ @e15~s608234 [switch] \"Hike reminders\"\n+ @e16~s608234 [text] \"\"\n+ @e17~s608234 [text] \"Offline maps\"\n+ @e18~s608234 [text] \"Keep saved trail maps available offline\"\n+ @e19~s608234 [switch] \"Offline maps\"\n+ @e20~s608234 [text] \"STORAGE\"\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_21",
+          "startSeconds": 142.039,
+          "endSeconds": 142.169,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-stim agent-device wait text \"Keep saved trail maps available offline\"",
+          "output": "",
+          "exitCode": 0
+        },
+        {
+          "id": "item_22",
+          "startSeconds": 147.602,
+          "endSeconds": 149.357,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-stim agent-device screenshot tmp/javascript-stim-settings.png",
+          "output": "tmp/javascript-stim-settings.png (320x640)\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_23",
+          "startSeconds": 152.543,
+          "endSeconds": 152.543,
+          "command": "cp tmp/javascript-stim-settings.png results/sol-android/javascript-stim/proof/settings.png",
+          "output": "",
+          "exitCode": 0
+        },
+        {
+          "id": "item_24",
+          "startSeconds": 158.598,
+          "endSeconds": 164.776,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-stim agent-device record stop",
+          "output": "results/sol-android/javascript-stim/proof/session.mp4\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_25",
+          "startSeconds": 167.584,
+          "endSeconds": 167.873,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-stim agent-device close",
+          "output": "Closed: javascript-stim\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_27",
+          "startSeconds": 177.364,
+          "endSeconds": 177.364,
+          "command": "stat -f '%N %z bytes' results/sol-android/javascript-stim/proof/settings.png",
+          "output": "results/sol-android/javascript-stim/proof/settings.png 40203 bytes\n",
+          "exitCode": 0
+        }
+      ],
+      "backgroundProcesses": [],
+      "markers": [
+        {
+          "id": "app-alive",
+          "kind": "appAlive",
+          "label": "App process alive",
+          "atSeconds": 100.208
+        },
+        {
+          "id": "settings-ready",
+          "kind": "settingsReady",
+          "label": "Settings proof ready",
+          "atSeconds": 149.357
+        }
+      ],
+      "proof": {
+        "src": "benchmarks/sol-android/javascript-stim.png",
+        "expected": "Keep saved trail maps available offline",
+        "width": 320,
+        "height": 640
+      },
+      "recording": {
+        "src": "benchmarks/sol-android/javascript-stim.mp4",
+        "bytes": 132824
+      }
+    },
+    {
+      "id": "javascript-control",
+      "model": "gpt-5.6-sol",
+      "platform": "android",
+      "variant": "javascript",
+      "arm": "control",
+      "valid": true,
+      "invalidReasons": [],
+      "settingsReadySeconds": 419.681,
+      "appAliveSeconds": 356.055,
+      "diagnosisSeconds": null,
+      "diagnosisCommandCount": null,
+      "launchCrashAudit": null,
+      "diagnosisUsage": null,
+      "estimatedDiagnosisCostUsd": null,
+      "totalSeconds": 462,
+      "commandCount": 66,
+      "usage": {
+        "input_tokens": 3478780,
+        "cached_input_tokens": 3340672,
+        "output_tokens": 15964,
+        "reasoning_output_tokens": 5134
+      },
+      "estimatedTokenCostUsd": 2.2079807999999996,
+      "summary": "Created an isolated worktree and carried over dependencies or native outputs, worked on the JavaScript change, and started the local Expo/Android workflow. It reached Settings and captured valid agent-device proof. The record includes 3 failed command attempts before completion.",
+      "messages": [
+        {
+          "id": "item_0",
+          "atSeconds": 5.632,
+          "text": "I’m using the required agent-device skill for the launch proof and will follow its session-isolation commands exactly. I’ll first create the dedicated worktree and carry over the existing dependency/native build outputs, then make the one text change, create and boot the named AVD, and keep polling the detached Debug build until it succeeds."
+        },
+        {
+          "id": "item_3",
+          "atSeconds": 18.044,
+          "text": "The requested branch does not yet exist, and the main checkout is clean. Installed artifacts are substantial (about 19 GB of dependencies plus Android/iOS outputs), so I’m carrying them into the worktree with filesystem cloning where supported to preserve the exact installed state efficiently."
+        },
+        {
+          "id": "item_12",
+          "atSeconds": 87.968,
+          "text": "The worktree now contains the copied dependencies and native build outputs, and the Settings subtitle has the requested exact wording with a clean diff check. I’m moving to the isolated Android device setup now; the AVD will be created fresh under the exact ownership name and booted without snapshots."
+        },
+        {
+          "id": "item_28",
+          "atSeconds": 183.478,
+          "text": "The fresh AVD is running as `<simulator-udid>`; its launch output confirms the requested AVD name, the 8 GiB partition value, and a cold startup with boot completion reached. Next I’m starting Metro detached, then the default Debug build/install/launch as the separately logged background process the coordinator requested."
+        },
+        {
+          "id": "item_59",
+          "atSeconds": 360.983,
+          "text": "The default Debug build completed successfully, installed `app-debug.apk`, and launched on the owned AVD. The launch log ties that AVD to serial `<simulator-udid>`; I’m beginning the required isolated agent-device proof immediately, including run-scoped video before navigating to Settings."
+        },
+        {
+          "id": "item_63",
+          "atSeconds": 383.687,
+          "text": "The isolated agent-device session opened successfully and run-scoped recording is active. Its initial accessibility snapshot shows Expo onboarding (`Continue`), so the skill directs me to use that semantic ref and then navigate by the current Settings label/ref."
+        },
+        {
+          "id": "item_74",
+          "atSeconds": 444.941,
+          "text": "The required text wait succeeded, the Settings screenshot was captured and copied, and recording stop reported the saved run video before the isolated session closed. I’m doing the final read-only checks now to confirm both proof files exist and that the <simulator-udid-prefix>, Metro, and Trailhead remain running as requested."
+        },
+        {
+          "id": "item_77",
+          "atSeconds": 461.676,
+          "text": "Completed successfully. The Debug app, Metro, and owned <simulator-udid-prefix> remain running.\n\n- Worktree: [javascript-control](worktree/javascript-control)\n- Screenshot: [settings.png](results/sol-android/javascript-control/proof/settings.png)\n- Video: [session.mp4](results/sol-android/javascript-control/proof/session.mp4)\n- Emulator serial: `<simulator-udid>`"
+        }
+      ],
+      "commands": [
+        {
+          "id": "item_1",
+          "startSeconds": 6.655,
+          "endSeconds": 6.655,
+          "command": "sed -n '1,240p' results/sol-android/javascript-control/runner-home/.codex/skills/agent-device/SKILL.md",
+          "output": "---\nname: agent-device\ndescription: Automates Apple-platform apps (iOS, tvOS, macOS), Android devices, and Amazon Vega OS TV apps in Vega Virtual Devices. Use when navigating apps, taking snapshots/screenshots where supported, driving TV remotes, tapping, typing, scrolling, extracting UI info, collecting evidence, or planning agent-device CLI commands.\n---\n\n# agent-device\n\nFor a normal app-driving task, start immediately. Do not probe first with `--help`, `--version`, `devices`, `appstate`, `snapshot`, or `screenshot`:\n\n```bash\nagent-device open <app> --foreground\n```\n\nThat starts the session and returns the initial interactive snapshot with `@refs`.\n\nLoop: act with `press|click|fill|longpress <target> ... --settle`, `scroll <direction> --settle`, or `back --settle`; continue from the printed diff, verify the named expectation (`wait text \"...\"`, `is`, `get`, or `find`), then run `agent-device close`.\n\nCopy refs byte-for-byte: `@e12`, `@e12~s4` — keep the `@` and any `~sN`. Prefer current refs, then `id`/`label`/`role` selectors; coordinates are a last resort. If snapshot reports sparse/AX-unavailable, its refs and selectors are invalid: run `agent-device screenshot`, inspect the image, use coordinates, then retry `snapshot -i` after navigating. Otherwise run `snapshot -i` only when the diff lacks the next target.\n\nError output includes corrective hints; follow them instead of re-planning. Only when the task is specialized (for example gestures, scripting, TV, macOS, remote, or debugging) or a command shape is unclear, run `agent-device help <topic>`. `agent-device --help` lists topics, but is not a startup step.\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_2",
+          "startSeconds": 12.374,
+          "endSeconds": 14.231,
+          "command": "\"git status --short --branch && git worktree list --porcelain && git show-ref --verify --quiet refs/heads/bench/javascript-control; printf 'branch_exit=%s\\\\n' \\\"\"'$?\" && for p in node_modules android/.gradle android/app/build android/build ios/Pods; do if [ -e \"$p\" ]; then du -sh \"$p\"; else printf '\"'missing %s\\\\n' \\\"\"'$p\"; fi; done'",
+          "output": " 19G\tnode_modules\n 15M\tandroid/.gradle\n4.0G\tandroid/app/build\n184K\tandroid/build\n1.2G\tios/Pods\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_4",
+          "startSeconds": 19.678,
+          "endSeconds": 19.678,
+          "command": "git worktree add -b bench/javascript-control worktree/javascript-control benchmark/v3-fixture",
+          "output": "Preparing worktree (new branch 'bench/javascript-control')\nHEAD is now at 63fe92c test: stabilize benchmark native fingerprint\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_5",
+          "startSeconds": 25.735,
+          "endSeconds": 25.918,
+          "command": "for p in ios/build ios/Pods ios/Podfile.lock android/.gradle android/build android/app/build android/app/.cxx android/.cxx; do if [ -e \"$p\" ]; then du -sh \"$p\"; else printf '\"'missing %s\\\\n' \\\"\"'$p\"; fi; done",
+          "output": "1.2G\tios/Pods\n 96K\tios/Podfile.lock\n 15M\tandroid/.gradle\n184K\tandroid/build\n4.0G\tandroid/app/build\n821M\tandroid/app/.cxx\nmissing android/.cxx\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_6",
+          "startSeconds": 32.484,
+          "endSeconds": 47.929,
+          "command": "cp -cR workspace/node_modules worktree/javascript-control/node_modules",
+          "output": "",
+          "exitCode": 0
+        },
+        {
+          "id": "item_7",
+          "startSeconds": 52.779,
+          "endSeconds": 56.759,
+          "command": "cp -cR workspace/.gradle ./android/.gradle && cp -cR workspace/build ./android/build && cp -cR workspace/build ./android/app/build && cp -cR workspace/.cxx ./android/app/.cxx && cp -cR workspace/Pods ./ios/Pods && cp -cR workspace/build ./ios/build",
+          "output": "",
+          "exitCode": 0
+        },
+        {
+          "id": "item_8",
+          "startSeconds": 59.371,
+          "endSeconds": 59.371,
+          "command": "rg -n -F 'Keep map tiles for saved trails on device' . --glob '\"'!node_modules/**'\"' --glob '\"'!android/app/build/**'\"' --glob '\"'!ios/Pods/**'\"'",
+          "output": "./app/(tabs)/settings.tsx:112:            subtitle=\"Keep map tiles for saved trails on device\"\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_10",
+          "startSeconds": 69.788,
+          "endSeconds": 69.789,
+          "command": "git diff --check && git diff -- app/'(tabs)'/settings.tsx && sed -n '1,40p' android/local.properties 2>/dev/null || true && rg -n 'sdk.dir|JAVA_HOME|android.sdk' android gradle.properties package.json --glob '\"'!**/build/**'\"'",
+          "output": "diff --git a/app/(tabs)/settings.tsx b/app/(tabs)/settings.tsx\nindex 2f3d8a7..3bdee54 100644\n--- a/app/(tabs)/settings.tsx\n+++ b/app/(tabs)/settings.tsx\n@@ -109,7 +109,7 @@ export default function SettingsScreen() {\n           <RowLabel\n             icon=\"cloud-offline-outline\"\n             title=\"Offline maps\"\n-            subtitle=\"Keep map tiles for saved trails on device\"\n+            subtitle=\"Keep saved trail maps available offline\"\n           />\n           <Switch\n             value={offlineMaps}\nrg: gradle.properties: No such file or directory (os error 2)\nandroid/gradlew.bat:47:if defined JAVA_HOME goto findJavaFromJavaHome\nandroid/gradlew.bat:54:echo ERROR: JAVA_HOME is not set and no 'java' command could be found in your PATH. 1>&2\nandroid/gradlew.bat:56:echo Please set the JAVA_HOME variable in your environment to match the 1>&2\nandroid/gradlew.bat:62:set JAVA_HOME=%JAVA_HOME:\"=%\nandroid/gradlew.bat:63:set JAVA_EXE=%JAVA_HOME%java.exe\nandroid/gradlew.bat:68:echo ERROR: JAVA_HOME is set to an invalid directory: %JAVA_HOME% 1>&2\nandroid/gradlew.bat:70:echo Please set the JAVA_HOME variable in your environment to match the 1>&2\nandroid/gradlew:120:if [ -n \"$JAVA_HOME\" ] ; then\nandroid/gradlew:121:    if [ -x \"$JAVA_HOME/jre/sh/java\" ] ; then\nandroid/gradlew:123:        JAVACMD=$JAVA_HOME/jre/sh/java\nandroid/gradlew:125:        JAVACMD=$JAVA_HOME/bin/java\nandroid/gradlew:128:        die \"ERROR: JAVA_HOME is set to an invalid directory: $JAVA_HOME\nandroid/gradlew:130:Please set the JAVA_HOME variable in your environment to match the\nandroid/gradlew:137:        die \"ERROR: JAVA_HOME is not set and no 'java' command could be found in your PATH.\nandroid/gradlew:139:Please set the JAVA_HOME variable in your environment to match the\nandroid/app/proguard-rules.pro:3:# in /usr/local/Cellar/android-sdk/24.3.3/tools/proguard/proguard-android.txt\n",
+          "exitCode": 2
+        },
+        {
+          "id": "item_11",
+          "startSeconds": 75.812,
+          "endSeconds": 75.812,
+          "command": "\"printf 'ANDROID_HOME=%s\\\\nANDROID_SDK_ROOT=%s\\\\nJAVA_HOME=%s\\\\n' \\\"\"'${ANDROID_HOME:-}\" \"${ANDROID_SDK_ROOT:-}\" \"${JAVA_HOME:-}\"; command -v avdmanager; command -v <simulator-udid-prefix>; command -v adb; command -v java; command -v npx'",
+          "output": "ANDROID_HOME=workspace/sdk\nANDROID_SDK_ROOT=\nJAVA_HOME=workspace/Home\navdmanager\n./allowed-bin/<simulator-udid-prefix>\n./allowed-bin/adb\njava\nnpx\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_13",
+          "startSeconds": 88.787,
+          "endSeconds": 89.559,
+          "command": "avdmanager list avd",
+          "output": "Available Android Virtual Devices:\n    Name: Android16_16KB\n  Device: pixel_6 (Google)\n    Path: workspace/Android16_16KB.avd\n  Target: 16 KB Page Size (Google Inc.)\n          Based on: Android 16.0 (\"Baklava\") Tag/ABI: page_size_16kb/arm64-v8a\n  Sdcard: 512 MB\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_14",
+          "startSeconds": 94.581,
+          "endSeconds": 95.075,
+          "command": "printf 'no\\\\n' | avdmanager create avd --name Trailhead_javascript-control --package 'system-images;android-36;google_apis_playstore_ps16k;arm64-v8a'",
+          "output": "Warning: This version only understands SDK XML versions up to 3 but an SDK XML file of version 4 was encountered. This can happen if you use versions of Android Studio and the command-line tools that were released at different times.\nAuto-selecting single ABI arm64-v8a\nDo you wish to create a custom hardware profile? [no] ",
+          "exitCode": 0
+        },
+        {
+          "id": "item_15",
+          "startSeconds": 99.057,
+          "endSeconds": 99.057,
+          "command": "rg -n '\"'^disk'\"\\\\.dataPartition\\\\.size=' workspace/config.ini || true",
+          "output": "9:disk.dataPartition.size=6G\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_17",
+          "startSeconds": 111.182,
+          "endSeconds": 111.182,
+          "command": "adb devices -l",
+          "output": "List of devices attached\n\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_18",
+          "startSeconds": 116.774,
+          "endSeconds": 116.828,
+          "command": "<simulator-udid-prefix> -avd Trailhead_javascript-control -no-snapshot-save -no-snapshot-load > tmp/javascript-control-<simulator-udid-prefix>.log 2>&1 & <simulator-udid-prefix>_pid=$!; printf '\"'%s\\\\n' \\\"\"'$<simulator-udid-prefix>_pid\" > tmp/javascript-control-<simulator-udid-prefix>.pid; printf '\"'<simulator-udid-prefix>_pid=%s\\\\n' \\\"\"'$<simulator-udid-prefix>_pid\"",
+          "output": "<simulator-udid-prefix>_pid=2600\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_19",
+          "startSeconds": 121.674,
+          "endSeconds": 121.674,
+          "command": "ps -p 2600 -o pid=,stat=,command=; tail -n 30 tmp/javascript-control-<simulator-udid-prefix>.log; adb devices -l",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_20",
+          "startSeconds": 127.446,
+          "endSeconds": 127.446,
+          "command": "pgrep -af 'Trailhead_javascript-control|qemu-system|<simulator-udid-prefix>.*-avd' || true; ls -l tmp/javascript-control-<simulator-udid-prefix>.log; adb devices -l",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_21",
+          "startSeconds": 132.406,
+          "endSeconds": 132.406,
+          "command": "ps -p 1037,2700 -o pid=,ppid=,stat=,command=",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_22",
+          "startSeconds": 138.765,
+          "endSeconds": 138.765,
+          "command": "ls -l ./allowed-bin/<simulator-udid-prefix> workspace/sdk<simulator-udid-prefix>/<simulator-udid-prefix>",
+          "output": "-rwxr-xr-x@ 1 <local-user>  staff  1616672 Feb 16  2026 workspace/sdk<simulator-udid-prefix>/<simulator-udid-prefix>\nlrwxr-xr-x@ 1 <local-user>  staff       59 Sep  4 09:56 ./allowed-bin/<simulator-udid-prefix> -> workspace/sdk<simulator-udid-prefix>/<simulator-udid-prefix>\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_23",
+          "startSeconds": 146.551,
+          "endSeconds": 146.604,
+          "command": "nohup workspace/sdk<simulator-udid-prefix>/<simulator-udid-prefix> -avd Trailhead_javascript-control -no-snapshot-save -no-snapshot-load </dev/null > tmp/javascript-control-<simulator-udid-prefix>.log 2>&1 & <simulator-udid-prefix>_pid=$!; printf '\"'%s\\\\n' \\\"\"'$<simulator-udid-prefix>_pid\" > tmp/javascript-control-<simulator-udid-prefix>.pid; printf '\"'<simulator-udid-prefix>_pid=%s\\\\n' \\\"\"'$<simulator-udid-prefix>_pid\"",
+          "output": "<simulator-udid-prefix>_pid=3010\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_24",
+          "startSeconds": 151.327,
+          "endSeconds": 151.327,
+          "command": "ps -p 3010 -o pid=,stat=,command=; tail -n 40 tmp/javascript-control-<simulator-udid-prefix>.log; adb devices -l",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_26",
+          "startSeconds": 173.781,
+          "endSeconds": 173.781,
+          "command": "adb devices -l; adb -s <simulator-udid> shell getprop sys.boot_completed 2>/dev/null || true",
+          "output": "List of devices attached\n<simulator-udid>          device product:sdk_gphone16k_arm64 model:sdk_gphone16k_arm64 device:emu64a16k transport_id:277\n\n\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_27",
+          "startSeconds": 179.122,
+          "endSeconds": 179.231,
+          "command": "adb -s <simulator-udid> shell getprop sys.boot_completed; adb -s <simulator-udid> shell getprop init.svc.bootanim",
+          "output": "stopped\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_29",
+          "startSeconds": 185.795,
+          "endSeconds": 185.846,
+          "command": "nohup npx expo start --dev-client --port 8081 </dev/null > tmp/javascript-control-metro.log 2>&1 & metro_pid=$!; printf '\"'%s\\\\n' \\\"\"'$metro_pid\" > tmp/javascript-control-metro.pid; printf '\"'metro_pid=%s\\\\n' \\\"\"'$metro_pid\"",
+          "output": "metro_pid=3511\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_30",
+          "startSeconds": 190.369,
+          "endSeconds": 190.369,
+          "command": "ps -p 3511 -o pid=,stat=,command=; tail -n 30 tmp/javascript-control-metro.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_32",
+          "startSeconds": 208.512,
+          "endSeconds": 208.512,
+          "command": "ps -p 3753 -o pid=,stat=,command=; tail -n 30 tmp/javascript-control-metro.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_33",
+          "startSeconds": 216.903,
+          "endSeconds": 217.686,
+          "command": "npx expo run:android --device <simulator-udid> --no-bundler </dev/null > tmp/javascript-control-build.log 2>&1 & build_pid=$!; printf '\"'%s\\\\n' \\\"\"'$build_pid\" > tmp/javascript-control-build.pid; printf '\"'build_pid=%s\\\\n' \\\"\"'$build_pid\"; wait \"$build_pid\"",
+          "output": "",
+          "exitCode": 1
+        },
+        {
+          "id": "item_34",
+          "startSeconds": 222.149,
+          "endSeconds": 222.149,
+          "command": "ps -p 4160 -o pid=,stat=,command=; tail -n 120 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_35",
+          "startSeconds": 227.472,
+          "endSeconds": 227.639,
+          "command": "rg -n -F 'Could not find device with name' node_modules/@expo node_modules/expo --glob '*.js' --glob '*.ts' | head -20",
+          "output": "",
+          "exitCode": 0
+        },
+        {
+          "id": "item_36",
+          "startSeconds": 232.181,
+          "endSeconds": 239.2,
+          "command": "rg -uu -n -F 'Could not find device with name' node_modules | head -20",
+          "output": "node_modules/expo/node_modules/@expo/cli/build/src/start/platforms/android/AndroidDeviceManager.js.map:1:{\"version\":3,\"sources\":[\"../../../../../src/start/platforms/android/AndroidDeviceManager.ts\"],\"sourcesContent\":[\"import assert from 'assert';\\nimport chalk from 'chalk';\\n\\nimport { activateWindowAsync } from './activateWindow';\\nimport * as AndroidDebugBridge from './adb';\\nimport { startDeviceAsync } from './<simulator-udid-prefix>';\\nimport { getDevicesAsync } from './getDevices';\\nimport { promptForDeviceAsync } from './promptAndroidDevice';\\nimport * as Log from '../../../log';\\nimport { AbortCommandError, CommandError } from '../../../utils/errors';\\nimport { validateUrl } from '../../../utils/url';\\nimport { DeviceManager } from '../DeviceManager';\\nimport { ExpoGoInstaller } from '../ExpoGoInstaller';\\nimport type { BaseResolveDeviceProps } from '../PlatformManager';\\n\\nconst EXPO_GO_APPLICATION_IDENTIFIER = 'host.exp.exponent';\\n\\nexport class AndroidDeviceManager extends DeviceManager<AndroidDebugBridge.Device> {\\n  static async resolveFromNameAsync(name: string): Promise<AndroidDeviceManager> {\\n    const devices = await getDevicesAsync();\\n    const device = devices.find((device) => device.name === name);\\n\\n    if (!device) {\\n      throw new CommandError('Could not find device with name: ' + name);\\n    }\\n    return AndroidDeviceManager.resolveAsync({ device, shouldPrompt: false });\\n  }\\n\\n  static async resolveAsync({\\n    device,\\n    shouldPrompt,\\n  }: BaseResolveDeviceProps<AndroidDebugBridge.Device> = {}): Promise<AndroidDeviceManager> {\\n    if (device) {\\n      const manager = new AndroidDeviceManager(device);\\n      if (!(await manager.attemptToStartAsync())) {\\n        throw new AbortCommandError();\\n      }\\n      return manager;\\n    }\\n\\n    const devices = await getDevicesAsync();\\n    const _device = shouldPrompt ? await promptForDeviceAsync(devices) : devices[0];\\n    return AndroidDeviceManager.resolveAsync({ device: _device, shouldPrompt: false });\\n  }\\n\\n  get name() {\\n    // TODO: Maybe strip `_` from the device name?\\n    return this.device.name;\\n  }\\n\\n  get identifier(): string {\\n    return this.device.pid ?? 'unknown';\\n  }\\n\\n  async getAppVersionAsync(applicationId: string): Promise<string | null> {\\n    const info = await AndroidDebugBridge.getPackageInfoAsync(this.device, {\\n      appId: applicationId,\\n    });\\n\\n    const regex = /versionName=([0-9.]+)/;\\n    return regex.exec(info)?.[1] ?? null;\\n  }\\n\\n  protected async attemptToStartAsync(): Promise<AndroidDebugBridge.Device | null> {\\n    // TODO: Add a light-weight method for checking since a device could disconnect.\\n    if (!(await AndroidDebugBridge.isDeviceBootedAsync(this.device))) {\\n      this.device = await startDeviceAsync(this.device);\\n    }\\n\\n    if (this.device.isAuthorized === false) {\\n      AndroidDebugBridge.logUnauthorized(this.device);\\n      return null;\\n    }\\n\\n    return this.device;\\n  }\\n\\n  async startAsync(): Promise<AndroidDebugBridge.Device> {\\n    const device = await this.attemptToStartAsync();\\n    assert(device, `Failed to boot <simulator-udid-prefix>.`);\\n    return this.device;\\n  }\\n\\n  async installAppAsync(binaryPath: string) {\\n    await AndroidDebugBridge.installAsync(this.device, {\\n      filePath: binaryPath,\\n    });\\n  }\\n\\n  async uninstallAppAsync(appId: string) {\\n    // we need to check if the app is installed, else we might bump into \\\"Failure [DELETE_FAILED_INTERNAL_ERROR]\\\"\\n    const isInstalled = await this.isAppInstalledAndIfSoReturnContainerPathForIOSAsync(appId);\\n    if (!isInstalled) {\\n      return;\\n    }\\n\\n    try {\\n      await AndroidDebugBridge.uninstallAsync(this.device, {\\n        appId,\\n      });\\n    } catch (e) {\\n      Log.error(\\n        `Could not uninstall app \\\"${appId}\\\" from your device, please uninstall it manually and try again.`\\n      );\\n      throw e;\\n    }\\n  }\\n\\n  /**\\n   * @param launchActivity Activity to launch `[application identifier]/.[main activity name]`, ex: `com.bacon.app/.MainActivity`\\n   */\\n  async launchActivityAsync(launchActivity: string, url?: string): Promise<string> {\\n    try {\\n      return await AndroidDebugBridge.launchActivityAsync(this.device, {\\n        launchActivity,\\n        url,\\n      });\\n    } catch (error: any) {\\n      let errorMessage = `Couldn't open Android app with activity \\\"${launchActivity}\\\" on device \\\"${this.name}\\\".`;\\n      if (error instanceof CommandError && error.code === 'APP_NOT_INSTALLED') {\\n        errorMessage += `\\\\nThe app might not be installed, try installing it with: ${chalk.bold(\\n          `npx expo run:android -d ${this.name}`\\n        )}`;\\n      }\\n      errorMessage += chalk.gray(`\\\\n${error.message}`);\\n      error.message = errorMessage;\\n      throw error;\\n    }\\n  }\\n\\n  async isAppInstalledAndIfSoReturnContainerPathForIOSAsync(applicationId: string) {\\n    return await AndroidDebugBridge.isPackageInstalledAsync(this.device, applicationId);\\n  }\\n\\n  async openUrlAsync(url: string) {\\n    // Non-compliant URLs will be treated as application identifiers.\\n    if (!validateUrl(url, { requireProtocol: true })) {\\n      await this.launchActivityAsync(url);\\n      return;\\n    }\\n\\n    const parsed = new URL(url);\\n\\n    if (parsed.protocol === 'exp:') {\\n      await AndroidDebugBridge.launchActivityAsync(\\n        { pid: this.device.pid },\\n        {\\n          launchActivity: `${EXPO_GO_APPLICATION_IDENTIFIER}/.experience.HomeActivity`,\\n        }\\n      );\\n    }\\n\\n    await AndroidDebugBridge.openUrlAsync({ pid: this.device.pid }, { url });\\n  }\\n\\n  async activateWindowAsync() {\\n    // Bring the <simulator-udid-prefix> window to the front on macos devices.\\n    await activateWindowAsync(this.device);\\n  }\\n\\n  getExpoGoAppId(): string {\\n    return EXPO_GO_APPLICATION_IDENTIFIER;\\n  }\\n\\n  async ensureExpoGoAsync(sdkVersion: string): Promise<boolean> {\\n    const installer = new ExpoGoInstaller('android', EXPO_GO_APPLICATION_IDENTIFIER, sdkVersion);\\n    return installer.ensureAsync(this);\\n  }\\n}\\n\"],\"names\":[\"AndroidDeviceManager\",\"EXPO_GO_APPLICATION_IDENTIFIER\",\"DeviceManager\",\"resolveFromNameAsync\",\"name\",\"devices\",\"getDevicesAsync\",\"device\",\"find\",\"CommandError\",\"resolveAsync\",\"shouldPrompt\",\"manager\",\"attemptToStartAsync\",\"AbortCommandError\",\"_device\",\"promptForDeviceAsync\",\"identifier\",\"pid\",\"getAppVersionAsync\",\"applicationId\",\"regex\",\"info\",\"AndroidDebugBridge\",\"getPackageInfoAsync\",\"appId\",\"exec\",\"isDeviceBootedAsync\",\"startDeviceAsync\",\"isAuthorized\",\"logUnauthorized\",\"startAsync\",\"assert\",\"installAppAsync\",\"binaryPath\",\"installAsync\",\"filePath\",\"uninstallAppAsync\",\"isInstalled\",\"isAppInstalledAndIfSoReturnContainerPathForIOSAsync\",\"uninstallAsync\",\"e\",\"Log\",\"error\",\"launchActivityAsync\",\"launchActivity\",\"url\",\"errorMessage\",\"code\",\"chalk\",\"bold\",\"gray\",\"message\",\"isPackageInstalledAsync\",\"openUrlAsync\",\"validateUrl\",\"requireProtocol\",\"parsed\",\"URL\",\"protocol\",\"activateWindowAsync\",\"getExpoGoAppId\",\"ensureExpoGoAsync\",\"sdkVersion\",\"installer\",\"ExpoGoInstaller\",\"ensureAsync\"],\"mappings\":\";;;;+BAiBaA;;;eAAAA;;;;gEAjBM;;;;;;;gEACD;;;;;;gCAEkB;6DACA;0BACH;4BACD;qCACK;6DAChB;wBAC2B;qBACpB;+BACE;iCACE;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;AAGhC,MAAMC,iCAAiC;AAEhC,MAAMD,6BAA6BE,4BAAa;IACrD,aAAaC,qBAAqBC,IAAY,EAAiC;QAC7E,MAAMC,UAAU,MAAMC,IAAAA,2BAAe;QACrC,MAAMC,SAASF,QAAQG,IAAI,CAAC,CAACD,SAAWA,OAAOH,IAAI,KAAKA;QAExD,IAAI,CAACG,QAAQ;YACX,MAAM,IAAIE,oBAAY,CAAC,sCAAsCL;QAC/D;QACA,OAAOJ,qBAAqBU,YAAY,CAAC;YAAEH;YAAQI,cAAc;QAAM;IACzE;IAEA,aAAaD,aAAa,EACxBH,MAAM,EACNI,YAAY,EACsC,GAAG,CAAC,CAAC,EAAiC;QACxF,IAAIJ,QAAQ;YACV,MAAMK,UAAU,IAAIZ,qBAAqBO;YACzC,IAAI,CAAE,MAAMK,QAAQC,mBAAmB,IAAK;gBAC1C,MAAM,IAAIC,yBAAiB;YAC7B;YACA,OAAOF;QACT;QAEA,MAAMP,UAAU,MAAMC,IAAAA,2BAAe;QACrC,MAAMS,UAAUJ,eAAe,MAAMK,IAAAA,yCAAoB,EAACX,WAAWA,OAAO,CAAC,EAAE;QAC/E,OAAOL,qBAAqBU,YAAY,CAAC;YAAEH,QAAQQ;YAASJ,cAAc;QAAM;IAClF;IAEA,IAAIP,OAAO;QACT,8CAA8C;QAC9C,OAAO,IAAI,CAACG,MAAM,CAACH,IAAI;IACzB;IAEA,IAAIa,aAAqB;QACvB,OAAO,IAAI,CAACV,MAAM,CAACW,GAAG,IAAI;IAC5B;IAEA,MAAMC,mBAAmBC,aAAqB,EAA0B;YAM/DC;QALP,MAAMC,OAAO,MAAMC,KAAmBC,mBAAmB,CAAC,IAAI,CAACjB,MAAM,EAAE;YACrEkB,OAAOL;QACT;QAEA,MAAMC,QAAQ;QACd,OAAOA,EAAAA,cAAAA,MAAMK,IAAI,CAACJ,0BAAXD,WAAkB,CAAC,EAAE,KAAI;IAClC;IAEA,MAAgBR,sBAAiE;QAC/E,gFAAgF;QAChF,IAAI,CAAE,MAAMU,KAAmBI,mBAAmB,CAAC,IAAI,CAACpB,MAAM,GAAI;YAChE,IAAI,CAACA,MAAM,GAAG,MAAMqB,IAAAA,0BAAgB,EAAC,IAAI,CAACrB,MAAM;QAClD;QAEA,IAAI,IAAI,CAACA,MAAM,CAACsB,YAAY,KAAK,OAAO;YACtCN,KAAmBO,eAAe,CAAC,IAAI,CAACvB,MAAM;YAC9C,OAAO;QACT;QAEA,OAAO,IAAI,CAACA,MAAM;IACpB;IAEA,MAAMwB,aAAiD;QACrD,MAAMxB,SAAS,MAAM,IAAI,CAACM,mBAAmB;QAC7CmB,IAAAA,iBAAM,EAACzB,QAAQ,CAAC,wBAAwB,CAAC;QACzC,OAAO,IAAI,CAACA,MAAM;IACpB;IAEA,MAAM0B,gBAAgBC,UAAkB,EAAE;QACxC,MAAMX,KAAmBY,YAAY,CAAC,IAAI,CAAC5B,MAAM,EAAE;YACjD6B,UAAUF;QACZ;IACF;IAEA,MAAMG,kBAAkBZ,KAAa,EAAE;QACrC,6GAA6G;QAC7G,MAAMa,cAAc,MAAM,IAAI,CAACC,mDAAmD,CAACd;QACnF,IAAI,CAACa,aAAa;YAChB;QACF;QAEA,IAAI;YACF,MAAMf,KAAmBiB,cAAc,CAAC,IAAI,CAACjC,MAAM,EAAE;gBACnDkB;YACF;QACF,EAAE,OAAOgB,GAAG;YACVC,KAAIC,KAAK,CACP,CAAC,yBAAyB,EAAElB,MAAM,+DAA+D,CAAC;YAEpG,MAAMgB;QACR;IACF;IAEA;;GAEC,GACD,MAAMG,oBAAoBC,cAAsB,EAAEC,GAAY,EAAmB;QAC/E,IAAI;YACF,OAAO,MAAMvB,KAAmBqB,mBAAmB,CAAC,IAAI,CAACrC,MAAM,EAAE;gBAC/DsC;gBACAC;YACF;QACF,EAAE,OAAOH,OAAY;YACnB,IAAII,eAAe,CAAC,yCAAyC,EAAEF,eAAe,aAAa,EAAE,IAAI,CAACzC,IAAI,CAAC,EAAE,CAAC;YAC1G,IAAIuC,iBAAiBlC,oBAAY,IAAIkC,MAAMK,IAAI,KAAK,qBAAqB;gBACvED,gBAAgB,CAAC,0DAA0D,EAAEE,gBAAK,CAACC,IAAI,CACrF,CAAC,wBAAwB,EAAE,IAAI,CAAC9C,IAAI,EAAE,GACrC;YACL;YACA2C,gBAAgBE,gBAAK,CAACE,IAAI,CAAC,CAAC,EAAE,EAAER,MAAMS,OAAO,EAAE;YAC/CT,MAAMS,OAAO,GAAGL;YAChB,MAAMJ;QACR;IACF;IAEA,MAAMJ,oDAAoDnB,aAAqB,EAAE;QAC/E,OAAO,MAAMG,KAAmB8B,uBAAuB,CAAC,IAAI,CAAC9C,MAAM,EAAEa;IACvE;IAEA,MAAMkC,aAAaR,GAAW,EAAE;QAC9B,iEAAiE;QACjE,IAAI,CAACS,IAAAA,gBAAW,EAACT,KAAK;YAAEU,iBAAiB;QAAK,IAAI;YAChD,MAAM,IAAI,CAACZ,mBAAmB,CAACE;YAC/B;QACF;QAEA,MAAMW,SAAS,IAAIC,IAAIZ;QAEvB,IAAIW,OAAOE,QAAQ,KAAK,QAAQ;YAC9B,MAAMpC,KAAmBqB,mBAAmB,CAC1C;gBAAE1B,KAAK,IAAI,CAACX,MAAM,CAACW,GAAG;YAAC,GACvB;gBACE2B,gBAAgB,GAAG5C,+BAA+B,yBAAyB,CAAC;YAC9E;QAEJ;QAEA,MAAMsB,KAAmB+B,YAAY,CAAC;YAAEpC,KAAK,IAAI,CAACX,MAAM,CAACW,GAAG;QAAC,GAAG;YAAE4B;QAAI;IACxE;IAEA,MAAMc,sBAAsB;QAC1B,2DAA2D;QAC3D,MAAMA,IAAAA,mCAAmB,EAAC,IAAI,CAACrD,MAAM;IACvC;IAEAsD,iBAAyB;QACvB,OAAO5D;IACT;IAEA,MAAM6D,kBAAkBC,UAAkB,EAAoB;QAC5D,MAAMC,YAAY,IAAIC,gCAAe,CAAC,WAAWhE,gCAAgC8D;QACjF,OAAOC,UAAUE,WAAW,CAAC,IAAI;IACnC;AACF\"}\nnode_modules/expo/node_modules/@expo/cli/build/src/start/platforms/android/AndroidDeviceManager.js:87:            throw new _errors.CommandError('Could not find device with name: ' + name);\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_37",
+          "startSeconds": 242.164,
+          "endSeconds": 242.164,
+          "command": "sed -n '1,240p' node_modules/expo/node_modules/@expo/cli/build/src/start/platforms/android/getDevices.js",
+          "output": "\"use strict\";\nObject.defineProperty(exports, \"__esModule\", {\n    value: true\n});\nObject.defineProperty(exports, \"getDevicesAsync\", {\n    enumerable: true,\n    get: function() {\n        return getDevicesAsync;\n    }\n});\nconst _adb = require(\"./adb\");\nconst _<simulator-udid-prefix> = require(\"./<simulator-udid-prefix>\");\nconst _errors = require(\"../../../utils/errors\");\nasync function getDevicesAsync() {\n    const bootedDevices = await (0, _adb.getAttachedDevicesAsync)();\n    const data = await (0, _<simulator-udid-prefix>.listAvdsAsync)();\n    const connectedNames = bootedDevices.map(({ name })=>name);\n    const offlineEmulators = data.filter(({ name })=>!connectedNames.includes(name)).map(({ name, type })=>{\n        return {\n            name,\n            type,\n            isBooted: false,\n            // TODO: Are <simulator-udid-prefix>s always authorized?\n            isAuthorized: true\n        };\n    });\n    const allDevices = bootedDevices.concat(offlineEmulators);\n    if (!allDevices.length) {\n        throw new _errors.CommandError([\n            `No Android connected device found, and no <simulator-udid-prefix>s could be started automatically.`,\n            `Connect a device or create an <simulator-udid-prefix> (https://docs.expo.dev/workflow/android-studio-<simulator-udid-prefix>).`,\n            `Then follow the instructions here to enable USB debugging:`,\n            `https://developer.android.com/studio/run/device.html#developer-device-options. If you are using Genymotion go to Settings -> ADB, select \"Use custom Android SDK tools\", and point it at your Android SDK directory.`\n        ].join('\\n'));\n    }\n    return allDevices;\n}\n\n//# sourceMappingURL=getDevices.js.map",
+          "exitCode": 0
+        },
+        {
+          "id": "item_38",
+          "startSeconds": 247.493,
+          "endSeconds": 247.493,
+          "command": "rg -n 'getAttachedDevices|name:' node_modules/expo/node_modules/@expo/cli/build/src/start/platforms/android/adb.js | head -40 && sed -n '145,225p' node_modules/expo/node_modules/@expo/cli/build/src/start/platforms/android/adb.js",
+          "output": "24:    get getAttachedDevicesAsync () {\n25:        return getAttachedDevicesAsync;\n224:async function getAttachedDevicesAsync() {\n308:    const devices = await getAttachedDevicesAsync();\n    DeviceABI[\"armeabi\"] = \"armeabi\";\n    DeviceABI[\"universal\"] = \"universal\";\n    return DeviceABI;\n}({});\nconst CANT_START_ACTIVITY_ERROR = 'Activity not started, unable to resolve Intent';\n// http://developer.android.com/ndk/guides/abis.html\nconst PROP_CPU_NAME = 'ro.product.cpu.abi';\nconst PROP_CPU_ABI_LIST_NAME = 'ro.product.cpu.abilist';\n// Can sometimes be null\n// http://developer.android.com/ndk/guides/abis.html\nconst PROP_BOOT_ANIMATION_STATE = 'init.svc.bootanim';\nlet _server;\nfunction getServer() {\n    _server ??= new _ADBServer.ADBServer();\n    return _server;\n}\nfunction logUnauthorized(device) {\n    _log.warn(`\\nThis computer is not authorized for developing on ${_chalk().default.bold(device.name)}. ${_chalk().default.dim((0, _link.learnMore)('https://expo.fyi/authorize-android-device'))}`);\n}\nasync function isPackageInstalledAsync(device, androidPackage) {\n    const packages = await getServer().runAsync(adbShellArgs(device.pid, 'pm', 'list', 'packages', '--user', _env.env.EXPO_ADB_USER, androidPackage));\n    const lines = packages.split(/\\r?\\n/);\n    for(let i = 0; i < lines.length; i++){\n        const line = lines[i].trim();\n        if (line === `package:${androidPackage}`) {\n            return true;\n        }\n    }\n    return false;\n}\nasync function launchActivityAsync(device, { launchActivity, url }) {\n    const command = [\n        'am',\n        'start',\n        // FLAG_ACTIVITY_SINGLE_TOP -- If set, the activity will not be launched if it is already running at the top of the history stack.\n        '-f',\n        '0x20000000',\n        // Activity to open first: com.bacon.app/.MainActivity\n        '-n',\n        launchActivity\n    ];\n    if (url) {\n        command.push('-d', url);\n    }\n    return openAsync(adbShellArgs(device.pid, ...command));\n}\nasync function openUrlAsync(device, { url }) {\n    return openAsync(adbShellArgs(device.pid, 'am', 'start', '-a', 'android.intent.action.VIEW', '-d', url));\n}\n/** Runs a generic command watches for common errors in order to throw with an expected code. */ async function openAsync(args) {\n    const results = await getServer().runAsync(args);\n    if (results.includes(CANT_START_ACTIVITY_ERROR) || results.match(/Error: Activity class .* does not exist\\./g)) {\n        throw new _errors.CommandError('APP_NOT_INSTALLED', results.substring(results.indexOf('Error: ')));\n    }\n    return results;\n}\nasync function uninstallAsync(device, { appId }) {\n    return await getServer().runAsync(adbArgs(device.pid, 'uninstall', '--user', _env.env.EXPO_ADB_USER, appId));\n}\nasync function getPackageInfoAsync(device, { appId }) {\n    return await getServer().runAsync(adbShellArgs(device.pid, 'dumpsys', 'package', appId));\n}\nasync function installAsync(device, { filePath }) {\n    // TODO: Handle the `INSTALL_FAILED_INSUFFICIENT_STORAGE` error.\n    return await getServer().runAsync(adbArgs(device.pid, 'install', '-r', '-d', '--user', _env.env.EXPO_ADB_USER, filePath));\n}\nfunction adbArgs(pid, ...options) {\n    const args = [];\n    if (pid) {\n        args.push('-s', pid);\n    }\n    return args.concat(options);\n}\nfunction adbShellArgs(pid, ...command) {\n    return adbArgs(pid, 'shell', ...command.map(shellQuote));\n}\nfunction shellQuote(value) {\n    return `'${value.replace(/'/g, `'\\\\''`)}'`;\n}\nasync function getAttachedDevicesAsync() {\n    const output = await getServer().runAsync([\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_39",
+          "startSeconds": 252.247,
+          "endSeconds": 252.247,
+          "command": "sed -n '224,285p' node_modules/expo/node_modules/@expo/cli/build/src/start/platforms/android/adb.js",
+          "output": "async function getAttachedDevicesAsync() {\n    const output = await getServer().runAsync([\n        'devices',\n        '-l'\n    ]);\n    const splitItems = output.trim().replace(/\\n$/, '').split(_os().default.EOL)// Filter ADB trace logs from the output, e.g.\n    // adb D 03-06 15:25:53 63677 4018815 adb_client.cpp:393] adb_query: host:devices-l\n    // 03-04 12:29:44.557 16415 16415 D adb     : commandline.cpp:1646 Using server socket: tcp:<local-ip>:5037\n    // 03-04 12:29:44.557 16415 16415 D adb     : adb_client.cpp:160 _adb_connect: host:version\n    .filter((line)=>!line.match(/\\.cpp:[0-9]+/));\n    // First line is `\"List of devices attached\"`, remove it\n    // @ts-ignore: todo\n    const attachedDevices = splitItems.slice(1, splitItems.length).map((line)=>{\n        // unauthorized: ['FA8251A00719', 'unauthorized', 'usb:338690048X', 'transport_id:5']\n        // authorized: ['FA8251A00719', 'device', 'usb:336592896X', 'product:walleye', 'model:Pixel_2', 'device:walleye', 'transport_id:4']\n        // <simulator-udid-prefix>: ['<simulator-udid>', 'offline', 'transport_id:1']\n        const props = line.split(' ').filter(Boolean);\n        const type = line.includes('<simulator-udid-prefix>') ? '<simulator-udid-prefix>' : 'device';\n        let connectionType;\n        if (type === 'device' && line.includes('usb:')) {\n            connectionType = 'USB';\n        } else if (type === 'device' && line.includes('_adb-tls-connect.')) {\n            connectionType = 'Network';\n        }\n        const isBooted = type === '<simulator-udid-prefix>' || props[1] !== 'offline';\n        const isAuthorized = connectionType === 'Network' ? line.includes('model:') // Network connected devices show `model:<name>` when authorized\n         : props[1] !== 'unauthorized';\n        return {\n            props,\n            type,\n            isAuthorized,\n            isBooted,\n            connectionType\n        };\n    }).filter(({ props: [pid] })=>!!pid);\n    const devicePromises = attachedDevices.map(async (props)=>{\n        const { type, props: [pid, ...deviceInfo], isAuthorized, isBooted } = props;\n        let name = null;\n        if (type === 'device') {\n            if (isAuthorized) {\n                // Possibly formatted like `model:Pixel_2`\n                // Transform to `Pixel_2`\n                const modelItem = deviceInfo.find((info)=>info.includes('model:'));\n                if (modelItem) {\n                    name = modelItem.replace('model:', '');\n                }\n            }\n            // unauthorized devices don't have a name available to read\n            if (!name) {\n                // Device FA8251A00719\n                name = `Device ${pid}`;\n            }\n        } else {\n            // Given an <simulator-udid-prefix> pid, get the <simulator-udid-prefix> name which can be used to start the <simulator-udid-prefix> later.\n            name = await getAdbNameForDeviceIdAsync({\n                pid\n            }) ?? '';\n        }\n        return props.connectionType ? {\n            pid,\n            name,\n            type,\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_40",
+          "startSeconds": 257.592,
+          "endSeconds": 257.592,
+          "command": "sed -n '285,340p' node_modules/expo/node_modules/@expo/cli/build/src/start/platforms/android/adb.js",
+          "output": "            type,\n            isAuthorized,\n            isBooted,\n            connectionType: props.connectionType\n        } : {\n            pid,\n            name,\n            type,\n            isAuthorized,\n            isBooted\n        };\n    });\n    return Promise.all(devicePromises);\n}\nasync function getAdbNameForDeviceIdAsync(device) {\n    const results = await getServer().runAsync(adbArgs(device.pid, 'emu', 'avd', 'name'));\n    if (results.match(/could not connect to TCP port .*: Connection refused/)) {\n        // Can also occur when the <simulator-udid-prefix> does not exist.\n        throw new _errors.CommandError('EMULATOR_NOT_FOUND', results);\n    }\n    return sanitizeAdbDeviceName(results) ?? null;\n}\nasync function isDeviceBootedAsync({ name } = {}) {\n    const devices = await getAttachedDevicesAsync();\n    if (!name) {\n        return devices[0] ?? null;\n    }\n    return devices.find((device)=>device.name === name) ?? null;\n}\nasync function isBootAnimationCompleteAsync(pid) {\n    try {\n        var _props_PROP_BOOT_ANIMATION_STATE;\n        const props = await getPropertyDataForDeviceAsync({\n            pid\n        }, PROP_BOOT_ANIMATION_STATE);\n        return !!((_props_PROP_BOOT_ANIMATION_STATE = props[PROP_BOOT_ANIMATION_STATE]) == null ? void 0 : _props_PROP_BOOT_ANIMATION_STATE.match(/stopped/));\n    } catch  {\n        return false;\n    }\n}\nasync function getDeviceABIsAsync(device) {\n    const cpuAbiList = (await getPropertyDataForDeviceAsync(device, PROP_CPU_ABI_LIST_NAME))[PROP_CPU_ABI_LIST_NAME];\n    if (cpuAbiList) {\n        return cpuAbiList.trim().split(',');\n    }\n    const abi = (await getPropertyDataForDeviceAsync(device, PROP_CPU_NAME))[PROP_CPU_NAME];\n    return [\n        abi\n    ];\n}\nasync function getPropertyDataForDeviceAsync(device, prop) {\n    const propCommand = prop ? adbShellArgs(device.pid, 'getprop', prop) : adbShellArgs(device.pid, 'getprop');\n    try {\n        // Prevent reading as UTF8.\n        const results = await getServer().getFileOutputAsync(propCommand);\n        // Like:\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_41",
+          "startSeconds": 262.406,
+          "endSeconds": 262.406,
+          "command": "adb -s <simulator-udid> emu avd name",
+          "output": "Trailhead_javascript-control\r\nOK\r\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_43",
+          "startSeconds": 274.629,
+          "endSeconds": 274.629,
+          "command": "ps -p 5365 -o pid=,stat=,etime=,command=; tail -n 80 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_44",
+          "startSeconds": 280.157,
+          "endSeconds": 280.157,
+          "command": "ps -p 5365 -o pid=,stat=,etime=,command=; tail -n 100 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_45",
+          "startSeconds": 287.22,
+          "endSeconds": 287.22,
+          "command": "ls -ld node_modules node_modules/@shopify/react-native-skia; realpath node_modules; realpath node_modules/@shopify/react-native-skia; ps -p 5365 -o pid=,stat=,etime=,command=; tail -n 60 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_46",
+          "startSeconds": 293.397,
+          "endSeconds": 293.397,
+          "command": "ps -p 5365 -o pid=,stat=,etime=,command=; tail -n 100 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_47",
+          "startSeconds": 298.358,
+          "endSeconds": 298.532,
+          "command": "ps -p 5365 -o pid=,stat=,etime=,command=; tail -n 100 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_48",
+          "startSeconds": 304.22,
+          "endSeconds": 304.409,
+          "command": "ps -p 5365 -o pid=,stat=,etime=,command=; tail -n 120 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_49",
+          "startSeconds": 309.301,
+          "endSeconds": 309.464,
+          "command": "ps -p 5365 -o pid=,stat=,etime=,command=; tail -n 120 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_50",
+          "startSeconds": 314.296,
+          "endSeconds": 314.297,
+          "command": "ps -p 5365 -o pid=,stat=,etime=,command=; tail -n 120 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_51",
+          "startSeconds": 319.233,
+          "endSeconds": 319.233,
+          "command": "ps -p 5365 -o pid=,stat=,etime=,command=; tail -n 80 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_52",
+          "startSeconds": 324.82,
+          "endSeconds": 324.998,
+          "command": "ps -p 5365 -o pid=,stat=,etime=,command=; tail -n 100 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_53",
+          "startSeconds": 329.935,
+          "endSeconds": 330.071,
+          "command": "ps -p 5365 -o pid=,stat=,etime=,command=; tail -n 120 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_54",
+          "startSeconds": 335.71,
+          "endSeconds": 335.889,
+          "command": "ps -p 5365 -o pid=,stat=,etime=,command=; tail -n 100 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_55",
+          "startSeconds": 340.79,
+          "endSeconds": 340.94,
+          "command": "ps -p 5365 -o pid=,stat=,etime=,command=; tail -n 80 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_56",
+          "startSeconds": 345.852,
+          "endSeconds": 346.03,
+          "command": "ps -p 5365 -o pid=,stat=,etime=,command=; tail -n 80 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_57",
+          "startSeconds": 351.519,
+          "endSeconds": 351.519,
+          "command": "ps -p 5365 -o pid=,stat=,etime=,command=; tail -n 80 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_42",
+          "startSeconds": 268.581,
+          "endSeconds": 355.573,
+          "command": "npx expo run:android --device Trailhead_javascript-control --no-bundler </dev/null > tmp/javascript-control-build.log 2>&1 & build_pid=$!; printf '\"'%s\\\\n' \\\"\"'$build_pid\" > tmp/javascript-control-build.pid; printf '\"'build_pid=%s\\\\n' \\\"\"'$build_pid\"; wait \"$build_pid\"",
+          "output": "",
+          "exitCode": 0
+        },
+        {
+          "id": "item_58",
+          "startSeconds": 356.472,
+          "endSeconds": 356.472,
+          "command": "ps -p 5365 -o pid=,stat=,etime=,command=; tail -n 100 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_60",
+          "startSeconds": 368.484,
+          "endSeconds": 368.484,
+          "command": "mkdir -p results/sol-android/javascript-control/proof",
+          "output": "",
+          "exitCode": 0
+        },
+        {
+          "id": "item_61",
+          "startSeconds": 373.653,
+          "endSeconds": 375.712,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device open com.appandflow.trailhead --foreground --platform android --serial <simulator-udid>",
+          "output": "Opened: com.appandflow.trailhead\nSession state: ./state/agent-device/sessions/javascript-control\nPage: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 3 visible nodes (5 total)\nCollapsed 2 Android helper nodes from the agent-facing text snapshot; use --raw or --json for the full hierarchy.\n@e1 [group] \"Close\"\n@e3 [scroll-area] [scrollable]\n@e4 [group] \"Continue\"\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_62",
+          "startSeconds": 379.421,
+          "endSeconds": 379.709,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device record start results/sol-android/javascript-control/proof/session.mp4 --scope device --quality high --hide-touches",
+          "output": "results/sol-android/javascript-control/proof/session.mp4\nSession state: ./state/agent-device/sessions/javascript-control\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_64",
+          "startSeconds": 385.521,
+          "endSeconds": 386.673,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device click @e4 --settle",
+          "output": "Tapped @e4 (160, 552)\nsettled after 780ms: +14 -1 (~4 unchanged)\n- @e5 [text] \"Continue\"\n+ @e5~s114799 [group] \"Reload\"\n+ @e6~s114799 [text] \"Reload\"\n+ @e7~s114799 [group]\n+ @e8~s114799 [group] \"Home\"\n+ @e9~s114799 [text] \"Go home\"\n+ @e10~s114799 [group]\n+ @e11~s114799 [group] \"Performance monitor\"\n+ @e12~s114799 [text] \"Toggle performance monitor\"\n+ @e13~s114799 [group]\n+ @e14~s114799 [group] \"Element inspector\"\n+ @e15~s114799 [text] \"Toggle element inspector\"\n+ @e16~s114799 [group]\n+ @e17~s114799 [group] \"DevTools\"\n+ @e18~s114799 [text] \"Open DevTools\"\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_65",
+          "startSeconds": 391.364,
+          "endSeconds": 391.364,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device click @e1 --settle",
+          "output": "Error (COMMAND_FAILED): Ref @e1 needs a complete snapshot — the current frame only authorizes its emitted refs\nHint: Capture a fresh interactive snapshot (snapshot -i) or use a stable selector, then retry.\nDiagnostic ID: mtn6q2n3-e4efa77a\nDiagnostics Log: ./state/agent-device/sessions/javascript-control/requests/9a7c653f044bbea8.ndjson\n",
+          "exitCode": 1
+        },
+        {
+          "id": "item_66",
+          "startSeconds": 396.793,
+          "endSeconds": 396.917,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device snapshot -i",
+          "output": "Page: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 7 visible nodes (18 total)\nCollapsed 11 Android helper nodes from the agent-facing text snapshot; use --raw or --json for the full hierarchy.\n@e1 [group] \"Close\"\n@e3 [scroll-area] [scrollable]\n  [content below scroll-area hidden]\n@e4 [group] \"Reload\"\n@e7 [group] \"Home, Go home\"\n@e10 [group] \"Performance monitor, Toggle performance monitor\"\n@e13 [group] \"Element inspector, Toggle element inspector\"\n@e16 [group] \"DevTools, Open DevTools\"\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_67",
+          "startSeconds": 402.036,
+          "endSeconds": 403.633,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device click @e1 --settle",
+          "output": "Tapped @e1 (293, 302)\nsettled after 1360ms: +63 -17 (~1 unchanged)\n- @e1 [group]\n- @e2 [group] \"Close\"\n- @e4 [group]\n- @e5 [group] \"Reload\"\n- @e6 [text] \"Reload\"\n- @e7 [group]\n- @e8 [group] \"Home\"\n- @e9 [text] \"Go home\"\n- @e10 [group]\n- @e11 [group] \"Performance monitor\"\n- @e12 [text] \"Toggle performance monitor\"\n- @e13 [group]\n- @e14 [group] \"Element inspector\"\n- @e15 [text] \"Toggle element inspector\"\n- @e16 [group]\n- @e17 [group] \"DevTools\"\n- @e18 [text] \"Open DevTools\"\n+ @e2~s114804 [text-field] \"Search trails, regions, tags\"\n+ @e3~s114804 [horizontalscrollview]\n+ @e4~s114804 [button] \"All regions\"\n+ @e5~s114804 [text] \"All regions\"\n+ @e6~s114804 [button] \"Adirondacks\"\n+ @e7~s114804 [text] \"Adirondacks\"\n+ @e8~s114804 [button] \"Bas-Saint-Laurent\"\n+ @e9~s114804 [text] \"Bas-Saint-Laurent\"\n+ @e10~s114804 [horizontalscrollview]\n+ @e11~s114804 [button] \"Any level\"\n+ @e12~s114804 [text] \"Any level\"\n+ @e13~s114804 [button] \"Easy\"\n+ @e14~s114804 [text] \"Easy\"\n+ @e15~s114804 [button] \"Moderate\"\n+ @e16~s114804 [text] \"Moderate\"\n+ @e17~s114804 [button] \"Hard\"\n+ @e18~s114804 [text] \"Hard\"\n+ @e19~s114804 [button] \"Expert\"\n+ @e20~s114804 [button] \"Sort by name\"\n+ @e21~s114804 [text] \"Name\"\n+ @e22~s114804 [button] \"Sort by distance\"\n+ @e23~s114804 [text] \"Distance\"\n+ @e24~s114804 [button] \"Sort by rating\"\n+ @e25~s114804 [text] \"Rating\"\n+ @e26~s114804 [scroll-area]\n+ @e27~s114804 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n+ @e28~s114804 [text] \"Belvedere de la Chute\"\n+ @e29~s114804 [text] \"Gaspesie\"\n+ @e30~s114804 [text] \"\"\n+ @e31~s114804 [text] \"11 km\"\n+ @e32~s114804 [text] \"\"\n+ @e33~s114804 [text] \"1106 m\"\n+ @e34~s114804 [text] \"\"\n+ @e35~s114804 [text] \"4:16:00\"\n+ @e36~s114804 [text] \"Moderate\"\n+ @e37~s114804 [text] \"\"\n+ @e38~s114804 [text] \"3.8\"\n+ @e39~s114804 [text] \"(837)\"\n+ @e40~s114804 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n+ @e41~s114804 [text] \"Belvedere de la Tour Bleu\"\n+ @e42~s114804 [text] \"Mont-Tremblant\"\n+ @e43~s114804 [text] \"\"\n+ @e44~s114804 [text] \"1.9 km\"\n+ @e45~s114804 [text] \"\"\n+ @e46~s114804 [text] \"701 m\"\n+ @e47~s114804 [text] \"\"\n+ @e48~s114804 [text] \"1:31:00\"\n+ @e49~s114804 [text] \"Hard\"\n+ @e50~s114804 [text] \"\"\n+ @e51~s114804 [text] \"5.0\"\n+ @e52~s114804 [text] \"(609)\"\n+ @e53~s114804 [group] \", Trails\"\n+ @e54~s114804 [text] \"\"\n+ @e55~s114804 [text] \"Trails\"\n+ @e56~s114804 [group] \", Record\"\n+ @e57~s114804 [text] \"\"\n+ @e58~s114804 [text] \"Record\"\n+ @e59~s114804 [group] \", History\"\n+ @e60~s114804 [text] \"\"\n+ @e61~s114804 [text] \"History\"\n+ @e62~s114804 [group] \", Settings\"\n+ @e63~s114804 [text] \"\"\n+ @e64~s114804 [text] \"Settings\"\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_68",
+          "startSeconds": 407.102,
+          "endSeconds": 408.41,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device click @e62~s114804 --settle",
+          "output": "Tapped @e62 (280, 592)\nsettled after 1047ms: +18 -50 (~14 unchanged)\n- @e2 [text-field] \"Search trails, regions, tags\"\n- @e3 [horizontalscrollview]\n- @e4 [button] \"All regions\"\n- @e5 [text] \"All regions\"\n- @e6 [button] \"Adirondacks\"\n- @e7 [text] \"Adirondacks\"\n- @e8 [button] \"Bas-Saint-Laurent\"\n- @e9 [text] \"Bas-Saint-Laurent\"\n- @e10 [horizontalscrollview]\n- @e11 [button] \"Any level\"\n- @e12 [text] \"Any level\"\n- @e13 [button] \"Easy\"\n- @e14 [text] \"Easy\"\n- @e15 [button] \"Moderate\"\n- @e16 [text] \"Moderate\"\n- @e17 [button] \"Hard\"\n- @e18 [text] \"Hard\"\n- @e19 [button] \"Expert\"\n- @e20 [button] \"Sort by name\"\n- @e21 [text] \"Name\"\n- @e22 [button] \"Sort by distance\"\n- @e23 [text] \"Distance\"\n- @e24 [button] \"Sort by rating\"\n- @e25 [text] \"Rating\"\n- @e27 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e28 [text] \"Belvedere de la Chute\"\n- @e29 [text] \"Gaspesie\"\n- @e30 [text] \"\"\n- @e31 [text] \"11 km\"\n- @e32 [text] \"\"\n- @e33 [text] \"1106 m\"\n- @e34 [text] \"\"\n- @e35 [text] \"4:16:00\"\n- @e36 [text] \"Moderate\"\n- @e37 [text] \"\"\n- @e38 [text] \"3.8\"\n- @e39 [text] \"(837)\"\n- @e40 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n- @e41 [text] \"Belvedere de la Tour Bleu\"\n- @e42 [text] \"Mont-Tremblant\"\n- @e43 [text] \"\"\n- @e44 [text] \"1.9 km\"\n- @e45 [text] \"\"\n- @e46 [text] \"701 m\"\n- @e47 [text] \"\"\n- @e48 [text] \"1:31:00\"\n- @e49 [text] \"Hard\"\n- @e50 [text] \"\"\n- @e51 [text] \"5.0\"\n- @e52 [text] \"(609)\"\n+ @e3~s114808 [text] \"UNITS\"\n+ @e4~s114808 [text] \"Distance\"\n+ @e5~s114808 [text] \"\"\n+ @e6~s114808 [text] \"Used across the whole app\"\n+ @e7~s114808 [button] \"Metric units\"\n+ @e8~s114808 [text] \"Metric\"\n+ @e9~s114808 [button] \"Imperial units\"\n+ @e10~s114808 [text] \"Imperial\"\n+ @e11~s114808 [text] \"PREFERENCES\"\n+ @e12~s114808 [text] \"\"\n+ @e13~s114808 [text] \"Hike reminders\"\n+ @e14~s114808 [text] \"Nudge me when I have not hiked in a while\"\n+ @e15~s114808 [switch] \"Hike reminders\"\n+ @e16~s114808 [text] \"\"\n+ @e17~s114808 [text] \"Offline maps\"\n+ @e18~s114808 [text] \"Keep saved trail maps available offline\"\n+ @e19~s114808 [switch] \"Offline maps\"\n+ @e20~s114808 [text] \"STORAGE\"\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_69",
+          "startSeconds": 413.206,
+          "endSeconds": 413.342,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device wait text \"Keep saved trail maps available offline\"",
+          "output": "",
+          "exitCode": 0
+        },
+        {
+          "id": "item_70",
+          "startSeconds": 418.309,
+          "endSeconds": 419.681,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device screenshot tmp/javascript-control-settings.png",
+          "output": "tmp/javascript-control-settings.png (320x640)\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_71",
+          "startSeconds": 423.358,
+          "endSeconds": 423.358,
+          "command": "cp tmp/javascript-control-settings.png results/sol-android/javascript-control/proof/settings.png",
+          "output": "",
+          "exitCode": 0
+        },
+        {
+          "id": "item_72",
+          "startSeconds": 428.954,
+          "endSeconds": 435.167,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device record stop",
+          "output": "results/sol-android/javascript-control/proof/session.mp4\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_73",
+          "startSeconds": 438.095,
+          "endSeconds": 438.297,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device close",
+          "output": "Closed: javascript-control\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_75",
+          "startSeconds": 448.615,
+          "endSeconds": 448.779,
+          "command": "ls -lh results/sol-android/javascript-control/proof/settings.png results/sol-android/javascript-control/proof/session.mp4; file results/sol-android/javascript-control/proof/settings.png results/sol-android/javascript-control/proof/session.mp4; ps -p 3753 -o pid=,stat=,etime=,command=; adb -s <simulator-udid> shell getprop sys.boot_completed; adb -s <simulator-udid> shell dumpsys activity activities | rg 'mResumedActivity'; git status --short --branch",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_76",
+          "startSeconds": 454.76,
+          "endSeconds": 454.76,
+          "command": "adb -s <simulator-udid> shell pidof com.appandflow.trailhead; adb -s <simulator-udid> shell dumpsys activity activities | rg -m 6 'com\\\\.appandflow\\\\.trailhead|topResumedActivity|mResumedActivity'",
+          "output": "6333\n  * Task{47960ee #8 type=standard A=10213:com.appandflow.trailhead U=0 visible=true visibleRequested=true mode=fullscreen translucent=false sz=1}\n    topResumedActivity=ActivityRecord{29745207 u0 com.appandflow.trailhead/.MainActivity t8}\n    * Hist  #0: ActivityRecord{29745207 u0 com.appandflow.trailhead/.MainActivity t8}\n      packageName=com.appandflow.trailhead processName=com.appandflow.trailhead\n      launchedFromUid=10213 launchedFromPackage=com.appandflow.trailhead launchedFromFeature=null userId=0\n      app=ProcessRecord{31e9dfa 6333:com.appandflow.trailhead/u0a213}\n",
+          "exitCode": 0
+        }
+      ],
+      "backgroundProcesses": [],
+      "markers": [
+        {
+          "id": "app-alive",
+          "kind": "appAlive",
+          "label": "App process alive",
+          "atSeconds": 356.055
+        },
+        {
+          "id": "settings-ready",
+          "kind": "settingsReady",
+          "label": "Settings proof ready",
+          "atSeconds": 419.681
+        }
+      ],
+      "proof": {
+        "src": "benchmarks/sol-android/javascript-control.png",
+        "expected": "Keep saved trail maps available offline",
+        "width": 320,
+        "height": 640
+      },
+      "recording": {
+        "src": "benchmarks/sol-android/javascript-control.mp4",
+        "bytes": 270198
+      }
+    },
+    {
+      "id": "native-stim",
+      "model": "gpt-5.6-sol",
+      "platform": "android",
+      "variant": "native",
+      "arm": "stim",
+      "valid": true,
+      "invalidReasons": [],
+      "settingsReadySeconds": 429.872,
+      "appAliveSeconds": 371.328,
+      "diagnosisSeconds": null,
+      "diagnosisCommandCount": null,
+      "launchCrashAudit": null,
+      "diagnosisUsage": null,
+      "estimatedDiagnosisCostUsd": null,
+      "totalSeconds": 470.258,
+      "commandCount": 19,
+      "usage": {
+        "input_tokens": 1062498,
+        "cached_input_tokens": 998912,
+        "output_tokens": 6468,
+        "reasoning_output_tokens": 1428
+      },
+      "estimatedTokenCostUsd": 0.7832688000000001,
+      "summary": "Created an isolated worktree, worked on the native Android change, and ran Stim's Android workflow. It reached Settings and captured valid agent-device proof. The record includes 1 failed command attempt before completion.",
+      "messages": [
+        {
+          "id": "item_0",
+          "atSeconds": 5.42,
+          "text": "I’m using the Stim skill for the isolated worktree/build session, then the agent-device skill for the required <simulator-udid-prefix> interaction and proof capture. I’ll keep every requested command form exact and stay with the run through the saved screenshot and stopped recording."
+        },
+        {
+          "id": "item_3",
+          "atSeconds": 12.231,
+          "text": "The Stim skill requires its installed, version-matched workflow guide before launch. I’m loading that now, then I’ll create the worktree with the exact command you supplied and use only its printed path."
+        },
+        {
+          "id": "item_6",
+          "atSeconds": 29.234,
+          "text": "The exact worktree creation command is still running, likely while carrying ignored native/dependency artifacts. I’ll use the absolute path from its completion output verbatim."
+        },
+        {
+          "id": "item_7",
+          "atSeconds": 44.205,
+          "text": "The run worktree is `worktree/bench+native-stim`. I’m now making the single native string change there, then I’ll start its dedicated Metro and Android run."
+        },
+        {
+          "id": "item_11",
+          "atSeconds": 65.576,
+          "text": "Metro is running on the isolated workspace at port 8082. The app-name resource is updated, and I’m starting the specified Android 36 Play Store 16 KB ARM64 image now; I’ll take the <simulator-udid-prefix> serial only from this launch output."
+        },
+        {
+          "id": "item_13",
+          "atSeconds": 99.263,
+          "text": "The run <simulator-udid-prefix> serial is `<simulator-udid>`; the requested image booted and the debug build is compiling. I’m keeping this launch attached until Stim reports installation and readiness."
+        },
+        {
+          "id": "item_14",
+          "atSeconds": 170.091,
+          "text": "The native build is progressing normally at about one minute into Stim’s current estimate. Metro remains active, and the run is still bound to `<simulator-udid>`."
+        },
+        {
+          "id": "item_15",
+          "atSeconds": 234.1,
+          "text": "The build has reached two minutes with no error output. I’m continuing to hold the exact Stim run open; the next step remains the required isolated agent-device open as soon as launch readiness is reported."
+        },
+        {
+          "id": "item_16",
+          "atSeconds": 298.215,
+          "text": "Still compiling cleanly at three minutes. I’m not starting agent-device early—the exact <simulator-udid-prefix> serial is known, but the requested sequence calls for opening the installed app only after Stim completes the launch."
+        },
+        {
+          "id": "item_17",
+          "atSeconds": 361.616,
+          "text": "The build is at four minutes and remains healthy. I’m continuing the attached launch rather than rerunning or restarting anything, preserving the run-owned <simulator-udid-prefix> and Metro state."
+        },
+        {
+          "id": "item_18",
+          "atSeconds": 386.053,
+          "text": "Stim reports `com.appandflow.trailhead` launched and stable on the exact run serial `<simulator-udid>` (Metro 8082; native build succeeded). I’m opening the required isolated agent-device session now, and the very next command will start the run-scoped recording."
+        },
+        {
+          "id": "item_21",
+          "atSeconds": 398.346,
+          "text": "The isolated session opened successfully and high-quality device-scoped recording is active. A React Native warning overlay is present, so the agent-device skill is directing me to dismiss that overlay before using the visible `Settings` semantic target."
+        },
+        {
+          "id": "item_24",
+          "atSeconds": 410.767,
+          "text": "The initial `Settings` ref expired when the overlay dismissal changed the UI, exactly as agent-device reports. I’m refreshing the interactive semantic snapshot and will use the newly issued Settings ref."
+        },
+        {
+          "id": "item_27",
+          "atSeconds": 421.487,
+          "text": "Settings is open and the semantic diff shows `Offline maps`. I’m now executing the five required proof/teardown commands one by one, exactly as specified; Metro and the app remain running throughout capture."
+        },
+        {
+          "id": "item_33",
+          "atSeconds": 456.924,
+          "text": "The required wait succeeded, the screenshot was captured and copied, and recording stop reported the saved `session.mp4`; the isolated agent-device session is now closed. I’m doing one read-only existence/visual check on the copied proof before reporting, without stopping Metro or the <simulator-udid-prefix> app."
+        },
+        {
+          "id": "item_35",
+          "atSeconds": 470.05,
+          "text": "Completed successfully.\n\n- Worktree: [bench+native-stim](worktree/bench+native-stim)\n- Screenshot: [settings.png](results/sol-android/native-stim/proof/settings.png)\n- Video: [session.mp4](results/sol-android/native-stim/proof/session.mp4)\n\nThe `Offline maps` wait succeeded, the screenshot exists, and recording stop confirmed the saved video. Metro and the launched app were left running."
+        }
+      ],
+      "commands": [
+        {
+          "id": "item_1",
+          "startSeconds": 8.631,
+          "endSeconds": 8.631,
+          "command": "cat results/sol-android/native-stim/runner-home/.codex/skills/agent-device/SKILL.md",
+          "output": "---\nname: agent-device\ndescription: Automates Apple-platform apps (iOS, tvOS, macOS), Android devices, and Amazon Vega OS TV apps in Vega Virtual Devices. Use when navigating apps, taking snapshots/screenshots where supported, driving TV remotes, tapping, typing, scrolling, extracting UI info, collecting evidence, or planning agent-device CLI commands.\n---\n\n# agent-device\n\nFor a normal app-driving task, start immediately. Do not probe first with `--help`, `--version`, `devices`, `appstate`, `snapshot`, or `screenshot`:\n\n```bash\nagent-device open <app> --foreground\n```\n\nThat starts the session and returns the initial interactive snapshot with `@refs`.\n\nLoop: act with `press|click|fill|longpress <target> ... --settle`, `scroll <direction> --settle`, or `back --settle`; continue from the printed diff, verify the named expectation (`wait text \"...\"`, `is`, `get`, or `find`), then run `agent-device close`.\n\nCopy refs byte-for-byte: `@e12`, `@e12~s4` — keep the `@` and any `~sN`. Prefer current refs, then `id`/`label`/`role` selectors; coordinates are a last resort. If snapshot reports sparse/AX-unavailable, its refs and selectors are invalid: run `agent-device screenshot`, inspect the image, use coordinates, then retry `snapshot -i` after navigating. Otherwise run `snapshot -i` only when the diff lacks the next target.\n\nError output includes corrective hints; follow them instead of re-planning. Only when the task is specialized (for example gestures, scripting, TV, macOS, remote, or debugging) or a command shape is unclear, run `agent-device help <topic>`. `agent-device --help` lists topics, but is not a startup step.\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_2",
+          "startSeconds": 8.631,
+          "endSeconds": 8.631,
+          "command": "cat results/sol-android/native-stim/runner-home/.codex/skills/stim/SKILL.md",
+          "output": "---\nname: stim\ndescription: The React Native / Expo CLI for AI agents. Use when an agent needs an isolated Metro server and simulator or <simulator-udid-prefix>, must build and launch an app, inspect build or runtime errors, create a parallel worktree, or identify the correct device for UI interaction.\n---\n\n# Stim\n\nBefore using Stim, load the workflow guide from the installed CLI:\n\n```bash\nstim guide agent\n```\n\nFollow the version-matched instructions it prints.\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_4",
+          "startSeconds": 13.177,
+          "endSeconds": 13.346,
+          "command": "stim guide agent",
+          "output": "Commands use `stim`. If it is not installed globally, replace `stim` with `npx stim-cli`.\n\nAGENT WORKFLOW\n\nUse Stim to run React Native and Expo apps without sharing a Metro port or\ndevice with another workspace. Prefer plain output: it streams each phase and\nends with the facts the next step needs. Use --json only when a script must\nparse a stable payload.\n\nNORMAL WORKFLOW\n\nWork in the current checkout by default. When the task needs another branch or\nan isolated environment, create a worktree and carry its dependencies and\nnative outputs.\n\nBefore native worktree work, run doctor for the platform in scope. It checks\nthe main checkout from a linked worktree. Fix relevant findings and inspect the\nupstream gap.\n\n  stim doctor --platform ios          # or: --platform android\n\n  # In the main checkout, seed the shared build caches when more native\n  # worktrees are coming. Skip this for one-off or JavaScript-only work.\n  stim start\n  stim ios                             # or: stim android\n  stim stop\n\n  # Branches from HEAD. --carry-ignored carries installed dependencies and\n  # native output. Pass it on the first creation, never on a retry. The command\n  # prints the new absolute path.\n  stim worktree create <name> --carry-ignored\n  cd <printed-path>\n\n  stim start\n  stim ios                             # or: stim android\n  stim logs --errors\n\n  # JavaScript and TypeScript edits use Fast Refresh.\n  stim logs --since 30s --level error\n\n  stim stop\n  stim worktree remove\n\nRULES DURING THE LOOP\n\n- Run start before a debug ios or android build. If it returns STIM_NO_METRO,\n  run stim start and retry.\n- Run ios or android again after a native input changes. A JavaScript-only\n  change does not need one.\n- A cold native build can outlive a shell timeout. Run the same command again:\n  the second call joins the active build or returns its result.\n- ios and android install the app, launch it, and check readiness. Trust the\n  exact device, app, Metro, and launch facts in the final summary. Use the full\n  reported device ID. Never assume a simulator named booted belongs to this\n  workspace.\n- After each ios or android run, give the user one compact result: exact device,\n  app id, launch state, cache result, total duration, and whether stim logs\n  --errors passed. Include a remedy only when action remains. Do not repeat the\n  phase transcript.\n- An OK summary with no launch qualifier proves the launch. \"bundle requested,\n  still building\" means Metro has not finished; wait and query the logs. For\n  launch UNVERIFIED, follow the printed remedy before claiming success. JSON\n  reports these as true, \"bundling\", and \"unverified\" in launched.\n- Exit code 0 from logs --errors is the pass condition. Human output can show\n  \"No matching log records\" on stderr. JSON mode prints zero bytes when no\n  records match. Do not read the NDJSON files directly.\n- Use stim status when resuming a workspace or recovering missing device,\n  port, server, or build facts. A normal start and platform run already print\n  them. Use stim doctor when a build is unexpectedly slow or the environment\n  looks incomplete.\n\nOWNERSHIP AND DELETION\n\nStim creates, boots, and deletes only devices it created. Owned simulators use\nthe stim-<label> (<model> <runtime>) name. Never point Stim at a user-created\n<simulator-udid-prefix> or simulator.\n\nworktree remove parks the workspace's simulator for later adoption. A parked\nsimulator is Stim-owned: never delete one by hand. gc --delete clears verified\nentries and keeps failures; see guide lifecycle. First launch on a physical\niPhone can need the one-time taps named by the remedy.\n\nstim android --device [serial] and stim ios --device [udid] install on a\nconnected physical device. Stim never creates, boots, or deletes hardware and\nrecords nothing about it, so stop and gc leave it alone.\n\nA --device run leases that device for the run. stim device lock ios --for 10m\nholds it across runs; stim device unlock gives it back. Never delete another\nworkspace's lease file under ~/.stim/device-locks; gc --delete removes expired\nones.\n\nTreat a refusal as an ownership or state mismatch: read its code and remedy.\nNever reach for --force first.\n\nAsk the user before these actions:\n\n- worktree remove, because it deletes the worktree, its Stim-created branch\n  when it has no unique commits, and gives up its owned device.\n- worktree remove --force, because it also discards uncommitted and untracked\n  files.\n- gc --delete, because it deletes orphaned resources. gc --delete --cache all\n  empties the shared build caches instead; it inspects nothing else.\n- stop when the workspace owns an EAS session, because it irreversibly ends\n  that remote session. For a local device, stop shuts it down but does not\n  delete it. An explicit stop shuts down a Stim-owned simulator even when\n  another process uses it. It never shuts down an unowned simulator.\n\nSANDBOXES\n\nAn agent harness that sandboxes shell commands usually permits writes inside\nthe project and little else. Stim also needs writes to STIM_HOME (~/.stim by\ndefault), simulator service access, and local access to the adb server. When\nthose sit outside the harness allowlist, the failure looks like an unwritable\ndirectory or unavailable device service rather than a broken machine. Decide\nat the start of a session whether to run Stim outside the sandbox or ask the\nuser to allow those operations. guide errors lists the exact requirements.\n\nLOAD ADVANCED GUIDANCE WHEN NEEDED\n\n  stim guide             # list topics\n  stim guide lifecycle   # full flow, flags, worktrees, builds, and capacity\n  stim guide facts       # JSON payload fields\n  stim guide metro       # supervisor, custom Metro, tunnels, and remote devices\n  stim guide logs        # filters, record shape, and capture limits\n  stim guide errors      # error codes and remedies\n  stim guide cleanup     # destructive behavior and disk cleanup\n  stim guide settings    # configuration files and supported keys\n\nRead the relevant topic before release configurations or Android variants;\nremote devices; custom Metro processes or tunnels; cache misses, bypasses, or\nconcurrent builds; capacity limits; cache statistics from stim stats; worktree\ncarry-over; fingerprint exclusions; gc; --force; cleanup failures; or\nunfamiliar states and error codes. Ordinary stim stop and an authorized clean\nstim worktree remove do not need the cleanup guide.\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_5",
+          "startSeconds": 17.946,
+          "endSeconds": 41.379,
+          "command": "stim worktree create bench/native-stim --dir worktree/project --carry-ignored",
+          "output": "  branch      worktree-bench/native-stim from HEAD (63fe92c)\n  carry       node_modules, Pods, native build output (APFS clone)\n  ready       worktree/bench+native-stim\nworktree/bench+native-stim\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_8",
+          "startSeconds": 45.622,
+          "endSeconds": 45.622,
+          "command": "sed -n '1,80p' android/app/src/main/res/values/strings.xml",
+          "output": "<resources>\n  <string name=\"app_name\">Trailhead</string>\n  <string name=\"expo_system_ui_user_interface_style\" translatable=\"false\">automatic</string>\n  <string name=\"expo_splash_screen_resize_mode\" translatable=\"false\">contain</string>\n</resources>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_10",
+          "startSeconds": 61.264,
+          "endSeconds": 63.247,
+          "command": "stim start",
+          "output": "  metro       starting on port 8082 (expo-child, supervisor pid 11991)\nOK: dev server on port 8082, supervisor pid 11991 (expo-child) (1.7s)\n  logs        results/sol-android/native-stim/stim-home/workspaces/bench-sol-android-gpt-5-6-sol-native-stim-178854--06258db765a1a5de/logs\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_12",
+          "startSeconds": 67.099,
+          "endSeconds": 382.308,
+          "command": "stim android --system-image \"system-images;android-36;google_apis_playstore_ps16k;arm64-v8a\"",
+          "output": "  metro       port 8082 (pid 11994)\n  device      waiting for <simulator-udid> to finish booting\n  device      stim-b36e04f4-bench-native-stim created (21.4s)\n  fingerprint a6161c.. miss (3.8s)\n  build       compiling debug with Gradle\n  cache       gradle build cache on (--build-cache, shared under the Gradle user home)\n  build       still compiling (30s of ~4m31s)\n  build       still compiling (1m00s of ~4m31s)\n  build       still compiling (1m30s of ~4m31s)\n  build       still compiling (2m00s of ~4m31s)\n  build       still compiling (2m30s of ~4m31s)\n  build       still compiling (3m00s of ~4m31s)\n  build       still compiling (3m30s of ~4m31s)\n  build       still compiling (4m00s of ~4m31s)\n  build       still compiling (4m30s of ~4m31s)\n  build       ok (4m34s)\n  device      stim-b36e04f4-bench-native-stim (<simulator-udid>) booted (83ms)\n  install     app-debug.apk -> <simulator-udid> (1.1s)\n  launch      com.appandflow.trailhead (253ms)\n  metro       debug_http_host <local-ip>:8082 + adb reverse tcp:8082->tcp:8082\n  logs        results/sol-android/native-stim/stim-home/workspaces/bench-sol-android-gpt-5-6-sol-native-stim-178854--06258db765a1a5de/logs (collector pid 18590)\n  verify      bundle loaded, process alive, stable for 3s -- the first screen may still be rendering (11.2s total)\n  launch      1 error-level record in the device log during launch (logs --errors --source device)\n  launch       ERROR  Can't perform a React state update on a component that hasn't mounted yet. This indicates that you have a side-effect in your render function that asynchronously tries to update the component. Move this work to useEffect instead.\nOK: com.appandflow.trailhead launched on <simulator-udid>, Metro port 8082 (built)\n  device      stim-b36e04f4-bench-native-stim (<simulator-udid>)\n  app         com.appandflow.trailhead\n  metro       running on port 8082\n  cache       built\n  logs        results/sol-android/native-stim/stim-home/workspaces/bench-sol-android-gpt-5-6-sol-native-stim-178854--06258db765a1a5de/logs\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_19",
+          "startSeconds": 388.023,
+          "endSeconds": 390.19,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-stim agent-device open com.appandflow.trailhead --foreground --platform android --serial <simulator-udid>",
+          "output": "Opened: com.appandflow.trailhead\nSession state: ./state/agent-device/sessions/native-stim\nPage: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 24 visible nodes (68 total)\nHint: React Native warning/error overlay detected. It overlays part of the app and should be handled before interacting.\nRun: agent-device react-native dismiss-overlay\nThe command verifies the overlay is gone. Run agent-device snapshot -i afterward only when you need fresh refs for the next action.\nCollapsed 44 Android helper nodes from the agent-facing text snapshot; use --raw or --json for the full hierarchy.\n@e1 [scroll-area] [scrollable]\n@e2 [text-field] \"Search trails, regions, tags\" [editable]\n@e3 [horizontalscrollview] \"Bas-Saint-Laurent, Adirondacks, All regions\" [scrollable]\n@e4 [button] \"All regions\"\n@e6 [button] \"Adirondacks\"\n@e8 [button] \"Bas-Saint-Laurent\"\n@e10 [horizontalscrollview] \"Hard, Moderate, Easy, Any level\" [scrollable]\n@e11 [button] \"Any level\"\n@e13 [button] \"Easy\"\n@e15 [button] \"Moderate\"\n@e17 [button] \"Hard\"\n@e19 [button] \"Expert\"\n@e20 [button] \"Sort by name\"\n@e22 [button] \"Sort by distance\"\n@e24 [button] \"Sort by rating\"\n@e26 [scroll-area] \"Belvedere de la Tour Bleu, Mont-Tremblant, , 1.9 km, , 701 m, , 1:31:00, Hard, , 5.0, (609), Belvedere de la Chute, Gaspesie, 11 km, 1106 m, 4:16:00, Moderate, 3.8, (837)\" [scrollable]\n  [content above scroll-area hidden]\n  [content below scroll-area hidden]\n@e27 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n@e40 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n@e53 [group] \", Trails\"\n@e56 [group] \", Record\"\n@e59 [group] \", History\"\n@e62 [group] \", Settings\"\n@e65 [group] \"!, Can't perform a React state update on a component that hasn't mounted yet. This indicates that you have a side-effect in your render function that asynchronously tries to update the component. Move this work to useEffect instead.\"\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_20",
+          "startSeconds": 393.72,
+          "endSeconds": 394.103,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-stim agent-device record start results/sol-android/native-stim/proof/session.mp4 --scope device --quality high --hide-touches",
+          "output": "results/sol-android/native-stim/proof/session.mp4\nSession state: ./state/agent-device/sessions/native-stim\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_22",
+          "startSeconds": 400.789,
+          "endSeconds": 401.069,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-stim agent-device react-native dismiss-overlay",
+          "output": "React Native overlay dismiss action sent and verified gone\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_23",
+          "startSeconds": 407.048,
+          "endSeconds": 407.154,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-stim agent-device click @e62 --settle",
+          "output": "Error (COMMAND_FAILED): Ref @e62 belongs to an expired ref frame — a device action since the snapshot invalidated it\nHint: The UI may have changed since these refs were issued, so they no longer represent current device state. Take a new snapshot before relying on or interacting with them.\nDiagnostic ID: mtn72at0-186e764a\nDiagnostics Log: ./state/agent-device/sessions/native-stim/requests/8ce8040f2233c0d7.ndjson\n",
+          "exitCode": 1
+        },
+        {
+          "id": "item_25",
+          "startSeconds": 412.27,
+          "endSeconds": 412.434,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-stim agent-device snapshot -i",
+          "output": "Page: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 22 visible nodes (64 total)\nCollapsed 42 Android helper nodes from the agent-facing text snapshot; use --raw or --json for the full hierarchy.\n@e1 [scroll-area] [scrollable]\n@e2 [text-field] \"Search trails, regions, tags\" [editable]\n@e3 [horizontalscrollview] \"Bas-Saint-Laurent, Adirondacks, All regions\" [scrollable]\n@e4 [button] \"All regions\"\n@e6 [button] \"Adirondacks\"\n@e8 [button] \"Bas-Saint-Laurent\"\n@e10 [horizontalscrollview] \"Hard, Moderate, Easy, Any level\" [scrollable]\n@e11 [button] \"Any level\"\n@e13 [button] \"Easy\"\n@e15 [button] \"Moderate\"\n@e17 [button] \"Hard\"\n@e19 [button] \"Expert\"\n@e20 [button] \"Sort by name\"\n@e22 [button] \"Sort by distance\"\n@e24 [button] \"Sort by rating\"\n@e26 [scroll-area] \"Belvedere de la Tour Bleu, Mont-Tremblant, , 1.9 km, , 701 m, , 1:31:00, Hard, , 5.0, (609), Belvedere de la Chute, Gaspesie, 11 km, 1106 m, 4:16:00, Moderate, 3.8, (837)\" [scrollable]\n  [content above scroll-area hidden]\n  [content below scroll-area hidden]\n@e27 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n@e40 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n@e53 [group] \", Trails\"\n@e56 [group] \", Record\"\n@e59 [group] \", History\"\n@e62 [group] \", Settings\"\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_26",
+          "startSeconds": 417.511,
+          "endSeconds": 418.912,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-stim agent-device click @e62 --settle",
+          "output": "Tapped @e62 (280, 592)\nsettled after 1047ms: +18 -50 (~14 unchanged)\n- @e2 [text-field] \"Search trails, regions, tags\"\n- @e3 [horizontalscrollview]\n- @e4 [button] \"All regions\"\n- @e5 [text] \"All regions\"\n- @e6 [button] \"Adirondacks\"\n- @e7 [text] \"Adirondacks\"\n- @e8 [button] \"Bas-Saint-Laurent\"\n- @e9 [text] \"Bas-Saint-Laurent\"\n- @e10 [horizontalscrollview]\n- @e11 [button] \"Any level\"\n- @e12 [text] \"Any level\"\n- @e13 [button] \"Easy\"\n- @e14 [text] \"Easy\"\n- @e15 [button] \"Moderate\"\n- @e16 [text] \"Moderate\"\n- @e17 [button] \"Hard\"\n- @e18 [text] \"Hard\"\n- @e19 [button] \"Expert\"\n- @e20 [button] \"Sort by name\"\n- @e21 [text] \"Name\"\n- @e22 [button] \"Sort by distance\"\n- @e23 [text] \"Distance\"\n- @e24 [button] \"Sort by rating\"\n- @e25 [text] \"Rating\"\n- @e27 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e28 [text] \"Belvedere de la Chute\"\n- @e29 [text] \"Gaspesie\"\n- @e30 [text] \"\"\n- @e31 [text] \"11 km\"\n- @e32 [text] \"\"\n- @e33 [text] \"1106 m\"\n- @e34 [text] \"\"\n- @e35 [text] \"4:16:00\"\n- @e36 [text] \"Moderate\"\n- @e37 [text] \"\"\n- @e38 [text] \"3.8\"\n- @e39 [text] \"(837)\"\n- @e40 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n- @e41 [text] \"Belvedere de la Tour Bleu\"\n- @e42 [text] \"Mont-Tremblant\"\n- @e43 [text] \"\"\n- @e44 [text] \"1.9 km\"\n- @e45 [text] \"\"\n- @e46 [text] \"701 m\"\n- @e47 [text] \"\"\n- @e48 [text] \"1:31:00\"\n- @e49 [text] \"Hard\"\n- @e50 [text] \"\"\n- @e51 [text] \"5.0\"\n- @e52 [text] \"(609)\"\n+ @e3~s391208 [text] \"UNITS\"\n+ @e4~s391208 [text] \"Distance\"\n+ @e5~s391208 [text] \"\"\n+ @e6~s391208 [text] \"Used across the whole app\"\n+ @e7~s391208 [button] \"Metric units\"\n+ @e8~s391208 [text] \"Metric\"\n+ @e9~s391208 [button] \"Imperial units\"\n+ @e10~s391208 [text] \"Imperial\"\n+ @e11~s391208 [text] \"PREFERENCES\"\n+ @e12~s391208 [text] \"\"\n+ @e13~s391208 [text] \"Hike reminders\"\n+ @e14~s391208 [text] \"Nudge me when I have not hiked in a while\"\n+ @e15~s391208 [switch] \"Hike reminders\"\n+ @e16~s391208 [text] \"\"\n+ @e17~s391208 [text] \"Offline maps\"\n+ @e18~s391208 [text] \"Keep map tiles for saved trails on device\"\n+ @e19~s391208 [switch] \"Offline maps\"\n+ @e20~s391208 [text] \"STORAGE\"\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_28",
+          "startSeconds": 423.323,
+          "endSeconds": 423.44,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-stim agent-device wait text \"Offline maps\"",
+          "output": "",
+          "exitCode": 0
+        },
+        {
+          "id": "item_29",
+          "startSeconds": 428.523,
+          "endSeconds": 429.872,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-stim agent-device screenshot tmp/native-stim-settings.png",
+          "output": "tmp/native-stim-settings.png (320x640)\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_30",
+          "startSeconds": 434.014,
+          "endSeconds": 434.015,
+          "command": "cp tmp/native-stim-settings.png results/sol-android/native-stim/proof/settings.png",
+          "output": "",
+          "exitCode": 0
+        },
+        {
+          "id": "item_31",
+          "startSeconds": 438.37,
+          "endSeconds": 444.639,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-stim agent-device record stop",
+          "output": "results/sol-android/native-stim/proof/session.mp4\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_32",
+          "startSeconds": 447.257,
+          "endSeconds": 447.452,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-stim agent-device close",
+          "output": "Closed: native-stim\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_34",
+          "startSeconds": 458.389,
+          "endSeconds": 458.389,
+          "command": "stat results/sol-android/native-stim/proof/settings.png",
+          "output": "16777244 55854073 -rw-r--r-- 1 <local-user> staff 0 40309 \"Sep  4 12:55:11 2026\" \"Sep  4 12:55:11 2026\" \"Sep  4 12:55:11 2026\" \"Sep  4 12:55:11 2026\" 4096 80 0 results/sol-android/native-stim/proof/settings.png\n",
+          "exitCode": 0
+        }
+      ],
+      "backgroundProcesses": [],
+      "markers": [
+        {
+          "id": "app-alive",
+          "kind": "appAlive",
+          "label": "App process alive",
+          "atSeconds": 371.328
+        },
+        {
+          "id": "settings-ready",
+          "kind": "settingsReady",
+          "label": "Settings proof ready",
+          "atSeconds": 429.872
+        }
+      ],
+      "proof": {
+        "src": "benchmarks/sol-android/native-stim.png",
+        "expected": "Offline maps",
+        "width": 320,
+        "height": 640
+      },
+      "recording": {
+        "src": "benchmarks/sol-android/native-stim.mp4",
+        "bytes": 129597
+      }
+    },
+    {
+      "id": "native-control",
+      "model": "gpt-5.6-sol",
+      "platform": "android",
+      "variant": "native",
+      "arm": "control",
+      "valid": true,
+      "invalidReasons": [],
+      "settingsReadySeconds": 392.995,
+      "appAliveSeconds": 304.204,
+      "diagnosisSeconds": null,
+      "diagnosisCommandCount": null,
+      "launchCrashAudit": null,
+      "diagnosisUsage": null,
+      "estimatedDiagnosisCostUsd": null,
+      "totalSeconds": 433.001,
+      "commandCount": 55,
+      "usage": {
+        "input_tokens": 2733685,
+        "cached_input_tokens": 2645248,
+        "output_tokens": 17645,
+        "reasoning_output_tokens": 5723
+      },
+      "estimatedTokenCostUsd": 1.7647472,
+      "summary": "Created an isolated worktree and carried over dependencies or native outputs, worked on the native Android change, and started the local Expo/Android workflow. It started 2 processes with nohup and monitored the detached work through later commands. It reached Settings and captured valid agent-device proof. The record includes 2 failed command attempts before completion.",
+      "messages": [
+        {
+          "id": "item_0",
+          "atSeconds": 4.91,
+          "text": "I’m using the `agent-device` skill because the requested proof requires its exact session, recording, navigation, and evidence workflow. I’ll first create and populate the isolated worktree, then create the named AVD, run the Debug build in the background with short polling, and perform the proof without stopping the <simulator-udid-prefix> or app."
+        },
+        {
+          "id": "item_3",
+          "atSeconds": 19.737,
+          "text": "The requested branch does not yet exist. The main checkout is clean and contains reusable dependencies plus Android and iOS native outputs, so I’m creating the branch worktree from the fixture HEAD and copying those existing artifacts into it before doing any app work."
+        },
+        {
+          "id": "item_6",
+          "atSeconds": 45.094,
+          "text": "The copy is still running, primarily because the existing dependency tree is large. I’m polling it now; once complete, all subsequent repository commands will use only the new worktree."
+        },
+        {
+          "id": "item_11",
+          "atSeconds": 86.501,
+          "text": "The worktree now has the exact app label. I’m moving to the Android SDK phase: I’ll verify the run-specific AVD name is unused, create it from the requested API 36 Play Store 16 KiB ARM image with the default profile, and set only the required 8 GiB data partition override."
+        },
+        {
+          "id": "item_19",
+          "atSeconds": 135.436,
+          "text": "The direct SDK <simulator-udid-prefix> binary exited before registering a device and produced no diagnostic output. I’m retrying through the environment’s Android SDK `<simulator-udid-prefix>` entry point (still not Stim), keeping the same new AVD and mandatory no-snapshot flags, then I’ll confirm the exact process and serial before proceeding."
+        },
+        {
+          "id": "item_25",
+          "atSeconds": 169.967,
+          "text": "The new AVD is running as `<simulator-udid>`; the launch output confirms the exact AVD name and a full cold startup. Android is connected but boot animation is still running, so I’m continuing short boot-property checks before starting the Debug build."
+        },
+        {
+          "id": "item_28",
+          "atSeconds": 195.823,
+          "text": "Android boot completed (`sys.boot_completed=1`, boot animation stopped). I’m now starting the local Expo `run:android` command for explicit `debug` on `<simulator-udid>` as the required shell-background job; its PID and complete output are being kept under `workspace/tmp`, while I poll it with short foreground checks."
+        },
+        {
+          "id": "item_31",
+          "atSeconds": 209.043,
+          "text": "Expo’s `--device` option resolves the Android device display name rather than accepting the adb serial, so the first job exited before building. I’m restarting the same Debug job with the exact AVD name; Expo will still report and target the already-confirmed run device, and the app proof will use the adb serial `<simulator-udid>`."
+        },
+        {
+          "id": "item_47",
+          "atSeconds": 298.247,
+          "text": "The Debug build is actively compiling its remaining ARM64 native code, with the background PID still healthy. The reused native cache contains absolute source references from the fixture checkout—expected when carrying native outputs—but the build command and all project edits remain scoped to the new worktree."
+        },
+        {
+          "id": "item_50",
+          "atSeconds": 312.189,
+          "text": "The Debug build completed successfully, installed `app-debug.apk`, and Expo launched the development-client URL on the named run AVD. The run device serial is `<simulator-udid>`. Per the proof workflow, I’m opening the isolated `agent-device` session now and will start run-scoped recording immediately afterward."
+        },
+        {
+          "id": "item_53",
+          "atSeconds": 324.854,
+          "text": "The isolated session opened successfully and device-scoped recording is active at the required path. Expo’s first-run overlay is visible with a semantic `Continue` control, so I’m dismissing that onboarding and then navigating to Settings using current semantic references."
+        },
+        {
+          "id": "item_60",
+          "atSeconds": 357.809,
+          "text": "A React Native development warning overlay is intercepting tab interactions. The skill’s diagnostic explicitly directs dismissal with `react-native dismiss-overlay`; I’m applying that within the same isolated session, then I’ll take a fresh snapshot and select Settings again."
+        },
+        {
+          "id": "item_65",
+          "atSeconds": 384.277,
+          "text": "Settings is now open and the semantic snapshot exposes `Offline maps`. I’m entering the mandated evidence sequence now; each required command will be issued independently and exactly as specified."
+        },
+        {
+          "id": "item_71",
+          "atSeconds": 417.746,
+          "text": "The required wait succeeded, `settings.png` was copied, and recording stop reported the saved `session.mp4`; the isolated session is now closed as required. I’m doing one final read-only check that both proof files exist and that `<simulator-udid>` still has the Trailhead app alive in the foreground, without stopping either process."
+        },
+        {
+          "id": "item_73",
+          "atSeconds": 432.701,
+          "text": "Completed successfully.\n\n- Worktree: [native-control](worktree/native-control)\n- Settings proof: [settings.png](results/sol-android/native-control/proof/settings.png)\n- Video proof: [session.mp4](results/sol-android/native-control/proof/session.mp4)\n\nThe named AVD remains running as `<simulator-udid>`, with the Debug app alive and foregrounded."
+        }
+      ],
+      "commands": [
+        {
+          "id": "item_1",
+          "startSeconds": 6.403,
+          "endSeconds": 6.403,
+          "command": "sed -n '1,240p' runner-home/.codex/skills/agent-device/SKILL.md",
+          "output": "---\nname: agent-device\ndescription: Automates Apple-platform apps (iOS, tvOS, macOS), Android devices, and Amazon Vega OS TV apps in Vega Virtual Devices. Use when navigating apps, taking snapshots/screenshots where supported, driving TV remotes, tapping, typing, scrolling, extracting UI info, collecting evidence, or planning agent-device CLI commands.\n---\n\n# agent-device\n\nFor a normal app-driving task, start immediately. Do not probe first with `--help`, `--version`, `devices`, `appstate`, `snapshot`, or `screenshot`:\n\n```bash\nagent-device open <app> --foreground\n```\n\nThat starts the session and returns the initial interactive snapshot with `@refs`.\n\nLoop: act with `press|click|fill|longpress <target> ... --settle`, `scroll <direction> --settle`, or `back --settle`; continue from the printed diff, verify the named expectation (`wait text \"...\"`, `is`, `get`, or `find`), then run `agent-device close`.\n\nCopy refs byte-for-byte: `@e12`, `@e12~s4` — keep the `@` and any `~sN`. Prefer current refs, then `id`/`label`/`role` selectors; coordinates are a last resort. If snapshot reports sparse/AX-unavailable, its refs and selectors are invalid: run `agent-device screenshot`, inspect the image, use coordinates, then retry `snapshot -i` after navigating. Otherwise run `snapshot -i` only when the diff lacks the next target.\n\nError output includes corrective hints; follow them instead of re-planning. Only when the task is specialized (for example gestures, scripting, TV, macOS, remote, or debugging) or a command shape is unclear, run `agent-device help <topic>`. `agent-device --help` lists topics, but is not a startup step.\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_2",
+          "startSeconds": 13.259,
+          "endSeconds": 15.877,
+          "command": "git status --short --branch && git worktree list --porcelain && git show-ref --verify --quiet refs/heads/bench/native-control; code=$?; printf '\"'branch_exists=%s\\\\n' \\\"\"'$code\"; for p in node_modules android/.gradle android/build android/app/build ios/Pods ios/build; do if [ -e \"$p\" ]; then du -sh \"$p\"; else printf '\"'missing %s\\\\n' \\\"\"'$p\"; fi; done",
+          "output": " 23G\tnode_modules\n 15M\tandroid/.gradle\n184K\tandroid/build\n4.0G\tandroid/app/build\n1.2G\tios/Pods\n1.1M\tios/build\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_4",
+          "startSeconds": 21.483,
+          "endSeconds": 21.483,
+          "command": "git worktree add -b bench/native-control worktree/native-control 63fe92cb06e228fb0294344a67778180392f3008",
+          "output": "Preparing worktree (new branch 'bench/native-control')\nHEAD is now at 63fe92c test: stabilize benchmark native fingerprint\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_5",
+          "startSeconds": 33.655,
+          "endSeconds": 54.429,
+          "command": "cp -cR workspace/node_modules worktree/native-control/node_modules\ncp -cR workspace/.gradle worktree/native-control/android/.gradle\ncp -cR workspace/build worktree/native-control/android/build\ncp -cR workspace/build worktree/native-control/android/app/build\ncp -cR workspace/Pods worktree/native-control/ios/Pods\ncp -cR workspace/build worktree/native-control/ios/build\nif [ -f workspace/.env ]; then cp -p workspace/.env worktree/native-control/.env; fi",
+          "output": "",
+          "exitCode": 0
+        },
+        {
+          "id": "item_7",
+          "startSeconds": 61.428,
+          "endSeconds": 64.215,
+          "command": "'git status --short --branch && for p in node_modules android/.gradle android/build android/app/build ios/Pods ios/build; do du -sh \"$p\"; done && sed -n '\"'1,120p' android/app/src/main/res/values/strings.xml\"",
+          "output": "## bench/native-control\n 52G\tnode_modules\n 15M\tandroid/.gradle\n184K\tandroid/build\n4.0G\tandroid/app/build\n1.2G\tios/Pods\n1.1M\tios/build\n<resources>\n  <string name=\"app_name\">Trailhead</string>\n  <string name=\"expo_system_ui_user_interface_style\" translatable=\"false\">automatic</string>\n  <string name=\"expo_splash_screen_resize_mode\" translatable=\"false\">contain</string>\n</resources>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_9",
+          "startSeconds": 73.328,
+          "endSeconds": 73.328,
+          "command": "\"sed -n '1,80p' android/local.properties && test -x \\\"\"'$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager\"; printf '\"'android_home_avdmanager=%s\\\\n' \\\"\"'$?\" && test -x \"$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/avdmanager\"; printf '\"'android_sdk_root_avdmanager=%s\\\\n' \\\"\"'$?\"'",
+          "output": "sed: android/local.properties: No such file or directory\nandroid_home_avdmanager=1\nandroid_sdk_root_avdmanager=1\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_10",
+          "startSeconds": 79.337,
+          "endSeconds": 79.337,
+          "command": "env | rg '\"'^(ANDROID|JAVA_HOME|PATH)='\"' && command -v avdmanager && command -v <simulator-udid-prefix> && command -v adb",
+          "output": "JAVA_HOME=workspace/Home\nPATH=<toolchain-path>\navdmanager\n./allowed-bin/<simulator-udid-prefix>\n./allowed-bin/adb\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_12",
+          "startSeconds": 88.298,
+          "endSeconds": 89.053,
+          "command": "workspace/avdmanager list avd",
+          "output": "Available Android Virtual Devices:\n    Name: Android16_16KB\n  Device: pixel_6 (Google)\n    Path: workspace/Android16_16KB.avd\n  Target: 16 KB Page Size (Google Inc.)\n          Based on: Android 16.0 (\"Baklava\") Tag/ABI: page_size_16kb/arm64-v8a\n  Sdcard: 512 MB\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_13",
+          "startSeconds": 93.924,
+          "endSeconds": 94.429,
+          "command": "printf 'no\\\\n' | workspace/avdmanager create avd --name Trailhead_native-control --package 'system-images;android-36;google_apis_playstore_ps16k;arm64-v8a'",
+          "output": "Warning: This version only understands SDK XML versions up to 3 but an SDK XML file of version 4 was encountered. This can happen if you use versions of Android Studio and the command-line tools that were released at different times.\nAuto-selecting single ABI arm64-v8a\nDo you wish to create a custom hardware profile? [no] ",
+          "exitCode": 0
+        },
+        {
+          "id": "item_14",
+          "startSeconds": 98.965,
+          "endSeconds": 98.965,
+          "command": "rg -n '\"'^disk'\"\\\\.dataPartition\\\\.size=' workspace/config.ini || true",
+          "output": "9:disk.dataPartition.size=6G\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_16",
+          "startSeconds": 114.614,
+          "endSeconds": 114.667,
+          "command": "nohup workspace/sdk<simulator-udid-prefix>/<simulator-udid-prefix> -avd Trailhead_native-control -no-snapshot-save -no-snapshot-load > tmp/native-control-<simulator-udid-prefix>.log 2>&1 & echo $! > tmp/native-control-<simulator-udid-prefix>.pid",
+          "output": "",
+          "exitCode": 0
+        },
+        {
+          "id": "item_17",
+          "startSeconds": 120.394,
+          "endSeconds": 120.394,
+          "command": "run_pid=$(< tmp/native-control-<simulator-udid-prefix>.pid); ps -p \"$run_pid\" -o pid=,stat=,etime=,command=; tail -n 30 tmp/native-control-<simulator-udid-prefix>.log; workspace/adb devices -l",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_18",
+          "startSeconds": 127.683,
+          "endSeconds": 127.683,
+          "command": "'ls -l tmp/native-control-<simulator-udid-prefix>.log tmp/native-control-<simulator-udid-prefix>.pid; run_pid=$(< tmp/native-control-<simulator-udid-prefix>.pid); printf '\"'<simulator-udid-prefix>_pid=%s\\\\n' \\\"\"'$run_pid\"; ps -ax -o pid=,command= | rg '\"'Trailhead_native-control|qemu-system-aarch64' || true; tail -n 80 tmp/native-control-<simulator-udid-prefix>.log\"",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_20",
+          "startSeconds": 137.191,
+          "endSeconds": 137.244,
+          "command": "nohup <simulator-udid-prefix> -avd Trailhead_native-control -no-snapshot-save -no-snapshot-load > tmp/native-control-<simulator-udid-prefix>.log 2>&1 & echo $! > tmp/native-control-<simulator-udid-prefix>.pid",
+          "output": "",
+          "exitCode": 0
+        },
+        {
+          "id": "item_21",
+          "startSeconds": 143.029,
+          "endSeconds": 143.029,
+          "command": "run_pid=$(< tmp/native-control-<simulator-udid-prefix>.pid); ps -p \"$run_pid\" -o pid=,stat=,etime=,command=; tail -n 40 tmp/native-control-<simulator-udid-prefix>.log; adb devices -l",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_23",
+          "startSeconds": 153.387,
+          "endSeconds": 153.387,
+          "command": "adb devices -l",
+          "output": "List of devices attached\n<simulator-udid>          offline transport_id:281\n\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_24",
+          "startSeconds": 165.803,
+          "endSeconds": 165.803,
+          "command": "adb -s <simulator-udid> get-state; adb -s <simulator-udid> shell getprop sys.boot_completed 2>/dev/null; adb -s <simulator-udid> shell getprop init.svc.bootanim 2>/dev/null",
+          "output": "device\n\nrunning\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_26",
+          "startSeconds": 171.92,
+          "endSeconds": 172.061,
+          "command": "adb -s <simulator-udid> shell getprop sys.boot_completed 2>/dev/null; adb -s <simulator-udid> shell getprop init.svc.bootanim 2>/dev/null; adb -s <simulator-udid> shell getprop ro.boot.qemu.avd_name 2>/dev/null",
+          "output": "1\nstopped\nTrailhead_native-control\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_27",
+          "startSeconds": 184.266,
+          "endSeconds": 184.595,
+          "command": "sed -n '1,180p' package.json && ./node_modules/.bin/expo run:android --help | sed -n '1,160p'",
+          "output": "\n  Description\n    Run the native Android app locally\n\n  Usage\n    $ npx expo run:android <dir>\n\n  Options \n    --no-build-cache       Clear the native build cache\n    --no-install           Skip installing dependencies\n    --no-bundler           Skip starting the bundler\n    --app-id <appId>       Custom Android application ID to launch.\n    --variant <name>       Build variant or product flavor and build variant. Default: debug\n    --binary <path>        Path to existing .apk or .aab to install.\n    -d, --device [device]  Device name to run the app on\n    -p, --port <port>      Port to start the dev server on. Default: 8081\n    -h, --help             Output usage information\n\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_29",
+          "startSeconds": 198.191,
+          "endSeconds": 198.747,
+          "command": "./node_modules/.bin/expo run:android --device <simulator-udid> --variant debug > tmp/native-control-native.log 2>&1 &\nnative_pid=$!\nprintf '\"'%s\\\\n' \\\"\"'$native_pid\" > tmp/native-control-native.pid\nwait \"$native_pid\"\nnative_status=$?\nprintf '\"'%s\\\\n' \\\"\"'$native_status\" > tmp/native-control-native.exit\nexit \"$native_status\"",
+          "output": "",
+          "exitCode": 1
+        },
+        {
+          "id": "item_30",
+          "startSeconds": 204.315,
+          "endSeconds": 204.315,
+          "command": "'native_pid=$(< tmp/native-control-native.pid); ps -p \"$native_pid\" -o pid=,stat=,etime=,command=; tail -n 80 tmp/native-control-native.log; printf '\"'exit='; test -f tmp/native-control-native.exit && sed -n '1p' tmp/native-control-native.exit || printf 'pending\\\\n'\"",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_33",
+          "startSeconds": 217.397,
+          "endSeconds": 217.397,
+          "command": "native_pid=$(< tmp/native-control-native.pid); ps -p \"$native_pid\" -o pid=,stat=,etime=,command=; tail -n 60 tmp/native-control-native.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_34",
+          "startSeconds": 223.249,
+          "endSeconds": 223.249,
+          "command": "native_pid=$(< tmp/native-control-native.pid); ps -p \"$native_pid\" -o pid=,stat=,etime=,command=; tail -n 80 tmp/native-control-native.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_35",
+          "startSeconds": 230.146,
+          "endSeconds": 230.258,
+          "command": "pwd; ls -ld node_modules node_modules/@shopify/react-native-skia; realpath node_modules/@shopify/react-native-skia",
+          "output": "drwxr-xr-x@ 590 <local-user>  staff  18880 Sep  4 12:59 node_modules\ndrwxr-xr-x@  16 <local-user>  staff    512 Sep  4 12:59 node_modules/@shopify/react-native-skia\nworktree/native-control/node_modules/@shopify/react-native-skia\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_36",
+          "startSeconds": 236.536,
+          "endSeconds": 236.536,
+          "command": "native_pid=$(< tmp/native-control-native.pid); ps -p \"$native_pid\" -o pid=,stat=,etime=,command=; tail -n 100 tmp/native-control-native.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_37",
+          "startSeconds": 242.996,
+          "endSeconds": 243.18,
+          "command": "native_pid=$(< tmp/native-control-native.pid); ps -p \"$native_pid\" -o pid=,stat=,etime=,command=; tail -n 80 tmp/native-control-native.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_38",
+          "startSeconds": 248.532,
+          "endSeconds": 248.696,
+          "command": "native_pid=$(< tmp/native-control-native.pid); ps -p \"$native_pid\" -o pid=,stat=,etime=,command=; tail -n 60 tmp/native-control-native.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_39",
+          "startSeconds": 253.783,
+          "endSeconds": 253.966,
+          "command": "native_pid=$(< tmp/native-control-native.pid); ps -p \"$native_pid\" -o pid=,stat=,etime=,command=; tail -n 50 tmp/native-control-native.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_40",
+          "startSeconds": 259.129,
+          "endSeconds": 259.129,
+          "command": "native_pid=$(< tmp/native-control-native.pid); ps -p \"$native_pid\" -o pid=,stat=,etime=,command=; tail -n 60 tmp/native-control-native.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_41",
+          "startSeconds": 265.162,
+          "endSeconds": 265.271,
+          "command": "native_pid=$(< tmp/native-control-native.pid); ps -p \"$native_pid\" -o pid=,stat=,etime=,command=; tail -n 70 tmp/native-control-native.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_42",
+          "startSeconds": 270.523,
+          "endSeconds": 270.68,
+          "command": "native_pid=$(< tmp/native-control-native.pid); ps -p \"$native_pid\" -o pid=,stat=,etime=,command=; tail -n 50 tmp/native-control-native.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_43",
+          "startSeconds": 275.9,
+          "endSeconds": 276.083,
+          "command": "native_pid=$(< tmp/native-control-native.pid); ps -p \"$native_pid\" -o pid=,stat=,etime=,command=; tail -n 55 tmp/native-control-native.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_44",
+          "startSeconds": 281.908,
+          "endSeconds": 282.091,
+          "command": "native_pid=$(< tmp/native-control-native.pid); ps -p \"$native_pid\" -o pid=,stat=,etime=,command=; tail -n 40 tmp/native-control-native.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_45",
+          "startSeconds": 287.29,
+          "endSeconds": 287.479,
+          "command": "native_pid=$(< tmp/native-control-native.pid); ps -p \"$native_pid\" -o pid=,stat=,etime=,command=; tail -n 45 tmp/native-control-native.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_46",
+          "startSeconds": 293.516,
+          "endSeconds": 293.711,
+          "command": "'native_pid=$(< tmp/native-control-native.pid); ps -p \"$native_pid\" -o pid=,stat=,etime=,command=; ps -ax -o pid=,ppid=,%cpu=,stat=,command= | rg '\"'gradle|GradleDaemon|ninja|cmake' | tail -n 20; tail -n 25 tmp/native-control-native.log\"",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_48",
+          "startSeconds": 300.354,
+          "endSeconds": 300.355,
+          "command": "native_pid=$(< tmp/native-control-native.pid); ps -p \"$native_pid\" -o pid=,stat=,etime=,command=; tail -n 50 tmp/native-control-native.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_49",
+          "startSeconds": 305.83,
+          "endSeconds": 305.998,
+          "command": "native_pid=$(< tmp/native-control-native.pid); ps -p \"$native_pid\" -o pid=,stat=,etime=,command=; tail -n 45 tmp/native-control-native.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "item_51",
+          "startSeconds": 314.45,
+          "endSeconds": 316.65,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device open com.appandflow.trailhead --foreground --platform android --serial <simulator-udid>",
+          "output": "Opened: com.appandflow.trailhead\nSession state: ./state/agent-device/sessions/native-control\nPage: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 3 visible nodes (5 total)\nCollapsed 2 Android helper nodes from the agent-facing text snapshot; use --raw or --json for the full hierarchy.\n@e1 [group] \"Close\"\n@e3 [scroll-area] [scrollable]\n@e4 [group] \"Continue\"\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_52",
+          "startSeconds": 320.549,
+          "endSeconds": 320.862,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device record start results/sol-android/native-control/proof/session.mp4 --scope device --quality high --hide-touches",
+          "output": "results/sol-android/native-control/proof/session.mp4\nSession state: ./state/agent-device/sessions/native-control\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_54",
+          "startSeconds": 326.724,
+          "endSeconds": 327.714,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device click @e4 --settle",
+          "output": "Tapped @e4 (160, 552)\nsettled after 680ms: +14 -1 (~4 unchanged)\n- @e5 [text] \"Continue\"\n+ @e5~s861454 [group] \"Reload\"\n+ @e6~s861454 [text] \"Reload\"\n+ @e7~s861454 [group]\n+ @e8~s861454 [group] \"Home\"\n+ @e9~s861454 [text] \"Go home\"\n+ @e10~s861454 [group]\n+ @e11~s861454 [group] \"Performance monitor\"\n+ @e12~s861454 [text] \"Toggle performance monitor\"\n+ @e13~s861454 [group]\n+ @e14~s861454 [group] \"Element inspector\"\n+ @e15~s861454 [text] \"Toggle element inspector\"\n+ @e16~s861454 [group]\n+ @e17~s861454 [group] \"DevTools\"\n+ @e18~s861454 [text] \"Open DevTools\"\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_55",
+          "startSeconds": 332.689,
+          "endSeconds": 332.689,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device click @e1 --settle",
+          "output": "Error (COMMAND_FAILED): Ref @e1 needs a complete snapshot — the current frame only authorizes its emitted refs\nHint: Capture a fresh interactive snapshot (snapshot -i) or use a stable selector, then retry.\nDiagnostic ID: mtn7egkw-bd6505bc\nDiagnostics Log: ./state/agent-device/sessions/native-control/requests/9638324a7b34ac23.ndjson\n",
+          "exitCode": 1
+        },
+        {
+          "id": "item_56",
+          "startSeconds": 337.73,
+          "endSeconds": 337.854,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device snapshot -i",
+          "output": "Page: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 7 visible nodes (18 total)\nCollapsed 11 Android helper nodes from the agent-facing text snapshot; use --raw or --json for the full hierarchy.\n@e1 [group] \"Close\"\n@e3 [scroll-area] [scrollable]\n  [content below scroll-area hidden]\n@e4 [group] \"Reload\"\n@e7 [group] \"Home, Go home\"\n@e10 [group] \"Performance monitor, Toggle performance monitor\"\n@e13 [group] \"Element inspector, Toggle element inspector\"\n@e16 [group] \"DevTools, Open DevTools\"\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_57",
+          "startSeconds": 342.544,
+          "endSeconds": 344.224,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device click @e1 --settle",
+          "output": "Tapped @e1 (293, 302)\nsettled after 1438ms: +66 -16 (~2 unchanged)\n- @e1 [group]\n- @e2 [group] \"Close\"\n+ @e2~s861459 [text-field] \"Search trails, regions, tags\"\n+ @e3~s861459 [horizontalscrollview]\n+ @e4~s861459 [button] \"All regions\"\n+ @e5~s861459 [text] \"All regions\"\n+ @e6~s861459 [button] \"Adirondacks\"\n+ @e7~s861459 [text] \"Adirondacks\"\n+ @e8~s861459 [button] \"Bas-Saint-Laurent\"\n+ @e9~s861459 [text] \"Bas-Saint-Laurent\"\n+ @e10~s861459 [horizontalscrollview]\n+ @e11~s861459 [button] \"Any level\"\n+ @e12~s861459 [text] \"Any level\"\n+ @e13~s861459 [button] \"Easy\"\n+ @e14~s861459 [text] \"Easy\"\n+ @e15~s861459 [button] \"Moderate\"\n+ @e16~s861459 [text] \"Moderate\"\n+ @e17~s861459 [button] \"Hard\"\n+ @e18~s861459 [text] \"Hard\"\n+ @e19~s861459 [button] \"Expert\"\n+ @e20~s861459 [button] \"Sort by name\"\n+ @e21~s861459 [text] \"Name\"\n+ @e22~s861459 [button] \"Sort by distance\"\n+ @e23~s861459 [text] \"Distance\"\n+ @e24~s861459 [button] \"Sort by rating\"\n+ @e25~s861459 [text] \"Rating\"\n+ @e26~s861459 [scroll-area]\n+ @e27~s861459 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n+ @e28~s861459 [text] \"Belvedere de la Chute\"\n+ @e29~s861459 [text] \"Gaspesie\"\n+ @e30~s861459 [text] \"\"\n+ @e31~s861459 [text] \"11 km\"\n+ @e32~s861459 [text] \"\"\n+ @e33~s861459 [text] \"1106 m\"\n+ @e34~s861459 [text] \"\"\n+ @e35~s861459 [text] \"4:16:00\"\n+ @e36~s861459 [text] \"Moderate\"\n+ @e37~s861459 [text] \"\"\n+ @e38~s861459 [text] \"3.8\"\n+ @e39~s861459 [text] \"(837)\"\n+ @e40~s861459 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n+ @e41~s861459 [text] \"Belvedere de la Tour Bleu\"\n+ @e42~s861459 [text] \"Mont-Tremblant\"\n+ @e43~s861459 [text] \"\"\n+ @e44~s861459 [text] \"1.9 km\"\n+ @e45~s861459 [text] \"\"\n+ @e46~s861459 [text] \"701 m\"\n+ @e47~s861459 [text] \"\"\n+ @e48~s861459 [text] \"1:31:00\"\n+ @e49~s861459 [text] \"Hard\"\n+ @e50~s861459 [text] \"\"\n+ @e51~s861459 [text] \"5.0\"\n+ @e52~s861459 [text] \"(609)\"\n+ @e53~s861459 [group] \", Trails\"\n+ @e54~s861459 [text] \"\"\n+ @e55~s861459 [text] \"Trails\"\n+ @e56~s861459 [group] \", Record\"\n+ @e57~s861459 [text] \"\"\n+ @e58~s861459 [text] \"Record\"\n+ @e59~s861459 [group] \", History\"\n+ @e60~s861459 [text] \"\"\n+ @e61~s861459 [text] \"History\"\n+ @e62~s861459 [group] \", Settings\"\n+ @e63~s861459 [text] \"\"\n+ @e64~s861459 [text] \"Settings\"\n+ @e65~s861459 [group] \"!, Can't perform a React state update on a component that hasn't mounted yet. This indicates that you have a side-effect in your render function that asynchronously tries to update the component. Move this work to useEffect instead.\"\n+ @e66~s861459 [text] \"!\"\n+ @e67~s861459 [text] \"Can't perform a React state update on a component that hasn't mounted yet. This indicates that you have a side-effect in your render function that asynchronously tries to update the component. Move this work to useEffect instead.\"\n- @e5 [group] \"Reload\"\n- @e6 [text] \"Reload\"\n- @e7 [group]\n- @e8 [group] \"Home\"\n- @e9 [text] \"Go home\"\n- @e10 [group]\n- @e11 [group] \"Performance monitor\"\n- @e12 [text] \"Toggle performance monitor\"\n- @e13 [group]\n- @e14 [group] \"Element inspector\"\n- @e15 [text] \"Toggle element inspector\"\n- @e16 [group]\n… changed lines truncated\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_58",
+          "startSeconds": 347.82,
+          "endSeconds": 348.71,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device click @e62~s861459 --settle",
+          "output": "Tapped @e62 (280, 592)\nsettled after 641ms: +0 -0 (~68 unchanged)\nunchanged interactive (20):\n= @e1~s861462 [scroll-area]\n= @e2~s861462 [text-field] \"Search trails, regions, tags\"\n= @e3~s861462 [horizontalscrollview]\n= @e4~s861462 [button] \"All regions\"\n= @e5~s861462 [text] \"All regions\"\n= @e6~s861462 [button] \"Adirondacks\"\n= @e7~s861462 [text] \"Adirondacks\"\n= @e8~s861462 [button] \"Bas-Saint-Laurent\"\n= @e9~s861462 [text] \"Bas-Saint-Laurent\"\n= @e10~s861462 [horizontalscrollview]\n= @e11~s861462 [button] \"Any level\"\n= @e12~s861462 [text] \"Any level\"\n= @e13~s861462 [button] \"Easy\"\n= @e14~s861462 [text] \"Easy\"\n= @e15~s861462 [button] \"Moderate\"\n= @e16~s861462 [text] \"Moderate\"\n= @e17~s861462 [button] \"Hard\"\n= @e18~s861462 [text] \"Hard\"\n= @e19~s861462 [button] \"Expert\"\n= @e20~s861462 [button] \"Sort by name\"\n… more interactive elements not shown, use snapshot -i\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_59",
+          "startSeconds": 354.066,
+          "endSeconds": 354.233,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device snapshot -i",
+          "output": "Page: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 24 visible nodes (68 total)\nHint: React Native warning/error overlay detected. It overlays part of the app and should be handled before interacting.\nRun: agent-device react-native dismiss-overlay\nThe command verifies the overlay is gone. Run agent-device snapshot -i afterward only when you need fresh refs for the next action.\nCollapsed 44 Android helper nodes from the agent-facing text snapshot; use --raw or --json for the full hierarchy.\n@e1 [scroll-area] [scrollable]\n@e2 [text-field] \"Search trails, regions, tags\" [editable]\n@e3 [horizontalscrollview] \"Bas-Saint-Laurent, Adirondacks, All regions\" [scrollable]\n@e4 [button] \"All regions\"\n@e6 [button] \"Adirondacks\"\n@e8 [button] \"Bas-Saint-Laurent\"\n@e10 [horizontalscrollview] \"Hard, Moderate, Easy, Any level\" [scrollable]\n@e11 [button] \"Any level\"\n@e13 [button] \"Easy\"\n@e15 [button] \"Moderate\"\n@e17 [button] \"Hard\"\n@e19 [button] \"Expert\"\n@e20 [button] \"Sort by name\"\n@e22 [button] \"Sort by distance\"\n@e24 [button] \"Sort by rating\"\n@e26 [scroll-area] \"Belvedere de la Tour Bleu, Mont-Tremblant, , 1.9 km, , 701 m, , 1:31:00, Hard, , 5.0, (609), Belvedere de la Chute, Gaspesie, 11 km, 1106 m, 4:16:00, Moderate, 3.8, (837)\" [scrollable]\n  [content above scroll-area hidden]\n  [content below scroll-area hidden]\n@e27 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n@e40 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n@e53 [group] \", Trails\"\n@e56 [group] \", Record\"\n@e59 [group] \", History\"\n@e62 [group] \", Settings\"\n@e65 [group] \"!, Can't perform a React state update on a component that hasn't mounted yet. This indicates that you have a side-effect in your render function that asynchronously tries to update the component. Move this work to useEffect instead.\"\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_61",
+          "startSeconds": 359.75,
+          "endSeconds": 360.023,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device react-native dismiss-overlay",
+          "output": "React Native overlay dismiss action sent, but verification still detects an overlay\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_62",
+          "startSeconds": 366.154,
+          "endSeconds": 367.628,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device screenshot tmp/native-control-nav.png",
+          "output": "tmp/native-control-nav.png (320x640)\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_63",
+          "startSeconds": 375.726,
+          "endSeconds": 376.196,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device snapshot -i",
+          "output": "Page: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 22 visible nodes (64 total)\nCollapsed 42 Android helper nodes from the agent-facing text snapshot; use --raw or --json for the full hierarchy.\n@e1 [scroll-area] [scrollable]\n@e2 [text-field] \"Search trails, regions, tags\" [editable]\n@e3 [horizontalscrollview] \"Bas-Saint-Laurent, Adirondacks, All regions\" [scrollable]\n@e4 [button] \"All regions\"\n@e6 [button] \"Adirondacks\"\n@e8 [button] \"Bas-Saint-Laurent\"\n@e10 [horizontalscrollview] \"Hard, Moderate, Easy, Any level\" [scrollable]\n@e11 [button] \"Any level\"\n@e13 [button] \"Easy\"\n@e15 [button] \"Moderate\"\n@e17 [button] \"Hard\"\n@e19 [button] \"Expert\"\n@e20 [button] \"Sort by name\"\n@e22 [button] \"Sort by distance\"\n@e24 [button] \"Sort by rating\"\n@e26 [scroll-area] \"Belvedere de la Tour Bleu, Mont-Tremblant, , 1.9 km, , 701 m, , 1:31:00, Hard, , 5.0, (609), Belvedere de la Chute, Gaspesie, 11 km, 1106 m, 4:16:00, Moderate, 3.8, (837)\" [scrollable]\n  [content above scroll-area hidden]\n  [content below scroll-area hidden]\n@e27 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n@e40 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n@e53 [group] \", Trails\"\n@e56 [group] \", Record\"\n@e59 [group] \", History\"\n@e62 [group] \", Settings\"\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_64",
+          "startSeconds": 380.014,
+          "endSeconds": 381.594,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device click @e62 --settle",
+          "output": "Tapped @e62 (280, 592)\nsettled after 1276ms: +18 -50 (~14 unchanged)\n- @e2 [text-field] \"Search trails, regions, tags\"\n- @e3 [horizontalscrollview]\n- @e4 [button] \"All regions\"\n- @e5 [text] \"All regions\"\n- @e6 [button] \"Adirondacks\"\n- @e7 [text] \"Adirondacks\"\n- @e8 [button] \"Bas-Saint-Laurent\"\n- @e9 [text] \"Bas-Saint-Laurent\"\n- @e10 [horizontalscrollview]\n- @e11 [button] \"Any level\"\n- @e12 [text] \"Any level\"\n- @e13 [button] \"Easy\"\n- @e14 [text] \"Easy\"\n- @e15 [button] \"Moderate\"\n- @e16 [text] \"Moderate\"\n- @e17 [button] \"Hard\"\n- @e18 [text] \"Hard\"\n- @e19 [button] \"Expert\"\n- @e20 [button] \"Sort by name\"\n- @e21 [text] \"Name\"\n- @e22 [button] \"Sort by distance\"\n- @e23 [text] \"Distance\"\n- @e24 [button] \"Sort by rating\"\n- @e25 [text] \"Rating\"\n- @e27 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e28 [text] \"Belvedere de la Chute\"\n- @e29 [text] \"Gaspesie\"\n- @e30 [text] \"\"\n- @e31 [text] \"11 km\"\n- @e32 [text] \"\"\n- @e33 [text] \"1106 m\"\n- @e34 [text] \"\"\n- @e35 [text] \"4:16:00\"\n- @e36 [text] \"Moderate\"\n- @e37 [text] \"\"\n- @e38 [text] \"3.8\"\n- @e39 [text] \"(837)\"\n- @e40 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n- @e41 [text] \"Belvedere de la Tour Bleu\"\n- @e42 [text] \"Mont-Tremblant\"\n- @e43 [text] \"\"\n- @e44 [text] \"1.9 km\"\n- @e45 [text] \"\"\n- @e46 [text] \"701 m\"\n- @e47 [text] \"\"\n- @e48 [text] \"1:31:00\"\n- @e49 [text] \"Hard\"\n- @e50 [text] \"\"\n- @e51 [text] \"5.0\"\n- @e52 [text] \"(609)\"\n+ @e3~s861470 [text] \"UNITS\"\n+ @e4~s861470 [text] \"Distance\"\n+ @e5~s861470 [text] \"\"\n+ @e6~s861470 [text] \"Used across the whole app\"\n+ @e7~s861470 [button] \"Metric units\"\n+ @e8~s861470 [text] \"Metric\"\n+ @e9~s861470 [button] \"Imperial units\"\n+ @e10~s861470 [text] \"Imperial\"\n+ @e11~s861470 [text] \"PREFERENCES\"\n+ @e12~s861470 [text] \"\"\n+ @e13~s861470 [text] \"Hike reminders\"\n+ @e14~s861470 [text] \"Nudge me when I have not hiked in a while\"\n+ @e15~s861470 [switch] \"Hike reminders\"\n+ @e16~s861470 [text] \"\"\n+ @e17~s861470 [text] \"Offline maps\"\n+ @e18~s861470 [text] \"Keep map tiles for saved trails on device\"\n+ @e19~s861470 [switch] \"Offline maps\"\n+ @e20~s861470 [text] \"STORAGE\"\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_66",
+          "startSeconds": 386.486,
+          "endSeconds": 386.606,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device wait text \"Offline maps\"",
+          "output": "",
+          "exitCode": 0
+        },
+        {
+          "id": "item_67",
+          "startSeconds": 391.674,
+          "endSeconds": 392.995,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device screenshot tmp/native-control-settings.png",
+          "output": "tmp/native-control-settings.png (320x640)\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_68",
+          "startSeconds": 396.68,
+          "endSeconds": 396.68,
+          "command": "cp tmp/native-control-settings.png results/sol-android/native-control/proof/settings.png",
+          "output": "",
+          "exitCode": 0
+        },
+        {
+          "id": "item_69",
+          "startSeconds": 401.342,
+          "endSeconds": 407.586,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device record stop",
+          "output": "results/sol-android/native-control/proof/session.mp4\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_70",
+          "startSeconds": 410.793,
+          "endSeconds": 411.001,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device close",
+          "output": "Closed: native-control\n",
+          "exitCode": 0
+        },
+        {
+          "id": "item_72",
+          "startSeconds": 425.688,
+          "endSeconds": 425.794,
+          "command": "ls -lh results/sol-android/native-control/proof/settings.png results/sol-android/native-control/proof/session.mp4; adb -s <simulator-udid> shell pidof com.appandflow.trailhead; adb -s <simulator-udid> shell dumpsys activity activities | rg 'mResumedActivity|topResumedActivity'; git status --short --branch; rg -n '<string name=\\\"app_name\\\">Trailhead native-control</string>' android/app/src/main/res/values/strings.xml",
+          "output": "2:  <string name=\"app_name\">Trailhead native-control</string>\n",
+          "exitCode": 0
+        }
+      ],
+      "backgroundProcesses": [
+        {
+          "id": "background-item_16",
+          "label": "workspace/sdk<simulator-udid-prefix>/<simulator-udid-prefix> -avd Trailhead_native-control -no-snapshot-save -no-snapshot-load",
+          "startSeconds": 114.667,
+          "endSeconds": 143.029,
+          "launcherCommandId": "item_16",
+          "monitorCount": 3
+        },
+        {
+          "id": "background-item_20",
+          "label": "<simulator-udid-prefix> -avd Trailhead_native-control -no-snapshot-save -no-snapshot-load",
+          "startSeconds": 137.244,
+          "endSeconds": 143.029,
+          "launcherCommandId": "item_20",
+          "monitorCount": 1
+        }
+      ],
+      "markers": [
+        {
+          "id": "app-alive",
+          "kind": "appAlive",
+          "label": "App process alive",
+          "atSeconds": 304.204
+        },
+        {
+          "id": "settings-ready",
+          "kind": "settingsReady",
+          "label": "Settings proof ready",
+          "atSeconds": 392.995
+        }
+      ],
+      "proof": {
+        "src": "benchmarks/sol-android/native-control.png",
+        "expected": "Offline maps",
+        "width": 320,
+        "height": 640
+      },
+      "recording": {
+        "src": "benchmarks/sol-android/native-control.mp4",
+        "bytes": 282203
+      }
+    }
+  ]
+}
