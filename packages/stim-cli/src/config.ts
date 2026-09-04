@@ -174,6 +174,7 @@ export function clearDevice(projectPath: string, platform: string): void {
 }
 
 export function setSupervisor(projectPath: string, { pid, port, startedAt }: SupervisorRecord): SupervisorRecord {
+  requireAbsoluteProjectPath(projectPath);
   return withConfigLock(() => {
     const cfg = ensureConfig();
     if (!cfg.projects[projectPath]) {

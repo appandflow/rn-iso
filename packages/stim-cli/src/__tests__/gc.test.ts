@@ -620,6 +620,32 @@ test('findStaleProjectDevices only proposes devices present in the live listing'
   expect(stale.length).toBe(0);
 });
 
+test('findStaleProjectDevices never reaps a device recorded under a key that is not absolute', () => {
+  const now = Date.now();
+  const stale = findStaleProjectDevices({
+    config: makeConfig({
+      projects: { '.claude/stim-worktrees/nestrel': { platforms: { ios: { deviceUdid: 'U-STALE', owned: true } } } },
+    }),
+    sims: staleSims,
+    avds: [],
+    olderThanDays: 30,
+    now,
+    lastTouched: () => now - 90 * DAY_MS,
+  });
+  expect(stale.length).toBe(0);
+});
+
+test('findStaleDeviceRecords still clears a dangling claim held by a key that is not absolute', () => {
+  const stale = findStaleDeviceRecords({
+    config: makeConfig({
+      projects: { '.claude/stim-worktrees/nestrel': { platforms: { ios: { deviceUdid: 'GONE', owned: true } } } },
+    }),
+    sims: [],
+    avds: [],
+  });
+  expect(stale.map((r) => r.id)).toEqual(['GONE']);
+});
+
 test('findStaleProjectDevices skips projects the dead-entry sweep already claimed', () => {
   const now = Date.now();
   const stale = findStaleProjectDevices({
@@ -1917,6 +1943,7 @@ describe('a registry key that is not an absolute path', () => {
     expect(report.skipped[0]?.dir).toBe(relativeKey);
     expect(report.skipped[0]?.reason).toMatch(/not an absolute path/);
     expect(report.skipped[0]?.reason).toMatch(/UDID-1/);
+    expect(report.skipped[0]?.reason).toMatch(/gc removes it once that claim is gone/);
     expect(report.skipped[0]?.reason).not.toMatch(/not mounted/);
   });
 
