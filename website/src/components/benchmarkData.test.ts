@@ -3,6 +3,7 @@ import {
   assignCommandLanes,
   benchmarkSelectionFromSearch,
   benchmarkSelectionSearch,
+  benchmarkOverview,
   comparableRuns,
   comparisonOutcome,
   commandAtCursor,
@@ -101,6 +102,72 @@ describe('benchmark URL selection', () => {
     expect(benchmarkSelectionSearch({ stage: 'luna-rc12', runId: 'javascript-stim' }, navigationBenchmarks)).toBe('');
     expect(benchmarkSelectionSearch({ stage: 'sol-rc12', runId: 'native-stim' }, navigationBenchmarks)).toBe(
       '?benchmark=sol-rc12&run=native-stim',
+    );
+  });
+});
+
+describe('benchmarkOverview', () => {
+  it('builds paired rows with shared scaling and exact audit links', () => {
+    const overview = benchmarkOverview(
+      [
+        {
+          stage: 'first',
+          title: 'First',
+          runs: [
+            { id: 'first-stim', arm: 'stim', variant: 'native', valid: true, settingsReadySeconds: 50 },
+            { id: 'first-control', arm: 'control', variant: 'native', valid: true, settingsReadySeconds: 100 },
+          ],
+        },
+        {
+          stage: 'second',
+          title: 'Second',
+          runs: [
+            { id: 'second-stim', arm: 'stim', variant: 'native', valid: true, settingsReadySeconds: 200 },
+            { id: 'wrong-variant', arm: 'control', variant: 'javascript', valid: true, settingsReadySeconds: 400 },
+          ],
+        },
+      ] as BenchmarkData[],
+      'native',
+    );
+
+    expect(overview.maxSeconds).toBe(200);
+    expect(overview.rows[0]?.arms.map(({ arm, widthPercent, href }) => ({ arm, widthPercent, href }))).toEqual([
+      { arm: 'stim', widthPercent: 25, href: '/benchmarks#audit-title' },
+      { arm: 'control', widthPercent: 50, href: '/benchmarks?benchmark=first&run=first-control#audit-title' },
+    ]);
+    expect(overview.rows[1]?.arms[0]).toMatchObject({
+      arm: 'stim',
+      label: 'Stim',
+      widthPercent: 100,
+      href: '/benchmarks?benchmark=second&run=second-stim#audit-title',
+    });
+    expect(overview.rows[1]?.arms[1]).toEqual({
+      arm: 'control',
+      label: 'Control',
+      run: null,
+      widthPercent: 0,
+      href: null,
+    });
+  });
+
+  it('treats invalid and valid runs without a Settings endpoint as missing', () => {
+    const overview = benchmarkOverview(
+      [
+        {
+          stage: 'missing',
+          title: 'Missing',
+          runs: [
+            { id: 'invalid', arm: 'stim', variant: 'javascript', valid: false, settingsReadySeconds: 30 },
+            { id: 'no-endpoint', arm: 'control', variant: 'javascript', valid: true, settingsReadySeconds: null },
+          ],
+        },
+      ] as BenchmarkData[],
+      'javascript',
+    );
+
+    expect(overview.maxSeconds).toBe(1);
+    expect(overview.rows[0]?.arms.every((arm) => arm.run === null && arm.href === null && arm.widthPercent === 0)).toBe(
+      true,
     );
   });
 });

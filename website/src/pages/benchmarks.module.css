@@ -28,6 +28,183 @@
   line-height: 1.7;
 }
 
+.overview {
+  margin-bottom: 2rem;
+}
+
+.overviewGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.overviewChart {
+  padding: 1.25rem;
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 1rem;
+  background: var(--ifm-background-surface-color);
+}
+
+.overviewChartHead,
+.overviewLegend {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.overviewChartHead h3 {
+  margin: 0;
+}
+
+.overviewChartHead > span,
+.overviewLegend {
+  color: var(--ifm-color-emphasis-700);
+  font-size: 0.72rem;
+}
+
+.overviewLegend {
+  justify-content: flex-end;
+  gap: 1rem;
+  margin: 0.4rem 0 1rem;
+}
+
+.stimKey::before,
+.controlKey::before {
+  display: inline-block;
+  width: 0.55rem;
+  height: 0.55rem;
+  margin-right: 0.35rem;
+  border-radius: 50%;
+  background: var(--ifm-color-primary);
+  content: '';
+}
+
+.controlKey::before {
+  background: #f97316;
+}
+
+.overviewModel {
+  display: grid;
+  grid-template-columns: 6.5rem minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: start;
+  padding: 0.75rem 0;
+  border-top: 1px solid var(--ifm-color-emphasis-200);
+}
+
+.overviewModel > strong {
+  padding-top: 0.2rem;
+  font-size: 0.78rem;
+}
+
+.overviewBars {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.overviewBarLink,
+.missingBar {
+  display: grid;
+  grid-template-columns: 3.25rem minmax(4rem, 1fr) auto;
+  gap: 0.5rem;
+  align-items: center;
+  color: var(--ifm-font-color-base);
+  font-size: 0.72rem;
+  text-decoration: none;
+}
+
+.overviewBarLink:hover {
+  color: var(--ifm-color-primary);
+  text-decoration: none;
+}
+
+.overviewBarLink:focus-visible {
+  border-radius: 0.25rem;
+  outline: 2px solid var(--ifm-color-primary);
+  outline-offset: 0.2rem;
+}
+
+.overviewBarLink strong,
+.missingBar > :last-child {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.overviewTrack {
+  height: 0.7rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--ifm-color-emphasis-200);
+}
+
+.overviewBar {
+  display: block;
+  min-width: 0.35rem;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--ifm-color-primary);
+}
+
+.missingBar {
+  color: var(--ifm-color-emphasis-600);
+}
+
+.missingBar > :last-child {
+  grid-column: 2 / 4;
+}
+
+.methodology {
+  display: grid;
+  grid-template-columns: minmax(14rem, 0.75fr) minmax(0, 1.25fr);
+  gap: 2rem;
+  margin-bottom: 3.5rem;
+  padding: 1.5rem;
+  border-radius: 1rem;
+  background: color-mix(in srgb, var(--ifm-color-primary) 8%, var(--ifm-background-surface-color));
+}
+
+.methodology h2 {
+  margin-top: 0;
+}
+
+.methodology p,
+.methodology dl,
+.methodology dd {
+  margin: 0;
+}
+
+.methodology p {
+  margin-bottom: 0.75rem;
+  color: var(--ifm-color-emphasis-700);
+}
+
+.methodology dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.methodology dt {
+  margin-bottom: 0.25rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.methodology dd {
+  color: var(--ifm-color-emphasis-700);
+  font-size: 0.82rem;
+}
+
+.detailHeading {
+  margin-bottom: 1.75rem;
+  padding-top: 2.5rem;
+  border-top: 1px solid var(--ifm-color-emphasis-300);
+}
+
+.detailHeading h2 {
+  margin: 0;
+}
+
 .modelPicker {
   display: flex;
   flex-wrap: wrap;
@@ -255,8 +432,14 @@
     padding-top: 2rem;
   }
 
+  .overviewGrid,
   .comparisonGrid {
     grid-template-columns: 1fr;
+  }
+
+  .methodology {
+    grid-template-columns: 1fr;
+    gap: 1.25rem;
   }
 
   .environment {
@@ -270,5 +453,20 @@
 
   .sectionHeading p {
     margin-top: 0.4rem;
+  }
+}
+
+@media (max-width: 520px) {
+  .overviewModel {
+    grid-template-columns: 1fr;
+    gap: 0.35rem;
+  }
+
+  .overviewModel > strong {
+    padding-top: 0;
+  }
+
+  .methodology dl {
+    grid-template-columns: 1fr;
   }
 }
