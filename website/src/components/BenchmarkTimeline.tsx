@@ -1,5 +1,5 @@
 import type { CSSProperties, ReactNode } from 'react';
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import useBaseUrl from '@docusaurus/useBaseUrl';
 import {
   assignCommandLanes,
@@ -337,19 +337,23 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
             ))}
           </div>
 
-          {run.backgroundProcesses.length
-            ? run.backgroundProcesses.map((process, index) => {
-                const active =
-                  playbackMode && cursorSeconds >= process.startSeconds && cursorSeconds <= process.endSeconds;
-                const selectedProcess =
-                  !playbackMode && selected?.kind === 'background' && selected.event.id === process.id;
-                return (
-                  <Fragment key={process.id}>
-                    <div className={styles.laneLabel}>{index === 0 ? 'Background' : null}</div>
-                    <div className={styles.backgroundTrack}>
-                      {playbackMode ? (
-                        <i className={styles.playhead} style={{ left: position(cursorSeconds, run.totalSeconds) }} />
-                      ) : null}
+          {run.backgroundProcesses.length ? (
+            <>
+              <div className={styles.laneLabel}>Background</div>
+              <div
+                className={styles.backgroundTracks}
+                style={{ '--lane-count': run.backgroundProcesses.length } as CSSProperties}
+              >
+                {playbackMode ? (
+                  <i className={styles.playhead} style={{ left: position(cursorSeconds, run.totalSeconds) }} />
+                ) : null}
+                {run.backgroundProcesses.map((process) => {
+                  const active =
+                    playbackMode && cursorSeconds >= process.startSeconds && cursorSeconds <= process.endSeconds;
+                  const selectedProcess =
+                    !playbackMode && selected?.kind === 'background' && selected.event.id === process.id;
+                  return (
+                    <div className={styles.backgroundTrack} key={process.id}>
                       <button
                         type="button"
                         className={`${styles.backgroundBar} ${active || selectedProcess ? styles.commandSelected : ''}`}
@@ -368,10 +372,11 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
                         {process.label}
                       </button>
                     </div>
-                  </Fragment>
-                );
-              })
-            : null}
+                  );
+                })}
+              </div>
+            </>
+          ) : null}
 
           <div className={styles.laneLabel}>App/device</div>
           <div className={styles.dotTrack}>
