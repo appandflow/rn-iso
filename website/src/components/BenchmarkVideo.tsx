@@ -7,7 +7,7 @@ export default function BenchmarkVideo(): ReactNode {
   const video = useBaseUrl('/benchmarks/luna-rc12/javascript-stim-web.mp4');
   const poster = useBaseUrl('/benchmarks/luna-rc12/javascript-stim-video-poster.png');
   const social = useBaseUrl('/benchmarks/luna-rc12/javascript-stim-social.mp4');
-  const audit = useBaseUrl('/benchmarks#audit-title');
+  const audit = useBaseUrl('/benchmarks/details#audit-title');
 
   return (
     <section className={styles.story} aria-labelledby="benchmark-video-title">
@@ -31,13 +31,13 @@ export default function BenchmarkVideo(): ReactNode {
           aria-label="Luna JavaScript Stim benchmark video"
         >
           <source src={video} type="video/mp4" />
-          Your browser cannot play this video. The complete run remains available in the audit timeline below.
+          Your browser cannot play this video. The complete run remains available in the detailed audit timeline.
         </video>
       </div>
       <p>
         A continuous, silent replay of the published Luna rc.12 JavaScript run. The clock, commands, output, and proof
         come from the <a href={audit}>published Luna audit</a>; the matching simulator interaction was recreated with
-        agent-device and plays at real speed.
+        agent-device and plays at 2x speed.
       </p>
     </section>
   );

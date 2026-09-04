@@ -1,86 +1,17 @@
 import type { ReactNode } from 'react';
-import { useMemo } from 'react';
-import { useHistory, useLocation } from '@docusaurus/router';
-import useIsBrowser from '@docusaurus/useIsBrowser';
 import Link from '@docusaurus/Link';
 import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
-import BenchmarkTimeline from '@site/src/components/BenchmarkTimeline';
+import { benchmarks, displayVariant } from '@site/src/components/benchmarkCatalog';
 import BenchmarkVideo from '@site/src/components/BenchmarkVideo';
 import {
   benchmarkDisplayTitle,
-  comparableRuns,
   benchmarkOverview,
-  benchmarkSelectionFromSearch,
-  benchmarkSelectionSearch,
-  comparisonOutcome,
-  formatCost,
   formatSeconds,
-  formatTokens,
-  totalTokens,
   type BenchmarkData,
   type BenchmarkRun,
 } from '@site/src/components/benchmarkData';
-import benchmarkJson from '@site/src/data/benchmarks/luna-rc12.json';
-import opusBenchmarkJson from '@site/src/data/benchmarks/opus-rc12.json';
-import sonnetBenchmarkJson from '@site/src/data/benchmarks/sonnet-rc12.json';
-import solBenchmarkJson from '@site/src/data/benchmarks/sol-rc12.json';
 import styles from './benchmarks.module.css';
-
-const benchmarks = (
-  [benchmarkJson, solBenchmarkJson, sonnetBenchmarkJson, opusBenchmarkJson] as BenchmarkData[]
-).filter((benchmark) => benchmark.runs.some((run) => run.valid));
-
-function defaultRun(benchmark: BenchmarkData | undefined): BenchmarkRun | undefined {
-  return benchmark?.runs.find((run) => run.valid);
-}
-
-function displayVariant(variant: BenchmarkRun['variant']): string {
-  return variant === 'javascript' ? 'JavaScript change' : 'Native change';
-}
-
-function ComparisonCard({
-  variant,
-  runs,
-  maxSeconds,
-}: {
-  variant: BenchmarkRun['variant'];
-  runs: BenchmarkRun[];
-  maxSeconds: number;
-}): ReactNode {
-  const comparable = comparableRuns(runs);
-  const stim = comparable.find((run) => run.arm === 'stim');
-  const control = comparable.find((run) => run.arm === 'control');
-  const outcome = comparisonOutcome(stim?.settingsReadySeconds, control?.settingsReadySeconds);
-  return (
-    <article className={styles.comparisonCard}>
-      <h3>{displayVariant(variant)}</h3>
-      <span className={`${styles.outcome} ${styles[outcome.tone]}`}>{outcome.label}</span>
-      {comparable.map((run) => {
-        const endpoint = comparable.find((candidate) => candidate.id === run.id)?.settingsReadySeconds ?? null;
-        return (
-          <div className={styles.barRow} key={run.id}>
-            <div className={styles.barHead}>
-              <span>{run.arm === 'stim' ? 'Stim' : 'Control'}</span>
-              <strong>{formatSeconds(endpoint)}</strong>
-            </div>
-            <div className={styles.barTrack}>
-              <div
-                className={`${styles.bar} ${run.arm === 'control' ? styles.controlBar : ''}`}
-                style={{ width: `${endpoint === null ? 0 : (endpoint / maxSeconds) * 100}%` }}
-              />
-            </div>
-            <div className={styles.barMeta}>
-              <span>{formatTokens(totalTokens(run.usage))} tokens</span>
-              <span>{formatCost(run.estimatedTokenCostUsd)} cost</span>
-              <span>{run.commandCount} commands</span>
-            </div>
-          </div>
-        );
-      })}
-    </article>
-  );
-}
 
 function OverviewChart({
   variant,
@@ -139,46 +70,6 @@ function OverviewChart({
 }
 
 export default function Benchmarks(): ReactNode {
-  const history = useHistory();
-  const location = useLocation();
-  const isBrowser = useIsBrowser();
-  const search = isBrowser ? location.search : '';
-  const selection = useMemo(() => benchmarkSelectionFromSearch(search, benchmarks), [search]);
-  const stage = selection.stage;
-  const benchmark = benchmarks.find((candidate) => candidate.stage === stage) ?? benchmarks[0];
-  const publishedRuns = useMemo(() => benchmark?.runs.filter((run) => run.valid) ?? [], [benchmark]);
-  const activeId = selection.runId;
-  const activeRun = publishedRuns.find((run) => run.id === activeId) ?? defaultRun(benchmark);
-  const navigateTo = (nextStage: string, nextRunId: string) => {
-    history.push({
-      pathname: location.pathname,
-      search: benchmarkSelectionSearch({ stage: nextStage, runId: nextRunId }, benchmarks),
-      hash: location.hash,
-    });
-  };
-  const grouped = useMemo(
-    () =>
-      (['javascript', 'native'] as const).map((variant) => ({
-        variant,
-        runs: publishedRuns.filter((run) => run.variant === variant),
-      })),
-    [publishedRuns],
-  );
-  const maxSeconds = Math.max(1, ...comparableRuns(publishedRuns).map((run) => run.settingsReadySeconds));
-
-  if (!benchmark || !activeRun) {
-    return (
-      <Layout title="Agent benchmarks" description="Auditable Stim agent benchmark results.">
-        <main className={styles.page}>
-          <div className="container">
-            <Heading as="h1">Agent benchmarks unavailable</Heading>
-            <p>No valid benchmark runs have been published.</p>
-          </div>
-        </main>
-      </Layout>
-    );
-  }
-
   return (
     <Layout
       title="Agent benchmarks"
@@ -251,108 +142,18 @@ export default function Benchmarks(): ReactNode {
 
           <BenchmarkVideo />
 
-          <div className={styles.detailHeading}>
-            <span className={styles.eyebrow}>Detailed audit</span>
-            <Heading as="h2">{benchmarkDisplayTitle(benchmark.title)}: Stim vs local toolchain</Heading>
-          </div>
-
-          <nav className={styles.modelPicker} aria-label="Benchmark model">
-            <span>Model</span>
-            {benchmarks.map((candidate) => (
-              <button
-                key={candidate.stage}
-                type="button"
-                aria-pressed={candidate.stage === benchmark.stage}
-                onClick={() => {
-                  navigateTo(candidate.stage, defaultRun(candidate)?.id ?? '');
-                }}
-              >
-                {benchmarkDisplayTitle(candidate.title)}
-              </button>
-            ))}
-          </nav>
-
-          <section className={styles.comparison} aria-labelledby="comparison-title">
-            <div className={styles.sectionHeading}>
-              <Heading as="h2" id="comparison-title">
-                Settings-ready comparison
-              </Heading>
-              <p>Recorded {benchmark.recordedOn} / valid runs only</p>
-            </div>
-            <div className={styles.comparisonGrid}>
-              {grouped.map(({ variant, runs }) => (
-                <ComparisonCard key={variant} variant={variant} runs={runs} maxSeconds={maxSeconds} />
-              ))}
-            </div>
-          </section>
-
-          <section className={styles.environment} aria-labelledby="environment-title">
+          <section className={styles.detailCta} aria-labelledby="detail-cta-title">
             <div>
-              <span>Benchmark machine</span>
-              <Heading as="h2" id="environment-title">
-                {benchmark.environment.machine.model}
+              <span className={styles.eyebrow}>Command-level evidence</span>
+              <Heading as="h2" id="detail-cta-title">
+                Inspect every benchmark run
               </Heading>
-              <p>
-                {benchmark.environment.machine.chip} / {benchmark.environment.machine.memory}
-              </p>
+              <p>Compare environments, play each command timeline, inspect terminal output, and open proof images.</p>
             </div>
-            <dl>
-              <div>
-                <dt>System</dt>
-                <dd>{benchmark.environment.macos}</dd>
-              </div>
-              <div>
-                <dt>Toolchain</dt>
-                <dd>
-                  {benchmark.environment.xcode} / {benchmark.environment.node}
-                </dd>
-              </div>
-              <div>
-                <dt>Device</dt>
-                <dd>{benchmark.environment.simulator}</dd>
-              </div>
-            </dl>
+            <Link className="button button--primary" to="/benchmarks/details">
+              Explore detailed audits
+            </Link>
           </section>
-
-          <section className={styles.audit} aria-labelledby="audit-title">
-            <div className={styles.sectionHeading}>
-              <div>
-                <Heading as="h2" id="audit-title">
-                  Run audit
-                </Heading>
-                <p>Select a command bar to inspect its terminal output.</p>
-              </div>
-            </div>
-            <div className={styles.runTabs} role="group" aria-label="Benchmark runs">
-              {publishedRuns.map((run) => (
-                <button
-                  key={run.id}
-                  type="button"
-                  aria-pressed={run.id === activeRun.id}
-                  onClick={() => navigateTo(benchmark.stage, run.id)}
-                >
-                  {run.variant} / {run.arm}
-                </button>
-              ))}
-            </div>
-            <BenchmarkTimeline key={`${benchmark.stage}-${activeRun.id}`} run={activeRun} />
-          </section>
-
-          <aside className={styles.notes}>
-            <p>
-              <strong>About cost.</strong>{' '}
-              {benchmark.pricing?.estimateNote ??
-                'Provider-reported cost is shown when the benchmark runner supplies it.'}{' '}
-              {benchmark.pricing ? (
-                <a href={benchmark.pricing.source}>See the recorded model's official token rates.</a>
-              ) : null}
-            </p>
-            <p>
-              The protocol keeps JavaScript and native changes separate. App-process liveness is a secondary diagnostic
-              marker in the timeline, not a reported performance result. Public artifacts use relative paths and
-              redacted simulator identifiers.
-            </p>
-          </aside>
         </div>
       </main>
     </Layout>

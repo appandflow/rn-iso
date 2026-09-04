@@ -195,14 +195,57 @@
   font-size: 0.82rem;
 }
 
-.detailHeading {
-  margin-bottom: 1.75rem;
-  padding-top: 2.5rem;
-  border-top: 1px solid var(--ifm-color-emphasis-300);
+.detailHero {
+  max-width: 52rem;
+  margin-bottom: 2.5rem;
 }
 
-.detailHeading h2 {
+.detailHero > a {
+  display: inline-block;
+  margin-bottom: 1.5rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.detailHero .eyebrow {
+  display: block;
+}
+
+.detailHero h1 {
+  margin-bottom: 0.75rem;
+  font-size: clamp(2rem, 5vw, 3rem);
+  letter-spacing: -0.04em;
+}
+
+.detailHero p {
+  color: var(--ifm-color-emphasis-700);
+  font-size: 1.05rem;
+  line-height: 1.7;
+}
+
+.detailCta {
+  display: flex;
+  gap: 2rem;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.5rem;
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 1rem;
+  background: var(--ifm-background-surface-color);
+}
+
+.detailCta h2,
+.detailCta p {
   margin: 0;
+}
+
+.detailCta p {
+  margin-top: 0.5rem;
+  color: var(--ifm-color-emphasis-700);
+}
+
+.detailCta > a {
+  flex: none;
 }
 
 .modelPicker {
@@ -445,6 +488,14 @@
   .environment {
     grid-template-columns: 1fr;
     gap: 1rem;
+  }
+
+  .detailCta {
+    display: block;
+  }
+
+  .detailCta > a {
+    margin-top: 1rem;
   }
 
   .sectionHeading {
