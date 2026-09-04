@@ -1,15 +1,36 @@
 import { describe, expect, it } from 'vitest';
 import {
   assignCommandLanes,
+  benchmarkSelectionFromSearch,
+  benchmarkSelectionSearch,
   comparableRuns,
   comparisonOutcome,
   commandAtCursor,
   formatSeconds,
   initialAuditSelection,
   timeBreakdown,
+  type BenchmarkData,
   type BenchmarkCommand,
   type BenchmarkRun,
 } from './benchmarkData';
+
+const navigationBenchmarks = [
+  {
+    stage: 'luna-rc12',
+    runs: [
+      { id: 'javascript-stim', valid: true },
+      { id: 'native-stim', valid: true },
+      { id: 'luna-invalid', valid: false },
+    ],
+  },
+  {
+    stage: 'sol-rc12',
+    runs: [
+      { id: 'javascript-stim', valid: true },
+      { id: 'native-stim', valid: true },
+    ],
+  },
+] as BenchmarkData[];
 
 function command(id: string, startSeconds: number, endSeconds: number): BenchmarkCommand {
   return { id, startSeconds, endSeconds, command: id, output: '', exitCode: 0 };
@@ -53,6 +74,33 @@ describe('comparableRuns', () => {
     const missing = { id: 'missing', valid: true, settingsReadySeconds: null } as BenchmarkRun;
 
     expect(comparableRuns([valid, invalid, missing]).map((run) => run.id)).toEqual(['valid']);
+  });
+});
+
+describe('benchmark URL selection', () => {
+  it('selects an explicitly linked benchmark and valid run', () => {
+    expect(benchmarkSelectionFromSearch('?benchmark=sol-rc12&run=native-stim', navigationBenchmarks)).toEqual({
+      stage: 'sol-rc12',
+      runId: 'native-stim',
+    });
+  });
+
+  it('requires the benchmark for a run link and rejects invalid runs', () => {
+    expect(benchmarkSelectionFromSearch('?run=native-stim', navigationBenchmarks)).toEqual({
+      stage: 'luna-rc12',
+      runId: 'javascript-stim',
+    });
+    expect(benchmarkSelectionFromSearch('?benchmark=luna-rc12&run=luna-invalid', navigationBenchmarks)).toEqual({
+      stage: 'luna-rc12',
+      runId: 'javascript-stim',
+    });
+  });
+
+  it('uses a clean URL for the default and stable query parameters otherwise', () => {
+    expect(benchmarkSelectionSearch({ stage: 'luna-rc12', runId: 'javascript-stim' }, navigationBenchmarks)).toBe('');
+    expect(benchmarkSelectionSearch({ stage: 'sol-rc12', runId: 'native-stim' }, navigationBenchmarks)).toBe(
+      '?benchmark=sol-rc12&run=native-stim',
+    );
   });
 });
 
