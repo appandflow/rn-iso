@@ -24,39 +24,59 @@ import benchmarkJson from '@site/src/data/benchmarks/luna-rc12.json';
 import opusBenchmarkJson from '@site/src/data/benchmarks/opus-rc12.json';
 import sonnetBenchmarkJson from '@site/src/data/benchmarks/sonnet-rc12.json';
 import solBenchmarkJson from '@site/src/data/benchmarks/sol-rc12.json';
+import solLaunchCrashJson from '@site/src/data/benchmarks/sol-launch-crash.json';
 import styles from './benchmarks.module.css';
 
 const benchmarks = (
-  [benchmarkJson, solBenchmarkJson, sonnetBenchmarkJson, opusBenchmarkJson] as BenchmarkData[]
+  [
+    benchmarkJson,
+    solBenchmarkJson,
+    sonnetBenchmarkJson,
+    opusBenchmarkJson,
+    solLaunchCrashJson,
+  ] as unknown as BenchmarkData[]
 ).filter((benchmark) => benchmark.runs.some((run) => run.valid));
+const readinessBenchmarks = benchmarks.filter((benchmark) => benchmark.suite !== 'launch-crash');
+const launchCrashBenchmarks = benchmarks.filter((benchmark) => benchmark.suite === 'launch-crash');
 
 function defaultRun(benchmark: BenchmarkData | undefined): BenchmarkRun | undefined {
   return benchmark?.runs.find((run) => run.valid);
 }
 
 function displayVariant(variant: BenchmarkRun['variant']): string {
-  return variant === 'javascript' ? 'JavaScript change' : 'Native change';
+  if (variant === 'javascript') return 'JavaScript change';
+  if (variant === 'native') return 'Native change';
+  return 'JavaScript launch failure';
 }
 
 function ComparisonCard({
   variant,
   runs,
   maxSeconds,
+  modelLabel,
+  href,
 }: {
   variant: BenchmarkRun['variant'];
   runs: BenchmarkRun[];
   maxSeconds: number;
+  modelLabel?: string;
+  href?: string;
 }): ReactNode {
-  const comparable = comparableRuns(runs);
+  const isLaunchCrash = variant === 'launch-crash';
+  const comparable = isLaunchCrash
+    ? runs.filter((run) => run.valid && run.diagnosisSeconds !== null)
+    : comparableRuns(runs);
   const stim = comparable.find((run) => run.arm === 'stim');
   const control = comparable.find((run) => run.arm === 'control');
   const outcome = comparisonOutcome(stim?.settingsReadySeconds, control?.settingsReadySeconds);
   return (
     <article className={styles.comparisonCard}>
-      <h3>{displayVariant(variant)}</h3>
-      <span className={`${styles.outcome} ${styles[outcome.tone]}`}>{outcome.label}</span>
+      <h3>{modelLabel ? `${modelLabel}: ${displayVariant(variant)}` : displayVariant(variant)}</h3>
+      <span className={`${styles.outcome} ${styles[isLaunchCrash ? 'neutral' : outcome.tone]}`}>
+        {isLaunchCrash ? 'Time to first actionable diagnosis' : outcome.label}
+      </span>
       {comparable.map((run) => {
-        const endpoint = comparable.find((candidate) => candidate.id === run.id)?.settingsReadySeconds ?? null;
+        const endpoint = (isLaunchCrash ? run.diagnosisSeconds : run.settingsReadySeconds) ?? null;
         return (
           <div className={styles.barRow} key={run.id}>
             <div className={styles.barHead}>
@@ -70,13 +90,26 @@ function ComparisonCard({
               />
             </div>
             <div className={styles.barMeta}>
-              <span>{formatTokens(totalTokens(run.usage))} tokens</span>
-              <span>{formatCost(run.estimatedTokenCostUsd)} cost</span>
-              <span>{run.commandCount} commands</span>
+              {isLaunchCrash ? (
+                <>
+                  <span>Settings repaired {formatSeconds(run.settingsReadySeconds)}</span>
+                  <span>
+                    {run.diagnosisUsage ? formatTokens(totalTokens(run.diagnosisUsage)) : 'unavailable'} tokens
+                  </span>
+                  <span>{formatCost(run.estimatedDiagnosisCostUsd ?? null)} cost</span>
+                </>
+              ) : (
+                <>
+                  <span>{formatTokens(totalTokens(run.usage))} tokens</span>
+                  <span>{formatCost(run.estimatedTokenCostUsd)} cost</span>
+                  <span>{run.commandCount} commands</span>
+                </>
+              )}
             </div>
           </div>
         );
       })}
+      {href ? <Link to={href}>Open the run audit</Link> : null}
     </article>
   );
 }
@@ -155,15 +188,20 @@ export default function Benchmarks(): ReactNode {
       hash: location.hash,
     });
   };
-  const grouped = useMemo(
-    () =>
-      (['javascript', 'native'] as const).map((variant) => ({
-        variant,
-        runs: publishedRuns.filter((run) => run.variant === variant),
-      })),
-    [publishedRuns],
+  const grouped = useMemo(() => {
+    const variants: BenchmarkRun['variant'][] =
+      benchmark?.suite === 'launch-crash' ? ['launch-crash'] : ['javascript', 'native'];
+    return variants.map((variant) => ({
+      variant,
+      runs: publishedRuns.filter((run) => run.variant === variant),
+    }));
+  }, [benchmark?.suite, publishedRuns]);
+  const maxSeconds = Math.max(
+    1,
+    ...(benchmark?.suite === 'launch-crash'
+      ? publishedRuns.map((run) => run.diagnosisSeconds ?? 0)
+      : comparableRuns(publishedRuns).map((run) => run.settingsReadySeconds)),
   );
-  const maxSeconds = Math.max(1, ...comparableRuns(publishedRuns).map((run) => run.settingsReadySeconds));
 
   if (!benchmark || !activeRun) {
     return (
@@ -206,10 +244,41 @@ export default function Benchmarks(): ReactNode {
             </div>
             <div className={styles.overviewGrid}>
               {(['javascript', 'native'] as const).map((variant) => (
-                <OverviewChart key={variant} variant={variant} benchmarks={benchmarks} />
+                <OverviewChart key={variant} variant={variant} benchmarks={readinessBenchmarks} />
               ))}
             </div>
           </section>
+
+          {launchCrashBenchmarks.length ? (
+            <section className={styles.overview} aria-labelledby="launch-crash-title">
+              <div className={styles.sectionHeading}>
+                <div>
+                  <Heading as="h2" id="launch-crash-title">
+                    Launch failure diagnosis
+                  </Heading>
+                  <p>
+                    A deterministic root-render exception is committed before dispatch. The agent must launch first,
+                    diagnose from captured errors, repair the source, and prove the unchanged Settings screen.
+                  </p>
+                </div>
+              </div>
+              <div className={styles.comparisonGrid}>
+                {launchCrashBenchmarks.map((candidate) => (
+                  <ComparisonCard
+                    key={candidate.stage}
+                    variant="launch-crash"
+                    runs={candidate.runs}
+                    maxSeconds={Math.max(1, ...candidate.runs.map((run) => run.diagnosisSeconds ?? 0))}
+                    modelLabel={candidate.runs[0]?.model ?? benchmarkDisplayTitle(candidate.title)}
+                    href={`/benchmarks${benchmarkSelectionSearch(
+                      { stage: candidate.stage, runId: defaultRun(candidate)?.id ?? '' },
+                      benchmarks,
+                    )}#audit-title`}
+                  />
+                ))}
+              </div>
+            </section>
+          ) : null}
 
           <section className={styles.methodology} aria-labelledby="methodology-title">
             <div>
@@ -242,6 +311,10 @@ export default function Benchmarks(): ReactNode {
                 <dd>The reported time is the validated Settings screenshot, not the earlier app-process marker.</dd>
               </div>
               <div>
+                <dt>Launch-failure suite</dt>
+                <dd>Diagnosis time and repaired Settings proof are reported separately from readiness results.</dd>
+              </div>
+              <div>
                 <dt>Audited attempts</dt>
                 <dd>Transcript rules, device identity, isolation, and proof are checked; invalid runs are excluded.</dd>
               </div>
@@ -272,7 +345,7 @@ export default function Benchmarks(): ReactNode {
           <section className={styles.comparison} aria-labelledby="comparison-title">
             <div className={styles.sectionHeading}>
               <Heading as="h2" id="comparison-title">
-                Settings-ready comparison
+                {benchmark.suite === 'launch-crash' ? 'Launch-failure result' : 'Settings-ready comparison'}
               </Heading>
               <p>Recorded {benchmark.recordedOn} / valid runs only</p>
             </div>

@@ -202,6 +202,31 @@ describe('benchmark viewer export', () => {
     );
   });
 
+  it('summarizes a Stim-assisted launch-failure diagnosis separately from a normal change', () => {
+    const commands = [
+      {
+        id: 'launch',
+        startSeconds: 1,
+        endSeconds: 10,
+        command: 'stim ios',
+        output: 'ERROR launch crash',
+        exitCode: 0,
+      },
+      {
+        id: 'logs',
+        startSeconds: 11,
+        endSeconds: 12,
+        command: 'stim logs --errors',
+        output: 'ERROR launch crash',
+        exitCode: 0,
+      },
+    ];
+
+    expect(summarizeRun({ variant: 'launch-crash', screen: { valid: false } }, commands, [])).toBe(
+      "Prepared the benchmark workspace, worked on the JavaScript launch failure, and ran Stim's iOS workflow. It used the captured Stim error log to identify the injected failure before repairing it.",
+    );
+  });
+
   it('replaces machine paths, run ids, and simulator ids', () => {
     const source =
       '/Volumes/ExternalSSD/Developer/bench/results/run-123/proof/settings.png ' +
@@ -462,5 +487,71 @@ describe('benchmark viewer export', () => {
     expect(() => exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'proof'))).toThrow(
       'no valid benchmark runs found',
     );
+  });
+
+  it('exports launch-crash diagnosis metrics as a separate suite', () => {
+    const root = mkdtempSync(join(tmpdir(), 'stim-launch-crash-export-'));
+    tempDirs.push(root);
+    const stageDir = join(root, 'results', 'sol-launch-crash');
+    const runDir = join(stageDir, 'private-run-id');
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(
+      join(runDir, 'meta.json'),
+      JSON.stringify({
+        dispatchAt: '2026-09-04T12:00:00.000Z',
+        finishedAt: '2026-09-04T12:03:00.000Z',
+        platform: 'ios',
+      }),
+    );
+    writeFileSync(
+      join(runDir, 'run.json'),
+      JSON.stringify({
+        runId: 'private-run-id',
+        model: 'gpt-5.6-sol',
+        variant: 'launch-crash',
+        arm: 'stim',
+        valid: true,
+        invalidReasons: [],
+        dispatchToDiagnosisSeconds: 90,
+        diagnosisCommandCount: 5,
+        diagnosisUsage: {
+          input_tokens: 100_000,
+          cached_input_tokens: 80_000,
+          output_tokens: 1_000,
+          reasoning_output_tokens: 100,
+        },
+        diagnosis: { observedAt: '2026-09-04T12:01:30.000Z' },
+        dispatchToScreenReadySeconds: 150,
+        commandCount: 10,
+        usage: {
+          input_tokens: 200_000,
+          cached_input_tokens: 160_000,
+          output_tokens: 2_000,
+          reasoning_output_tokens: 200,
+        },
+        screen: { valid: false },
+      }),
+    );
+
+    const payload = exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'proof'));
+
+    expect(payload).toMatchObject({
+      suite: 'launch-crash',
+      platform: 'ios',
+      primaryMetric: 'Dispatch to first actionable diagnosis; repaired Settings screenshot reported separately',
+    });
+    expect(payload.runs[0]).toMatchObject({
+      id: 'launch-crash-stim',
+      platform: 'ios',
+      diagnosisSeconds: 90,
+      diagnosisCommandCount: 5,
+      estimatedDiagnosisCostUsd: 0.132,
+    });
+    expect(payload.runs[0].markers).toContainEqual({
+      id: 'diagnosis',
+      kind: 'diagnosis',
+      label: 'Actionable diagnosis',
+      atSeconds: 90,
+    });
   });
 });

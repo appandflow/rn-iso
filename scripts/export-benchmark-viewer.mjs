@@ -311,7 +311,12 @@ export function summarizeRun(record, commands, backgroundProcesses) {
   const commandText = successfulCommands.map((command) => command.command).join('\n');
   const preparedWorktree = /\bgit\s+worktree\b|\bstim\s+worktree\s+create\b/.test(commandText);
   const copiedInputs = /\bcp\b[^\n]*(?:node_modules|ios\/Pods|ios\/build)/.test(commandText);
-  const change = record.variant === 'native' ? 'native iOS change' : 'JavaScript change';
+  const change =
+    record.variant === 'native'
+      ? 'native iOS change'
+      : record.variant === 'launch-crash'
+        ? 'JavaScript launch failure'
+        : 'JavaScript change';
   const preparation = preparedWorktree
     ? `Created an isolated worktree${copiedInputs ? ' and carried over dependencies or native outputs' : ''}`
     : 'Prepared the benchmark workspace';
@@ -339,7 +344,11 @@ export function summarizeRun(record, commands, backgroundProcesses) {
   const recovery = failed
     ? ` The record includes ${failed} failed command ${failed === 1 ? 'attempt' : 'attempts'} before completion.`
     : '';
-  return `${preparation}, worked on the ${change}, and ${launch}.${background}${validation}${recovery}`;
+  const diagnosis =
+    record.variant === 'launch-crash' && /(?:^|\s)stim\s+logs\s+--errors(?:\s|$)/.test(commandText)
+      ? ' It used the captured Stim error log to identify the injected failure before repairing it.'
+      : '';
+  return `${preparation}, worked on the ${change}, and ${launch}.${diagnosis}${background}${validation}${recovery}`;
 }
 
 function assertPortable(payload) {
@@ -438,12 +447,17 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
       return {
         id,
         model: record.model,
+        platform: meta.platform ?? 'ios',
         variant: record.variant,
         arm: record.arm,
         valid: record.valid,
         invalidReasons: (record.invalidReasons ?? []).map((reason) => sanitizeBenchmarkText(reason, replacements)),
         settingsReadySeconds: record.dispatchToScreenReadySeconds,
         appAliveSeconds: record.dispatchToAppAliveSeconds,
+        diagnosisSeconds: record.dispatchToDiagnosisSeconds ?? null,
+        diagnosisCommandCount: record.diagnosisCommandCount ?? null,
+        diagnosisUsage: record.diagnosisUsage ?? null,
+        estimatedDiagnosisCostUsd: estimateTokenCost(record.diagnosisUsage, record.model),
         totalSeconds,
         commandCount: record.commandCount,
         usage,
@@ -458,6 +472,12 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
             kind: 'appAlive',
             label: 'App process alive',
             atSeconds: relativeSeconds(appAlive.observedAt, meta.dispatchAt),
+          },
+          record.diagnosis?.observedAt && {
+            id: 'diagnosis',
+            kind: 'diagnosis',
+            label: 'Actionable diagnosis',
+            atSeconds: relativeSeconds(record.diagnosis.observedAt, meta.dispatchAt),
           },
           record.screen?.observedAt && {
             id: 'settings-ready',
@@ -478,7 +498,8 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
     })
     .toSorted(
       (a, b) =>
-        ['javascript', 'native'].indexOf(a.variant) - ['javascript', 'native'].indexOf(b.variant) ||
+        ['javascript', 'native', 'launch-crash'].indexOf(a.variant) -
+          ['javascript', 'native', 'launch-crash'].indexOf(b.variant) ||
         ['stim', 'control'].indexOf(a.arm) - ['stim', 'control'].indexOf(b.arm),
     );
 
@@ -492,9 +513,14 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
     schemaVersion: 1,
     stage,
     title: formatStage(stage),
+    suite: runs.every((run) => run.variant === 'launch-crash') ? 'launch-crash' : 'readiness',
+    platform: runs[0].platform,
     protocolVersion: 4,
     recordedOn,
-    primaryMetric: 'Dispatch to validated Settings screenshot',
+    primaryMetric:
+      runs[0].variant === 'launch-crash'
+        ? 'Dispatch to first actionable diagnosis; repaired Settings screenshot reported separately'
+        : 'Dispatch to validated Settings screenshot',
     pricing: modelPricing[model]
       ? {
           model,

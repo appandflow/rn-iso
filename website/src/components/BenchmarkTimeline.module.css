@@ -367,6 +367,11 @@
   background: #d97706;
 }
 
+.diagnosisDot {
+  background: #2563eb;
+  box-shadow: 0 0 0 0.2rem color-mix(in srgb, #2563eb 18%, transparent);
+}
+
 .readyDot {
   width: 1.35rem;
   height: 1.35rem;
