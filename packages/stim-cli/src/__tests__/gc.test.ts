@@ -260,6 +260,7 @@ test('parked deletion keeps ownership records after malformed simctl list output
       throw new Error(`unexpected run: ${cmd}`);
     },
     runQuiet: () => null,
+    runFileQuiet: () => null,
     spawn: () => null,
   });
 
@@ -375,6 +376,7 @@ test('gc sizes only listed owned Android AVDs after ownership classification', a
       throw new Error(`unexpected run: ${cmd}`);
     },
     runQuiet: () => null,
+    runFileQuiet: () => null,
     spawn: () => null,
   });
 
@@ -651,6 +653,9 @@ function installExecutor() {
       throw new Error(`unexpected run: ${cmd}`);
     },
     runQuiet() {
+      return null;
+    },
+    runFileQuiet() {
       return null;
     },
     spawn(cmd) {
@@ -1371,9 +1376,12 @@ describe('EAS orphan session sweep', () => {
       run(cmd) {
         throw new Error(`unexpected run: ${cmd}`);
       },
-      runQuiet(cmd) {
-        if (!cmd.includes('--git-common-dir')) return null;
-        return cmd.includes(otherWorkspace) ? otherGitCommon : projectGitCommon;
+      runQuiet() {
+        return null;
+      },
+      runFileQuiet(_file: string, args: string[]) {
+        if (!args.includes('--git-common-dir')) return null;
+        return args.some((arg) => arg.includes(otherWorkspace)) ? otherGitCommon : projectGitCommon;
       },
       spawn(cmd) {
         throw new Error(`unexpected spawn: ${cmd}`);
@@ -1926,6 +1934,10 @@ function installDeviceExecutor({
       if (shutdownMatch && throwOnShutdownFor.has(shutdownMatch[1])) {
         throw new Error(`simulated shutdown failure for ${shutdownMatch[1]}`);
       }
+      return '';
+    },
+    runFileQuiet(file: string, args: string[] = []) {
+      execCalls.push([file, ...args].join(' '));
       return '';
     },
     spawn(cmd) {
