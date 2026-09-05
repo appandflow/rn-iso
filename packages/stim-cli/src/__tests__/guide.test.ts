@@ -292,6 +292,17 @@ test('every guide topic explains the npx fallback for short stim commands', () =
   expect(renderIndex('9.9.9')).toMatch(/not installed globally[^.]*npx stim-cli/i);
 });
 
+test('the agent workflow checks errors before and after edits, before cleanup', () => {
+  const agent = renderTopic('agent');
+  assert(agent);
+  const normalWorkflow = agent.match(/NORMAL WORKFLOW([\s\S]*?)RULES DURING THE LOOP/)?.[1];
+  assert(normalWorkflow);
+  expect(normalWorkflow.match(/stim logs --errors/g)).toHaveLength(2);
+  expect(normalWorkflow.lastIndexOf('stim logs --errors')).toBeLessThan(normalWorkflow.lastIndexOf('stim stop'));
+  expect(agent).toContain('stim guide lifecycle verification');
+  expect(renderSection('lifecycle', 'verification')).toBeTruthy();
+});
+
 test('the agent guide routes to every detailed topic', () => {
   const agent = renderTopic('agent');
   assert(agent);
