@@ -246,6 +246,14 @@ test('android keys on the gradle variant rather than the Xcode configuration', (
   expect(buildCacheKey('android', hash, { configuration: 'Release' })).toBe(`${hash}-debug-sim`);
 });
 
+test('android cache keys separate target ABIs while preserving the universal key', () => {
+  const hash = 'abc123';
+  expect(buildCacheKey('android', hash, { abi: 'arm64-v8a' })).toBe(`${hash}-debug-sim-arm64-v8a`);
+  expect(buildCacheKey('android', hash, { abi: 'x86_64' })).toBe(`${hash}-debug-sim-x86-64`);
+  expect(buildCacheKey('android', hash, {})).toBe(`${hash}-debug-sim`);
+  expect(buildCacheKey('ios', hash, { abi: 'arm64-v8a' })).toBe(`${hash}-debug-sim`);
+});
+
 test('the CLI and the Expo provider compute the same key', () => {
   for (const [platform, options] of [
     ['ios', {}],
@@ -253,7 +261,7 @@ test('the CLI and the Expo provider compute the same key', () => {
     ['ios', { device: 'generic' }],
     ['ios', { device: 'Janic iPhone' }],
     ['ios', { device: true }],
-    ['android', { variant: 'release', device: 'emulator-5554' }],
+    ['android', { variant: 'release', device: 'emulator-5554', abi: 'arm64-v8a' }],
   ] as [string, Record<string, unknown>][]) {
     expect(buildCacheKey(platform, 'hash', options)).toBe(providerKey(platform, 'hash', options));
   }

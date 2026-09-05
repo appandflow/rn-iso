@@ -63,6 +63,9 @@ RULES DURING THE LOOP
   run stim start and retry.
 - Run ios or android again after a native input changes. A JavaScript-only
   change does not need one.
+- Android Debug builds target the owned emulator system-image ABI or the
+  physical device's primary ABI. Unknown targets and Release builds stay
+  universal.
 - If launch reports an app error but also says the native process is alive,
   the app did not crash. Fix JavaScript or TypeScript and use Fast Refresh; if
   the error screen remains, use stim reload. Do not run ios or android again.
@@ -402,8 +405,9 @@ line by design (see \`guide logs\`), not this single-payload contract.
   fingerprint / cacheKey / cacheHit / cacheSkipped / waitedForBuild /
   appPath / installSkipped / launched
                   as above -- cacheKey keys on the VARIANT here
-                  (<fingerprint>-productionrelease-sim) the way the iOS one
-                  keys on the configuration
+                  (<fingerprint>-productionrelease-sim). A Debug artifact for
+                  a proven target ABI also ends in that ABI
+                  (<fingerprint>-debug-sim-arm64-v8a)
   variant         the gradle variant that was built ("productionDebug" from
                   --variant or the android.variant setting); null for the
                   default assembleDebug. A variant whose name ENDS IN Release
@@ -1964,7 +1968,9 @@ lines Stim composes rather than on files the project owns:
            Podfile post_install block. Xcode 26+ only, and skipped entirely
            when the project configured ccache (the two defeat each other).
   android  gradlew carries --build-cache, so task outputs cross worktrees with
-           no org.gradle.caching=true in gradle.properties.
+           no org.gradle.caching=true in gradle.properties. Debug builds also
+           carry -PreactNativeArchitectures=<target ABI> when Stim can prove
+           the emulator or physical-device ABI; otherwise they stay universal.
   start    the dev server gets a shared Metro FileStore APPENDED to whatever
            the project configured -- in-process on a bare project, and through
            Expo's config override on SDK 54+. Expo SDK 53 and older use their
@@ -1998,7 +2004,9 @@ THE BUILD CACHE HAS THREE LEVELS
      remote cannot stall the loop, and a hit is copied into level one on the
      way past so the next workspace on this machine gets it for free. After a
      build, the result is stored locally AND handed to both providers, which
-     run independently.
+     run independently. An ABI-targeted Android Debug build skips this Expo
+     tier because its run-options contract cannot distinguish ABIs; levels one
+     and two remain ABI-keyed and active.
 
   Stim never configures a provider and never suggests changing one: a
   project without one is a perfectly ordinary local-only project (doctor does
@@ -2966,7 +2974,10 @@ be setup steps are supplied by Stim on the command lines it composes itself:
                (Xcode 26+ only, and skipped when the project configured ccache,
                which defeats it)
   gradlew      --build-cache -- so no org.gradle.caching=true in a committed
-               gradle.properties
+               gradle.properties. Debug builds add
+               -PreactNativeArchitectures=<target ABI> when the owned
+               emulator system image or physical device proves the ABI;
+               unknown targets and Release builds stay universal.
   start        a shared Metro FileStore, APPENDED to whatever the project
                configured -- so no metro.config.js. On a bare project Stim
                hosts Metro itself and adds it to the config it loaded; on Expo

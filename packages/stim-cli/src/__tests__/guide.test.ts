@@ -200,6 +200,13 @@ test('the facts topic says Android artifacts use the post-Gradle fingerprint', (
   expect(body).toMatch(/fingerprint and cacheKey are null/);
 });
 
+test('the guides document Android target-ABI builds and universal fallbacks', () => {
+  expect(renderTopic('facts')).toMatch(/debug-sim-arm64-v8a/);
+  expect(renderTopic('lifecycle')).toMatch(/-PreactNativeArchitectures=<target ABI>/);
+  expect(renderTopic('lifecycle')).toMatch(/ABI-targeted Android Debug build skips this Expo\s+tier/);
+  expect(renderTopic('agent')).toMatch(/Unknown targets and Release builds stay\s+universal/);
+});
+
 test('the one-line JSON sentence names every command whose --json payload is a single line', () => {
   const body = renderTopic('facts');
   assert(body);
