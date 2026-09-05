@@ -390,7 +390,7 @@ fire BEFORE the build, because a refusal that costs a build is a bad refusal.`,
   so the Expo dev menu is not over the app, fresh install or not. An app started
   ANOTHER way does not carry those arguments and \`snapshot -i\` can show the
   menu instead: \`agent-device press 'label="Close"'\` dismisses it, then press
-  Reload. See \`guide facts\`, under \`launched\`.
+  Reload. See \`guide facts devmenu\`.
 
   A BARE APP (no expo-dev-client) gets the same first two commands and a
   different third. The prompt fires the same way, because it is fired by any

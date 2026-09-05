@@ -145,7 +145,7 @@ test('a group preamble travels with each section it introduces', () => {
 });
 
 test('the facts topic pins how an owned emulator gets its console port', () => {
-  const body = renderTopic('facts');
+  const body = renderSection('facts', 'payloads');
   assert(body);
   expect(body).toMatch(/CHOSEN AND RECORDED under the global config lock\s+BEFORE the emulator starts/);
   expect(body).toMatch(/passed to it as `-port`/);
@@ -300,7 +300,7 @@ test('the index lists every topic and the running version', () => {
 });
 
 test('the facts topic documents the fields each --json payload actually carries', () => {
-  const body = renderTopic('facts');
+  const body = renderSection('facts', 'payloads');
   assert(body);
   const sources = {
     start: readFileSync(new URL('../commands/start.ts', import.meta.url), 'utf-8'),
@@ -354,7 +354,7 @@ test('the facts topic documents the fields each --json payload actually carries'
 });
 
 test('the facts topic documents durationMs for both run commands', () => {
-  const body = renderTopic('facts');
+  const body = renderSection('facts', 'payloads');
   assert(body);
   const ios = body.slice(body.indexOf('stim ios --json'), body.indexOf('stim android --json'));
   const android = body.slice(body.indexOf('stim android --json'), body.indexOf('ON FAILURE'));
@@ -364,7 +364,7 @@ test('the facts topic documents durationMs for both run commands', () => {
 });
 
 test('the facts topic says Android artifacts use the post-Gradle fingerprint', () => {
-  const body = renderTopic('facts');
+  const body = renderSection('facts', 'payloads');
   assert(body);
   expect(body).toMatch(/Android also fingerprints after Gradle/);
   expect(body).toMatch(/stored only under that post-build hash/);
@@ -373,14 +373,14 @@ test('the facts topic says Android artifacts use the post-Gradle fingerprint', (
 
 test('the guides explain unavailable iOS fingerprints after native mutations', () => {
   expect(renderTopic('agent')).toContain('installs the build without caching it');
-  expect(renderTopic('facts')).toMatch(/iOS\s+fingerprint after prebuild or pod install/);
+  expect(renderSection('facts', 'payloads')).toMatch(/iOS\s+fingerprint after prebuild or pod install/);
   const lifecycle = renderSection('lifecycle', 'builds');
   expect(lifecycle).toContain('skips local storage and remote uploads');
   expect(lifecycle).toContain('cacheKey are null in the result and lastBuild');
 });
 
 test('the guides document Android target-ABI builds and universal fallbacks', () => {
-  expect(renderTopic('facts')).toMatch(/debug-sim-arm64-v8a/);
+  expect(renderSection('facts', 'payloads')).toMatch(/debug-sim-arm64-v8a/);
   expect(renderSection('lifecycle', 'builds')).toMatch(/-PreactNativeArchitectures=<target ABI>/);
   expect(renderSection('lifecycle', 'builds')).toMatch(/ABI-targeted Android Debug build skips this Expo\s+tier/);
   expect(renderTopic('agent')).toMatch(/Unknown targets and Release builds stay\s+universal/);
@@ -492,7 +492,7 @@ test('the guide documents the identical-artifact skip and its fail-closed rule',
 });
 
 test('the guide says what a verified launch does not prove, in the words the commands print', () => {
-  const facts = renderTopic('facts');
+  const facts = renderSection('facts', 'payloads');
   assert(facts);
   expect(facts).toMatch(/IT IS NOT A PAINTED SCREEN/);
   expect(facts).toMatch(/first screen may still be\s+rendering/);
@@ -538,7 +538,7 @@ test('the guide documents the progress cadence the heartbeat actually uses', () 
 });
 
 test('the guide states once where the heartbeat estimate comes from', () => {
-  const facts = renderTopic('facts');
+  const facts = renderSection('facts', 'stats');
   assert(facts);
   expect(facts).toMatch(/lastColdBuildMs/);
   expect(facts).toMatch(/lastPodsMs/);
@@ -549,11 +549,11 @@ test('the guide states once where the heartbeat estimate comes from', () => {
   expect(facts).toMatch(/build {7}still compiling \(1m00s of ~3m10s\)/);
   const lifecycle = renderSection('lifecycle', 'progress');
   assert(lifecycle);
-  expect(lifecycle).toMatch(/`guide facts` says where the\s+number comes from/);
+  expect(lifecycle).toMatch(/`guide facts stats` says where\s+the number comes from/);
 });
 
 test('the guide documents scoped iOS dev-client preapproval', () => {
-  const facts = renderTopic('facts');
+  const facts = renderSection('facts', 'devmenu');
   assert(facts);
   expect(facts).toMatch(/preapproves[^.]*CoreSimulatorBridge[^.]*bundle id[^.]*scheme/i);
   expect(facts).toMatch(/unrelated schemes remain[^.]*unapproved/i);
@@ -855,7 +855,7 @@ test('the guide matches the Local Network path reason alone, not any errno-50 bl
 
 test('the guide gives the Local Network recovery commands and the taps that have no API', () => {
   const errors = renderSection('errors', 'unverified');
-  const facts = renderTopic('facts');
+  const facts = renderSection('facts', 'devmenu');
   assert(errors);
   assert(facts);
 
@@ -892,7 +892,7 @@ test('the guide gives the Local Network recovery commands and the taps that have
 });
 
 test('the guide scopes each platform dev-menu suppression mechanism accurately', () => {
-  const facts = renderTopic('facts');
+  const facts = renderSection('facts', 'devmenu');
   assert(facts);
 
   expect(facts).toMatch(/EVERY DEV-CLIENT DEEP LINK CARRIES disableOnboarding=1\s+INSIDE ITS PROJECT URL/);
@@ -1267,7 +1267,7 @@ test('physical-device guidance separates collector cleanup from device leases', 
     expect(body).toMatch(/`device lock` lease survives\s+collector exit until released or expired/);
     expect(body).toMatch(/`gc --delete` can remove its\s+expired lease file/);
   }
-  const facts = renderTopic('facts');
+  const facts = renderSection('facts', 'payloads');
   assert(facts);
   expect(facts).toMatch(/ID is stored in a temporary\s+lease/);
   const website = readFileSync(new URL('../../../../website/docs/commands.md', import.meta.url), 'utf-8');
@@ -1366,10 +1366,10 @@ test('advanced contracts stay in guide topics instead of the skill', () => {
   const advanced = [
     ['AGENT_DEVICE_DAEMON_AUTH_TOKEN', 'metro', null],
     ['metro.ngrokUrl', 'settings', null],
-    ['waitedForBuild', 'facts', null],
+    ['waitedForBuild', 'facts', 'payloads'],
     ['STIM_AT_CAPACITY', 'errors', null],
     ['.fingerprintignore', 'lifecycle', 'builds'],
-    ['CoreSimulatorBridge', 'facts', null],
+    ['CoreSimulatorBridge', 'facts', 'devmenu'],
     ['~/.android/avd', 'cleanup', null],
     ['android.avdConfigFile', 'settings', null],
     ['productionRelease', 'lifecycle', 'release'],
@@ -1430,8 +1430,8 @@ test('the guide defines reload as a JavaScript-only live-app recovery', () => {
   expect(lifecycle).toMatch(/owned local simulator or emulator/);
   expect(lifecycle).toMatch(/stim reload ios[\s\S]*stim reload android/);
   expect(renderSection('lifecycle', 'options')).toMatch(/^  reload\s+\[ios\|android\] --json$/m);
-  expect(facts).toContain('stim reload [ios|android] --json');
-  expect(facts).toMatch(/platform[\s\S]*deviceId[\s\S]*metroPort[\s\S]*strategy/);
+  expect(renderSection('facts', 'payloads')).toContain('stim reload [ios|android] --json');
+  expect(renderSection('facts', 'payloads')).toMatch(/platform[\s\S]*deviceId[\s\S]*metroPort[\s\S]*strategy/);
   expect(errors).toContain('STIM_RELOAD_AMBIGUOUS');
   expect(errors).toContain('STIM_RELOAD_RELEASE');
   expect(errors).toContain('STIM_RELOAD_FAILED');
@@ -1653,7 +1653,7 @@ test('the guide says what counts as an installed model, and the two runtime form
 });
 
 test('the facts topic documents the model, runtime and system image the run reports', () => {
-  const facts = renderTopic('facts');
+  const facts = renderSection('facts', 'payloads');
   assert(facts);
   const flat = facts.replace(/\s+/g, ' ');
   expect(flat).toMatch(/deviceType the owned simulator's MODEL/);
@@ -1663,7 +1663,7 @@ test('the facts topic documents the model, runtime and system image the run repo
 });
 
 test('the guide states the rule that turns runs into the numbers `stats` prints', () => {
-  const facts = renderTopic('facts');
+  const facts = renderSection('facts', 'stats');
   assert(facts);
 
   expect(facts).toMatch(/HOW A RUN IS COUNTED/);

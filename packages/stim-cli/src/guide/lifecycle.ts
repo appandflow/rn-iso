@@ -90,7 +90,7 @@ TWO REPORTS, TWO QUESTIONS
   "What is running" is \`stim status\`: live state, right now. "How much the
   cache saved" is \`stim stats\`: aggregate counters for this project and for
   the machine, with a hit rate and an estimate of the time saved (see
-  \`guide facts\`).`,
+  \`guide facts stats\`).`,
   sections: {
     progress: {
       summary: 'phase lines, the label set, heartbeats and their ~ estimate, what create, start, stop and remove print',
@@ -145,8 +145,8 @@ TWO REPORTS, TWO QUESTIONS
     build       waiting on /w/app-411 (pid 41233, 1m30s elapsed)
 
   The \`~\` value is an estimate, never a countdown; the third line is a
-  project with no record to estimate from yet. \`guide facts\` says where the
-  number comes from.
+  project with no record to estimate from yet. \`guide facts stats\` says where
+  the number comes from.
 
   The lifecycle commands use the same column. \`worktree create\` keeps the
   created path alone on stdout and reports itself on stderr:
