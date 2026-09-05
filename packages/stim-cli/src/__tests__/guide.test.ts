@@ -143,8 +143,8 @@ test('the facts topic documents the fields each --json payload actually carries'
   assert(body);
   const sources = {
     start: readFileSync(new URL('../commands/start.ts', import.meta.url), 'utf-8'),
-    ios: readFileSync(new URL('../commands/ios.ts', import.meta.url), 'utf-8'),
-    android: readFileSync(new URL('../commands/android.ts', import.meta.url), 'utf-8'),
+    ios: readFileSync(new URL('../commands/ios/result.ts', import.meta.url), 'utf-8'),
+    android: readFileSync(new URL('../commands/android/result.ts', import.meta.url), 'utf-8'),
   };
   const fields = {
     start: ['port', 'supervisorPid', 'mode', 'logsDir', 'alreadyRunning'],
@@ -239,9 +239,12 @@ test('the one-line JSON sentence names every command whose --json payload is a s
     doctor: 'doctor.ts',
     device: 'device.ts',
   };
-  for (const [, file] of Object.entries(files)) {
+  for (const file of Object.values(files)) {
     const src = readFileSync(new URL(`../commands/${file}`, import.meta.url), 'utf-8');
     expect(src).toMatch(/--json/);
+  }
+  for (const file of [...Object.values(files), 'ios/result.ts', 'android/result.ts']) {
+    const src = readFileSync(new URL(`../commands/${file}`, import.meta.url), 'utf-8');
     expect(src).not.toMatch(/JSON\.stringify\([^)]*,\s*null\s*,\s*2\s*\)/);
     expect(src).not.toMatch(/JSON\.stringify\(\s*\n/);
   }
@@ -335,7 +338,7 @@ test('the guide says what a verified launch does not prove, in the words the com
   expect(facts).toMatch(/first screen may still be\s+rendering/);
   expect(facts).toMatch(/Poll the UI before you trust a\s+screenshot/);
   for (const command of ['ios', 'android']) {
-    const src = readFileSync(new URL(`../commands/${command}.ts`, import.meta.url), 'utf-8');
+    const src = readFileSync(new URL(`../commands/${command}/launch.ts`, import.meta.url), 'utf-8');
     expect(src.includes('the first screen may still be rendering')).toBeTruthy();
     expect(src.includes('ready: bundle loaded')).toBeFalsy();
   }
@@ -725,10 +728,20 @@ test('the guide scopes each platform dev-menu suppression mechanism accurately',
 test('the errors topic documents every code the build commands and the iOS signing gate can emit', () => {
   const body = renderTopic('errors');
   assert(body);
-  const sources = [
-    ...['ios.ts', 'android.ts', 'start.ts'].map((f) =>
-      readFileSync(new URL(`../commands/${f}`, import.meta.url), 'utf-8'),
+  const commandFiles = [
+    'ios.ts',
+    'android.ts',
+    'start.ts',
+    'native-runtime.ts',
+    'dev-client.ts',
+    ...['ios', 'android'].flatMap((command) =>
+      readdirSync(new URL(`../commands/${command}/`, import.meta.url))
+        .filter((file) => file.endsWith('.ts'))
+        .map((file) => `${command}/${file}`),
     ),
+  ];
+  const sources = [
+    ...commandFiles.map((file) => readFileSync(new URL(`../commands/${file}`, import.meta.url), 'utf-8')),
     ...['engine/ios-profile.ts', 'engine/ios-signing.ts'].map((f) =>
       readFileSync(new URL(`../${f}`, import.meta.url), 'utf-8'),
     ),
@@ -736,7 +749,7 @@ test('the errors topic documents every code the build commands and the iOS signi
   const codes = new Set([...sources.matchAll(/STIM_[A-Z_]+/g)].map((m) => m[0]));
   expect(codes.size >= 8).toBeTruthy();
   for (const code of codes) {
-    expect(body.includes(code)).toBeTruthy();
+    expect(body).toContain(code);
   }
 });
 

@@ -2,7 +2,7 @@ import chalk from 'chalk';
 import type { ChildProcess } from 'node:child_process';
 import { mkdirSync, openSync, readFileSync } from 'node:fs';
 import type { Command } from 'commander';
-import { phaseLine } from '../command-output.ts';
+import { phaseLine, stepTimer } from '../command-output.ts';
 import type { StartError, StartFacts, SupervisorRecord } from '../types.ts';
 import { getProject, upsertProject } from '../config.ts';
 import { getExecutor } from '../exec.ts';
@@ -48,7 +48,6 @@ import {
   type TunnelRecord,
 } from '../engine/tunnel.ts';
 import { gitCommonDir, repoRoot } from '../worktree.ts';
-import { stepTimer } from './ios.ts';
 
 const DEFAULT_WAIT_SECONDS = 60;
 const POLL_MS = 500;
