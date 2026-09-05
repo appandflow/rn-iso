@@ -4,6 +4,9 @@ sidebar_position: 4
 description: 'Install the small Stim workflow skill for coding agents'
 ---
 
+Commands use `stim`. If it is not installed globally, replace `stim` with
+`npx stim-cli`.
+
 Install the bundled skill from the repository:
 
 ```bash
