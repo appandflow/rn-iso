@@ -4007,6 +4007,30 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     expect(text).not.toMatch(/opened on the dev-client URL/);
   });
 
+  test('a first-bundle failure on a live phone uses the existing automation session', async () => {
+    reserve();
+    const { errs, exitCode } = await run(
+      { device: true },
+      {
+        ...connected(),
+        verifyLaunch: async () => ({
+          fatal: true,
+          processAlive: true,
+          errors: [{ src: 'metro', msg: 'Unable to resolve module ./missing' }],
+        }),
+      },
+    );
+    const text = errs.join('\n');
+    expect(exitCode).toBe(1);
+    expect(text).toContain(`existing agent-device automation session for com.example.app on ${PHONE}`);
+    expect(text).toContain('exact arguments and environment that identify that session');
+    expect(text).toContain('Run `agent-device snapshot -i` in that session');
+    expect(text).not.toContain(`agent-device snapshot -i --platform ios --udid ${PHONE}`);
+    expect(text).toMatch(/If Reload is visible on the error screen, press it by exact ref or label/);
+    expect(text).toMatch(/Otherwise open the React Native dev menu through that session/);
+    expect(text).not.toContain('agent-device metro reload');
+  });
+
   test('the collector is the launch: it carries --physical and the run reads the device pid', async () => {
     reserve();
     const { calls } = await run({ device: true }, connected());

@@ -27,7 +27,6 @@ Node 20.19.4 or later on Node 20, or Node 22.12.0 or later, is required.
 stim doctor
 stim start
 stim ios                  # or: stim android
-stim reload               # after a JS-only edit when Fast Refresh needs help
 stim logs --errors
 stim stop
 ```
@@ -50,8 +49,10 @@ readiness. Plain output streams progress and reports the complete result. Use
 `--json` when a script needs structured data.
 
 `stim reload [ios|android]` reloads JavaScript in the live app on this
-workspace's owned local device. It does not build, install, boot, or launch an
-app. The platform is optional when only one app is live.
+workspace's owned local device. Use it after a failed first bundle load, when
+an error screen remains after a fix, or when you explicitly need an app
+restart. It is not part of the normal workflow and does not build, install,
+boot, or launch an app. The platform is optional when only one app is live.
 
 ## Reference
 
