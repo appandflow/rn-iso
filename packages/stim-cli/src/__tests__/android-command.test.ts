@@ -73,7 +73,11 @@ beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'stim-android-'));
   writeFileSync(
     join(root, 'package.json'),
-    JSON.stringify({ name: 'app', scripts: { android: 'react-native run-android' } }),
+    JSON.stringify({
+      name: 'app',
+      dependencies: { 'react-native': '0.81.0' },
+      scripts: { android: 'react-native run-android' },
+    }),
   );
   mkdirSync(join(root, 'android', 'app'), { recursive: true });
   writeFileSync(join(root, 'android', 'app', 'build.gradle'), 'android {\n  namespace "com.example.app"\n}\n');
@@ -135,6 +139,7 @@ interface BuildArgs {
   root?: string;
   logWriter?: unknown;
   variant?: string | null;
+  abi?: string | null;
 }
 interface InstallArgs {
   apkPath?: string | null;
@@ -248,6 +253,7 @@ function harness(overrides = {}) {
   const stdout: string[] = [];
   const options = {
     root,
+    deviceAbi: () => null,
     ensureDevice: async (args: unknown = {}) => {
       calls.ensureDevice.push(args);
       return { avdName: 'stim-app-412', consolePort: 5584, owned: true };
@@ -336,8 +342,15 @@ function harness(overrides = {}) {
     build: async (args: BuildArgs = {}) => {
       calls.order.push('build');
       calls.build.push(args);
-      return { ok: true, apkPath: fakeApk(), durationMs: 161000, lastLines: [] };
+      return {
+        ok: true,
+        apkPath: fakeApk(),
+        durationMs: 161000,
+        lastLines: [],
+        ccache: { status: 'reported' as const, hits: 176, misses: 204, hitRatePercent: 46.3 },
+      };
     },
+    ccacheFor: () => null,
     install: (args: InstallArgs = {}) => {
       calls.install.push(args);
       return { ok: true, apkPath: args.apkPath ?? '' };
@@ -1024,6 +1037,7 @@ describe('a cache hit', () => {
       bundleId: 'com.example.app',
       installSkipped: false,
       launched: true,
+      ccache: { status: 'not-run', hits: null, misses: null, hitRatePercent: null },
       debugHttpHost: '10.0.2.2:8082',
       debugHttpHostNote: null,
       devClientUrl: null,
@@ -1051,6 +1065,90 @@ describe('a cache miss', () => {
     expect(labelled(h.stderr, 'build')[1]).toMatch(/^  build {7}ok \(2m41s\)$/);
     assert(result.facts);
     expect(result.facts.cacheHit).toBe(false);
+  });
+
+  test('hands the resolved ccache environment to Gradle and reports its counts', async () => {
+    const setup = {
+      dir: join(home, 'ccache'),
+      statsLog: join(home, 'ccache-stats.log'),
+      env: { CMAKE_CXX_COMPILER_LAUNCHER: '/opt/homebrew/bin/ccache' },
+    };
+    const options: Record<string, unknown>[] = [];
+    const h = harness({
+      ccacheFor: () => setup,
+      build: async (_args: BuildArgs = {}, opts: Record<string, unknown> = {}) => {
+        options.push(opts);
+        return {
+          ok: true,
+          apkPath: fakeApk(),
+          durationMs: 161000,
+          lastLines: [],
+          ccache: { status: 'reported' as const, hits: 176, misses: 204, hitRatePercent: 46.3 },
+        };
+      },
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(options[0]?.ccache).toBe(setup);
+    assert(result.facts);
+    expect(result.facts.ccache).toEqual({ status: 'reported', hits: 176, misses: 204, hitRatePercent: 46.3 });
+    expect(h.stdout.join('\n')).toMatch(/^ {2}compilation cache 176 hits \/ 204 misses \(46\.3%\)$/m);
+  });
+
+  test('builds only the ABI selected for an owned emulator and scopes the cache key', async () => {
+    const abiKey = `${FINGERPRINT}-debug-sim-arm64-v8a`;
+    const h = harness({
+      json: true,
+      deviceAbi: never('the owned emulator ABI query'),
+      ensureDevice: async () => ({
+        avdName: 'stim-app-412',
+        consolePort: 5584,
+        owned: true,
+        systemImage: 'system-images;android-36;google_apis;arm64-v8a',
+      }),
+      loadProvider: never('the Expo build cache provider'),
+    });
+
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(h.calls.build[0]?.abi).toBe('arm64-v8a');
+    expect(h.calls.resolveCached[0]).toEqual(['android', abiKey]);
+    expect(h.calls.storeCached[0]?.slice(0, 2)).toEqual(['android', abiKey]);
+    expect(result.facts?.cacheKey).toBe(abiKey);
+    expect(JSON.parse(h.stdout[0] ?? '{}').cacheKey).toBe(abiKey);
+    expect(readState().lastBuild.cacheKey).toBe(abiKey);
+  });
+
+  test('keeps a universal Debug build when the owned emulator ABI is unknown', async () => {
+    const h = harness({
+      ensureDevice: async () => ({
+        avdName: 'stim-app-412',
+        consolePort: 5584,
+        owned: true,
+        systemImage: null,
+      }),
+    });
+
+    expect((await h.run()).ok).toBe(true);
+    expect(h.calls.build[0]?.abi).toBeNull();
+    expect(h.calls.resolveCached[0]).toEqual(['android', CACHE_KEY]);
+  });
+
+  test('keeps Release builds universal even when the target ABI is known', async () => {
+    const releaseKey = `${FINGERPRINT}-release-sim`;
+    const h = harness({
+      variant: 'release',
+      ensureDevice: async () => ({
+        avdName: 'stim-app-412',
+        consolePort: 5584,
+        owned: true,
+        systemImage: 'system-images;android-36;google_apis;arm64-v8a',
+      }),
+    });
+
+    expect((await h.run()).ok).toBe(true);
+    expect(h.calls.build[0]?.abi).toBeNull();
+    expect(h.calls.resolveCached[0]).toEqual(['android', releaseKey]);
   });
 
   test('a cache that cannot be written is a warning, not a failed run', async () => {
@@ -1362,6 +1460,33 @@ describe('metro is verified before any build work', () => {
 });
 
 describe('the other refusals', () => {
+  test('a directory that depends on neither react-native nor expo is refused before any workspace state', async () => {
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'monorepo', devDependencies: { vitest: '5' } }));
+    const h = harness({ ensureDevice: never('the device'), build: never('the build') });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('STIM_NO_PROJECT');
+    expect(result.error?.message).toContain(join(root, 'package.json'));
+    expect(result.error?.message).toMatch(/neither react-native nor expo/);
+    expect(result.error?.remedy).toBeTruthy();
+    expect(h.calls.ensureStorage).toEqual([]);
+    expect(h.stdout).toEqual([]);
+  });
+
+  test('a package.json that does not parse is refused as unreadable, not as a missing app dependency', async () => {
+    writeFileSync(join(root, 'package.json'), '{ "name": "app", "dependencies": { "react-native": "0.81.0"');
+    const h = harness({ ensureDevice: never('the device'), build: never('the build') });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('STIM_NO_PROJECT');
+    expect(result.error?.message).toContain(join(root, 'package.json'));
+    expect(result.error?.message).toMatch(/is not valid JSON/);
+    expect(result.error?.message).not.toMatch(/neither react-native nor expo/);
+    expect(result.error?.remedy).toMatch(/Fix the JSON/);
+    expect(h.calls.ensureStorage).toEqual([]);
+    expect(h.stdout).toEqual([]);
+  });
+
   test('a fingerprint with no hash refuses without a package-install remedy', async () => {
     const h = harness({
       fingerprint: async () => null,
@@ -1936,18 +2061,75 @@ describe('single-flight builds', () => {
     expect(h.stderr.join('\n')).toMatch(/without an artifact/);
   });
 
-  test('losing the takeover race builds anyway rather than queueing again', async () => {
+  test('losing the takeover race waits for the new holder and installs its artifact', async () => {
+    let acquires = 0;
+    let waits = 0;
+    const waited = join(home, 'build-cache', 'android', CACHE_KEY, 'app-debug.apk');
+    const h = harness({
+      acquireLock: () => heldBy(++acquires === 1 ? 41233 : 51234),
+      waitForBuild: async () =>
+        ++waits === 1
+          ? { builderFailed: 'the builder (pid 41233) is gone', waitedMs: 10 }
+          : { hit: waited, waitedMs: 2000 },
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(acquires).toBe(2);
+    expect(waits).toBe(2);
+    expect(h.calls.build).toHaveLength(0);
+    expect(h.calls.storeCached).toHaveLength(0);
+    expect(h.calls.releaseLock).toHaveLength(0);
+    expect(h.calls.install[0]?.apkPath).toBe(waited);
+    expect(result.facts?.waitedForBuild).toEqual({ pid: 51234, ms: 2000 });
+    expect(h.stdout).toHaveLength(1);
+    expect(h.stderr.join('\n')).not.toMatch(/RETRY:|building here/);
+  });
+
+  test('a failed replacement builder allows another takeover only after acquiring the lock', async () => {
+    let acquires = 0;
     let waits = 0;
     const h = harness({
-      acquireLock: () => heldBy(),
+      acquireLock: () =>
+        ++acquires < 3
+          ? heldBy(acquires === 1 ? 41233 : 51234)
+          : { acquired: true, path: '/lock', lock: { pid: process.pid } },
       waitForBuild: async () => {
         waits++;
-        return { builderFailed: 'the builder (pid 41233) is gone', waitedMs: 10 };
+        return { builderFailed: 'the build lock was released without an artifact', waitedMs: 10 };
       },
     });
     expect((await h.run()).ok).toBe(true);
-    expect(waits).toBe(1);
-    expect(h.calls.releaseLock.length).toBe(0);
+    expect(acquires).toBe(3);
+    expect(waits).toBe(2);
+    expect(h.calls.build).toHaveLength(1);
+    expect(h.calls.releaseLock).toHaveLength(1);
+    expect(h.stderr.join('\n')).toMatch(/RETRY:.*pid 51234/);
+  });
+
+  test('replacement builders share one wait deadline including lock acquisition time', async () => {
+    let clock = 0;
+    let acquires = 0;
+    const ceilings: (number | undefined)[] = [];
+    const h = harness({
+      now: () => clock,
+      acquireLock: () => {
+        if (++acquires === 3) clock += 60000;
+        return heldBy(41233 + acquires);
+      },
+      waitForBuild: async ({ ceilingMs }: { ceilingMs?: number }) => {
+        ceilings.push(ceilingMs);
+        clock += ceilings.length === 1 ? 60 * 60000 : 29 * 60000;
+        return { builderFailed: 'the builder is gone', waitedMs: 0 };
+      },
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(acquires).toBe(3);
+    expect(ceilings).toEqual([90 * 60000, 30 * 60000]);
+    expect(h.calls.build).toHaveLength(0);
+    expect(h.calls.releaseLock).toHaveLength(0);
+    expect(result.error?.code).toBe('STIM_BUILD_WAIT_TIMEOUT');
+    expect(h.stderr.join('\n')).toMatch(/41236/);
   });
 
   test('a FAILED build releases the lock', async () => {
@@ -2315,6 +2497,7 @@ describe('the pure parts', () => {
       bundleId: null,
       installSkipped: false,
       launched: false,
+      ccache: { status: 'unavailable', hits: null, misses: null, hitRatePercent: null },
       debugHttpHost: null,
       debugHttpHostNote: null,
       devClientUrl: null,
@@ -2465,6 +2648,7 @@ describe('launch verification', () => {
     const h = harness({
       verifyLaunched: async () => ({
         verified: true,
+        processAlive: true,
         waitedMs: 2500,
         errors: [
           { src: 'device', proc: 'ReactNativeJS(1234)', msg: 'a native framework error' },
@@ -2479,6 +2663,37 @@ describe('launch verification', () => {
     );
     expect(text).toMatch(/^  launch {6}a redbox from the app$/m);
     expect(text).not.toMatch(/a native framework error/);
+    expect(text).toContain('stim reload android');
+    expect(text).toMatch(/Do not run `stim android` unless native inputs changed or the app process exits/);
+  });
+
+  test('a native process exit recommends another platform run instead of a Metro reload', async () => {
+    const h = harness({
+      verifyLaunched: async () => ({
+        fatal: true,
+        processAlive: false,
+        errors: [{ src: 'device', msg: 'native crash' }],
+      }),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(h.stderr.join('\n')).toMatch(/run `stim android` again.*Metro reload cannot restart an exited app/);
+  });
+
+  test('a Metro build failure with a live native process recommends reload instead of another native run', async () => {
+    const h = harness({
+      verifyLaunched: async () => ({
+        fatal: true,
+        processAlive: true,
+        errors: [{ src: 'metro', msg: 'Unable to resolve module ./missing' }],
+      }),
+    });
+    const result = await h.run();
+    const text = h.stderr.join('\n');
+    expect(result.ok).toBe(false);
+    expect(text).toMatch(/native app is still running/);
+    expect(text).toContain('stim reload android');
+    expect(text).toMatch(/Do not run `stim android` unless native inputs changed or the app process exits/);
   });
 
   test('the picker: no bundle request makes it launched: "unverified", still exit ok', async () => {
@@ -3752,6 +3967,38 @@ describe('the project cache provider', () => {
     expect(labelled(h.stderr, 'cache').some((line) => line.includes('uploaded (./cache.cjs)'))).toBe(true);
   });
 
+  test('an ABI-targeted build uses the key-based provider and skips the Expo provider', async () => {
+    const abiKey = `${FINGERPRINT}-debug-sim-arm64-v8a`;
+    const providerCalls: unknown[] = [];
+    const h = harness(
+      providerOptions(
+        {
+          resolve: (input: unknown) => {
+            providerCalls.push(input);
+            return null;
+          },
+          store: (input: unknown) => {
+            providerCalls.push(input);
+          },
+        },
+        {
+          ensureDevice: async () => ({
+            avdName: 'stim-app-412',
+            consolePort: 5584,
+            owned: true,
+            systemImage: 'system-images;android-36;google_apis;arm64-v8a',
+          }),
+          loadProvider: never('the Expo build cache provider'),
+        },
+      ),
+    );
+
+    expect((await h.run()).ok).toBe(true);
+    expect(providerCalls).toHaveLength(2);
+    expect(providerCalls[0]).toMatchObject({ platform: 'android', key: abiKey });
+    expect(providerCalls[1]).toMatchObject({ platform: 'android', key: abiKey });
+  });
+
   test('an unusable provider reports once and the build still succeeds', async () => {
     const h = harness({
       resolveCacheProvider: () => providerConfig(),
@@ -3844,6 +4091,54 @@ describe('--device (a physical Android device)', () => {
     expect(result.ok).toBe(true);
     expect(h.calls.install[0]?.serial).toBe('RFCR7081Q9L');
     expect(h.calls.launch[0]?.serial).toBe('RFCR7081Q9L');
+  });
+
+  test('a physical Debug run builds for the device primary ABI', async () => {
+    const serials: string[] = [];
+    const h = physicalHarness({
+      deviceAbi: (serial: string) => {
+        serials.push(serial);
+        return 'arm64-v8a';
+      },
+    });
+
+    expect((await h.run()).ok).toBe(true);
+    expect(serials).toEqual(['RFCR7081Q9L']);
+    expect(h.calls.build[0]?.abi).toBe('arm64-v8a');
+    expect(h.calls.resolveCached[0]).toEqual(['android', `${FINGERPRINT}-debug-sim-arm64-v8a`]);
+  });
+
+  test('a physical Debug run stays universal when the device ABI is unknown', async () => {
+    const h = physicalHarness({ deviceAbi: () => null });
+
+    expect((await h.run()).ok).toBe(true);
+    expect(h.calls.build[0]?.abi).toBeNull();
+    expect(h.calls.resolveCached[0]).toEqual(['android', CACHE_KEY]);
+  });
+
+  test('a physical Release run stays universal without querying the device ABI', async () => {
+    const h = physicalHarness({
+      variant: 'release',
+      deviceAbi: never('the device ABI'),
+    });
+
+    expect((await h.run()).ok).toBe(true);
+    expect(h.calls.build[0]?.abi).toBeNull();
+    expect(h.calls.resolveCached[0]).toEqual(['android', `${FINGERPRINT}-release-sim`]);
+  });
+
+  test('a live physical-device error recommends Metro reload', async () => {
+    const h = physicalHarness({
+      verifyLaunched: async () => ({
+        verified: true,
+        processAlive: true,
+        errors: [{ src: 'client', msg: 'a redbox from the app' }],
+      }),
+    });
+    await h.run();
+    const text = h.stderr.join('\n');
+    expect(text).toContain('agent-device metro reload --metro-port 8082');
+    expect(text).not.toContain('agent-device snapshot');
   });
 
   test('a physical run launches against localhost, not the emulator loopback', async () => {

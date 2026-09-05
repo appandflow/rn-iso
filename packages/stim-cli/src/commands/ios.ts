@@ -1,160 +1,19 @@
+import { rmSync } from 'node:fs';
+import { type Command, InvalidArgumentError } from 'commander';
 import chalk from 'chalk';
-import type { ChildProcess } from 'node:child_process';
-import { mkdirSync, openSync, readFileSync, rmSync } from 'node:fs';
-import { basename, join } from 'node:path';
-import { spawnEntry } from '../spawn-entry.ts';
-import { InvalidArgumentError, type Command } from 'commander';
 import {
   createWarnOnce,
-  loadCacheProvider,
   resolveTieredBuild,
   storeTieredBuild,
   type LoadCacheProviderResult,
   type ProviderCallResult,
 } from '@stim-cli/cache';
-import {
-  buildCacheKey,
-  describeFingerprintMiss,
-  filesystemBuildCapability,
-  fingerprintDiffRecord,
-  fingerprintDiffSuffix,
-  fingerprintProject,
-  prepareProviderDownloadDir,
-  providerDownloadPath,
-  providerUploadOutcome,
-  refingerprintAfterMutation,
-  resolveBuild,
-  storeBuild,
-  untrackedMissLine,
-  untrackedNativeFiles,
-} from '../build-cache.ts';
 import type { FingerprintSource } from '@expo/fingerprint';
+import { formatDuration, phaseLine, shortHash, SLOW_STEP_MS, stepClock, stepTimer } from '../command-output.ts';
+import { waitFlagConflict, leaseExpiryText, parseDeviceWait, type RunLease } from '../engine/device-lease-run.ts';
+import type { RemoteDeviceBackend, CacheHitLevel, CompilationCacheActivity, IosFacts } from '../types.ts';
 import {
-  formatDuration,
-  launchErrorReport,
-  phaseLine,
-  shortHash,
-  shortUdid,
-  type LaunchErrorRecord,
-} from '../command-output.ts';
-import { verifyCollectorOwnership } from '../collector/ownership.ts';
-import { getConcurrencyLimits, getProject, upsertProject } from '../config.ts';
-import {
-  DEFAULT_METRO_PORT,
-  LAUNCH_BUNDLING,
-  LAUNCH_FATAL,
-  LAUNCH_UNVERIFIED,
-  RELEASE_VERIFY_WAIT_MS,
-  clearOtherUserApps,
-  devClientUrl,
-  installIosApp,
-  iosAppProcess,
-  launchIosApp,
-  readCollectorRecords,
-  unverifiedLaunchLines,
-  verifyLaunch,
-  verifyReleaseLaunch,
-} from '../engine/app-install.ts';
-import {
-  acquireBuildLock,
-  releaseBuildLock,
-  takeoverLine,
-  waitForBuild,
-  type BuildLockHandle,
-  type WaitForBuildResult,
-} from '../engine/build-lock.ts';
-import { acquireBuildSlot, releaseBuildSlot, type BuildSlotHandle } from '../engine/build-slots.ts';
-import { readPodState, podsAreStale, runPodInstall } from '../engine/deps.ts';
-import {
-  checkDeviceCapacity,
-  clearIosAdoptionPending,
-  ensureBooted,
-  ensureOwnedDevice,
-  unknownIosDeviceTypeRefusal,
-  unknownIosRuntimeRefusal,
-} from '../engine/device.ts';
-import { listIosRuntimes } from '../sim/ios.ts';
-import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../sim-pool.ts';
-import {
-  REMOTE_SESSION_ERROR,
-  binOnPath,
-  ensureRemoteBootOwned,
-  ensureMetroReachable,
-  remoteIosDeps,
-  resolveRemoteContext,
-} from '../engine/device-remote.ts';
-import {
-  DEVICECTL_INSTALL_TIMEOUT_MS,
-  LAUNCH_PROBE_TIMEOUT_MS,
-  awaitIosDeviceLaunch,
-  installIosDeviceApp,
-  iosDeviceProcess,
-  iosPoolCandidates,
-  iosPoolNoCandidatesRefusal,
-  listIosDevices,
-  localNetworkPending,
-  resolveIosPhysicalDevice,
-  verifyIosDeviceReleaseLaunch,
-} from '../engine/ios-device.ts';
-import { selectFromPool } from '../engine/device-pool.ts';
-import {
-  DEBUG_VERIFY_STEP_MS,
-  acquireRunLease,
-  leaseExpiryText,
-  lostLine,
-  lostRefusal,
-  parseDeviceWait,
-  releaseLeaseOnSignal,
-  runLease,
-  waitFlagConflict,
-  type LeaseFacts,
-  type RunLease,
-} from '../engine/device-lease-run.ts';
-import { gateProfileForDevice, sealAppForDevice } from '../engine/ios-signing.ts';
-import { chooseLanAddress, copyAppAside, ensureLanReachable, lanOriginUrlFor, writeIpTxt } from '../engine/ios-lan.ts';
-import { hostLanCandidates } from '../engine/lan-address.ts';
-import { detectProviders } from '../engine/metro-reach.ts';
-import { ownedSessionName } from '../engine/eas-simulator.ts';
-import { type Diagnostic, describeDiagnostic } from '../engine/errors-xcode.ts';
-import { needsPrebuild, runPrebuild } from '../engine/prebuild.ts';
-import {
-  RESOLVE_TIMEOUT_MS,
-  UPLOAD_TIMEOUT_MS,
-  cacheLevel,
-  checkEasAuth,
-  easAuthNote,
-  exitAfterFlush,
-  isEasAuthFailureText,
-  loadProjectProvider,
-  resolveEasCliBin,
-  resolveRemote,
-  uploadRemote,
-  type LoadProjectProviderResult,
-} from '../engine/remote-cache.ts';
-import {
-  createRunRecorder,
-  readRunEstimates,
-  recordRunStats,
-  statsProjectKey,
-  type RunEstimates,
-  type RunRecorder,
-} from '../engine/stats.ts';
-import { swapJsBundle } from '../engine/js-swap.ts';
-import {
-  buildIos,
-  compilationCacheActivityLine,
-  COMPILATION_CACHE_NOT_RUN,
-  COMPILATION_CACHE_UNAVAILABLE,
-  readBundleExecutable,
-  readBundleId,
-} from '../engine/xcode.ts';
-import { getExecutor } from '../exec.ts';
-import type { CacheHitLevel, CompilationCacheActivity, IosFacts, RemoteDeviceBackend } from '../types.ts';
-import { NOT_OURS_FOREIGN_CWD, isPidAlive, resolveProjectMetro } from '../metro.ts';
-import { createNdjsonWriter, type NdjsonWriter } from '../ndjson.ts';
-import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../paths.ts';
-import { detectBundleId, detectIsExpo, findProjectRoot, isPackageResolvable, projectShortcut } from '../project.ts';
-import {
+  REMOTE_DEVICE_BACKENDS,
   cacheProviderSettingError,
   iosLanHostSetting,
   iosLanHostSettingError,
@@ -163,21 +22,116 @@ import {
   iosSigningIdentitySha1Setting,
   iosSigningIdentitySha1SettingError,
   publicUrlSetting,
-  REMOTE_DEVICE_BACKENDS,
   remoteDeviceSettingError,
   remoteIosSetting,
-  resolveCacheProviderConfig,
-  resolveSettings,
   SETTING_SHAPE_REMEDY,
   settingShapeErrors,
   tunnelModeSetting,
   unknownSettingKeys,
-  type SettingsObject,
 } from '../settings.ts';
-import { MODE_BARE, MODE_EXPO, readWorkspaceState, writeWorkspaceState } from '../supervisor/state.ts';
-import { gitCommonDir, repoRoot } from '../worktree.ts';
+import type {
+  IosCommandOptions,
+  IosBootLike,
+  RemoteUploadLike,
+  BuildIosResultLike,
+  WaitedForBuild,
+  FailArgs,
+  BuildFailureFields,
+} from './ios/types.ts';
+import { type IosDeps, DEFAULT_DEPS } from './ios/dependencies.ts';
+import {
+  buildCacheKey,
+  describeFingerprintMiss,
+  filesystemBuildCapability,
+  fingerprintDiffRecord,
+  fingerprintDiffSuffix,
+  prepareProviderDownloadDir,
+  providerDownloadPath,
+  refingerprintAfterMutation,
+  untrackedMissLine,
+} from '../build-cache.ts';
+import { DEFAULT_METRO_PORT } from '../engine/app-install.ts';
+import { takeoverLine, WAIT_CEILING_MS, type BuildLockHandle, type WaitForBuildResult } from '../engine/build-lock.ts';
+import type { BuildSlotHandle } from '../engine/build-slots.ts';
+import { ensureOwnedDevice } from '../engine/device.ts';
+import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../sim-pool.ts';
+import { REMOTE_SESSION_ERROR, binOnPath } from '../engine/device-remote.ts';
+import {
+  DEVICECTL_INSTALL_TIMEOUT_MS,
+  iosPoolCandidates,
+  iosPoolNoCandidatesRefusal,
+  resolveIosPhysicalDevice,
+} from '../engine/ios-device.ts';
+import { chooseLanAddress, copyAppAside, lanOriginUrlFor, writeIpTxt } from '../engine/ios-lan.ts';
+import { ownedSessionName } from '../engine/eas-simulator.ts';
+import {
+  RESOLVE_TIMEOUT_MS,
+  easAuthNote,
+  isEasAuthFailureText,
+  type LoadProjectProviderResult,
+} from '../engine/remote-cache.ts';
+import { createRunRecorder, statsProjectKey, type RunEstimates } from '../engine/stats.ts';
+import { COMPILATION_CACHE_NOT_RUN, COMPILATION_CACHE_UNAVAILABLE } from '../engine/xcode.ts';
+import type { NdjsonWriter } from '../ndjson.ts';
+import { workspaceDir, workspaceLogsDir } from '../paths.ts';
+import { appProjectProblem } from '../project.ts';
+import { type SupervisorLike, noMetroMessage, noMetroRemedy } from './native-runtime.ts';
+import {
+  PLATFORM,
+  buildLogFile,
+  deviceLabel,
+  resolveConfiguration,
+  resolveDeviceType,
+  resolveRuntime,
+  deviceModelRefusal,
+  isReleaseConfiguration,
+  podAction,
+  xcodeFailureReport,
+  printDiagnostics,
+} from './ios/support.ts';
+import { lastBuildRecord, writeLastBuild } from './ios/result.ts';
+import { finishIosRun } from './ios/launch.ts';
 
-export { formatDuration, phaseLine, shortHash, shortUdid } from '../command-output.ts';
+export { lastBuildRecord, iosFacts, writeLastBuild, cacheDescription } from './ios/result.ts';
+
+export { devClientScheme, schemesFromInfoPlist, readBundleSchemes, pickDevClientScheme } from './dev-client.ts';
+
+export { collectorLogFile, collectorEntry, stopPreviousCollector, replaceCollector } from './ios/collector.ts';
+
+export {
+  GATE_RETRY_DELAYS_MS,
+  gateShouldRetry,
+  resolveMetroWithRetry,
+  noMetroMessage,
+  noMetroRemedy,
+  ensureWorkspaceStorageSafely,
+  launchOutcomeRecord,
+} from './native-runtime.ts';
+
+export {
+  PLATFORM,
+  buildLogFile,
+  deviceLabel,
+  deviceShortName,
+  appNameFromPath,
+  iosConfigurationSetting,
+  resolveConfiguration,
+  resolveDeviceType,
+  resolveRuntime,
+  isReleaseConfiguration,
+  podAction,
+  xcodeFailureReport,
+} from './ios/support.ts';
+
+export {
+  formatDuration,
+  phaseLine,
+  shortHash,
+  shortUdid,
+  SLOW_STEP_MS,
+  stepClock,
+  stepTimer,
+} from '../command-output.ts';
 
 function writeNote(line: string): void {
   console.error(line);
@@ -187,829 +141,13 @@ function writePhase(name: unknown, text: string): void {
   console.error(phaseLine(name, text));
 }
 
-export const PLATFORM = 'ios';
-
 // xcodebuild cannot target a remote simulator UDID, so remote builds use the generic destination.
 const GENERIC_SIM_DESTINATION = 'generic/platform=iOS Simulator';
+
 const IPHONEOS_SDK = 'iphoneos';
 
 const PROVIDER_SKIPPED_ON_DEVICE =
   'a device build is local-tier only: its cache key names the iphoneos slice, and a remote or provider entry is keyed for the simulator';
-
-interface DeviceLike {
-  deviceName?: string | null;
-  name?: string | null;
-  avdName?: string | null;
-  deviceType?: string | null;
-  runtime?: string | null;
-  adopted?: boolean;
-  adoptionPending?: boolean;
-  parkedCacheKey?: string;
-}
-
-interface IosBootLike {
-  ok?: boolean;
-  failed?: boolean;
-  udid?: string;
-  reason?: string;
-  code?: string;
-  remedy?: string;
-}
-
-interface PodStateLike {
-  hasPodfile?: boolean;
-  lockText?: unknown;
-  manifestText?: unknown;
-}
-
-interface PodVerdictLike {
-  stale?: boolean;
-  reason?: string;
-  noPods?: boolean;
-}
-
-interface MetroResolutionLike {
-  metro?: { pid?: number } | null;
-  kind?: string;
-  notOurs?: string | null;
-}
-
-interface SupervisorLike {
-  pid?: number;
-  port?: number;
-  mode?: string;
-}
-
-interface RemoteUploadLike {
-  uploaded?: boolean;
-  timedOut?: boolean;
-  failed?: string | null;
-}
-
-interface BuildIosResultLike {
-  failed?: boolean;
-  code?: string;
-  durationMs?: number;
-  diagnostics?: unknown[];
-  truncated?: number;
-  tail?: string[];
-  exitCode?: number | null;
-  appPath?: string;
-  bundleId?: string;
-  compilationCache?: CompilationCacheActivity;
-}
-
-interface VerifyLaunchResultLike {
-  verified?: boolean;
-  skipped?: boolean;
-  requested?: boolean;
-  fatal?: boolean;
-  processAlive?: boolean | null;
-  errors?: LaunchErrorRecord[];
-  waitedMs?: number;
-}
-
-interface IosCommandOptions {
-  json?: boolean;
-  metroCheck?: boolean;
-  buildCache?: boolean;
-  configuration?: string;
-  deviceType?: string;
-  runtime?: string;
-  device?: string | boolean;
-  remote?: RemoteDeviceBackend;
-  wait?: string | boolean;
-  waitConflict?: boolean;
-}
-
-interface WaitedForBuild {
-  pid?: number | null;
-  ms?: number;
-}
-
-interface FailArgs {
-  code: string;
-  message?: string | null;
-  remedy?: string | null;
-  lines?: string[];
-  logPath?: string | null;
-  build?: BuildFailureFields | null;
-  lease?: LeaseFacts | null;
-}
-
-interface BuildFailureFields {
-  fingerprint?: string | null;
-  cacheKey?: string | null;
-  cacheHit?: boolean | string;
-  cacheSkipped?: boolean;
-  appPath?: string | null;
-  bundleId?: string | null;
-}
-
-export function buildLogFile(root: string): string {
-  return join(workspaceLogsDir(root), `build-${PLATFORM}.ndjson`);
-}
-
-export function collectorLogFile(root: string): string {
-  return join(workspaceLogsDir(root), `collector-${PLATFORM}.log`);
-}
-
-export function collectorEntry(): string {
-  return spawnEntry('collector-run');
-}
-
-const MAX_PRINTED_DIAGNOSTICS = 6;
-
-const COLLECTOR_EXIT_WAIT_MS = 2000;
-const COLLECTOR_POLL_MS = 25;
-
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-
-export const SLOW_STEP_MS = 2000;
-
-export function stepClock(now: () => number = Date.now): () => number {
-  const t0 = now();
-  return () => now() - t0;
-}
-
-export function stepTimer(now: () => number = Date.now): () => string {
-  const elapsed = stepClock(now);
-  return () => `(${formatDuration(elapsed())})`;
-}
-
-export function deviceLabel(device: DeviceLike | null | undefined, udid: unknown): string {
-  const name = device?.deviceName || device?.name || null;
-  return name ? `${name} (${shortUdid(udid)})` : shortUdid(udid);
-}
-
-export function deviceShortName(device: DeviceLike | null | undefined, udid: unknown): string {
-  return device?.deviceName || device?.name || shortUdid(udid);
-}
-
-export function appNameFromPath(appPath: unknown): string | null {
-  if (typeof appPath !== 'string' || appPath.trim() === '') return null;
-  const name = basename(appPath).replace(/\.app$/i, '');
-  return name === '' ? null : name;
-}
-
-export function iosConfigurationSetting(settings: SettingsObject | null | undefined): string | null {
-  const ios = settings?.['ios'];
-  if (!ios || typeof ios !== 'object' || Array.isArray(ios)) return null;
-  const raw = (ios as Record<string, unknown>)['configuration'];
-  return typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : null;
-}
-
-export function resolveConfiguration(
-  flag: string | null | undefined,
-  settings: SettingsObject | null | undefined,
-): string | null {
-  const fromFlag = typeof flag === 'string' && flag.trim() !== '' ? flag.trim() : null;
-  return fromFlag || iosConfigurationSetting(settings);
-}
-
-function iosStringSetting(settings: SettingsObject | null | undefined, key: string): string | null {
-  const ios = settings?.['ios'];
-  if (!ios || typeof ios !== 'object' || Array.isArray(ios)) return null;
-  const raw = (ios as Record<string, unknown>)[key];
-  return typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : null;
-}
-
-export function resolveDeviceType(
-  flag: string | null | undefined,
-  settings: SettingsObject | null | undefined,
-): string | null {
-  const fromFlag = typeof flag === 'string' && flag.trim() !== '' ? flag.trim() : null;
-  return fromFlag || iosStringSetting(settings, 'deviceType');
-}
-
-export function resolveRuntime(
-  flag: string | null | undefined,
-  settings: SettingsObject | null | undefined,
-): string | null {
-  const fromFlag = typeof flag === 'string' && flag.trim() !== '' ? flag.trim() : null;
-  return fromFlag || iosStringSetting(settings, 'runtime');
-}
-
-function deviceModelRefusal({
-  deviceTypeFlag,
-  runtimeFlag,
-  deviceType,
-  runtime,
-  physical,
-  remoteBackend,
-  listRuntimes,
-}: {
-  deviceTypeFlag: string | undefined;
-  runtimeFlag: string | undefined;
-  deviceType: string | null;
-  runtime: string | null;
-  physical: boolean;
-  remoteBackend: RemoteDeviceBackend | null;
-  listRuntimes: typeof listIosRuntimes;
-}): { code: string; message: string; remedy: string } | null {
-  if (typeof deviceTypeFlag === 'string' && deviceTypeFlag.trim() === '') {
-    return {
-      code: 'STIM_BAD_ARG',
-      message: '--device-type was given an empty name.',
-      remedy:
-        'Pass `--device-type <name>` with a model `xcrun simctl list devicetypes` names, e.g. "iPad Pro 13-inch (M4)".',
-    };
-  }
-  if (typeof runtimeFlag === 'string' && runtimeFlag.trim() === '') {
-    return {
-      code: 'STIM_BAD_ARG',
-      message: '--runtime was given an empty version.',
-      remedy: 'Pass `--runtime <version>` with a runtime `xcrun simctl list runtimes` reports, e.g. "18.5".',
-    };
-  }
-  if (physical || remoteBackend) return null;
-  if (!deviceType && !runtime) return null;
-  let runtimes;
-  try {
-    runtimes = listRuntimes();
-  } catch (error) {
-    return {
-      code: 'STIM_NO_DEVICE',
-      message: `Could not read the installed simulator runtimes: ${(error as Error)?.message || error}`,
-      remedy: 'Run `stim doctor` to check the simulator toolchain, then try again.',
-    };
-  }
-  const refusal =
-    unknownIosRuntimeRefusal(runtime, runtimes) ?? unknownIosDeviceTypeRefusal(deviceType, runtimes, runtime);
-  return refusal ? { code: 'STIM_BAD_ARG', message: refusal.message, remedy: refusal.remedy } : null;
-}
-
-export function isReleaseConfiguration(configuration: string | null | undefined): boolean {
-  return (
-    typeof configuration === 'string' && configuration.trim() !== '' && configuration.trim().toLowerCase() !== 'debug'
-  );
-}
-
-export function podAction(
-  podState: PodStateLike | null | undefined,
-  verdict: PodVerdictLike | null | undefined,
-): { install: boolean; reason?: string } {
-  if (verdict?.stale) return { install: true, reason: verdict.reason };
-  if (verdict?.noPods && podState?.hasPodfile) {
-    return { install: true, reason: 'ios/Podfile exists but no pods are installed' };
-  }
-  return { install: false };
-}
-
-export function devClientScheme(
-  root: string,
-  appPath: string | null = null,
-  { exec = null }: { exec?: import('../exec.ts').Executor | null } = {},
-): string | undefined {
-  if (!hasDevClient(root)) return undefined;
-  const fromBundle = pickDevClientScheme(readBundleSchemes(appPath, { exec }));
-  if (fromBundle) return fromBundle;
-  const app = readJson(join(root, 'app.json')) as { expo?: { scheme?: unknown }; scheme?: unknown } | null;
-  const raw = app?.expo?.scheme ?? app?.scheme ?? null;
-  const scheme = Array.isArray(raw) ? raw.find((s) => typeof s === 'string' && s.trim() !== '') : raw;
-  if (typeof scheme !== 'string' || scheme.trim() === '') return undefined;
-  return scheme.trim();
-}
-
-export function schemesFromInfoPlist(plist: unknown): string[] {
-  const types = (plist as { CFBundleURLTypes?: unknown })?.CFBundleURLTypes;
-  if (!Array.isArray(types)) return [];
-  const out: string[] = [];
-  for (const type of types) {
-    const schemes = (type as { CFBundleURLSchemes?: unknown })?.CFBundleURLSchemes;
-    if (Array.isArray(schemes)) out.push(...schemes.filter((s) => typeof s === 'string' && s.trim() !== ''));
-  }
-  return out;
-}
-
-export function readBundleSchemes(
-  appPath: unknown,
-  { exec = null }: { exec?: import('../exec.ts').Executor | null } = {},
-): string[] {
-  if (typeof appPath !== 'string' || appPath.trim() === '') return [];
-  const e = exec || getExecutor();
-  let out;
-  try {
-    out = e.runFile('plutil', ['-convert', 'json', '-o', '-', join(appPath, 'Info.plist')]);
-  } catch {
-    return [];
-  }
-  try {
-    return schemesFromInfoPlist(JSON.parse(String(out)));
-  } catch {
-    return [];
-  }
-}
-
-const THIRD_PARTY_SCHEME =
-  /^(?:fb\d+|com\.googleusercontent\.apps\.|msauth\.|msauthv2|twitterkit-|db-[a-z0-9]+$|spotify|snapchat|com\.facebook)/i;
-
-export function pickDevClientScheme(schemes: unknown): string | null {
-  const all = (Array.isArray(schemes) ? schemes : [])
-    .filter((s) => typeof s === 'string' && s.trim() !== '')
-    .map((s) => s.trim())
-    .filter((s) => !/^(?:https?|mailto|tel|sms|itms(?:-apps)?)$/i.test(s));
-  const expo = all.filter((s) => s.startsWith('exp+'));
-  const pool = expo.length ? expo : all.filter((s) => !THIRD_PARTY_SCHEME.test(s));
-  const sorted = pool.toSorted((a, b) => b.length - a.length);
-  return sorted[0] ?? null;
-}
-
-function hasDevClient(root: string): boolean {
-  const pkg = readJson(join(root, 'package.json')) as {
-    dependencies?: Record<string, unknown>;
-    devDependencies?: Record<string, unknown>;
-  } | null;
-  const deps = { ...pkg?.dependencies, ...pkg?.devDependencies };
-  if ('expo-dev-client' in deps) return true;
-  return isPackageResolvable(root, 'expo-dev-client');
-}
-
-function readJson(file: string): unknown {
-  try {
-    return JSON.parse(readFileSync(file, 'utf-8'));
-  } catch {
-    return null;
-  }
-}
-
-export const GATE_RETRY_DELAYS_MS: number[] = [3000, 7000, 10000];
-
-export function gateShouldRetry(resolution: MetroResolutionLike | null | undefined): boolean {
-  if (resolution?.metro) return false;
-  return resolution?.kind !== NOT_OURS_FOREIGN_CWD;
-}
-
-export async function resolveMetroWithRetry(
-  resolve: (port: number, root: string) => Promise<MetroResolutionLike>,
-  port: number,
-  root: string,
-  {
-    delays = GATE_RETRY_DELAYS_MS,
-    sleep: wait = sleep,
-    onRetry = (_info: { attempt: number; delayMs: number; resolution: MetroResolutionLike }) => {},
-  }: {
-    delays?: number[];
-    sleep?: (ms: number) => Promise<void>;
-    onRetry?: (info: { attempt: number; delayMs: number; resolution: MetroResolutionLike }) => void;
-  } = {},
-): Promise<MetroResolutionLike> {
-  let resolution = await resolve(port, root);
-  for (let i = 0; i < delays.length && gateShouldRetry(resolution); i++) {
-    const delayMs = delays[i];
-    if (delayMs === undefined) break;
-    onRetry({ attempt: i + 1, delayMs, resolution });
-    await wait(delayMs);
-    resolution = await resolve(port, root);
-  }
-  return resolution;
-}
-
-export function noMetroMessage({
-  port,
-  resolution,
-  supervisor,
-  supervisorAlive,
-}: {
-  port: number;
-  resolution?: MetroResolutionLike | null;
-  supervisor?: SupervisorLike | null;
-  supervisorAlive?: boolean;
-}): string {
-  const foreign = resolution?.notOurs;
-  if (supervisor && supervisor.port === port && supervisorAlive) {
-    const mode = supervisor.mode ? `${supervisor.mode} ` : '';
-    return (
-      `A supervisor record exists for port ${port} (pid ${supervisor.pid}, ${mode}dev server) but it did not verify as this workspace's Metro` +
-      `${foreign ? `: ${foreign}` : ' -- nothing answered /status'}.` +
-      ' Metro may still be indexing this project (a monorepo file-map crawl blocks its event loop for ~20s after the port opens).'
-    );
-  }
-  if (foreign) return `Port ${port} is in use but is NOT this workspace's dev server: ${foreign}.`;
-  return `Nothing is serving this workspace's dev server on port ${port}.`;
-}
-
-export function noMetroRemedy({
-  port,
-  supervisor,
-  supervisorAlive,
-}: {
-  port: number;
-  supervisor?: SupervisorLike | null;
-  supervisorAlive?: boolean;
-}): string {
-  if (supervisor && supervisor.port === port && supervisorAlive) {
-    return 'Re-run `stim ios` in a few seconds, or give the dev server longer to verify with `stim start --wait <seconds>`.';
-  }
-  return 'Run `stim start` first, or pass --no-metro-check.';
-}
-
-export async function ensureWorkspaceStorageSafely(
-  root: string,
-  { note = (_line: string) => {} }: { note?: (line: string) => void } = {},
-): Promise<unknown> {
-  try {
-    return ensureWorkspaceStorage(root);
-  } catch (err) {
-    note(chalk.dim(`Could not prepare this workspace's Stim state: ${(err as Error)?.message || err}`));
-    throw err;
-  }
-}
-
-export function lastBuildRecord({
-  fingerprint = null,
-  cacheKey = null,
-  cacheHit = false,
-  cacheSkipped = false,
-  durationMs = 0,
-  appPath = null,
-  bundleId = null,
-  startedAt,
-  status,
-  errorCode = null,
-}: {
-  fingerprint?: string | null;
-  cacheKey?: string | null;
-  cacheHit?: boolean | string;
-  cacheSkipped?: boolean;
-  durationMs?: number;
-  appPath?: string | null;
-  bundleId?: string | null;
-  startedAt: string;
-  status: string;
-  errorCode?: string | null;
-}): Record<string, unknown> {
-  const record: Record<string, unknown> = {
-    platform: PLATFORM,
-    fingerprint,
-    cacheKey,
-    cacheHit: cacheLevel(cacheHit),
-    cacheSkipped: Boolean(cacheSkipped),
-    durationMs,
-    appPath,
-    bundleId,
-    startedAt,
-    status,
-  };
-  if (errorCode) record.errorCode = errorCode;
-  return record;
-}
-
-export function iosFacts({
-  udid,
-  deviceName,
-  deviceType = null,
-  runtime = null,
-  fingerprint,
-  configuration = null,
-  cacheKey,
-  cacheHit,
-  cacheSkipped = false,
-  compilationCache = COMPILATION_CACHE_NOT_RUN,
-  waitedForBuild = null,
-  appPath,
-  bundleId,
-  installSkipped = false,
-  metroPort,
-  logsDir,
-  durationMs,
-  launched = true,
-  webPreviewUrl = null,
-  lease,
-}: {
-  udid: string;
-  deviceName?: string | null;
-  deviceType?: string | null;
-  runtime?: string | null;
-  fingerprint?: string | null;
-  configuration?: string | null;
-  cacheKey?: string | null;
-  cacheHit?: boolean | string;
-  cacheSkipped?: boolean;
-  compilationCache?: CompilationCacheActivity;
-  waitedForBuild?: WaitedForBuild | null;
-  appPath?: string | null;
-  bundleId?: string | null;
-  installSkipped?: boolean;
-  metroPort?: number | null;
-  logsDir?: string;
-  durationMs?: number;
-  launched?: boolean | string;
-  webPreviewUrl?: string | null;
-  lease?: { kind: string; expiresAt: string } | null;
-}): IosFacts {
-  return {
-    platform: PLATFORM,
-    udid,
-    deviceName: deviceName ?? null,
-    deviceType: deviceType ?? null,
-    runtime: runtime ?? null,
-    fingerprint,
-    configuration: configuration ?? null,
-    cacheKey,
-    cacheHit: cacheLevel(cacheHit),
-    cacheSkipped: Boolean(cacheSkipped),
-    compilationCache,
-    waitedForBuild: waitedForBuild ? { pid: waitedForBuild.pid ?? null, ms: waitedForBuild.ms ?? 0 } : null,
-    appPath,
-    bundleId,
-    installSkipped: Boolean(installSkipped),
-    launched: launched === LAUNCH_UNVERIFIED || launched === LAUNCH_BUNDLING ? launched : Boolean(launched),
-    metroPort,
-    logs: { dir: logsDir },
-    durationMs,
-    ...(webPreviewUrl ? { webPreviewUrl } : {}),
-    ...(lease === undefined ? {} : { lease }),
-  };
-}
-
-export function writeLastBuild(
-  root: string,
-  record: Record<string, unknown>,
-  { write = writeWorkspaceState }: { write?: typeof writeWorkspaceState } = {},
-): Record<string, unknown> {
-  try {
-    write(root, { lastBuild: record });
-  } catch {}
-  return record;
-}
-
-interface ReplaceCollectorArgs {
-  root: string;
-  udid: string;
-  bundleId: string;
-  appName?: string | null;
-  appExecutable?: string | null;
-  physical?: boolean;
-  payloadUrl?: string | null;
-  spawn?: (cmd: string, args: readonly string[], opts: Record<string, unknown>) => ChildProcess;
-  kill?: (pid: number, signal: NodeJS.Signals) => boolean;
-  alive?: (pid: number) => boolean;
-  readState?: typeof readWorkspaceState;
-  verify?: typeof verifyCollectorOwnership;
-  waitMs?: number;
-  note?: (line: string) => void;
-}
-
-// On hardware the collector holds the devicectl console of a running app, and
-// an upgrade install terminates that app -- which ends devicectl non-zero and
-// records a failure for a normal action. So a device run stops the previous
-// collector before it installs, rather than as part of starting its own.
-export async function stopPreviousCollector({
-  root,
-  kill = (pid, signal) => process.kill(pid, signal),
-  alive = isPidAlive,
-  readState = readWorkspaceState,
-  verify = verifyCollectorOwnership,
-  waitMs = COLLECTOR_EXIT_WAIT_MS,
-  note = (_line: string) => {},
-}: {
-  root: string;
-  kill?: (pid: number, signal: NodeJS.Signals) => boolean;
-  alive?: (pid: number) => boolean;
-  readState?: typeof readWorkspaceState;
-  verify?: typeof verifyCollectorOwnership;
-  waitMs?: number;
-  note?: (line: string) => void;
-}): Promise<{ killed: number | null }> {
-  const previous = (readState(root)?.collectors as Record<string, { pid?: number }> | undefined)?.[PLATFORM] || null;
-  const previousPid = Number(previous?.pid) || null;
-  let killed: number | null = null;
-
-  if (previousPid) {
-    const ownership = verify({ pid: previousPid, platform: PLATFORM, root, isAlive: alive });
-    if (ownership.status === 'ours') {
-      try {
-        kill(previousPid, 'SIGTERM');
-        killed = previousPid;
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException)?.code !== 'ESRCH') {
-          note(
-            chalk.yellow(
-              `Could not stop the previous ${PLATFORM} log collector (pid ${previousPid}): ${(err as Error)?.message || err}`,
-            ),
-          );
-        }
-      }
-      const deadline = Date.now() + waitMs;
-      while (Date.now() < deadline && alive(previousPid)) {
-        await sleep(COLLECTOR_POLL_MS);
-      }
-    } else if (ownership.status === 'unverified') {
-      note(
-        chalk.dim(
-          `Previous ${PLATFORM} log collector (pid ${previousPid}): ${ownership.reason}, so it was not signalled -- starting a replacement anyway`,
-        ),
-      );
-    }
-  }
-  return { killed };
-}
-
-export async function replaceCollector({
-  root,
-  udid,
-  bundleId,
-  appName,
-  appExecutable,
-  physical = false,
-  payloadUrl = null,
-  spawn = (cmd, args, opts) => getExecutor().spawn(cmd, args, opts),
-  kill = (pid, signal) => process.kill(pid, signal),
-  alive = isPidAlive,
-  readState = readWorkspaceState,
-  verify = verifyCollectorOwnership,
-  waitMs = COLLECTOR_EXIT_WAIT_MS,
-  note = (_line: string) => {},
-}: ReplaceCollectorArgs): Promise<{ killed: number | null; pid: number | null }> {
-  const { killed } = await stopPreviousCollector({ root, kill, alive, readState, verify, waitMs, note });
-
-  const args = [collectorEntry(), '--platform', PLATFORM, '--root', root, '--udid', udid, '--bundle', bundleId];
-  if (appName) args.push('--app-name', appName);
-  if (appExecutable) args.push('--app-executable', appExecutable);
-  if (physical) args.push('--physical');
-  if (payloadUrl) args.push('--payload-url', payloadUrl);
-
-  let stdio: 'ignore' | (number | 'ignore')[] = 'ignore';
-  try {
-    mkdirSync(workspaceLogsDir(root), { recursive: true });
-    const fd = openSync(collectorLogFile(root), 'a');
-    stdio = ['ignore', fd, fd];
-  } catch {}
-
-  let child: ChildProcess | undefined;
-  try {
-    child = spawn(process.execPath, args, {
-      cwd: root,
-      detached: true,
-      stdio,
-      env: process.env,
-    });
-    child?.unref?.();
-  } catch (err) {
-    note(chalk.yellow(`Could not start the ${PLATFORM} log collector: ${(err as Error)?.message || err}`));
-    return { killed, pid: null };
-  }
-  return { killed, pid: child?.pid ?? null };
-}
-
-interface IosDeps {
-  resolveRemoteContext: typeof resolveRemoteContext;
-  ensureMetroReachable: typeof ensureMetroReachable;
-  ensureRemoteBootOwned: typeof ensureRemoteBootOwned;
-  detectProviders: typeof detectProviders;
-  remoteIosDeps: typeof remoteIosDeps;
-  resolveEasCliBin: typeof resolveEasCliBin;
-  findProjectRoot: typeof findProjectRoot;
-  resolveSettings: typeof resolveSettings;
-  gitCommonDir: typeof gitCommonDir;
-  repoRoot: typeof repoRoot;
-  detectBundleId: typeof detectBundleId;
-  detectIsExpo: typeof detectIsExpo;
-  devClientScheme: typeof devClientScheme;
-  getProject: typeof getProject;
-  upsertProject: typeof upsertProject;
-  projectShortcut: typeof projectShortcut;
-  checkDeviceCapacity: typeof checkDeviceCapacity;
-  ensureOwnedDevice: typeof ensureOwnedDevice;
-  listIosRuntimes: typeof listIosRuntimes;
-  ensureBooted: typeof ensureBooted;
-  resolveProjectMetro: typeof resolveProjectMetro;
-  resolveMetroWithRetry: typeof resolveMetroWithRetry;
-  readWorkspaceState: typeof readWorkspaceState;
-  isPidAlive: typeof isPidAlive;
-  getConcurrencyLimits: typeof getConcurrencyLimits;
-  fingerprintProject: typeof fingerprintProject;
-  untrackedNativeFiles: typeof untrackedNativeFiles;
-  resolveBuild: typeof resolveBuild;
-  storeBuild: typeof storeBuild;
-  resolveCacheProviderConfig: typeof resolveCacheProviderConfig;
-  loadCacheProvider: typeof loadCacheProvider;
-  acquireBuildLock: typeof acquireBuildLock;
-  releaseBuildLock: typeof releaseBuildLock;
-  waitForBuild: typeof waitForBuild;
-  acquireBuildSlot: typeof acquireBuildSlot;
-  releaseBuildSlot: typeof releaseBuildSlot;
-  loadProjectProvider: typeof loadProjectProvider;
-  checkEasAuth: typeof checkEasAuth;
-  resolveRemote: typeof resolveRemote;
-  uploadRemote: typeof uploadRemote;
-  needsPrebuild: typeof needsPrebuild;
-  runPrebuild: typeof runPrebuild;
-  readPodState: typeof readPodState;
-  podsAreStale: typeof podsAreStale;
-  runPodInstall: typeof runPodInstall;
-  buildIos: typeof buildIos;
-  listIosDevices: typeof listIosDevices;
-  hostLanCandidates: typeof hostLanCandidates;
-  ensureLanReachable: typeof ensureLanReachable;
-  gateProfileForDevice: typeof gateProfileForDevice;
-  sealAppForDevice: typeof sealAppForDevice;
-  installIosDeviceApp: typeof installIosDeviceApp;
-  awaitIosDeviceLaunch: typeof awaitIosDeviceLaunch;
-  acquireRunLease: typeof acquireRunLease;
-  runLease: typeof runLease;
-  selectFromPool: typeof selectFromPool;
-  releaseLeaseOnSignal: typeof releaseLeaseOnSignal;
-  iosDeviceProcess: typeof iosDeviceProcess;
-  verifyIosDeviceReleaseLaunch: typeof verifyIosDeviceReleaseLaunch;
-  readBundleId: typeof readBundleId;
-  readBundleExecutable: typeof readBundleExecutable;
-  swapJsBundle: typeof swapJsBundle;
-  installIosApp: typeof installIosApp;
-  clearOtherUserApps: typeof clearOtherUserApps;
-  clearIosAdoptionPending: typeof clearIosAdoptionPending;
-  launchIosApp: typeof launchIosApp;
-  verifyLaunch: typeof verifyLaunch;
-  verifyReleaseLaunch: typeof verifyReleaseLaunch;
-  ensureWorkspaceStorage: typeof ensureWorkspaceStorageSafely;
-  replaceCollector: typeof replaceCollector;
-  stopPreviousCollector: typeof stopPreviousCollector;
-  writeWorkspaceState: typeof writeWorkspaceState;
-  createWriter: typeof createNdjsonWriter;
-  recordStats: typeof recordRunStats;
-  readEstimates: typeof readRunEstimates;
-  now: () => number;
-}
-
-const DEFAULT_DEPS: IosDeps = {
-  findProjectRoot,
-  resolveSettings,
-  gitCommonDir,
-  repoRoot,
-  detectBundleId,
-  detectIsExpo,
-  devClientScheme,
-  getProject,
-  upsertProject,
-  projectShortcut,
-  checkDeviceCapacity,
-  ensureOwnedDevice,
-  listIosRuntimes,
-  ensureBooted,
-  resolveRemoteContext,
-  remoteIosDeps,
-  ensureMetroReachable,
-  ensureRemoteBootOwned,
-  detectProviders,
-  resolveProjectMetro,
-  resolveMetroWithRetry,
-  readWorkspaceState,
-  isPidAlive,
-  getConcurrencyLimits,
-  fingerprintProject,
-  untrackedNativeFiles,
-  resolveBuild,
-  storeBuild,
-  resolveCacheProviderConfig,
-  loadCacheProvider,
-  acquireBuildLock,
-  releaseBuildLock,
-  waitForBuild,
-  acquireBuildSlot,
-  releaseBuildSlot,
-  loadProjectProvider,
-  checkEasAuth,
-  resolveEasCliBin,
-  resolveRemote,
-  uploadRemote,
-  needsPrebuild,
-  runPrebuild,
-  readPodState,
-  podsAreStale,
-  runPodInstall,
-  buildIos,
-  listIosDevices,
-  hostLanCandidates,
-  ensureLanReachable,
-  gateProfileForDevice,
-  sealAppForDevice,
-  installIosDeviceApp,
-  awaitIosDeviceLaunch,
-  acquireRunLease,
-  runLease,
-  selectFromPool,
-  releaseLeaseOnSignal,
-  iosDeviceProcess,
-  verifyIosDeviceReleaseLaunch,
-  readBundleId,
-  readBundleExecutable,
-  swapJsBundle,
-  installIosApp,
-  clearOtherUserApps,
-  clearIosAdoptionPending,
-  launchIosApp,
-  verifyLaunch,
-  verifyReleaseLaunch,
-  ensureWorkspaceStorage: ensureWorkspaceStorageSafely,
-  replaceCollector,
-  stopPreviousCollector,
-  writeWorkspaceState,
-  createWriter: createNdjsonWriter,
-  recordStats: recordRunStats,
-  readEstimates: readRunEstimates,
-  now: () => Date.now(),
-};
 
 export default function iosCommand(program: Command): void {
   registerIos(program);
@@ -1071,758 +209,6 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     });
 }
 
-interface VerifyIosRunArgs {
-  d: IosDeps;
-  release: boolean;
-  launched: ReturnType<IosDeps['launchIosApp']>;
-  configuration: string | null;
-  phase: (name: unknown, text: string) => void;
-  note: (line: string) => void;
-  metroCheck: boolean;
-  logsDir: string;
-  launchedAt: number;
-  metroPort: number | null;
-  isExpo: boolean;
-  bundleId: string;
-  udid: string;
-  scheme?: string;
-  physical: boolean;
-  appName: string | null;
-  lanAddress: string | null;
-  lanOrigin: string | null;
-  remoteDevice: boolean;
-  metroOrigin: string | null;
-}
-
-async function verifyIosRun({
-  d,
-  release,
-  launched,
-  configuration,
-  phase,
-  note,
-  metroCheck,
-  logsDir,
-  launchedAt,
-  metroPort,
-  isExpo,
-  bundleId,
-  udid,
-  scheme,
-  physical,
-  appName,
-  lanAddress,
-  lanOrigin,
-  remoteDevice,
-  metroOrigin,
-}: VerifyIosRunArgs): Promise<boolean | string> {
-  const deviceProcess = (): boolean | null => {
-    const pid = d.iosDeviceProcess({ udid, appName: appName ?? bundleId });
-    return pid === undefined ? null : pid !== null;
-  };
-
-  if (release) {
-    const processCheck = physical
-      ? await d.verifyIosDeviceReleaseLaunch({ udid, appName: appName ?? bundleId })
-      : await d.verifyReleaseLaunch({ pid: launched?.pid ?? null });
-    if (processCheck?.verified) {
-      phase(
-        'verify',
-        `process alive ${formatDuration(processCheck.waitedMs ?? 0)} after launch (${configuration}: no bundle fetch to observe)`,
-      );
-      return true;
-    }
-    phase(
-      'verify',
-      chalk.yellow(
-        processCheck?.reason === 'exited'
-          ? `UNVERIFIED: the app process exited within ${formatDuration(processCheck.waitedMs ?? 0)} of launch`
-          : physical
-            ? `UNVERIFIED: devicectl could not read ${udid}'s process list`
-            : 'UNVERIFIED: simctl launch reported no process id to check',
-      ),
-    );
-    note(
-      chalk.yellow(
-        phaseLine(
-          '',
-          'A release app that dies at startup usually crashed loading its embedded bundle; `stim logs --errors` has the device log that says why.',
-        ),
-      ),
-    );
-    return processCheck?.reason === 'exited' ? LAUNCH_FATAL : LAUNCH_UNVERIFIED;
-  }
-
-  const verification: VerifyLaunchResultLike = metroCheck
-    ? await d.verifyLaunch({
-        logsDir,
-        since: launchedAt,
-        metroPort,
-        platform: 'ios',
-        mode: isExpo ? MODE_EXPO : MODE_BARE,
-        processAlive: remoteDevice
-          ? null
-          : physical
-            ? deviceProcess
-            : () => {
-                if (launched?.pid) return d.isPidAlive(launched.pid);
-                const pid = iosAppProcess(udid, bundleId);
-                return pid === undefined ? null : pid !== null;
-              },
-      })
-    : { verified: false, skipped: true };
-  if (verification?.fatal) {
-    const reason = verification.processAlive === false ? 'the app process exited' : 'Metro could not build the bundle';
-    phase('verify', chalk.red(`FATAL after ${formatDuration(verification.waitedMs ?? 0)}: ${reason}`));
-    for (const record of verification.errors ?? []) {
-      if (record.msg) note(chalk.red(phaseLine('', String(record.msg))));
-    }
-    return LAUNCH_FATAL;
-  }
-  if (verification?.verified) {
-    phase(
-      'verify',
-      `bundle loaded` +
-        (verification.processAlive === true ? ', process alive' : '') +
-        `, stable for 3s -- the first screen may still be rendering` +
-        ` (${formatDuration(verification.waitedMs ?? 0)} total)`,
-    );
-    reportLaunchErrors(verification.errors ?? [], note);
-    return true;
-  }
-  if (verification?.skipped) {
-    phase('verify', 'skipped (--no-metro-check): the launch is reported as unverified');
-    return LAUNCH_UNVERIFIED;
-  }
-  if (verification?.requested) {
-    phase(
-      'verify',
-      `BUNDLING: the app asked port ${metroPort} for its bundle and Metro was still building it ` +
-        `after ${formatDuration(verification.waitedMs ?? 0)} (a cold bundle on a large graph outlasts this window)`,
-    );
-    note(
-      chalk.dim(
-        phaseLine('', 'Nothing to do: `stim logs --source metro` shows the build finishing, usually within a minute.'),
-      ),
-    );
-    return LAUNCH_BUNDLING;
-  }
-
-  phase('verify', chalk.yellow("UNVERIFIED: no bundle request reached this workspace's Metro"));
-  for (const line of unverifiedLaunchLines({
-    platform: PLATFORM,
-    metroPort: metroPort ?? DEFAULT_METRO_PORT,
-    waitedMs: verification?.waitedMs,
-    bundleId,
-    udid,
-    devClientUrl: scheme ? devClientUrl(scheme, metroPort ?? DEFAULT_METRO_PORT, lanAddress ?? undefined) : null,
-    mode: isExpo ? MODE_EXPO : MODE_BARE,
-    remote: remoteDevice,
-    physical,
-    devClient: Boolean(scheme),
-    lanOrigin,
-    metroOrigin,
-    localNetworkPending:
-      physical &&
-      localNetworkPending(readCollectorRecords(logsDir), {
-        since: launchedAt,
-        pid: launched?.pid ?? null,
-        lanOrigin,
-      }),
-  }))
-    note(chalk.yellow(phaseLine('', line)));
-  return LAUNCH_UNVERIFIED;
-}
-
-function reportLaunchErrors(errors: LaunchErrorRecord[], note: (line: string) => void): void {
-  const report = launchErrorReport(errors);
-  if (report.summary) note(chalk.dim(phaseLine('launch', report.summary)));
-  for (const line of report.lines) note(chalk.yellow(phaseLine('launch', line)));
-}
-
-async function finishIosUpload(
-  uploadPending: Promise<RemoteUploadLike> | null,
-  remote: LoadProjectProviderResult | null,
-  phase: (name: unknown, text: string) => void,
-  note: (line: string) => void,
-): Promise<boolean> {
-  if (!uploadPending) return false;
-  const upload = await uploadPending;
-  if (upload?.uploaded) {
-    phase('cache', `uploaded (${remote?.name})`);
-  } else if (upload?.timedOut) {
-    note(
-      chalk.yellow(
-        phaseLine(
-          'cache',
-          `${remote?.name} upload still running after ${formatDuration(UPLOAD_TIMEOUT_MS)}; not waiting`,
-        ),
-      ),
-    );
-    return true;
-  } else if (upload?.failed) {
-    const authNote =
-      remote?.name === 'eas' && isEasAuthFailureText(upload.failed)
-        ? easAuthNote({ code: 'logged-out', reason: upload.failed, phase: 'upload' })
-        : null;
-    note(chalk.yellow(phaseLine('cache', authNote || `${remote?.name} upload failed: ${upload.failed}`)));
-  }
-  return false;
-}
-
-interface ReportIosResultArgs {
-  d: IosDeps;
-  root: string;
-  json: boolean;
-  release: boolean;
-  configuration: string | null;
-  metroCheck: boolean;
-  metroPort: number | null;
-  logsDir: string;
-  device: DeviceLike;
-  udid: string;
-  appPath: string | null;
-  bundleId: string;
-  installSkipped: boolean;
-  elapsed: () => number;
-  startedAt: string;
-  storeHash: string;
-  storeKey: string;
-  cacheHit: CacheHitLevel;
-  compilationCache: CompilationCacheActivity;
-  useBuildCache: boolean;
-  waitedForBuild: WaitedForBuild | null;
-  launchState: boolean | string;
-  remote: LoadProjectProviderResult | null;
-  providerName: string | null;
-  closeWriter: () => void;
-  webPreviewUrl: string | null;
-  lease?: { kind: string; expiresAt: string } | null;
-  recordRun: RunRecorder['record'];
-}
-
-function reportIosResult({
-  d,
-  root,
-  json,
-  release,
-  configuration,
-  metroCheck,
-  metroPort,
-  logsDir,
-  device,
-  udid,
-  appPath,
-  bundleId,
-  installSkipped,
-  elapsed,
-  startedAt,
-  storeHash,
-  storeKey,
-  cacheHit,
-  compilationCache,
-  useBuildCache,
-  waitedForBuild,
-  launchState,
-  remote,
-  providerName,
-  closeWriter,
-  webPreviewUrl,
-  lease,
-  recordRun,
-}: ReportIosResultArgs): IosFacts {
-  const durationMs = elapsed();
-  recordRun({ failed: false, cacheHit, waited: waitedForBuild, durationMs });
-  writeLastBuild(
-    root,
-    lastBuildRecord({
-      fingerprint: storeHash,
-      cacheKey: storeKey,
-      cacheHit,
-      cacheSkipped: !useBuildCache,
-      durationMs,
-      appPath,
-      bundleId,
-      startedAt,
-      status: 'ok',
-    }),
-    { write: d.writeWorkspaceState },
-  );
-  closeWriter();
-
-  const facts = iosFacts({
-    udid,
-    deviceName: device?.deviceName ?? null,
-    deviceType: device?.deviceType,
-    runtime: device?.runtime,
-    fingerprint: storeHash,
-    configuration,
-    cacheKey: storeKey,
-    cacheHit,
-    compilationCache,
-    cacheSkipped: !useBuildCache,
-    waitedForBuild,
-    appPath,
-    bundleId,
-    installSkipped,
-    metroPort,
-    logsDir,
-    durationMs,
-    launched: launchState,
-    webPreviewUrl,
-    lease,
-  });
-  if (json) {
-    console.log(JSON.stringify(facts));
-  } else {
-    const summary =
-      `OK: ${bundleId} on ${deviceLabel(device, udid)}, ` +
-      (release ? `${configuration} (embedded JS, no Metro)` : `Metro port ${metroPort}`) +
-      ` (${cacheDescription(cacheHit, remote?.name ?? providerName)}, ${formatDuration(durationMs)})`;
-    const outcome =
-      launchState === LAUNCH_UNVERIFIED
-        ? chalk.yellow(`${summary} -- launch UNVERIFIED`)
-        : launchState === LAUNCH_BUNDLING
-          ? chalk.green(`${summary} -- bundle requested, still building`)
-          : chalk.green(summary);
-    const deviceName = device?.deviceName ?? device?.name ?? udid;
-    const cacheResult = useBuildCache ? cacheDescription(cacheHit, remote?.name ?? providerName) : 'bypassed; built';
-    const metroResult = release
-      ? `embedded (${configuration})`
-      : !metroCheck
-        ? `check skipped on port ${metroPort}`
-        : launchState === LAUNCH_UNVERIFIED
-          ? `state unverified on port ${metroPort}`
-          : `running on port ${metroPort}`;
-    console.log(
-      [
-        outcome,
-        phaseLine('device', `${deviceName} (${udid})`),
-        phaseLine('app', bundleId),
-        phaseLine('metro', metroResult),
-        phaseLine('cache', cacheResult),
-        phaseLine('compilation cache', compilationCacheActivityLine(compilationCache)),
-        phaseLine('logs', logsDir),
-      ].join('\n'),
-    );
-    if (facts.webPreviewUrl) console.error(chalk.dim(`Watch this device: ${facts.webPreviewUrl}`));
-  }
-  return facts;
-}
-
-interface FinishIosRunArgs {
-  d: IosDeps;
-  root: string;
-  json: boolean;
-  release: boolean;
-  configuration: string | null;
-  isExpo: boolean;
-  metroCheck: boolean;
-  metroPort: number | null;
-  logsDir: string;
-  logFile: string;
-  device: DeviceLike;
-  udid: string;
-  physical: boolean;
-  lanAddress: string | null;
-  lanOriginUrl: string | null;
-  remoteDevice: ReturnType<IosDeps['remoteIosDeps']> | null;
-  bootPromise: Promise<IosBootLike | null | undefined>;
-  bootDuration: () => string;
-  appPath: string | null;
-  bundleId: string | null;
-  swapDir: string | null;
-  buildFailure: BuildFailureFields;
-  fail: (args: FailArgs) => null;
-  phase: (name: unknown, text: string) => void;
-  note: (line: string) => void;
-  logWriter: () => NdjsonWriter;
-  uploadPending: Promise<RemoteUploadLike> | null;
-  providerUpload: Promise<ProviderCallResult<void>> | null;
-  providerName: string | null;
-  remote: LoadProjectProviderResult | null;
-  abandonedRemote: boolean;
-  elapsed: () => number;
-  startedAt: string;
-  storeHash: string;
-  storeKey: string;
-  cacheHit: CacheHitLevel;
-  compilationCache: CompilationCacheActivity;
-  useBuildCache: boolean;
-  waitedForBuild: WaitedForBuild | null;
-  closeWriter: () => void;
-  lease: RunLease | null;
-  releaseLease: () => void;
-  recordRun: ReportIosResultArgs['recordRun'];
-}
-
-function cleanAdoptedIosApps({
-  d,
-  root,
-  udid,
-  bundleId,
-  phase,
-  note,
-}: {
-  d: IosDeps;
-  root: string;
-  udid: string;
-  bundleId: string | null;
-  phase: (name: unknown, text: string) => void;
-  note: (line: string) => void;
-}): string | null {
-  const swept = d.clearOtherUserApps({ udid, keep: bundleId });
-  if (swept.removed.length) {
-    phase('install', `removed ${swept.removed.join(', ')}, left by the previous workspace`);
-  }
-  if (swept.listed && swept.failed.length === 0) {
-    d.clearIosAdoptionPending(root);
-    return null;
-  }
-  if (!swept.listed) return 'Could not list apps left by the previous workspace.';
-  for (const failure of swept.failed) {
-    note(chalk.yellow(phaseLine('install', `could not remove ${failure}, left by the previous workspace`)));
-  }
-  return `Could not remove ${swept.failed.join(', ')}, left by the previous workspace.`;
-}
-
-function resolveRunBundleId(d: IosDeps, root: string, appPath: string | null, bundleId: string | null): string | null {
-  if (!appPath || bundleId) return bundleId;
-  return d.readBundleId(appPath) || d.detectBundleId(root);
-}
-
-function removeSwapDirectory(swapDir: string | null): void {
-  if (!swapDir) return;
-  try {
-    rmSync(swapDir, { recursive: true, force: true });
-  } catch {}
-}
-
-function readRunExecutable(d: IosDeps, appPath: string | null, note: (line: string) => void): string | null {
-  const executable = appPath ? d.readBundleExecutable(appPath) : null;
-  if (appPath && !executable) {
-    note(
-      chalk.dim(
-        `Could not read CFBundleExecutable from ${appPath}; the device log predicate falls back to the .app basename.`,
-      ),
-    );
-  }
-  return executable;
-}
-
-async function finishIosRun({
-  d,
-  root,
-  json,
-  release,
-  configuration,
-  isExpo,
-  metroCheck,
-  metroPort,
-  logsDir,
-  logFile,
-  device,
-  udid,
-  physical,
-  lanAddress,
-  lanOriginUrl,
-  remoteDevice,
-  bootPromise,
-  bootDuration,
-  appPath,
-  bundleId: initialBundleId,
-  swapDir,
-  buildFailure,
-  fail,
-  phase,
-  note,
-  logWriter,
-  uploadPending,
-  providerUpload,
-  providerName,
-  remote,
-  abandonedRemote: remoteWasAbandoned,
-  elapsed,
-  startedAt,
-  storeHash,
-  storeKey,
-  cacheHit,
-  compilationCache,
-  useBuildCache,
-  waitedForBuild,
-  closeWriter,
-  lease,
-  releaseLease,
-  recordRun,
-}: FinishIosRunArgs): Promise<IosFacts | null> {
-  let bundleId = initialBundleId;
-  let leaseWarned = false;
-  const raiseLeaseFor = (boundMs: number, beforeInstall: boolean): FailArgs | null => {
-    const step = lease?.raise(boundMs);
-    if (!step || step.ok) return null;
-    if (beforeInstall) {
-      const refusal = lostRefusal(step.holder, step.expiresAt, d.now());
-      return { code: refusal.code, message: refusal.message, remedy: refusal.remedy, lease: refusal.lease };
-    }
-    if (!leaseWarned) {
-      leaseWarned = true;
-      note(chalk.yellow(phaseLine('lease', lostLine(step.holder, step.expiresAt, d.now()))));
-    }
-    return null;
-  };
-
-  bundleId = resolveRunBundleId(d, root, appPath, bundleId);
-  if (appPath && !bundleId) {
-    return fail({
-      code: 'STIM_INSTALL_FAILED',
-      message: `Could not read a bundle identifier from the cached app at ${appPath}.`,
-      remedy: 'Remove the cache entry (`stim gc`) and run again to rebuild it.',
-      build: { ...buildFailure, appPath },
-    });
-  }
-
-  if (bundleId) d.upsertProject(root, { bundleId });
-
-  const booted = await bootPromise;
-  if (!booted?.ok) {
-    return fail({
-      code: booted?.code || 'STIM_NO_DEVICE',
-      message: booted?.reason || 'The owned simulator could not be booted.',
-      remedy: booted?.remedy || 'Run `stim ios` again to re-establish an owned simulator for this workspace.',
-    });
-  }
-  const deviceOutcome = physical ? 'connected' : `${device?.adopted ? 'adopted' : 'booted'} ${bootDuration()}`;
-  phase('device', `${deviceLabel(device, udid)} ${deviceOutcome}`);
-
-  const scheme = release ? undefined : d.devClientScheme(root, appPath);
-  const appName = appNameFromPath(appPath);
-  const appExecutable = readRunExecutable(d, appPath, note);
-  const dropSwapDir = () => removeSwapDirectory(swapDir);
-  let installSkipped = false;
-  let launched: ReturnType<IosDeps['launchIosApp']> | null = null;
-  let launchedAt = d.now();
-
-  if (physical) {
-    const lostBeforeInstall = raiseLeaseFor(DEVICECTL_INSTALL_TIMEOUT_MS, true);
-    if (lostBeforeInstall) return fail(lostBeforeInstall);
-    await d.stopPreviousCollector({ root, note });
-    const installTimer = stepTimer(d.now);
-    const installed = d.installIosDeviceApp({ udid, appPath: appPath!, bundleId });
-    if (installed?.failed) {
-      dropSwapDir();
-      return fail({
-        code: installed.code || 'STIM_INSTALL_FAILED',
-        message: installed.reason ?? `devicectl could not install ${appPath} on ${udid}.`,
-        remedy: installed.remedy ?? null,
-        build: { ...buildFailure, appPath, bundleId },
-      });
-    }
-    phase('install', `${basename(appPath!)} -> ${deviceLabel(device, udid)} ${installTimer()}`);
-    if (installed?.note) {
-      note(chalk.yellow(phaseLine('install', installed.note)));
-      logWriter().write({ src: 'build', level: 'warn', event: 'install_uninstalled_first', msg: installed.note });
-    }
-    dropSwapDir();
-
-    raiseLeaseFor(COLLECTOR_EXIT_WAIT_MS + LAUNCH_PROBE_TIMEOUT_MS, false);
-    const payloadUrl = scheme && metroPort !== null && lanAddress ? devClientUrl(scheme, metroPort, lanAddress) : null;
-    const launchTimer = stepTimer(d.now);
-    launchedAt = d.now();
-    const collector = await d.replaceCollector({
-      root,
-      udid,
-      bundleId: bundleId!,
-      appName,
-      physical: true,
-      payloadUrl,
-      note,
-    });
-    if (!collector?.pid) {
-      return fail({
-        code: 'STIM_LAUNCH_FAILED',
-        message: `The device log collector, which is what launches ${bundleId} on a phone, could not be started.`,
-        remedy: `Check ${logFile} and the workspace collector log, then run the command again.`,
-        build: { ...buildFailure, appPath, bundleId },
-      });
-    }
-    const started = await d.awaitIosDeviceLaunch({
-      udid,
-      bundleId: bundleId!,
-      appName: appName ?? bundleId!,
-      collectorPid: collector.pid,
-      readRecords: () => readCollectorRecords(logsDir).filter((entry) => Number(entry.ts) >= launchedAt),
-    });
-    if (started.failed || !started.pid) {
-      return fail({
-        code: 'STIM_LAUNCH_FAILED',
-        message: started.reason ?? `${bundleId} did not start on ${udid}.`,
-        remedy: started.remedy ?? null,
-        lines: started.lines ?? [],
-        logPath: logsDir,
-        build: { ...buildFailure, appPath, bundleId },
-      });
-    }
-    launched = {
-      ok: true,
-      mode: payloadUrl ? 'payload-url' : 'launch',
-      pid: started.pid,
-      ...(payloadUrl ? { url: payloadUrl } : {}),
-      ...(lanOriginUrl ? { jsLocation: lanOriginUrl } : {}),
-    };
-    phase('launch', `${bundleId!} pid ${started.pid} ${launchTimer()}`);
-  } else {
-    const adopting = Boolean(device?.adoptionPending);
-    if (adopting) {
-      const cleanupFailure = cleanAdoptedIosApps({ d, root, udid, bundleId, phase, note });
-      if (cleanupFailure) {
-        return fail({
-          code: 'STIM_INSTALL_FAILED',
-          message: `${cleanupFailure} Stim kept the adoption cleanup pending and did not install or launch the app.`,
-          remedy: 'Run `stim ios` again after simulator tooling is responsive.',
-          build: { ...buildFailure, appPath, bundleId },
-        });
-      }
-    }
-    const installTimer = stepTimer(d.now);
-    const installed = d.installIosApp(
-      {
-        udid,
-        appPath: appPath!,
-        bundleId,
-        devClientScheme: scheme,
-        proveInstalled: !adopting || device?.parkedCacheKey === storeKey,
-      },
-      { now: d.now },
-    );
-    if (installed?.failed) {
-      return fail({
-        code: installed.code || 'STIM_INSTALL_FAILED',
-        message: installed.reason,
-        remedy: 'Check that the simulator is booted and that the app was built for the simulator SDK.',
-        build: { ...buildFailure, appPath, bundleId },
-      });
-    }
-    installSkipped = Boolean(installed?.skipped);
-    const artifactDuration =
-      installed?.artifactDurationMs === undefined
-        ? installTimer()
-        : `(${formatDuration(installed.artifactDurationMs)})`;
-    phase(
-      'install',
-      installSkipped
-        ? `unchanged (${deviceShortName(device, udid)} already has this build) ${artifactDuration}`
-        : `${basename(appPath!)} -> ${deviceLabel(device, udid)} ${artifactDuration}`,
-    );
-    if (!remoteDevice && installed?.devClientPreparationDurationMs !== undefined) {
-      phase('install', `dev client prepared (${formatDuration(installed.devClientPreparationDurationMs)})`);
-    }
-
-    dropSwapDir();
-
-    const launchTimer = stepTimer(d.now);
-    launchedAt = d.now();
-    launched = d.launchIosApp({ udid, bundleId: bundleId!, metroPort, devClientScheme: scheme });
-    if (launched?.failed) {
-      return fail({
-        code: launched.code || 'STIM_LAUNCH_FAILED',
-        message: launched.reason,
-        remedy: `Run \`xcrun simctl launch --console ${udid} ${bundleId}\` to see what the app reports, and check ${logFile}.`,
-        build: { ...buildFailure, appPath, bundleId },
-      });
-    }
-    phase('launch', `${bundleId!} ${launchTimer()}`);
-  }
-
-  logWriter().write({
-    src: 'build',
-    level: 'info',
-    marker: true,
-    event: 'launch',
-    msg: release
-      ? `launched ${bundleId} on ${udid} (${configuration}, embedded JS bundle, no Metro)`
-      : `launched ${bundleId} on ${udid} against Metro ${lanOriginUrl ?? `port ${metroPort}`}` +
-        (launched?.mode === 'openurl' || launched?.mode === 'payload-url' ? ' (expo-dev-client)' : ''),
-  });
-
-  if (!physical) await d.replaceCollector({ root, udid, bundleId: bundleId!, appName, appExecutable, note });
-
-  if (physical) raiseLeaseFor(release ? RELEASE_VERIFY_WAIT_MS : DEBUG_VERIFY_STEP_MS, false);
-  const launchState = await verifyIosRun({
-    d,
-    release,
-    launched,
-    configuration,
-    phase,
-    note,
-    metroCheck,
-    logsDir,
-    launchedAt,
-    metroPort,
-    isExpo,
-    bundleId: bundleId!,
-    udid,
-    scheme,
-    physical,
-    appName,
-    lanAddress,
-    lanOrigin: lanOriginUrl,
-    remoteDevice: Boolean(remoteDevice),
-    metroOrigin: typeof launched?.jsLocation === 'string' ? launched.jsLocation : null,
-  });
-  if (launchState === LAUNCH_FATAL) {
-    return fail({
-      code: 'STIM_LAUNCH_FAILED',
-      message: 'The app failed its launch readiness check.',
-      remedy: `Read the launch error above or run \`stim logs --errors\`. The full timeline is in ${logsDir}.`,
-      logPath: logsDir,
-      build: { ...buildFailure, appPath, bundleId },
-    });
-  }
-  logWriter().write(launchOutcomeRecord({ launchState, release, bundleId, configuration, metroPort }));
-
-  const leaseFacts = lease?.facts() ?? null;
-  releaseLease();
-
-  const uploadWasAbandoned = await finishIosUpload(uploadPending, remote, phase, note);
-  const providerOutcome = providerUploadOutcome(providerUpload ? await providerUpload : null, providerName);
-  if (providerOutcome) {
-    if (providerOutcome.warn) note(chalk.yellow(phaseLine('cache', providerOutcome.line)));
-    else phase('cache', providerOutcome.line);
-  }
-  const facts = reportIosResult({
-    d,
-    root,
-    json,
-    release,
-    configuration,
-    metroCheck,
-    metroPort,
-    logsDir,
-    device,
-    udid,
-    appPath,
-    bundleId: bundleId!,
-    installSkipped,
-    elapsed,
-    startedAt,
-    storeHash,
-    storeKey,
-    cacheHit,
-    compilationCache,
-    useBuildCache,
-    waitedForBuild,
-    launchState,
-    remote,
-    providerName,
-    closeWriter,
-    webPreviewUrl: remoteDevice?.webPreviewUrl() ?? null,
-    lease: physical ? leaseFacts : undefined,
-    recordRun,
-  });
-  if (remoteWasAbandoned || uploadWasAbandoned) exitAfterFlush(0);
-  return facts;
-}
-
 export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> = {}): Promise<IosFacts | null> {
   let d: typeof DEFAULT_DEPS = { ...DEFAULT_DEPS, ...overrides };
   const json = Boolean(opts.json);
@@ -1843,6 +229,16 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     return null;
   }
   const root = foundRoot;
+  const projectProblem = appProjectProblem(root);
+  if (projectProblem) {
+    const { message, remedy } = projectProblem;
+    note(chalk.red(phaseLine('error', message)));
+    note(chalk.dim(phaseLine('remedy', remedy)));
+    note(chalk.red(phaseLine('failed', 'STIM_NO_PROJECT')));
+    if (json) console.log(JSON.stringify({ code: 'STIM_NO_PROJECT', message, remedy }));
+    process.exit(1);
+    return null;
+  }
 
   try {
     await d.ensureWorkspaceStorage(root, { note });
@@ -2175,8 +571,8 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   let fingerprint = '';
   let fingerprintSources: FingerprintSource[] = [];
   let cacheKey = '';
-  let storeHash = '';
-  let storeKey = '';
+  let storeHash: string | null = null;
+  let storeKey: string | null = null;
   let storeSources: FingerprintSource[] = [];
   let appPath: string | null = null;
   let bundleId: string | null = null;
@@ -2476,7 +872,10 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   }
 
   async function waitForSharedBuild(): Promise<boolean> {
-    if (!appPath && useBuildCache) {
+    if (!useBuildCache) return true;
+    const waitStarted = d.now();
+    let failedHolder: BuildLockHandle['held'];
+    while (!appPath) {
       let attempt: BuildLockHandle | null = null;
       try {
         attempt = d.acquireBuildLock({ platform: PLATFORM, key: cacheKey, root, logFile });
@@ -2490,7 +889,9 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
 
       if (attempt?.acquired) {
         buildLock = attempt;
-        if (attempt.tookOver) note(chalk.yellow(phaseLine('build', takeoverLine(attempt.tookOver))));
+        const previous = attempt.tookOver ?? failedHolder;
+        if (previous) note(chalk.yellow(phaseLine('build', takeoverLine(previous))));
+        break;
       } else if (attempt?.held) {
         const held = attempt.held;
         const who = held.projectRoot || 'another workspace';
@@ -2502,7 +903,19 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
 
         let waited: WaitForBuildResult | null = null;
         try {
-          waited = await d.waitForBuild({ platform: PLATFORM, key: cacheKey, out: note });
+          const ceilingMs = WAIT_CEILING_MS - (d.now() - waitStarted);
+          if (ceilingMs <= 0) {
+            throw Object.assign(
+              new Error(
+                `Waited ${formatDuration(d.now() - waitStarted)} for shared builds without an artifact; ${who} (pid ${held.pid}) holds ${attempt.path}.`,
+              ),
+              {
+                code: 'STIM_BUILD_WAIT_TIMEOUT',
+                lockPath: attempt.path,
+              },
+            );
+          }
+          waited = await d.waitForBuild({ platform: PLATFORM, key: cacheKey, out: note, ceilingMs });
         } catch (e) {
           const err = e as Error & { code?: string; lockPath?: string };
           if (err?.code !== 'STIM_BUILD_WAIT_TIMEOUT') throw e;
@@ -2523,15 +936,16 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
         } else {
           note(
             chalk.yellow(
-              phaseLine('build', `${who}'s build ended without an artifact (${waited?.builderFailed}); building here`),
+              phaseLine(
+                'build',
+                `${who}'s build ended without an artifact (${waited?.builderFailed}); retrying the build lock`,
+              ),
             ),
           );
-          try {
-            const takeover = d.acquireBuildLock({ platform: PLATFORM, key: cacheKey, root, logFile });
-            if (takeover?.acquired) buildLock = takeover;
-          } catch {}
-          note(chalk.yellow(phaseLine('build', takeoverLine(held))));
+          failedHolder = held;
         }
+      } else {
+        break;
       }
     }
     return true;
@@ -2719,7 +1133,19 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
             previousHash: fingerprint,
             fingerprint: d.fingerprintProject,
           });
-          if (after?.moved) {
+          if (!after) {
+            storeHash = null;
+            storeKey = null;
+            buildFailure = { ...buildFailure, fingerprint: null, cacheKey: null };
+            note(
+              chalk.yellow(
+                phaseLine(
+                  'fingerprint',
+                  `unavailable after ${mutatingSteps.join(', ')}; the build will be installed but not cached`,
+                ),
+              ),
+            );
+          } else if (after.moved) {
             storeHash = after.hash;
             storeSources = after.sources;
             storeKey = buildCacheKey(PLATFORM, after.hash, {
@@ -2777,19 +1203,25 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
           appPath = result.appPath ?? null;
           bundleId = result.bundleId ?? null;
 
-          try {
-            const stored = await storeTieredBuild({
-              local: filesystemBuildCapability({ resolve: d.resolveBuild, store: d.storeBuild, sources: storeSources }),
-              loadProvider,
-              target: { projectRoot: root, platform: PLATFORM, key: storeKey },
-              sourcePath: appPath!,
-              overwrite: !useBuildCache || swapFellBack,
-              warn: cacheWarn,
-            });
-            providerUpload = stored.providerUpload;
-            providerName = stored.providerName ?? providerName;
-          } catch (e) {
-            note(chalk.yellow(`Could not store the build in the shared cache: ${(e as Error)?.message || e}`));
+          if (storeKey) {
+            try {
+              const stored = await storeTieredBuild({
+                local: filesystemBuildCapability({
+                  resolve: d.resolveBuild,
+                  store: d.storeBuild,
+                  sources: storeSources,
+                }),
+                loadProvider,
+                target: { projectRoot: root, platform: PLATFORM, key: storeKey },
+                sourcePath: appPath!,
+                overwrite: !useBuildCache || swapFellBack,
+                warn: cacheWarn,
+              });
+              providerUpload = stored.providerUpload;
+              providerName = stored.providerName ?? providerName;
+            } catch (e) {
+              note(chalk.yellow(`Could not store the build in the shared cache: ${(e as Error)?.message || e}`));
+            }
           }
 
           if (physical) {
@@ -2798,7 +1230,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
             appPath = prepared;
           }
 
-          if (remote && !physical) {
+          if (remote && !physical && storeHash) {
             uploadPending = d.uploadRemote({
               logWriter: logWriter(),
               provider: remote.provider,
@@ -2915,75 +1347,5 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   } catch (error) {
     recordRun({ failed: true, durationMs: elapsed() });
     throw error;
-  }
-}
-
-export function launchOutcomeRecord({
-  launchState,
-  release,
-  bundleId,
-  configuration,
-  metroPort,
-}: {
-  launchState: boolean | string;
-  release: boolean;
-  bundleId: string | null;
-  configuration: string | null;
-  metroPort?: number | null;
-}): Record<string, unknown> {
-  const unverified = launchState === LAUNCH_UNVERIFIED;
-  const bundling = launchState === LAUNCH_BUNDLING;
-  let msg: string;
-  if (release) {
-    msg = unverified
-      ? `${bundleId} could not be verified as running after its ${configuration} launch`
-      : `${bundleId} is running its embedded ${configuration} bundle`;
-  } else if (unverified) {
-    msg = `no bundle request from ${bundleId} reached this workspace's Metro on port ${metroPort}`;
-  } else if (bundling) {
-    msg =
-      `${bundleId} requested a bundle from this workspace's Metro on port ${metroPort}; ` +
-      'it was still being built when the launch check ended';
-  } else {
-    msg = `${bundleId} fetched a bundle from this workspace's Metro on port ${metroPort}`;
-  }
-  return {
-    src: 'build',
-    level: unverified ? 'warn' : 'info',
-    event: unverified ? 'launch_unverified' : bundling ? 'launch_bundling' : 'launch_verified',
-    msg,
-  };
-}
-
-export function cacheDescription(cacheHit: CacheHitLevel, providerName: string | null = null): string {
-  if (cacheHit === 'remote') return `from ${providerName || 'the remote cache'}`;
-  if (cacheHit === 'local') return 'from cache';
-  return 'built';
-}
-
-export function xcodeFailureReport(result: BuildIosResultLike, logPath: string): { message: string; remedy: string } {
-  const diagnostics = (Array.isArray(result?.diagnostics) ? result.diagnostics : []) as Diagnostic[];
-  const code = result?.exitCode;
-  const how = code === null || code === undefined ? '' : ` (exit code ${code})`;
-  const message = diagnostics.length
-    ? `\`xcodebuild\` failed${how} with ${diagnostics.length} diagnostic${diagnostics.length === 1 ? '' : 's'}.`
-    : `\`xcodebuild\` failed${how} with no recognizable diagnostic.`;
-  const remedy = diagnostics.find((d) => d?.remedy)?.remedy || `See ${logPath} for the transcript.`;
-  return { message, remedy };
-}
-
-function printDiagnostics(note: (line: string) => void, result: BuildIosResultLike) {
-  const diagnostics = (Array.isArray(result?.diagnostics) ? result.diagnostics : []) as Diagnostic[];
-  const shown = diagnostics.slice(0, MAX_PRINTED_DIAGNOSTICS);
-  for (const diagnostic of shown) {
-    note(chalk.red(phaseLine('error', describeDiagnostic(diagnostic))));
-  }
-  const hidden = diagnostics.length - shown.length + (result?.truncated || 0);
-  if (hidden > 0) {
-    note(chalk.dim(phaseLine('error', `... and ${hidden} more diagnostic${hidden === 1 ? '' : 's'} in the log`)));
-  }
-  if (diagnostics.length === 0) {
-    note(chalk.red(phaseLine('error', 'xcodebuild failed with no recognizable diagnostic; last lines:')));
-    for (const line of (result?.tail || []).slice(-5)) note(chalk.dim(phaseLine('', line)));
   }
 }

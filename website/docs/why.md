@@ -4,13 +4,17 @@ sidebar_position: 1
 description: 'Fast, isolated React Native environments for coding agents'
 ---
 
+Commands use `stim`. If it is not installed globally, replace `stim` with
+`npx stim-cli`.
+
 Stim gives each coding agent a complete React Native environment. Each project
 or git worktree gets a reserved Metro port and an owned simulator or emulator.
 The agent can build, install, launch, inspect errors, and clean up through one
 small command surface.
 
 Stim supports React Native Community CLI and Expo projects. Builds run on the
-local machine. Apps can run on local or configured remote simulators.
+local machine. Apps can run on owned simulators and emulators, connected
+physical devices, or configured remote devices.
 
 > Stim is a release candidate. Commands and on-disk state can change before the
 > stable release. [Report an issue](https://github.com/appandflow/stim/issues)
@@ -51,8 +55,8 @@ noise means less waiting and fewer tokens.
 
 Stim records the ports, processes, build output, devices, and remote sessions it
 creates. It does not create, boot, or delete a user-created simulator or
-emulator. A physical device reached with `android --device` is used but never
-owned, and never recorded.
+emulator. A physical device reached with `ios --device` or `android --device`
+is leased for the run and never added to the owned-device registry.
 
 `stim stop` releases a live environment without deleting its local device.
 `stim worktree remove` reclaims the worktree environment. `stim gc --delete`

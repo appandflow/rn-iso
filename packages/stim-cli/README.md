@@ -31,6 +31,11 @@ stim logs --errors
 stim stop
 ```
 
+For `stim logs --errors`, a clean check requires exit code 0 and no matching
+errors in the captured logs. Exit code 0 alone means the query succeeded, even
+when it prints errors; an empty result does not prove launch or log capture
+succeeded.
+
 Use `stim doctor --platform ios` or `stim doctor --platform android` when only
 one native platform is in scope; shared project checks still run.
 
@@ -48,6 +53,12 @@ Stim builds or restores the app, installs it, launches it, and checks launch
 readiness. Plain output streams progress and reports the complete result. Use
 `--json` when a script needs structured data.
 
+`stim reload [ios|android]` reloads JavaScript in the live app on this
+workspace's owned local device. Use it after a failed first bundle load, when
+an error screen remains after a fix, or when you explicitly need an app
+restart. It is not part of the normal workflow and does not build, install,
+boot, or launch an app. The platform is optional when only one app is live.
+
 ## Reference
 
 The [documentation website](https://appandflow.github.io/stim/) explains the
@@ -62,8 +73,9 @@ stim <command> --help
 stim guide
 ```
 
-Runtime state defaults to `~/.stim`. Set `STIM_HOME` to move it. Stim only
-operates on devices and remote sessions that it owns.
+Runtime state defaults to `~/.stim`. Set `STIM_HOME` to move it. Stim manages
+owned simulators and emulators, leases connected physical devices, and supports
+configured remote devices.
 
 ## Package name
 

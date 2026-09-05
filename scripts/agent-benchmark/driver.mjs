@@ -775,17 +775,19 @@ function promptFor(arm, variant, runId, runDir, crash = null, requestedPlatform 
   const screenshot = join(runDir, 'proof', 'settings.png');
   const screenshotScratch = join('/tmp', `${runId}-settings.png`);
   const recording = join(runDir, 'proof', 'session.mp4');
+  const recordingScratch = join('/tmp', `${runId}-session.mp4`);
   const expected = settingsProofText(variant);
   const agentDevicePrefix = `env AGENT_DEVICE_STATE_DIR=${agentDeviceState} AGENT_DEVICE_SESSION=${runId} agent-device`;
   const targetDescription = platform === 'ios' ? 'simulator UDID' : 'emulator serial';
   const targetFlag = platform === 'ios' ? '--udid' : '--serial';
-  const deviceProof = ` After the app launches, you MUST use the agent-device skill and CLI. Codex does not forward the coordinator's agent-device environment into shell tools, so prefix every agent-device command exactly with \`${agentDevicePrefix}\`; never run a bare \`agent-device\` command. Read the exact run ${targetDescription} from the launch output and start the session with exactly \`${agentDevicePrefix} open com.appandflow.trailhead --foreground --platform ${platform} ${targetFlag} <run ${targetDescription}>\`, replacing only the angle-bracketed value. Immediately start run-scoped video with exactly \`${agentDevicePrefix} record start ${recording} --scope device --quality high --hide-touches\`. Handle any Expo onboarding shown and navigate to the Settings tab using semantic refs or labels. Then run each of these as its own top-level shell command, without chaining, redirection, a script, or an interactive shell: \`${agentDevicePrefix} wait text ${JSON.stringify(expected)}\`, \`${agentDevicePrefix} screenshot ${screenshotScratch}\`, \`cp ${screenshotScratch} ${screenshot}\`, \`${agentDevicePrefix} record stop\`, and \`${agentDevicePrefix} close\`. Do not stop or restart the agent-device daemon; report a failure if the isolated session refuses to open. The explicit state and session assignments and device identifier prevent cross-run ownership. Do not claim completion before the wait succeeds, the copied screenshot exists, and recording stop reports the saved video.`;
-  const suffix = ` Stay in this turn until the Settings screenshot is saved; do not stop to await a background notification. Do not use subagents. Do not read or write outside the fixture checkout, the run worktree, and ${runDir}. Report the run worktree and screenshot paths, then stop; the coordinator will verify and clean up.`;
+  const deviceProof = ` After the app launches, you MUST use the agent-device skill and CLI. Codex does not forward the coordinator's agent-device environment into shell tools, so every agent-device command below includes the required prefix. Never run a bare \`agent-device\` command. Read the exact run ${targetDescription} from the launch output. Handle any Expo onboarding shown and navigate to the Settings tab using semantic refs or labels between steps 2 and 3 below. Do not stop or restart the agent-device daemon; report a failure if the isolated session refuses to open. The explicit state and session assignments and device identifier prevent cross-run ownership.`;
+  const proofProtocol = `\n\nFINAL PROOF PROTOCOL: The proof directory already exists. For each numbered shell command below, send the displayed line alone as the entire Bash \`command\` string. Do not prepend \`mkdir\`, append \`ls\`, combine it with another command, use redirection, or wrap it in a script or interactive shell. Replace only the angle-bracketed value in step 1.\n\n1. \`${agentDevicePrefix} open com.appandflow.trailhead --foreground --platform ${platform} ${targetFlag} <run ${targetDescription}>\`\n2. \`${agentDevicePrefix} record start ${recordingScratch} --scope device --quality high --hide-touches\`\n3. \`${agentDevicePrefix} wait text ${JSON.stringify(expected)}\`\n4. \`${agentDevicePrefix} screenshot ${screenshotScratch}\`\n5. \`cp ${screenshotScratch} ${screenshot}\`\n6. \`${agentDevicePrefix} record stop\`\n7. \`cp ${recordingScratch} ${recording}\`\n8. \`${agentDevicePrefix} close\`\n\nDo not claim completion before all eight commands succeed in order, the wait finds the expected text, recording stop reports the saved video, and the copied screenshot and recording exist.`;
+  const suffix = ` Stay in this turn until the Settings screenshot is saved; do not stop to await a background notification. Do not use subagents. Do not read or write outside the fixture checkout, the run worktree, ${runDir}, ${screenshotScratch}, and ${recordingScratch}. Report the run worktree and screenshot paths, then stop; the coordinator will verify and clean up.${proofProtocol}`;
   if (variant === launchCrashVariant) {
     const launch =
       arm === 'stim'
-        ? 'Use the Stim skill and only the pinned published command available on PATH as exactly `stim`. Keep the inherited STIM_HOME unchanged. Before inspecting source or git diff, run `stim start` and then `stim ios` so the benchmark observes the failure. Preserve that launch output, then immediately run `stim logs --errors` as its own command. Diagnose the launch failure from those results. Only after the diagnostic commands may you inspect and edit source. Make the smallest repair, run `stim ios` again to prove a repaired launch on the same adopted simulator, and leave Metro and the app running until screenshot proof is complete. Do not use npx, an absolute Stim path, raw Expo launch commands, or stop Stim.'
-        : "Use the project's local Expo and Apple tooling and do not use Stim. Create a new iPhone 17 simulator running iOS 26.5 with the exact required name; do not substitute another device type or runtime and do not use an existing simulator. Before inspecting source or git diff, start Metro as a detached process with its PID and log under /tmp. Start the initial native build/install/launch as a detached shell process with its PID and log under /tmp, then poll it with short foreground shell commands. Once the app has launched and failed, run a separate foreground `tail`, `rg`, or simulator-log command that completes and prints the crash token and source location. Only after that explicit error-capture command completes may you inspect or edit source. Make the smallest repair and wait for the repaired Metro server to be ready. As the final recovery action before agent-device proof, explicitly relaunch the app on the same simulator with a completed `xcrun simctl launch` or `xcrun simctl openurl` command. Do not print, inspect, or search old crash-token output after that final relaunch. Leave Metro and the app running until screenshot proof is complete. Do not use a long-running foreground shell command, concurrent shell tool calls, or rely on streamed output from a command that is still running as diagnosis evidence.";
+        ? 'Use the Stim skill and only the pinned published command available on PATH as exactly `stim`. Keep the inherited STIM_HOME unchanged. Before inspecting source or git diff, run `stim start` and then `stim ios` so the benchmark observes the failure. Preserve that launch output, then immediately run `stim logs --errors` as its own command. Diagnose the launch failure from those results. Only after the diagnostic commands may you inspect and edit source. Make the smallest repair and demonstrate the repaired Settings screen on the same adopted simulator. Leave Metro and the app running until screenshot proof is complete. Do not use npx, an absolute Stim path, raw Expo launch commands, or stop Stim.'
+        : "Use the project's local Expo and Apple tooling and do not use Stim. Create a new iPhone 17 simulator running iOS 26.5 with the exact required name; do not substitute another device type or runtime and do not use an existing simulator. Before inspecting source or git diff, start Metro as a detached process with its PID and log under /tmp. Start the initial native build/install/launch as a detached shell process with its PID and log under /tmp, then poll it with short foreground shell commands. Once the app has launched and failed, run a separate foreground `tail`, `rg`, or simulator-log command that completes and prints the crash token and source location. Only after that explicit error-capture command completes may you inspect or edit source. Make the smallest repair and demonstrate the repaired Settings screen on the same simulator. Leave Metro and the app running until screenshot proof is complete. Do not use a long-running foreground shell command, concurrent shell tool calls, or rely on streamed output from a command that is still running as diagnosis evidence.";
     return (
       worktree +
       'The app has a deterministic JavaScript failure during its initial root render. Diagnose and repair that launch failure without making unrelated product changes. ' +
@@ -1540,14 +1542,16 @@ function screenEvidence(meta, appAlive, commands, runDir) {
   const target = join(runDir, 'proof', 'settings.png');
   const screenshotScratch = join('/tmp', `${meta.runId}-settings.png`);
   const recording = join(runDir, 'proof', 'session.mp4');
+  const recordingScratch = join('/tmp', `${meta.runId}-session.mp4`);
   const expected = settingsProofText(meta.variant);
   const openCommand = agentDeviceOpenCommand(meta, appAlive);
   const required = [
-    agentDeviceCommand(meta, `record start ${recording} --scope device --quality high --hide-touches`),
+    agentDeviceCommand(meta, `record start ${recordingScratch} --scope device --quality high --hide-touches`),
     agentDeviceCommand(meta, `wait text ${JSON.stringify(expected)}`),
     agentDeviceCommand(meta, `screenshot ${screenshotScratch}`),
     `cp ${screenshotScratch} ${target}`,
     agentDeviceCommand(meta, 'record stop'),
+    `cp ${recordingScratch} ${recording}`,
     agentDeviceCommand(meta, 'close'),
   ];
   const indexes = [];
@@ -1631,7 +1635,8 @@ function screenEvidence(meta, appAlive, commands, runDir) {
     screenshotCommandId: screenshotCommand.id,
     copyCommandId: commands[indexes[4]].id,
     recordStopCommandId: commands[indexes[5]].id,
-    closeCommandId: commands[indexes[6]].id,
+    recordingCopyCommandId: commands[indexes[6]].id,
+    closeCommandId: commands[indexes[7]].id,
     dispatchToScreenReadySeconds: (Date.parse(screenshotCommand.endedAt) - Date.parse(meta.dispatchAt)) / 1000,
     commands: [openCommand, ...required],
   };
@@ -1641,7 +1646,8 @@ function recordingEvidence(meta, commands, runDir, screen) {
   const target = join(runDir, 'proof', 'session.mp4');
   const start = commands.find((command) => command.id === screen.recordStartCommandId);
   const stop = commands.find((command) => command.id === screen.recordStopCommandId);
-  if (!screen.valid || !start || !stop || start.exitCode !== 0 || stop.exitCode !== 0) {
+  const copy = commands.find((command) => command.id === screen.recordingCopyCommandId);
+  if (!screen.valid || !start || !stop || !copy || start.exitCode !== 0 || stop.exitCode !== 0 || copy.exitCode !== 0) {
     return { valid: false, reason: 'simulator-recording-commands-missing', target };
   }
   if (!existsSync(target)) return { valid: false, reason: 'simulator-recording-missing', target };
@@ -1658,6 +1664,7 @@ function recordingEvidence(meta, commands, runDir, screen) {
     endedAt: stop.endedAt,
     startCommandId: start.id,
     stopCommandId: stop.id,
+    copyCommandId: copy.id,
   };
 }
 
@@ -2078,6 +2085,11 @@ function cleanup(runDir) {
     rmSync(screenshotScratch);
     actions.push(`remove ${screenshotScratch}`);
   }
+  const recordingScratch = join('/tmp', `${meta.runId}-session.mp4`);
+  if (existsSync(recordingScratch)) {
+    rmSync(recordingScratch);
+    actions.push(`remove ${recordingScratch}`);
+  }
   if (meta.arm === 'stim' && worktree && existsSync(worktree)) {
     const stimHome = join(runDir, 'stim-home');
     const env = {
@@ -2411,6 +2423,43 @@ function selftestAgentDeviceIsolation() {
   if ('agent-device close'.startsWith(agentDeviceCommand(meta, ''))) {
     throw new Error('bare default-session command passed the isolation check');
   }
+  const prompt = promptFor('stim', 'javascript', runId, state);
+  const androidPrompt = promptFor('control', 'javascript', runId, state, null, 'android');
+  const screenshotScratch = join('/tmp', `${runId}-settings.png`);
+  const screenshot = join(state, 'proof', 'settings.png');
+  const recordingScratch = join('/tmp', `${runId}-session.mp4`);
+  const recording = join(state, 'proof', 'session.mp4');
+  if (!prompt.includes(`record start ${recordingScratch}`) || !prompt.includes(`cp ${recordingScratch} ${recording}`)) {
+    throw new Error('simulator recording does not use local scratch before copying to evidence');
+  }
+  if (prompt.includes(`record start ${recording}`)) {
+    throw new Error('simulator recording writes directly to durable evidence storage');
+  }
+  const proofCommands = [
+    agentDeviceCommand(meta, 'open com.appandflow.trailhead --foreground --platform ios --udid <run simulator UDID>'),
+    agentDeviceCommand(meta, `record start ${recordingScratch} --scope device --quality high --hide-touches`),
+    agentDeviceCommand(meta, `wait text ${JSON.stringify(settingsProofText('javascript'))}`),
+    agentDeviceCommand(meta, `screenshot ${screenshotScratch}`),
+    `cp ${screenshotScratch} ${screenshot}`,
+    agentDeviceCommand(meta, 'record stop'),
+    `cp ${recordingScratch} ${recording}`,
+    agentDeviceCommand(meta, 'close'),
+  ];
+  if (
+    !prompt.includes('The proof directory already exists') ||
+    !prompt.includes('alone as the entire Bash `command` string') ||
+    proofCommands.some((proofCommand, index) => !prompt.includes(`${index + 1}. \`${proofCommand}\``))
+  ) {
+    throw new Error('proof command boundaries are not explicit and ordered');
+  }
+  if (
+    !androidPrompt.includes(
+      `1. \`${agentDeviceCommand(meta, 'open com.appandflow.trailhead --foreground --platform android --serial <run emulator serial>')}\``,
+    ) ||
+    !androidPrompt.includes('alone as the entire Bash `command` string')
+  ) {
+    throw new Error('Android proof command boundaries are not explicit');
+  }
   process.stdout.write('agent-device isolation self-test passed\n');
 }
 
@@ -2428,7 +2477,7 @@ function selftestLaunchCrash() {
     'Before inspecting source or git diff',
     'stim logs --errors',
     'Make the smallest repair',
-    'stim ios` again',
+    'demonstrate the repaired Settings screen on the same adopted simulator',
   ]) {
     if (!prompt.includes(required)) {
       throw new Error(`launch-crash prompt is missing: ${required}`);

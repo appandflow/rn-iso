@@ -317,6 +317,49 @@ describe('benchmark viewer export', () => {
     ).toBe('-Lworktree/native-control/DerivedData/Build/Products');
   });
 
+  it('redacts absolute paths embedded in generated build paths', () => {
+    expect(sanitizeBenchmarkText('node_modules/module.dir/Volumes/ExternalSSD/Developer/project/source.cpp.o')).toBe(
+      'node_modules/module.dir/workspace/source.cpp.o',
+    );
+  });
+
+  it('preserves web URLs while redacting nested machine paths', () => {
+    expect(
+      sanitizeBenchmarkText(
+        'https://example.com/Volumes/docs See (https://example.com/Volumes/docs) ' +
+          '[docs](https://example.com/Users/guide) url=https://example.com/Volumes/docs ' +
+          'https://example.com/docs;/Volumes/public https://example.com/a,/Users/public ' +
+          'https://example.com/a(/Volumes/public) https://example.com/a[/Users/public] ' +
+          'HTTPS://example.com/Volumes/docs ' +
+          'module.dir/Volumes/ExternalSSD/private.cpp',
+      ),
+    ).toBe(
+      'https://example.com/Volumes/docs See (https://example.com/Volumes/docs) ' +
+        '[docs](https://example.com/Users/guide) url=https://example.com/Volumes/docs ' +
+        'https://example.com/docs;/Volumes/public https://example.com/a,/Users/public ' +
+        'https://example.com/a(/Volumes/public) https://example.com/a[/Users/public] ' +
+        'HTTPS://example.com/Volumes/docs ' +
+        'module.dir/workspace/private.cpp',
+    );
+  });
+
+  it('applies private replacements inside preserved web URLs', () => {
+    const root = '/Volumes/ExternalSSD/results/private-run';
+    expect(
+      sanitizeBenchmarkText(`https://example.test/open?path=${root}/proof/settings.png`, [
+        [root, 'results/luna-android/javascript-stim'],
+        ['private-run', 'javascript-stim'],
+      ]),
+    ).toBe('https://example.test/open?path=results/luna-android/javascript-stim/proof/settings.png');
+  });
+
+  it('redacts ADB public keys from emulator logs and boot arguments', () => {
+    const key = 'A'.repeat(96);
+    expect(
+      sanitizeBenchmarkText(`Sending adb public key [${key} developer@host] androidboot.qemu.adb.pubkey=${key}`),
+    ).toBe('Sending adb public key [<adb-public-key>] androidboot.qemu.adb.pubkey=<adb-public-key>');
+  });
+
   it('makes Xcode, system-tool, and root-relative build paths portable', () => {
     expect(
       sanitizeBenchmarkText(
@@ -540,7 +583,7 @@ describe('benchmark viewer export', () => {
       JSON.stringify({
         runId: 'private-invalid-run-id',
         model: 'gpt-5.6-sol',
-        variant: 'native',
+        variant: 'fixture',
         arm: 'stim',
         valid: false,
         invalidReasons: ['missing command for A35AFE7E-06D9-4E4B-A14D-0451595A13BC (3372..) on Janics-Mac-mini.local'],
@@ -558,7 +601,7 @@ describe('benchmark viewer export', () => {
       JSON.stringify({
         runId: 'private-valid-run-id',
         model: 'gpt-5.6-sol',
-        variant: 'native',
+        variant: 'fixture',
         arm: 'control',
         valid: true,
         invalidReasons: [],
@@ -578,9 +621,9 @@ describe('benchmark viewer export', () => {
       memory: 'Test memory',
     });
 
-    expect(payload.runs.map((run) => run.id)).toEqual(['native-control']);
+    expect(payload.runs.map((run) => run.id)).toEqual(['fixture-control']);
     expect(payload.recordedOn).toBe('2026-09-03');
-    expect(readdirSync(proofDir)).toEqual(['native-control.png']);
+    expect(readdirSync(proofDir)).toEqual(['fixture-control.png']);
   });
 
   it('requires integrity-bound Android readiness and cleanup evidence', () => {
@@ -591,7 +634,7 @@ describe('benchmark viewer export', () => {
     mkdirSync(join(runDir, 'proof'), { recursive: true });
     const dispatchAt = '2026-09-04T12:00:00.000Z';
     const commandEvents = [
-      ['open', 1, 2, 'agent-device open com.example.app', 'opened'],
+      ['open', 1, 2, 'agent-device open com.example.app', 'emulator emulator-5554'],
       ['record-start', 3, 4, 'agent-device record start proof/session.mp4', 'recording'],
       ['wait', 5, 6, 'agent-device wait text "Keep saved trail maps available offline"', 'found'],
       ['screenshot', 7, 8, 'agent-device screenshot /tmp/settings.png', 'saved'],
@@ -626,6 +669,7 @@ describe('benchmark viewer export', () => {
     const rolloutPath = join(runDir, 'rollout.jsonl');
     writeFileSync(rolloutPath, '{}\n');
     writeFileSync(join(runDir, 'avds-before.json'), '[]\n');
+    writeFileSync(join(runDir, 'devices-before.json'), '[]\n');
     writeFileSync(
       join(runDir, 'app-alive.json'),
       JSON.stringify({ dispatchToAppAliveSeconds: 5, simulator: { udid: 'emulator-5554' } }),
@@ -702,7 +746,29 @@ describe('benchmark viewer export', () => {
     };
     writeFileSync(recordPath, JSON.stringify(record));
 
-    expect(exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'public-proof')).runs).toHaveLength(1);
+    const payload = exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'public-proof'));
+    expect(payload.runs).toHaveLength(1);
+    expect(payload.runs[0].commands[0].output).toBe('emulator <simulator-udid>');
+
+    const completeRecording = readFileSync(recordingPath);
+    const shortRecording = Buffer.from(completeRecording);
+    const movieHeader = shortRecording.indexOf(Buffer.from('mvhd'));
+    const movieHeaderVersion = shortRecording[movieHeader + 4];
+    const timescaleOffset = movieHeaderVersion === 1 ? movieHeader + 24 : movieHeader + 16;
+    const durationOffset = movieHeaderVersion === 1 ? movieHeader + 28 : movieHeader + 20;
+    const timescale = shortRecording.readUInt32BE(timescaleOffset);
+    if (movieHeaderVersion === 1) shortRecording.writeBigUInt64BE(BigInt(timescale), durationOffset);
+    else shortRecording.writeUInt32BE(timescale, durationOffset);
+    writeFileSync(recordingPath, shortRecording);
+    record.evidenceSha256.recording = sha256(recordingPath);
+    writeFileSync(recordPath, JSON.stringify(record));
+    expect(() => exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'public-proof'))).toThrow(
+      'no valid benchmark runs found',
+    );
+    writeFileSync(recordingPath, completeRecording);
+    record.evidenceSha256.recording = sha256(recordingPath);
+    writeFileSync(recordPath, JSON.stringify(record));
+
     for (const mutate of [
       () => writeFileSync(bundlePath, 'tampered'),
       () => writeFileSync(join(runDir, 'avds-before.json'), JSON.stringify(['Trailhead_private-run-id'])),
@@ -726,6 +792,158 @@ describe('benchmark viewer export', () => {
         }),
       );
     }
+  });
+
+  it('requires isolated iOS readiness commands, recording copy, and owned cleanup', () => {
+    const root = mkdtempSync(join(tmpdir(), 'stim-ios-export-'));
+    tempDirs.push(root);
+    const runId = 'private-ios-run-id';
+    const stageDir = join(root, 'results', 'sol-ios');
+    const runDir = join(stageDir, runId);
+    const proofDir = join(runDir, 'proof');
+    mkdirSync(proofDir, { recursive: true });
+    const dispatchAt = '2026-09-04T12:00:00.000Z';
+    const stateDir = join(root, 'state', 'agent-device');
+    const udid = 'A35AFE7E-06D9-4E4B-A14D-0451595A13BC';
+    const prefix = `env AGENT_DEVICE_STATE_DIR=${stateDir} AGENT_DEVICE_SESSION=${runId} agent-device`;
+    const screenshotScratch = join('/tmp', `${runId}-settings.png`);
+    const recordingScratch = join('/tmp', `${runId}-session.mp4`);
+    const proofPath = join(proofDir, 'settings.png');
+    const recordingPath = join(proofDir, 'session.mp4');
+    const bundlePath = join(proofDir, 'metro-8081-at-app-alive.bundle');
+    const commandEvents = [
+      [
+        'open',
+        1,
+        2,
+        `${prefix} open com.appandflow.trailhead --foreground --platform ios --udid ${udid}`,
+        `Opened: com.appandflow.trailhead\nSession state: ${stateDir}/sessions/${runId}\n`,
+      ],
+      [
+        'record-start',
+        3,
+        4,
+        `${prefix} record start ${recordingScratch} --scope device --quality high --hide-touches`,
+        `${recordingScratch}\n`,
+      ],
+      ['wait', 5, 6, `${prefix} wait text "Keep saved trail maps available offline"`, ''],
+      ['screenshot', 7, 8, `${prefix} screenshot ${screenshotScratch}`, `${screenshotScratch} (402x874 @1x)\n`],
+      ['copy', 9, 10, `cp ${screenshotScratch} ${proofPath}`, ''],
+      ['record-stop', 11, 12, `${prefix} record stop`, `${recordingScratch}\n`],
+      ['record-copy', 13, 14, `cp ${recordingScratch} ${recordingPath}`, ''],
+      ['close', 15, 16, `${prefix} close`, `Closed: ${runId}\n`],
+    ];
+    writeFileSync(
+      join(runDir, 'events.jsonl'),
+      `${commandEvents
+        .flatMap(([id, start, end, command, output]) => [
+          stamp(new Date(Date.parse(dispatchAt) + start * 1000).toISOString(), {
+            type: 'item.started',
+            item: { id, type: 'command_execution', command },
+          }),
+          stamp(new Date(Date.parse(dispatchAt) + end * 1000).toISOString(), {
+            type: 'item.completed',
+            item: { id, type: 'command_execution', command, aggregated_output: output, exit_code: 0 },
+          }),
+        ])
+        .join('\n')}\n`,
+    );
+    copyFileSync(join(process.cwd(), 'website/static/benchmarks/sol-launch-crash/launch-crash-stim.png'), proofPath);
+    copyFileSync(
+      join(process.cwd(), 'website/static/benchmarks/luna-rc12/javascript-stim-interaction.mp4'),
+      recordingPath,
+    );
+    writeFileSync(bundlePath, 'Keep saved trail maps available offline');
+    writeFileSync(join(runDir, 'rollout.jsonl'), '{}\n');
+    writeFileSync(join(runDir, 'devices-before.json'), `${JSON.stringify([udid])}\n`);
+    writeFileSync(
+      join(runDir, 'app-alive.json'),
+      JSON.stringify({ dispatchToAppAliveSeconds: 5, simulator: { udid } }),
+    );
+    writeFileSync(
+      join(runDir, 'cleanup.json'),
+      JSON.stringify({
+        cleanedAt: '2026-09-04T12:01:00.000Z',
+        actions: [
+          'verified benchmark agent-device sessions empty',
+          'stim worktree remove --force',
+          `verified parked simulator ${udid}`,
+          `verified quiescent simulator ${udid}`,
+        ],
+      }),
+    );
+    writeFileSync(
+      join(runDir, 'meta.json'),
+      JSON.stringify({
+        runId,
+        runner: 'codex',
+        model: 'gpt-5.6-sol',
+        arm: 'stim',
+        variant: 'javascript',
+        platform: 'ios',
+        dispatchAt,
+        finishedAt: '2026-09-04T12:01:00.000Z',
+        agentDevice: { stateDir, session: runId },
+        expectedParkedSimulator: { udid },
+      }),
+    );
+    const eventsPath = join(runDir, 'events.jsonl');
+    const recordPath = join(runDir, 'run.json');
+    const record = {
+      runId,
+      runner: 'codex',
+      model: 'gpt-5.6-sol',
+      variant: 'javascript',
+      arm: 'stim',
+      valid: true,
+      invalidReasons: [],
+      dispatchToAppAliveSeconds: 5,
+      dispatchToScreenReadySeconds: 8,
+      simulator: { udid },
+      commandCount: 8,
+      proof: { valid: true, expected: 'Keep saved trail maps available offline', target: bundlePath },
+      screen: {
+        valid: true,
+        expected: 'Keep saved trail maps available offline',
+        dimensions: { width: 402, height: 874 },
+        observedAt: '2026-09-04T12:00:08.000Z',
+        dispatchToScreenReadySeconds: 8,
+        openCommandId: 'open',
+        recordStartCommandId: 'record-start',
+        waitCommandId: 'wait',
+        screenshotCommandId: 'screenshot',
+        copyCommandId: 'copy',
+        recordStopCommandId: 'record-stop',
+        recordingCopyCommandId: 'record-copy',
+        closeCommandId: 'close',
+        commands: commandEvents.map((event) => event[3]),
+      },
+      recording: {
+        valid: true,
+        target: recordingPath,
+        bytes: readFileSync(recordingPath).length,
+        startedAt: '2026-09-04T12:00:04.000Z',
+        endedAt: '2026-09-04T12:00:12.000Z',
+        startCommandId: 'record-start',
+        stopCommandId: 'record-stop',
+        copyCommandId: 'record-copy',
+      },
+      evidenceSha256: {
+        events: sha256(eventsPath),
+        settingsPng: sha256(proofPath),
+        transcript: sha256(join(runDir, 'rollout.jsonl')),
+        proof: sha256(bundlePath),
+        recording: sha256(recordingPath),
+      },
+    };
+    writeFileSync(recordPath, JSON.stringify(record));
+
+    expect(exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'public-proof')).runs).toHaveLength(1);
+    delete record.screen.recordingCopyCommandId;
+    writeFileSync(recordPath, JSON.stringify(record));
+    expect(() => exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'public-proof'))).toThrow(
+      'no valid benchmark runs found',
+    );
   });
 
   it('refuses to publish a block with no valid attempts', () => {
@@ -789,7 +1007,13 @@ describe('benchmark viewer export', () => {
         `rg ${token} app/_layout.tsx`,
         `${token}\napp/_layout.tsx:28 in RootLayout`,
       ],
-      ['relaunch', '2026-09-04T12:01:40.000Z', '2026-09-04T12:02:00.000Z', 'stim ios', 'OK: com.example.app'],
+      [
+        'reload',
+        '2026-09-04T12:01:40.000Z',
+        '2026-09-04T12:02:00.000Z',
+        'agent-device metro reload --metro-port 8082',
+        'Reload broadcast sent',
+      ],
       [
         'screenshot',
         '2026-09-04T12:02:29.000Z',
@@ -866,7 +1090,7 @@ describe('benchmark viewer export', () => {
           reasoning_output_tokens: 200,
         },
         proof: { valid: true, expected: `${token} removed and original source restored` },
-        recovery: { valid: true, repairedLaunchCommandId: 'relaunch', screenshotCommandId: 'screenshot' },
+        recovery: { valid: true, screenshotCommandId: 'screenshot' },
         screen: {
           valid: true,
           expected: 'Keep map tiles for saved trails on device',
@@ -899,7 +1123,6 @@ describe('benchmark viewer export', () => {
         initialLaunchCommandId: 'launch',
         errorCaptureCommandId: 'logs',
         diagnosisCommandId: 'diagnosis',
-        repairedLaunchCommandId: 'relaunch',
         screenshotCommandId: 'screenshot',
       },
       estimatedDiagnosisCostUsd: 0.132,

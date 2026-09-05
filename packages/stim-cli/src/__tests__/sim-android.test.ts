@@ -15,6 +15,8 @@ import { join } from 'path';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import {
   MAX_EMULATOR_FAILURE_LINES,
+  androidDeviceAbi,
+  androidSystemImageAbi,
   androidToolPath,
   androidPoolNoCandidatesRefusal,
   buildToolsMajor,
@@ -909,6 +911,30 @@ test('physicalDeviceModel returns null when adb cannot answer', () => {
   } as never);
   expect(physicalDeviceModel('RFCR7081Q9L')).toBeNull();
   resetExecutor();
+});
+
+test('androidDeviceAbi reads the device primary ABI', () => {
+  const calls: string[][] = [];
+  setExecutor({
+    runFile: (_file: string, args: string[] = []) => {
+      calls.push(args);
+      return 'arm64-v8a\n';
+    },
+  } as never);
+  expect(androidDeviceAbi('RFCR7081Q9L')).toBe('arm64-v8a');
+  expect(calls).toEqual([['-s', 'RFCR7081Q9L', 'shell', 'getprop', 'ro.product.cpu.abi']]);
+});
+
+test('Android ABI detection falls back when the value is not supported', () => {
+  setExecutor({ runFile: () => 'unknown' } as never);
+  expect(androidDeviceAbi('RFCR7081Q9L')).toBeNull();
+  expect(androidSystemImageAbi('system-images;android-36;google_apis;unknown')).toBeNull();
+  expect(androidSystemImageAbi(null)).toBeNull();
+});
+
+test('androidSystemImageAbi uses the architecture selected for an owned emulator', () => {
+  expect(androidSystemImageAbi('system-images;android-36;google_apis;arm64-v8a')).toBe('arm64-v8a');
+  expect(androidSystemImageAbi('system-images;android-35;google_apis;x86_64')).toBe('x86_64');
 });
 
 test('resolvePhysicalDevice refuses a network-attached emulator that adb reports as physical', () => {

@@ -121,12 +121,13 @@ sequence is:
 
 ```text
 env AGENT_DEVICE_STATE_DIR=<campaign-state> AGENT_DEVICE_SESSION=<run-id> agent-device open com.appandflow.trailhead --foreground --platform ios --udid <run-udid>
-env AGENT_DEVICE_STATE_DIR=<campaign-state> AGENT_DEVICE_SESSION=<run-id> agent-device record start <run-dir>/proof/session.mp4 --scope device --quality high --hide-touches
+env AGENT_DEVICE_STATE_DIR=<campaign-state> AGENT_DEVICE_SESSION=<run-id> agent-device record start /tmp/<run-id>-session.mp4 --scope device --quality high --hide-touches
 <handle Expo onboarding if it appears and navigate by semantic label to Settings>
 env AGENT_DEVICE_STATE_DIR=<campaign-state> AGENT_DEVICE_SESSION=<run-id> agent-device wait text "<expected text>"
 env AGENT_DEVICE_STATE_DIR=<campaign-state> AGENT_DEVICE_SESSION=<run-id> agent-device screenshot /tmp/<run-id>-settings.png
 cp /tmp/<run-id>-settings.png <run-dir>/proof/settings.png
 env AGENT_DEVICE_STATE_DIR=<campaign-state> AGENT_DEVICE_SESSION=<run-id> agent-device record stop
+cp /tmp/<run-id>-session.mp4 <run-dir>/proof/session.mp4
 env AGENT_DEVICE_STATE_DIR=<campaign-state> AGENT_DEVICE_SESSION=<run-id> agent-device close
 ```
 
@@ -142,8 +143,8 @@ shape alone is insufficient.
 The agent reads `<run-udid>` or `<run-serial>` from the platform launch output.
 The explicit device identifier prevents an existing automation session from
 selecting unrelated hardware; a bundle identifier alone is insufficient. The
-temporary screenshot path avoids Simulator write restrictions on external
-volumes. JavaScript waits for `Keep saved trail maps available offline`; native
+temporary screenshot and recording paths avoid Simulator write restrictions on
+external volumes. JavaScript waits for `Keep saved trail maps available offline`; native
 waits for `Offline maps`.
 
 The collector accepts the screenshot only when the targeted open command names
@@ -251,10 +252,10 @@ interval. The agent starts in the fixture checkout and creates its own isolated
 run worktree from that HEAD, so worktree setup remains part of the measured
 workflow. The agent must launch before inspecting source. An actionable
 diagnosis contains both the run's unique error token and the root-layout source
-location. A valid repair removes that token, relaunches the app, and reaches the
-unchanged Settings proof on the same explicitly targeted simulator. Report
-diagnosis and repair timing separately; do not add crash-suite results to the
-readiness charts.
+location. A valid repair removes that token and reaches the unchanged Settings
+proof on the same explicitly targeted simulator. The recovery mechanism is a
+measured agent choice, not a validity condition. Report diagnosis and repair
+timing separately; do not add crash-suite results to the readiness charts.
 
 Run the crash suite only after the four-cell readiness pilot is accepted. Keep
 its goldens, prompts, metrics, and report separate from the normal JS/native

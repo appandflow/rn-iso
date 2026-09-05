@@ -52,7 +52,7 @@ export type BenchmarkRun = {
     initialLaunchCommandId: string;
     errorCaptureCommandId: string;
     diagnosisCommandId: string;
-    repairedLaunchCommandId: string;
+    repairedLaunchCommandId?: string;
     screenshotCommandId: string;
   } | null;
   diagnosisUsage?: BenchmarkUsage | null;

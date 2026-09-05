@@ -8,6 +8,9 @@ import {
   checkBuildCacheProvider,
   checkCompilationCache,
   checkCcacheConflict,
+  checkCcacheInstalled,
+  checkCxxCompilerLauncher,
+  parseCmakeCacheLauncher,
   checkDevClient,
   checkEasAuth,
   checkFingerprintParity,
@@ -124,6 +127,7 @@ test('checkMainCheckout runs its expensive probes only when their preconditions 
   setExecutor({
     run: () => '',
     runQuiet: () => null,
+    runFileQuiet: () => null,
     runFile: (file: string, args: string[] = []) => {
       calls.push([file, ...args]);
       return '';
@@ -304,6 +308,174 @@ test('a project with no ccache is reported as nothing, with or without caching i
   expect(checkCcacheConflict(null, { 'apple.ccacheEnabled': 'true' })).toBe(null);
 });
 
+test('the iOS ccache finding no longer claims ccache cannot cross worktrees at all', () => {
+  const f = checkCcacheConflict('post_install', { 'apple.ccacheEnabled': 'true' });
+  assert(f);
+  expect(f.detail).not.toMatch(/misses across worktrees anyway/);
+  expect(f.detail).toMatch(/default configuration/);
+});
+
+test('ccache on PATH is silent, and ccache absent costs time with a full remedy', () => {
+  expect(checkCcacheInstalled(true)).toBe(null);
+  const f = checkCcacheInstalled(false);
+  assert(f);
+  expect(f.level).toBe('cost');
+  expect(f.title).toMatch(/ccache is not on PATH, so Android C\+\+ recompiles in every worktree/);
+  expect(f.detail).toMatch(/command -v ccache/);
+  expect(f.detail).toMatch(/CMAKE_CXX_COMPILER_LAUNCHER/);
+  expect(f.detail).toMatch(/49\.6s.*34\.2s/);
+  expect(f.fix).toMatch(/brew install ccache/);
+  expect(f.fix).toMatch(/android\/app\/\.cxx/);
+  expect(f.fix).toMatch(/node_modules\/\*\*\/android\/\.cxx/);
+  expect(f.fix).toMatch(/\/opt\/homebrew\/bin/);
+});
+
+test('the ccache finding belongs to the Android group and is filtered out by --platform ios', () => {
+  const project = mkdtempSync(join(tmpdir(), 'stim-doc-ccache-platform-'));
+  try {
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
+    mkdirSync(join(project, 'android'), { recursive: true });
+    const options = { concurrency: { maxBuilds: 0, maxDevices: 0 }, lookupCcache: () => false };
+    const android = runDoctor(project, { ...options, platform: 'android' as const });
+    const ios = runDoctor(project, { ...options, platform: 'ios' as const });
+    expect(android.some((f) => /ccache is not on PATH/.test(f.title))).toBe(true);
+    expect(ios.some((f) => /ccache is not on PATH/.test(f.title))).toBe(false);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
+test('parseCmakeCacheLauncher reads the launcher a configure wrote into CMakeCache.txt', () => {
+  const cache = [
+    '//Compiler launcher for CXX.',
+    'CMAKE_CXX_COMPILER_LAUNCHER:STRING=/opt/homebrew/bin/ccache',
+    'CMAKE_BUILD_TYPE:STRING=Debug',
+  ].join('\n');
+  expect(parseCmakeCacheLauncher(cache)).toBe('/opt/homebrew/bin/ccache');
+  expect(parseCmakeCacheLauncher('CMAKE_CXX_COMPILER_LAUNCHER:STRING=')).toBe(null);
+  expect(parseCmakeCacheLauncher('CMAKE_BUILD_TYPE:STRING=Debug')).toBe(null);
+  expect(parseCmakeCacheLauncher(null)).toBe(null);
+});
+
+describe('checkCxxCompilerLauncher', () => {
+  const onDisk = (path: string) => path === '/opt/homebrew/bin/ccache';
+
+  test('a CMake cache naming a launcher that is gone is a cost, ccache installed or not', () => {
+    for (const ccacheOnPath of [true, false]) {
+      const f = checkCxxCompilerLauncher({
+        states: [{ path: 'android/app/.cxx/Debug/a1/arm64-v8a', launcher: '/usr/local/bin/ccache' }],
+        ccacheOnPath,
+        launcherExists: onDisk,
+      });
+      assert(f);
+      expect(f.level).toBe('cost');
+      expect(f.title).toMatch(/names a compiler launcher that is not on this machine/);
+      expect(f.detail).toMatch(/\/usr\/local\/bin\/ccache/);
+      expect(f.fix).toMatch(/\.cxx/);
+    }
+  });
+
+  test('a configured .cxx with no launcher costs the C++ cache until it is deleted once', () => {
+    const f = checkCxxCompilerLauncher({
+      states: [{ path: 'android/app/.cxx/Debug/a1/arm64-v8a', launcher: null }],
+      ccacheOnPath: true,
+      launcherExists: onDisk,
+    });
+    assert(f);
+    expect(f.level).toBe('cost');
+    expect(f.title).toMatch(/predates/);
+    expect(f.fix).toMatch(/\.cxx/);
+  });
+
+  test('nothing is said about a .cxx with no launcher when ccache is not installed either', () => {
+    expect(
+      checkCxxCompilerLauncher({
+        states: [{ path: 'android/app/.cxx/Debug/a1/arm64-v8a', launcher: null }],
+        ccacheOnPath: false,
+        launcherExists: onDisk,
+      }),
+    ).toBe(null);
+  });
+
+  test('a launcher CMake resolves through PATH is not read as a filesystem path', () => {
+    for (const ccacheOnPath of [true, false]) {
+      expect(
+        checkCxxCompilerLauncher({
+          states: [{ path: 'android/app/.cxx/Debug/a1/arm64-v8a', launcher: 'ccache' }],
+          ccacheOnPath,
+          launcherExists: onDisk,
+        }),
+      ).toBe(null);
+      expect(
+        checkCxxCompilerLauncher({
+          states: [{ path: 'android/app/.cxx/Debug/a1/arm64-v8a', launcher: 'ccache;--some-flag' }],
+          ccacheOnPath,
+          launcherExists: onDisk,
+        }),
+      ).toBe(null);
+    }
+  });
+
+  test('a launcher list whose absolute command is gone is still a cost', () => {
+    const f = checkCxxCompilerLauncher({
+      states: [{ path: 'android/app/.cxx/Debug/a1/arm64-v8a', launcher: '/usr/local/bin/ccache;--some-flag' }],
+      ccacheOnPath: true,
+      launcherExists: onDisk,
+    });
+    assert(f);
+    expect(f.detail).toMatch(/\/usr\/local\/bin\/ccache/);
+  });
+
+  test('a .cxx already routed through an installed launcher, or none at all, is clean', () => {
+    expect(
+      checkCxxCompilerLauncher({
+        states: [{ path: 'android/app/.cxx/Debug/a1/arm64-v8a', launcher: '/opt/homebrew/bin/ccache' }],
+        ccacheOnPath: true,
+        launcherExists: onDisk,
+      }),
+    ).toBe(null);
+    expect(checkCxxCompilerLauncher({ states: [], ccacheOnPath: true, launcherExists: onDisk })).toBe(null);
+  });
+});
+
+test('runDoctor reads the real .cxx of an Android project and reports it only for Android', () => {
+  const project = mkdtempSync(join(tmpdir(), 'stim-doc-cxx-'));
+  try {
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
+    const abiDir = join(project, 'android', 'app', '.cxx', 'Debug', '3q1r2w4t', 'arm64-v8a');
+    mkdirSync(abiDir, { recursive: true });
+    writeFileSync(join(abiDir, 'CMakeCache.txt'), 'CMAKE_BUILD_TYPE:STRING=Debug\n');
+    const options = { concurrency: { maxBuilds: 0, maxDevices: 0 }, lookupCcache: () => true };
+    const android = runDoctor(project, { ...options, platform: 'android' as const });
+    const ios = runDoctor(project, { ...options, platform: 'ios' as const });
+    expect(android.some((f) => /predates/.test(f.title))).toBe(true);
+    expect(ios.some((f) => /predates/.test(f.title))).toBe(false);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
+test('an iOS-only checkout is not told about the Android C++ cache', () => {
+  const project = mkdtempSync(join(tmpdir(), 'stim-doc-noandroid-'));
+  try {
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
+    const findings = runDoctor(project, {
+      concurrency: { maxBuilds: 0, maxDevices: 0 },
+      lookupCcache: () => false,
+    });
+    expect(findings.some((f) => /ccache is not on PATH/.test(f.title))).toBe(false);
+    expect(
+      runDoctor(project, {
+        concurrency: { maxBuilds: 0, maxDevices: 0 },
+        lookupCcache: () => false,
+        platform: 'android' as const,
+      }).some((f) => /ccache is not on PATH/.test(f.title)),
+    ).toBe(true);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
 test('a bare React Native project is not told to install expo-dev-client', () => {
   expect(checkDevClient({ dependencies: { 'react-native': '0.86.2' } })).toBe(null);
 });
@@ -363,6 +535,7 @@ test('detectXcodeMajor reports unknown rather than throwing when xcodebuild is m
       throw new Error('not found');
     },
     runQuiet: () => null,
+    runFileQuiet: () => null,
     spawn: () => {},
   });
   try {
@@ -590,6 +763,54 @@ test('checkConcurrency echoes the caps and the current live count when set', () 
   expect(f.detail).toMatch(/maxBuilds 2/);
   expect(f.detail).toMatch(/maxDevices 3/);
   expect(f.detail).toMatch(/1 /);
+});
+
+describe('a directory that is not an app', () => {
+  let home: string;
+  let project: string;
+
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'stim-doc-home-'));
+    process.env.STIM_HOME = home;
+    project = mkdtempSync(join(tmpdir(), 'stim-doc-app-'));
+  });
+
+  afterEach(() => {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(project, { recursive: true, force: true });
+    delete process.env.STIM_HOME;
+  });
+
+  const findings = () => runDoctor(project, { concurrency: () => ({ maxBuilds: 0, maxDevices: 0 }) });
+
+  test('runDoctor reports a package.json that depends on neither react-native nor expo', () => {
+    writeFileSync(
+      join(project, 'package.json'),
+      JSON.stringify({ name: 'monorepo', devDependencies: { vitest: '5' } }),
+    );
+    const reported = findings().find((f) => /not a React Native or Expo app/.test(f.title));
+    assert(reported);
+    expect(reported.level).toBe('cost');
+    expect(reported.detail).toContain(join(project, 'package.json'));
+    expect(reported.detail).toMatch(/STIM_NO_PROJECT/);
+    expect(reported.fix).toMatch(/app directory/);
+  });
+
+  test('runDoctor reports a package.json that does not parse as its own finding', () => {
+    writeFileSync(join(project, 'package.json'), '{ "name": "app", "dependencies": { "react-native": "0.81.0"');
+    const reported = findings().find((f) => /does not parse/.test(f.title));
+    assert(reported);
+    expect(reported.level).toBe('cost');
+    expect(reported.detail).toContain(join(project, 'package.json'));
+    expect(reported.detail).not.toMatch(/neither react-native nor expo/);
+    expect(reported.fix).toMatch(/Fix the JSON/);
+    expect(findings().some((f) => /not a React Native or Expo app/.test(f.title))).toBe(false);
+  });
+
+  test('runDoctor stays silent when the package.json depends on react-native', () => {
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.81.0' } }));
+    expect(findings().some((f) => /not a React Native or Expo app/.test(f.title))).toBe(false);
+  });
 });
 
 test('runDoctor stays silent about concurrency when nothing is set', () => {
@@ -959,6 +1180,7 @@ test('runDoctor keeps shared checks and filters native checks and remote backend
       lookupAgentDevice: () => true,
       lookupEasCli: () => false,
       lookupSimSlim: () => false,
+      lookupCcache: () => true,
     };
 
     const ios = runDoctor(project, { ...options, platform: 'ios', xcodeMajor: 26 });
@@ -967,12 +1189,12 @@ test('runDoctor keeps shared checks and filters native checks and remote backend
     for (const findings of [ios, android]) {
       expect(findings.some((finding) => finding.title.includes('metro.config.js'))).toBe(true);
     }
-    expect(ios.some((finding) => finding.title.includes('ccache'))).toBe(true);
+    expect(ios.some((finding) => finding.title.includes('Stim leaves Xcode compilation caching off'))).toBe(true);
     expect(ios.some((finding) => finding.title.includes('SimSlim'))).toBe(true);
     expect(ios.some((finding) => finding.title === 'This project uses a remote proxy')).toBe(true);
     expect(ios.some((finding) => finding.title.includes('simulator pool bound'))).toBe(true);
     expect(ios.some((finding) => finding.title.includes('no eas-cli'))).toBe(false);
-    expect(android.some((finding) => finding.title.includes('ccache'))).toBe(false);
+    expect(android.some((finding) => finding.title.includes('Stim leaves Xcode compilation caching off'))).toBe(false);
     expect(android.some((finding) => finding.title.includes('SimSlim'))).toBe(false);
     expect(android.some((finding) => finding.title === 'This project uses a remote proxy')).toBe(false);
     expect(android.some((finding) => finding.title.includes('simulator pool bound'))).toBe(false);
@@ -1107,7 +1329,7 @@ test('doctor success output scopes native checks to Android', () => {
   expect(output).toContain('Doctor (Android)');
   expect(output).toContain('Android');
   expect(output).toContain('setup       warm state, dev client');
-  expect(output).toContain('caches      Metro, Gradle build provider');
+  expect(output).toContain('caches      Metro, Gradle, ccache, build provider');
   expect(output).not.toContain('Xcode compilation');
   expect(output).not.toContain('SimSlim');
 });
@@ -1166,6 +1388,10 @@ test('doctor --platform android does not invoke Xcode tooling', async () => {
     runFile: (file: string, args: string[]) => {
       calls.push([file, ...args].join(' '));
       return '';
+    },
+    runFileQuiet: (file: string, args: string[]) => {
+      calls.push([file, ...args].join(' '));
+      return null;
     },
     spawn: () => {
       throw new Error('unexpected spawn');

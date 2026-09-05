@@ -59,6 +59,31 @@ test('client_log levels map onto the contract, and a stack passes through', () =
   });
 });
 
+test('a client symbolication response becomes info-level error context', () => {
+  withDir((dir) => {
+    const reporter = ndjsonReporter({ dir });
+    reporter.update({
+      type: 'client_symbolication',
+      codeFrame: {
+        fileName: '/app/App.tsx',
+        location: { row: 18, column: 8 },
+        content: '> 18 | throw new Error("boom")',
+      },
+      stack: [
+        { file: '/app/App.tsx', lineNumber: 18, column: 8, methodName: 'App', collapse: false },
+        { file: '/app/internal.js', lineNumber: 1, column: 2, methodName: 'internal', collapse: true },
+      ],
+    });
+
+    const [record] = records(dir, 'client.ndjson');
+    expect(record.level).toBe('info');
+    expect(record.event).toBe('client_symbolication');
+    expect(record.msg).toContain('Code: /app/App.tsx:18:8');
+    expect(record.msg).toContain('Call Stack');
+    expect(record.stack).toEqual([{ file: '/app/App.tsx', line: 18, column: 8, fn: 'App' }]);
+  });
+});
+
 test('bundling_error and transformer_error are metro-side errors with the message extracted', () => {
   withDir((dir) => {
     const reporter = ndjsonReporter({ dir });

@@ -1,67 +1,30 @@
-import chalk from 'chalk';
+import { join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync } from 'node:fs';
-import { basename, join, relative } from 'node:path';
-import { spawnEntry } from '../spawn-entry.ts';
-import { InvalidArgumentError, type Command } from 'commander';
+import { type Command, InvalidArgumentError } from 'commander';
+import chalk from 'chalk';
 import {
-  createWarnOnce,
   loadCacheProvider,
+  createWarnOnce,
   resolveTieredBuild,
   storeTieredBuild,
   type LoadCacheProviderResult,
   type ProviderCallResult,
 } from '@stim-cli/cache';
-import type { AndroidFacts, RemoteDeviceBackend, SettingsObject, WaitedForBuild } from '../types.ts';
-import { formatDuration, launchErrorReport, phaseLine, shortHash, type LaunchErrorRecord } from '../command-output.ts';
-import { verifyCollectorOwnership } from '../collector/ownership.ts';
-import { getConcurrencyLimits, getProject, upsertProject } from '../config.ts';
-import { getExecutor } from '../exec.ts';
-import {
-  buildCacheKey,
-  describeFingerprintMiss,
-  filesystemBuildCapability,
-  fingerprintDiffRecord,
-  fingerprintDiffSuffix,
-  fingerprintProject,
-  prepareProviderDownloadDir,
-  providerDownloadPath,
-  providerUploadOutcome,
-  refingerprintAfterMutation,
-  resolveBuild,
-  storeBuild,
-  storedAssetManifest,
-  untrackedMissLine,
-  untrackedNativeFiles,
-} from '../build-cache.ts';
 import type { FingerprintSource } from '@expo/fingerprint';
+import { formatDuration, phaseLine, shortHash, SLOW_STEP_MS, stepClock, stepTimer } from '../command-output.ts';
+import type { CcacheActivity, RemoteDeviceBackend, WaitedForBuild } from '../types.ts';
 import {
-  acquireBuildLock,
-  releaseBuildLock,
-  takeoverLine,
-  waitForBuild as waitForOtherBuild,
-  type BuildLockHandle,
-  type WaitForBuildResult,
-} from '../engine/build-lock.ts';
-import { acquireBuildSlot, releaseBuildSlot, type BuildSlotHandle } from '../engine/build-slots.ts';
-import { createNdjsonWriter } from '../ndjson.ts';
-import { isPidAlive, resolveProjectMetro } from '../metro.ts';
-import { emulatorLogFile, workspaceDir, workspaceLogsDir } from '../paths.ts';
-import { detectAndroidPackage, detectBundleId, detectIsExpo, findProjectRoot, projectShortcut } from '../project.ts';
-import {
-  devClientScheme as configuredDevClientScheme,
-  ensureWorkspaceStorageSafely,
-  launchOutcomeRecord,
-  noMetroMessage,
-  noMetroRemedy,
-  pickDevClientScheme,
-  resolveMetroWithRetry,
-  SLOW_STEP_MS,
-  stepClock,
-  stepTimer,
-} from './ios.ts';
+  appProjectProblem,
+  findProjectRoot,
+  detectAndroidPackage,
+  detectBundleId,
+  detectIsExpo,
+  projectShortcut,
+} from '../project.ts';
 import {
   REMOTE_DEVICE_BACKENDS,
+  resolveCacheProviderConfig,
+  resolveSettings,
   SETTING_SHAPE_REMEDY,
   androidAvdConfigSettingError,
   androidDataPartitionSizeGbSettingError,
@@ -69,245 +32,166 @@ import {
   publicUrlSetting,
   remoteAndroidSetting,
   remoteDeviceSettingError,
-  resolveCacheProviderConfig,
-  resolveSettings,
   settingShapeErrors,
   tunnelModeSetting,
   unknownSettingKeys,
 } from '../settings.ts';
 import {
-  createRunRecorder,
+  waitFlagConflict,
+  acquireRunLease,
+  releaseLeaseOnSignal,
+  runLease,
+  leaseExpiryText,
+  parseDeviceWait,
+  type RunLease,
+} from '../engine/device-lease-run.ts';
+import { verifyCollectorOwnership } from '../collector/ownership.ts';
+import { getConcurrencyLimits, getProject, upsertProject } from '../config.ts';
+import {
+  fingerprintProject,
+  resolveBuild,
+  storeBuild,
+  storedAssetManifest,
+  untrackedNativeFiles,
+  buildCacheKey,
+  describeFingerprintMiss,
+  filesystemBuildCapability,
+  fingerprintDiffRecord,
+  fingerprintDiffSuffix,
+  prepareProviderDownloadDir,
+  providerDownloadPath,
+  refingerprintAfterMutation,
+  untrackedMissLine,
+} from '../build-cache.ts';
+import {
+  acquireBuildLock,
+  releaseBuildLock,
+  waitForBuild as waitForOtherBuild,
+  takeoverLine,
+  WAIT_CEILING_MS,
+  type BuildLockHandle,
+  type WaitForBuildResult,
+} from '../engine/build-lock.ts';
+import { acquireBuildSlot, releaseBuildSlot, type BuildSlotHandle } from '../engine/build-slots.ts';
+import { createNdjsonWriter } from '../ndjson.ts';
+import { isPidAlive, resolveProjectMetro } from '../metro.ts';
+import {
+  ensureWorkspaceStorageSafely,
+  resolveMetroWithRetry,
+  noMetroMessage,
+  noMetroRemedy,
+} from './native-runtime.ts';
+import {
   readRunEstimates,
   recordRunStats,
+  createRunRecorder,
   statsProjectKey,
   type RunEstimates,
-  type RunRecorder,
 } from '../engine/stats.ts';
-import { gitCommonDir, repoRoot } from '../worktree.ts';
-import { readCollectors } from '../collector/state.ts';
-import { MODE_BARE, MODE_EXPO, readWorkspaceState, writeWorkspaceState } from '../supervisor/state.ts';
+import { readWorkspaceState, writeWorkspaceLaunch, writeWorkspaceState } from '../supervisor/state.ts';
 import {
-  ADB_INSTALL_TIMEOUT_MS,
-  DEFAULT_METRO_PORT,
-  LAUNCH_BUNDLING,
-  LAUNCH_FATAL,
-  LAUNCH_UNVERIFIED,
-  RELEASE_VERIFY_WAIT_MS,
-  androidDevClientUrl,
   installAndroidApp,
   launchAndroidApp,
   launchAndroidReleaseApp,
-  unverifiedLaunchLines,
   verifyAndroidReleaseLaunch,
-  androidAppProcess,
-  installConflictKind,
   verifyLaunch,
+  ADB_INSTALL_TIMEOUT_MS,
+  DEFAULT_METRO_PORT,
 } from '../engine/app-install.ts';
 import {
-  androidHome,
-  androidPoolCandidates,
-  androidPoolNoCandidatesRefusal,
-  memoizeEmulatorProbe,
-  emulatorDiskSpaceRemedy,
-  emulatorFailureRemedy,
-  extractEmulatorFailure,
-  findBuildTool,
+  androidDeviceAbi,
   listAdbDevices,
   listInstalledSystemImages,
   physicalDeviceModel,
   probeEmulatorSerial,
   resolvePhysicalDevice,
 } from '../sim/android.ts';
+import { checkDeviceCapacity, ensureBooted, ensureOwnedDevice, type OwnedDeviceRecord } from '../engine/device.ts';
 import {
-  checkDeviceCapacity,
-  ensureBooted,
-  ensureOwnedDevice,
-  unknownAndroidSystemImageRefusal,
-  type OwnedDeviceRecord,
-} from '../engine/device.ts';
-import {
-  REMOTE_SESSION_ERROR,
-  binOnPath,
   ensureRemoteBootOwned,
   ensureMetroReachable as ensureRemoteMetroReachable,
   remoteAndroidDeps,
   resolveRemoteContext,
+  REMOTE_SESSION_ERROR,
+  binOnPath,
 } from '../engine/device-remote.ts';
 import { detectProviders } from '../engine/metro-reach.ts';
 import { selectFromPool } from '../engine/device-pool.ts';
-import {
-  DEBUG_VERIFY_STEP_MS,
-  acquireRunLease,
-  leaseExpiryText,
-  lostLine,
-  lostRefusal,
-  parseDeviceWait,
-  releaseLeaseOnSignal,
-  runLease,
-  waitFlagConflict,
-  type LeaseFacts,
-  type RunLease,
-} from '../engine/device-lease-run.ts';
-import { ownedSessionName } from '../engine/eas-simulator.ts';
 import { needsPrebuild, runPrebuild } from '../engine/prebuild.ts';
 import { buildAndroid, productFlavorRefusal, readProductFlavors } from '../engine/gradle.ts';
-import { resolveKeystore, swapApkBundle } from '../engine/apk-swap.ts';
+import { CCACHE_NOT_RUN, CCACHE_UNAVAILABLE, resolveCcache } from '../engine/ccache.ts';
+import { swapApkBundle, resolveKeystore } from '../engine/apk-swap.ts';
 import { captureAssetManifest } from '../engine/asset-manifest.ts';
 import {
-  RESOLVE_TIMEOUT_MS,
-  UPLOAD_TIMEOUT_MS,
-  cacheLevel,
-  exitAfterFlush,
   checkEasAuth,
   resolveEasCliBin,
-  easAuthNote,
-  isEasAuthFailureText,
   loadProjectProvider,
   resolveRemote,
   uploadRemote,
+  RESOLVE_TIMEOUT_MS,
+  easAuthNote,
+  isEasAuthFailureText,
   type LoadProjectProviderResult,
 } from '../engine/remote-cache.ts';
-import { formatDiagnostic, type Diagnostic } from '../engine/errors-gradle.ts';
+import {
+  androidBuildOptions,
+  androidDevClientScheme,
+  dumpApkManifest,
+  apkPackage,
+  PLATFORM,
+  resolveVariant,
+  resolveSystemImage,
+  systemImageRefusal,
+  isReleaseVariant,
+  NO_METRO,
+  NO_FINGERPRINT,
+  NO_DEVICE,
+  noDeviceDiagnostic,
+  displayPath,
+  pooledAndroidDevice,
+} from './android/support.ts';
+import { getExecutor } from '../exec.ts';
+import { emulatorLogFile, workspaceDir, workspaceLogsDir } from '../paths.ts';
+import { gitCommonDir, repoRoot } from '../worktree.ts';
+import { ownedSessionName } from '../engine/eas-simulator.ts';
+import { formatDiagnostic } from '../engine/errors-gradle.ts';
+import type {
+  SupervisorLike,
+  RemoteUploadLike,
+  PrebuildResultLike,
+  BuildAndroidResultLike,
+  FailExtra,
+  AndroidRecord,
+  RunAndroidResult,
+  AndroidBootLike,
+} from './android/types.ts';
+import { persistLastBuild } from './android/result.ts';
+import { finishAndroidRun } from './android/launch.ts';
+
+export { androidFacts, lastBuildRecord } from './android/result.ts';
+
+export { collectorLogFile, killPreviousCollector, startCollector } from './android/collector.ts';
+
+export {
+  androidVariantSetting,
+  resolveVariant,
+  androidSystemImageSetting,
+  resolveSystemImage,
+  isReleaseVariant,
+  NO_METRO,
+  NO_FINGERPRINT,
+  NO_DEVICE,
+  findAapt,
+  dumpApkManifest,
+  parseXmltree,
+  apkPackage,
+  apkDevClientFacts,
+  androidDevClientScheme,
+  noDeviceDiagnostic,
+  displayPath,
+} from './android/support.ts';
 
 export { formatDuration, phaseLine, shortHash } from '../command-output.ts';
-
-export const PLATFORM = 'android';
-
-export function androidVariantSetting(settings: SettingsObject | null | undefined): string | null {
-  const android = settings?.['android'];
-  if (!android || typeof android !== 'object' || Array.isArray(android)) return null;
-  const raw = (android as Record<string, unknown>)['variant'];
-  return typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : null;
-}
-
-export function resolveVariant(
-  flag: string | null | undefined,
-  settings: SettingsObject | null | undefined,
-): string | null {
-  const fromFlag = typeof flag === 'string' && flag.trim() !== '' ? flag.trim() : null;
-  return fromFlag || androidVariantSetting(settings);
-}
-
-export function androidSystemImageSetting(settings: SettingsObject | null | undefined): string | null {
-  const android = settings?.['android'];
-  if (!android || typeof android !== 'object' || Array.isArray(android)) return null;
-  const raw = (android as Record<string, unknown>)['systemImage'];
-  return typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : null;
-}
-
-export function resolveSystemImage(
-  flag: string | null | undefined,
-  settings: SettingsObject | null | undefined,
-): string | null {
-  const fromFlag = typeof flag === 'string' && flag.trim() !== '' ? flag.trim() : null;
-  return fromFlag || androidSystemImageSetting(settings);
-}
-
-function systemImageRefusal({
-  flag,
-  resolved,
-  physical,
-  remoteBackend,
-  listImages,
-}: {
-  flag: string | null | undefined;
-  resolved: string | null;
-  physical: boolean;
-  remoteBackend: string | null;
-  listImages: typeof listInstalledSystemImages;
-}): { code: string; message: string; remedy: string } | null {
-  if (typeof flag === 'string' && flag.trim() === '') {
-    return {
-      code: 'STIM_BAD_ARG',
-      message: '--system-image was given an empty id.',
-      remedy:
-        'Pass `--system-image <id>` with an sdkmanager package id, e.g. "system-images;android-36;google_apis;arm64-v8a".',
-    };
-  }
-  if (physical || remoteBackend) return null;
-  if (!resolved) return null;
-  let images;
-  try {
-    images = listImages();
-  } catch (error) {
-    return {
-      code: NO_DEVICE,
-      message: `Could not read the installed Android system images: ${(error as Error)?.message || error}`,
-      remedy: 'Check that ANDROID_HOME points at a readable SDK, then try again.',
-    };
-  }
-  const refusal = unknownAndroidSystemImageRefusal(resolved, images);
-  return refusal ? { code: 'STIM_BAD_ARG', message: refusal.message, remedy: refusal.remedy } : null;
-}
-
-export function isReleaseVariant(variant: string | null | undefined): boolean {
-  return typeof variant === 'string' && /release$/i.test(variant.trim());
-}
-
-interface SupervisorLike {
-  pid?: number;
-  port?: number;
-  mode?: string;
-}
-
-interface RemoteUploadLike {
-  uploaded?: boolean;
-  timedOut?: boolean;
-  failed?: string | null;
-}
-
-interface PrebuildResultLike {
-  failed?: boolean;
-  code?: string;
-  reason?: string;
-  remedy?: string;
-  lastLines?: string[];
-  durationMs?: number;
-}
-
-interface BuildAndroidResultLike {
-  failed?: boolean;
-  code?: string;
-  reason?: string;
-  remedy?: string;
-  diagnostics?: Diagnostic[];
-  truncated?: number;
-  lastLines?: string[];
-  durationMs?: number;
-  apkPath?: string;
-  apkNote?: string | null;
-}
-
-interface InstallResultLike {
-  failed?: boolean;
-  code?: string;
-  reason?: string;
-  note?: string;
-  skipped?: boolean;
-}
-
-interface LaunchResultLike {
-  failed?: boolean;
-  code?: string;
-  reason?: string;
-  mode?: string;
-  component?: string;
-  devClientNote?: string | null;
-  devClientUrl?: string;
-  reversed?: string[];
-  debugHttpHost?: string | null;
-  debugHttpHostNote?: string | null;
-}
-
-interface VerifyLaunchResultLike {
-  verified?: boolean;
-  skipped?: boolean;
-  requested?: boolean;
-  fatal?: boolean;
-  processAlive?: boolean | null;
-  errors?: LaunchErrorRecord[];
-  waitedMs?: number;
-}
 
 interface AndroidCommandOptions {
   json?: boolean;
@@ -320,377 +204,7 @@ interface AndroidCommandOptions {
   wait?: string | boolean;
 }
 
-interface FailExtra {
-  lastBuildStatus?: boolean;
-  diagnostics?: string[];
-  lines?: string[];
-  logPath?: string | null;
-  lease?: LeaseFacts | null;
-}
-
-interface AndroidRecord {
-  fingerprint?: string | null;
-  cacheKey?: string | null;
-  cacheHit?: boolean | string;
-  cacheSkipped?: boolean;
-  appPath?: string | null;
-  bundleId?: string | null;
-  avdName?: string | null;
-  deviceName?: string | null;
-  systemImage?: string | null;
-}
-
-export const NO_METRO = 'STIM_NO_METRO';
-export const NO_FINGERPRINT = 'STIM_NO_FINGERPRINT';
-export const NO_DEVICE = 'STIM_NO_DEVICE';
-export const INSTALL_FAILED = 'STIM_INSTALL_FAILED';
-export const LAUNCH_FAILED = 'STIM_LAUNCH_FAILED';
-
 const FALLBACK_LINES = 5;
-
-interface XmlNode {
-  tag: string;
-  attrs: Record<string, string | null>;
-  children: XmlNode[];
-  indent: number;
-}
-
-interface AaptTool {
-  path: string;
-  tool: string;
-  version: string;
-}
-
-export function findAapt(
-  home: string = androidHome(),
-  {
-    readDir = readdirSync,
-    exists = existsSync,
-  }: { readDir?: (path: string) => string[]; exists?: (path: string) => boolean } = {},
-): AaptTool | null {
-  const found = findBuildTool(['aapt', 'aapt2'], { home, readDir, exists });
-  return found ? { path: found.path, tool: found.tool, version: found.version } : null;
-}
-
-export function dumpApkManifest(
-  apkPath: unknown,
-  { exec = null, aapt = null }: { exec?: import('../exec.ts').Executor | null; aapt?: AaptTool | null } = {},
-): string | null {
-  if (typeof apkPath !== 'string' || apkPath.trim() === '') return null;
-  const tool = aapt || findAapt();
-  if (!tool) return null;
-  const e = exec || getExecutor();
-  const args =
-    tool.tool === 'aapt2'
-      ? ['dump', 'xmltree', '--file', 'AndroidManifest.xml', apkPath]
-      : ['dump', 'xmltree', apkPath, 'AndroidManifest.xml'];
-  try {
-    const out = e.runFile(tool.path, args);
-    return typeof out === 'string' && out.includes('E: manifest') ? out : null;
-  } catch {
-    return null;
-  }
-}
-
-export function parseXmltree(text: unknown): XmlNode {
-  const root: XmlNode = { tag: '#root', attrs: {}, children: [], indent: -1 };
-  const stack: XmlNode[] = [root];
-  for (const raw of String(text ?? '').split('\n')) {
-    const indent = raw.search(/\S/);
-    if (indent < 0) continue;
-    const line = raw.trim();
-    const element = /^E: ([\w.:-]+)/.exec(line);
-    if (element) {
-      while (stack.length > 1 && stack[stack.length - 1]!.indent >= indent) stack.pop();
-      const node: XmlNode = { tag: element[1]!, attrs: {}, children: [], indent };
-      stack[stack.length - 1]!.children.push(node);
-      stack.push(node);
-      continue;
-    }
-    const attr = /^A: ([^(=]+?)(?:\(0x[0-9a-f]+\))?=(.*)$/.exec(line);
-    if (attr && stack.length > 1) {
-      const name = attr[1]!.replace(/^http:\/\/schemas\.android\.com\/apk\/res\/android:/, 'android:');
-      const value = /^"((?:[^"\\]|\\.)*)"/.exec(attr[2]!);
-      stack[stack.length - 1]!.attrs[name] = value ? value[1]! : null;
-    }
-  }
-  return root;
-}
-
-function eachNode(node: XmlNode, fn: (node: XmlNode) => void): void {
-  fn(node);
-  for (const child of node.children) eachNode(child, fn);
-}
-
-interface ApkDevClientFacts {
-  devClient: boolean;
-  schemes: string[];
-}
-
-export function apkPackage(text: unknown): string | null {
-  const root = parseXmltree(text);
-  const manifest = root.children.find((c) => c.tag === 'manifest');
-  const pkg = manifest?.attrs['package'];
-  return typeof pkg === 'string' && pkg.trim() ? pkg.trim() : null;
-}
-
-export function apkDevClientFacts(text: unknown): ApkDevClientFacts {
-  const root = parseXmltree(text);
-  const facts: ApkDevClientFacts = { devClient: false, schemes: [] };
-  let launchable: XmlNode | null = null;
-  eachNode(root, (node) => {
-    const name = node.attrs['android:name'];
-    if (typeof name === 'string' && name.startsWith('expo.modules.devlauncher')) facts.devClient = true;
-    if (node.tag !== 'activity' && node.tag !== 'activity-alias') return;
-    const filters = node.children.filter((c) => c.tag === 'intent-filter');
-    const isLauncher = filters.some((f) =>
-      f.children.some((c) => c.tag === 'action' && c.attrs['android:name'] === 'android.intent.action.MAIN'),
-    );
-    if (!isLauncher || launchable) return;
-    launchable = node;
-    for (const filter of filters) {
-      for (const data of filter.children) {
-        if (data.tag !== 'data') continue;
-        const scheme = data.attrs['android:scheme'];
-        if (typeof scheme === 'string' && scheme.trim()) facts.schemes.push(scheme.trim());
-      }
-    }
-  });
-  return facts;
-}
-
-export function androidDevClientScheme(
-  root: string,
-  apkPath: unknown,
-  {
-    exec = null,
-    dump = dumpApkManifest,
-    aapt = null,
-  }: { exec?: import('../exec.ts').Executor | null; dump?: typeof dumpApkManifest; aapt?: AaptTool | null } = {},
-): string | null | undefined {
-  const text = dump(apkPath, { exec, aapt });
-  if (text) {
-    const facts = apkDevClientFacts(text);
-    if (!facts.devClient) return undefined;
-    const scheme = pickDevClientScheme(facts.schemes);
-    if (scheme) return scheme;
-  }
-  return configuredDevClientScheme(root, null);
-}
-
-export function collectorEntry(): string {
-  return spawnEntry('collector-run');
-}
-
-export function collectorLogFile(root: string): string {
-  return join(workspaceLogsDir(root), `collector-${PLATFORM}.log`);
-}
-
-const EMULATOR_LOG_TAIL_LINES = 400;
-
-export function noDeviceDiagnostic({
-  reason,
-  logFile,
-  remedy,
-  localEmulator = true,
-  readLog = readEmulatorLogTail,
-}: {
-  reason: string;
-  logFile: string;
-  remedy: string;
-  localEmulator?: boolean;
-  readLog?: (file: string) => string;
-}): { message: string; remedy: string; lines: string[]; logPath: string | null } {
-  const text = localEmulator ? readLog(logFile) : '';
-  const logPath = text.trim() ? logFile : null;
-  const found = extractEmulatorFailure(text);
-  const diskRemedy = localEmulator ? emulatorDiskSpaceRemedy([reason, ...found]) : null;
-  if (found.length === 0) {
-    return {
-      message: reason,
-      remedy: diskRemedy ?? remedy,
-      lines: [],
-      logPath,
-    };
-  }
-  return {
-    message: `${reason} The emulator reported: ${found[0]}`,
-    remedy: diskRemedy ?? emulatorFailureRemedy(found),
-    lines: found.slice(1),
-    logPath,
-  };
-}
-
-function readEmulatorLogTail(file: string): string {
-  try {
-    return readFileSync(file, 'utf-8').split('\n').slice(-EMULATOR_LOG_TAIL_LINES).join('\n');
-  } catch {
-    return '';
-  }
-}
-
-export function displayPath(root: string, path: string): string {
-  const rel = relative(root, path);
-  return rel && !rel.startsWith('..') ? rel : path;
-}
-
-export function androidFacts({
-  serial,
-  avdName = null,
-  deviceName = null,
-  systemImage = null,
-  fingerprint,
-  cacheKey = null,
-  variant = null,
-  metroPort = null,
-  cacheHit,
-  cacheSkipped = false,
-  waitedForBuild = null,
-  appPath,
-  bundleId,
-  installSkipped = false,
-  launched,
-  logs,
-  debugHttpHost = null,
-  debugHttpHostNote = null,
-  devClientUrl = null,
-  durationMs,
-  lease,
-}: {
-  serial?: string | null;
-  avdName?: string | null;
-  deviceName?: string | null;
-  systemImage?: string | null;
-  fingerprint?: string | null;
-  cacheKey?: string | null;
-  variant?: string | null;
-  metroPort?: number | null;
-  cacheHit?: boolean | string;
-  cacheSkipped?: boolean;
-  waitedForBuild?: WaitedForBuild | null;
-  appPath?: string | null;
-  bundleId?: string | null;
-  installSkipped?: boolean;
-  launched?: boolean | string;
-  logs?: string | null;
-  debugHttpHost?: string | null;
-  debugHttpHostNote?: string | null;
-  devClientUrl?: string | null;
-  durationMs?: number;
-  lease?: { kind: string; expiresAt: string } | null;
-}): AndroidFacts {
-  return {
-    platform: PLATFORM,
-    serial: serial ?? null,
-    avdName: avdName ?? null,
-    deviceName: deviceName ?? avdName ?? null,
-    systemImage: systemImage ?? null,
-    fingerprint: fingerprint ?? null,
-    cacheKey: cacheKey ?? null,
-    variant: variant ?? null,
-    metroPort: metroPort ?? null,
-    cacheHit: cacheLevel(cacheHit),
-    cacheSkipped: Boolean(cacheSkipped),
-    waitedForBuild: waitedForBuild ? { pid: waitedForBuild.pid ?? null, ms: waitedForBuild.ms ?? 0 } : null,
-    appPath: appPath ?? null,
-    bundleId: bundleId ?? null,
-    installSkipped: Boolean(installSkipped),
-    launched: launched === LAUNCH_UNVERIFIED || launched === LAUNCH_BUNDLING ? launched : Boolean(launched),
-    debugHttpHost: debugHttpHost ?? null,
-    debugHttpHostNote: debugHttpHostNote ?? null,
-    devClientUrl: devClientUrl ?? null,
-    logs: logs ?? null,
-    durationMs: typeof durationMs === 'number' && Number.isFinite(durationMs) ? durationMs : null,
-    ...(lease === undefined ? {} : { lease }),
-  };
-}
-
-export function lastBuildRecord({
-  fingerprint,
-  cacheKey,
-  cacheHit,
-  cacheSkipped = false,
-  durationMs,
-  appPath,
-  bundleId,
-  startedAt,
-  status,
-  errorCode = null,
-  avdName = null,
-  deviceName = null,
-}: {
-  fingerprint?: string | null;
-  cacheKey?: string | null;
-  cacheHit?: boolean | string;
-  cacheSkipped?: boolean;
-  durationMs?: number;
-  appPath?: string | null;
-  bundleId?: string | null;
-  startedAt: string;
-  status: string;
-  errorCode?: string | null;
-  avdName?: string | null;
-  deviceName?: string | null;
-}): Record<string, unknown> {
-  const record: Record<string, unknown> = {
-    platform: PLATFORM,
-    avdName: avdName ?? null,
-    deviceName: deviceName ?? avdName ?? null,
-    fingerprint: fingerprint ?? null,
-    cacheKey: cacheKey ?? null,
-    cacheHit: cacheLevel(cacheHit),
-    cacheSkipped: Boolean(cacheSkipped),
-    durationMs: Number.isFinite(durationMs) ? durationMs : null,
-    appPath: appPath ?? null,
-    bundleId: bundleId ?? null,
-    startedAt,
-    status,
-  };
-  if (errorCode) record.errorCode = errorCode;
-  return record;
-}
-
-const COLLECTOR_EXIT_WAIT_MS = 2000;
-const COLLECTOR_POLL_MS = 25;
-
-export function killPreviousCollector(
-  root: string,
-  {
-    platform = PLATFORM,
-    kill = (pid: number, signal: NodeJS.Signals) => process.kill(pid, signal),
-    collectors = null,
-    verify = verifyCollectorOwnership,
-    isAlive = isPidAlive,
-    note = (_line: string) => {},
-  }: {
-    platform?: string;
-    kill?: (pid: number, signal: NodeJS.Signals) => boolean;
-    collectors?: Record<string, { pid?: number }> | null;
-    verify?: typeof verifyCollectorOwnership;
-    isAlive?: (pid: number) => boolean;
-    note?: (line: string) => void;
-  } = {},
-): number | null {
-  const record = (collectors ?? readCollectors(root))?.[platform] as { pid?: number } | undefined;
-  const pid = Number(record?.pid);
-  if (!Number.isFinite(pid) || pid <= 0 || pid === process.pid) return null;
-  const ownership = verify({ pid, platform, root, isAlive });
-  if (ownership.status === 'gone') return null;
-  if (ownership.status === 'unverified') {
-    note(
-      chalk.dim(
-        `Previous ${platform} log collector (pid ${pid}): ${ownership.reason}, so it was not signalled -- starting a replacement anyway`,
-      ),
-    );
-    return null;
-  }
-  try {
-    kill(pid, 'SIGTERM');
-    return pid;
-  } catch {
-    return null;
-  }
-}
 
 export default function androidCommand(program: Command): void {
   registerAndroid(program);
@@ -783,6 +297,7 @@ interface RunAndroidOptions {
   onLeaseSignal?: typeof releaseLeaseOnSignal;
   listDevices?: typeof listAdbDevices;
   deviceModel?: typeof physicalDeviceModel;
+  deviceAbi?: typeof androidDeviceAbi;
   isEmulatorDevice?: typeof probeEmulatorSerial;
   readApkPackage?: (apkPath: string | null) => string | null;
   remoteDevice?: RemoteDeviceBackend | null;
@@ -824,6 +339,7 @@ interface RunAndroidOptions {
   needsPrebuildFor?: typeof needsPrebuild;
   prebuild?: typeof runPrebuild;
   build?: typeof buildAndroid;
+  ccacheFor?: typeof resolveCcache;
   install?: typeof installAndroidApp;
   launch?: typeof launchAndroidApp;
   launchRelease?: typeof launchAndroidReleaseApp;
@@ -833,682 +349,13 @@ interface RunAndroidOptions {
   spawn?: (cmd: string, args: readonly string[], opts: Record<string, unknown>) => ChildProcess;
   kill?: (pid: number, signal: NodeJS.Signals) => boolean;
   createWriter?: typeof createNdjsonWriter;
+  writeLaunch?: typeof writeWorkspaceLaunch;
   writeState?: typeof writeWorkspaceState;
   recordStats?: typeof recordRunStats;
   readEstimates?: typeof readRunEstimates;
   now?: () => number;
   out?: (line: string) => void;
   emit?: (line: string) => void;
-}
-
-interface RunAndroidResult {
-  ok: boolean;
-  error?: { code?: string; message?: string | null; remedy?: string | null };
-  facts?: AndroidFacts;
-}
-
-interface AndroidBootLike {
-  ok?: boolean;
-  failed?: boolean;
-  serial?: string;
-  reason?: string;
-  code?: string;
-  remedy?: string;
-}
-
-type AndroidWriter = ReturnType<typeof createNdjsonWriter>;
-
-interface VerifyAndroidRunArgs {
-  release: boolean;
-  remoteRelease: boolean;
-  verifyReleaseLaunched: typeof verifyAndroidReleaseLaunch;
-  verifyLaunched: typeof verifyLaunch;
-  serial: string;
-  androidPackage: string;
-  variant: string | null;
-  metroCheck: boolean;
-  logsDir: string;
-  launchedAt: number;
-  metroPort: number | null;
-  isExpo: boolean;
-  physical: boolean;
-  scheme?: string | null;
-  phase: (label: unknown, text: string) => void;
-}
-
-async function verifyAndroidRun({
-  release,
-  remoteRelease,
-  verifyReleaseLaunched,
-  verifyLaunched,
-  serial,
-  androidPackage,
-  variant,
-  metroCheck,
-  logsDir,
-  launchedAt,
-  metroPort,
-  isExpo,
-  physical,
-  scheme,
-  phase,
-}: VerifyAndroidRunArgs): Promise<boolean | string> {
-  if (remoteRelease) {
-    phase('verify', chalk.yellow('UNVERIFIED: remote adapter launch accepted; process verification is unavailable'));
-    return LAUNCH_UNVERIFIED;
-  }
-  if (release) {
-    const processCheck = await verifyReleaseLaunched({ serial, packageName: androidPackage });
-    if (processCheck?.verified) {
-      phase(
-        'verify',
-        `process alive ${formatDuration(processCheck.waitedMs ?? 0)} after launch (${variant}: no bundle fetch to observe)`,
-      );
-      return true;
-    }
-    if (processCheck?.reason === 'probe-failed') {
-      phase('verify', chalk.yellow('UNVERIFIED: the app process check failed'));
-      return LAUNCH_UNVERIFIED;
-    }
-    phase(
-      'verify',
-      chalk.yellow(
-        `UNVERIFIED: no ${androidPackage} process on ${serial} ${formatDuration(processCheck?.waitedMs ?? 0)} after launch`,
-      ),
-    );
-    phase(
-      '',
-      chalk.yellow(
-        'A release app that dies at startup usually crashed loading its embedded bundle; `stim logs --errors` has the device log that says why.',
-      ),
-    );
-    return LAUNCH_FATAL;
-  }
-
-  const verification: VerifyLaunchResultLike = metroCheck
-    ? await verifyLaunched({
-        logsDir,
-        since: launchedAt,
-        metroPort,
-        platform: 'android',
-        mode: isExpo ? MODE_EXPO : MODE_BARE,
-        processAlive: () => {
-          const pid = androidAppProcess(serial, androidPackage);
-          return pid === undefined ? null : pid !== null;
-        },
-      })
-    : { verified: false, skipped: true };
-  if (verification?.fatal) {
-    const reason = verification.processAlive === false ? 'the app process exited' : 'Metro could not build the bundle';
-    phase('verify', chalk.red(`FATAL after ${formatDuration(verification.waitedMs ?? 0)}: ${reason}`));
-    for (const record of verification.errors ?? []) {
-      if (record.msg) phase('', chalk.red(String(record.msg)));
-    }
-    return LAUNCH_FATAL;
-  }
-  if (verification?.verified) {
-    phase(
-      'verify',
-      `bundle loaded` +
-        (verification.processAlive === true ? ', process alive' : '') +
-        `, stable for 3s -- the first screen may still be rendering` +
-        ` (${formatDuration(verification.waitedMs ?? 0)} total)`,
-    );
-    const report = launchErrorReport(verification.errors ?? []);
-    if (report.summary) phase('launch', chalk.dim(report.summary));
-    for (const line of report.lines) phase('launch', chalk.yellow(line));
-    return true;
-  }
-  if (verification?.skipped) {
-    phase('verify', 'skipped (--no-metro-check): the launch is reported as unverified');
-    return LAUNCH_UNVERIFIED;
-  }
-  if (verification?.requested) {
-    phase(
-      'verify',
-      `BUNDLING: the app asked port ${metroPort} for its bundle and Metro was still building it ` +
-        `after ${formatDuration(verification.waitedMs ?? 0)} (a cold bundle on a large graph outlasts this window)`,
-    );
-    phase(
-      '',
-      chalk.dim('Nothing to do: `stim logs --source metro` shows the build finishing, usually within a minute.'),
-    );
-    return LAUNCH_BUNDLING;
-  }
-
-  phase('verify', chalk.yellow("UNVERIFIED: no bundle request reached this workspace's Metro"));
-  for (const line of unverifiedLaunchLines({
-    platform: PLATFORM,
-    metroPort: metroPort ?? DEFAULT_METRO_PORT,
-    waitedMs: verification?.waitedMs,
-    bundleId: androidPackage,
-    serial,
-    devClientUrl: scheme ? androidDevClientUrl(scheme, metroPort ?? DEFAULT_METRO_PORT, physical) : null,
-    mode: isExpo ? MODE_EXPO : MODE_BARE,
-  }))
-    phase('', chalk.yellow(line));
-  return LAUNCH_UNVERIFIED;
-}
-
-async function finishAndroidUpload(
-  uploadPending: Promise<RemoteUploadLike> | null,
-  remote: LoadProjectProviderResult | null,
-  phase: (label: unknown, text: string) => void,
-): Promise<boolean> {
-  if (!uploadPending) return false;
-  const upload = await uploadPending;
-  if (upload?.uploaded) {
-    phase('cache', `uploaded (${remote?.name})`);
-  } else if (upload?.timedOut) {
-    phase(
-      'cache',
-      chalk.yellow(`${remote?.name} upload still running after ${formatDuration(UPLOAD_TIMEOUT_MS)}; not waiting`),
-    );
-    return true;
-  } else if (upload?.failed) {
-    const authNote =
-      remote?.name === 'eas' && isEasAuthFailureText(upload.failed)
-        ? easAuthNote({ code: 'logged-out', reason: upload.failed, phase: 'upload' })
-        : null;
-    phase('cache', chalk.yellow(authNote || `${remote?.name} upload failed: ${upload.failed}`));
-  }
-  return false;
-}
-
-interface ReportAndroidResultArgs {
-  lease?: { kind: string; expiresAt: string } | null;
-  json: boolean;
-  useBuildCache: boolean;
-  variant: string | null;
-  release: boolean;
-  metroCheck: boolean;
-  metroPort: number | null;
-  logsDir: string | null;
-  serial: string;
-  apkPath: string | null;
-  androidPackage: string;
-  installSkipped: boolean;
-  record: AndroidRecord;
-  waitedForBuild: WaitedForBuild | null;
-  remote: LoadProjectProviderResult | null;
-  providerName: string | null;
-  launchState: boolean | string;
-  launched: LaunchResultLike;
-  durationMs: number;
-  writer: AndroidWriter;
-  emit: (line: string) => void;
-  recordRun: RunRecorder['record'];
-}
-
-function reportAndroidResult({
-  json,
-  useBuildCache,
-  variant,
-  release,
-  metroCheck,
-  metroPort,
-  logsDir,
-  serial,
-  apkPath,
-  androidPackage,
-  installSkipped,
-  record,
-  waitedForBuild,
-  remote,
-  providerName,
-  launchState,
-  launched,
-  durationMs,
-  writer,
-  emit,
-  lease,
-  recordRun,
-}: ReportAndroidResultArgs): AndroidFacts {
-  recordRun({ failed: false, cacheHit: cacheLevel(record.cacheHit), waited: waitedForBuild, durationMs });
-  const facts = androidFacts({
-    serial,
-    avdName: record.avdName,
-    deviceName: record.deviceName,
-    systemImage: record.systemImage,
-    debugHttpHost: launched.debugHttpHost ?? null,
-    debugHttpHostNote: launched.debugHttpHostNote ?? null,
-    devClientUrl: launched.devClientUrl ?? null,
-    fingerprint: record.fingerprint,
-    cacheKey: record.cacheKey,
-    variant,
-    metroPort,
-    cacheHit: record.cacheHit,
-    cacheSkipped: !useBuildCache,
-    waitedForBuild,
-    appPath: apkPath,
-    bundleId: androidPackage,
-    installSkipped,
-    launched: launchState,
-    logs: logsDir,
-    durationMs,
-    lease,
-  });
-  writer.close();
-
-  if (json) {
-    emit(JSON.stringify(facts));
-  } else {
-    const summary =
-      `OK: ${androidPackage} launched on ${serial}, ` +
-      `${release ? `${variant} (embedded JS, no Metro)` : `Metro port ${metroPort}`} ` +
-      `(${cacheOutcome(record.cacheHit, remote?.name ?? providerName)})`;
-    const outcome =
-      launchState === LAUNCH_UNVERIFIED
-        ? chalk.yellow(`${summary} -- launch UNVERIFIED`)
-        : launchState === LAUNCH_BUNDLING
-          ? chalk.green(`${summary} -- bundle requested, still building`)
-          : chalk.green(summary);
-    const deviceName = record.avdName || record.deviceName || serial;
-    const cacheResult = useBuildCache ? cacheOutcome(record.cacheHit, remote?.name ?? providerName) : 'bypassed; built';
-    const metroResult = release
-      ? `embedded (${variant})`
-      : !metroCheck
-        ? `check skipped on port ${metroPort}`
-        : launchState === LAUNCH_UNVERIFIED
-          ? `state unverified on port ${metroPort}`
-          : `running on port ${metroPort}`;
-    emit(
-      [
-        outcome,
-        phaseLine('device', `${deviceName} (${serial})`),
-        phaseLine('app', androidPackage),
-        phaseLine('metro', metroResult),
-        phaseLine('cache', cacheResult),
-        phaseLine('logs', logsDir || 'unavailable (remote device)'),
-      ].join('\n'),
-    );
-  }
-  return facts;
-}
-
-interface FinishAndroidRunArgs {
-  lease: RunLease | null;
-  releaseLease: () => void;
-  root: string;
-  json: boolean;
-  metroCheck: boolean;
-  useBuildCache: boolean;
-  variant: string | null;
-  release: boolean;
-  isExpo: boolean;
-  metroPort: number | null;
-  logsDir: string;
-  emuLog: string;
-  device: OwnedDeviceRecord;
-  physical: boolean;
-  remoteDevice: ReturnType<typeof remoteAndroidDeps> | null;
-  bootPromise: Promise<AndroidBootLike>;
-  bootDuration: () => string;
-  apkPath: string | null;
-  androidPackage: string | null;
-  swapDir: string | null;
-  record: AndroidRecord;
-  waitedForBuild: WaitedForBuild | null;
-  uploadPending: Promise<RemoteUploadLike> | null;
-  providerUpload: Promise<ProviderCallResult<void>> | null;
-  providerName: string | null;
-  remote: LoadProjectProviderResult | null;
-  abandonedRemote: boolean;
-  started: number;
-  startedAt: string;
-  writer: AndroidWriter;
-  phase: (label: unknown, text: string) => void;
-  fail: (
-    code: string | undefined,
-    message?: string | null,
-    remedy?: string | null,
-    extra?: FailExtra,
-  ) => RunAndroidResult;
-  readApkPackage: (apkPath: string | null) => string | null;
-  install: typeof installAndroidApp;
-  launch: typeof launchAndroidApp;
-  launchRelease: typeof launchAndroidReleaseApp;
-  resolveDevClientScheme: typeof androidDevClientScheme;
-  verifyLaunched: typeof verifyLaunch;
-  verifyReleaseLaunched: typeof verifyAndroidReleaseLaunch;
-  spawn: (cmd: string, args: readonly string[], opts: Record<string, unknown>) => ChildProcess;
-  kill: (pid: number, signal: NodeJS.Signals) => boolean;
-  pidAlive: typeof isPidAlive;
-  verifyCollector: typeof verifyCollectorOwnership;
-  writeState: typeof writeWorkspaceState;
-  now: () => number;
-  out: (line: string) => void;
-  emit: (line: string) => void;
-  recordRun: ReportAndroidResultArgs['recordRun'];
-}
-
-async function finishAndroidRun({
-  lease,
-  releaseLease,
-  root,
-  json,
-  metroCheck,
-  useBuildCache,
-  variant,
-  release,
-  isExpo,
-  metroPort,
-  logsDir,
-  emuLog,
-  device,
-  physical,
-  remoteDevice,
-  bootPromise,
-  bootDuration,
-  apkPath,
-  androidPackage: initialPackage,
-  swapDir,
-  record,
-  waitedForBuild,
-  uploadPending,
-  providerUpload,
-  providerName,
-  remote,
-  abandonedRemote: remoteWasAbandoned,
-  started,
-  startedAt,
-  writer,
-  phase,
-  fail,
-  readApkPackage,
-  install,
-  launch,
-  launchRelease,
-  resolveDevClientScheme,
-  verifyLaunched,
-  verifyReleaseLaunched,
-  spawn,
-  kill,
-  pidAlive,
-  verifyCollector,
-  writeState,
-  now,
-  out,
-  emit,
-  recordRun,
-}: FinishAndroidRunArgs): Promise<RunAndroidResult> {
-  let androidPackage = initialPackage;
-  let leaseWarned = false;
-  const raiseLeaseFor = (boundMs: number, beforeInstall: boolean): RunAndroidResult | null => {
-    const step = lease?.raise(boundMs);
-    if (!step || step.ok) return null;
-    if (beforeInstall) {
-      const refusal = lostRefusal(step.holder, step.expiresAt, now());
-      return fail(refusal.code, refusal.message, refusal.remedy, { lease: refusal.lease });
-    }
-    if (!leaseWarned) {
-      leaseWarned = true;
-      phase('lease', chalk.yellow(lostLine(step.holder, step.expiresAt, now())));
-    }
-    return null;
-  };
-
-  const booted = await bootPromise;
-  if (booted.failed) {
-    const diag = noDeviceDiagnostic({
-      reason: booted.reason ?? 'The emulator did not boot.',
-      logFile: emuLog,
-      remedy: 'Run `stim status` to see what Stim thinks it owns; re-running `stim android` creates a fresh owned AVD.',
-      localEmulator: !physical,
-    });
-    return fail(NO_DEVICE, diag.message, diag.remedy, {
-      lines: diag.lines,
-      logPath: diag.logPath ? displayPath(root, diag.logPath) : null,
-    });
-  }
-  const serial = booted.serial!;
-  phase(
-    'device',
-    physical
-      ? `${device.deviceName || serial} (${serial}) connected, not owned by Stim`
-      : `${device.avdName || serial} (${serial}) booted ${bootDuration()}`,
-  );
-
-  const packageFromApk = readApkPackage(apkPath);
-  if (packageFromApk && androidPackage && packageFromApk !== androidPackage) {
-    phase('install', chalk.dim(`applicationId ${packageFromApk} (from the APK; project files say ${androidPackage})`));
-  }
-  androidPackage = packageFromApk || androidPackage || detectAndroidPackage(root);
-
-  const lostBeforeInstall = physical ? raiseLeaseFor(ADB_INSTALL_TIMEOUT_MS, true) : null;
-  if (lostBeforeInstall) return lostBeforeInstall;
-  const installTimer = stepTimer(now);
-  const installed: InstallResultLike = install({
-    serial,
-    apkPath: apkPath!,
-    packageName: androidPackage,
-    allowUninstall: release,
-  });
-  if (installed.failed) {
-    const conflict = installConflictKind(installed.reason);
-    const rerun = useBuildCache
-      ? ' Then run this command again; it installs the APK from cache without building it again.'
-      : ' Then run this command again.';
-    const installRemedy = conflict
-      ? `${androidPackage} is already installed on ${serial} ` +
-        (conflict === 'signature' ? 'with a different signer' : 'at a higher versionCode') +
-        `. Uninstall it first (\`adb -s ${serial} uninstall ${androidPackage}\`); its data goes with it.` +
-        rerun
-      : `Check that ${serial} is still connected (\`adb devices\`) and has room for the APK.`;
-    return fail(installed.code || INSTALL_FAILED, installed.reason, installRemedy, { lastBuildStatus: true });
-  }
-  const installSkipped = Boolean(installed.skipped);
-  phase(
-    'install',
-    installSkipped
-      ? `unchanged (${serial} already has this build) ${installTimer()}`
-      : `${basename(apkPath!)} -> ${serial} ${installTimer()}`,
-  );
-  if (installed.note) {
-    phase('install', chalk.yellow(installed.note));
-    writer.write({ src: 'build', level: 'warn', event: 'install_uninstalled_first', msg: installed.note });
-  }
-  if (swapDir) {
-    try {
-      rmSync(swapDir, { recursive: true, force: true });
-    } catch {}
-  }
-
-  if (androidPackage) upsertProject(root, { androidPackage });
-  record.bundleId = androidPackage;
-  if (!androidPackage) {
-    return fail(
-      LAUNCH_FAILED,
-      "Could not determine this app's Android package name, so there is nothing to launch.",
-      'Set `expo.android.package` in app.json / app.config.js, or `namespace` in android/app/build.gradle.',
-      { lastBuildStatus: true },
-    );
-  }
-
-  if (physical) raiseLeaseFor(0, false);
-  const scheme = release ? undefined : resolveDevClientScheme(root, apkPath);
-  const launchTimer = stepTimer(now);
-  const launchedAt = now();
-  const launched: LaunchResultLike = release
-    ? remoteDevice
-      ? remoteDevice.launch({ serial, packageName: androidPackage, metroPort: null })
-      : launchRelease({ serial, packageName: androidPackage })
-    : launch({
-        serial,
-        packageName: androidPackage,
-        metroPort: metroPort ?? DEFAULT_METRO_PORT,
-        devClientScheme: scheme,
-        physical,
-      });
-  if (launched.failed) {
-    return fail(
-      launched.code || LAUNCH_FAILED,
-      launched.reason,
-      `Check the app installed correctly (\`adb -s ${serial} shell pm list packages ${androidPackage}\`).`,
-      { lastBuildStatus: true },
-    );
-  }
-  writer.write({
-    src: 'build',
-    level: 'info',
-    event: 'app_launched',
-    marker: true,
-    msg: release
-      ? `launched ${androidPackage} on ${serial} (${variant}, embedded JS bundle, no Metro)`
-      : `launched ${androidPackage} on ${serial} against Metro port ${metroPort}`,
-  });
-  phase('launch', `${androidPackage} ${launchTimer()}`);
-
-  const reversedSummary = (launched.reversed ?? []).join(', ') || `tcp:${metroPort}->tcp:${metroPort}`;
-  if (!release && launched.debugHttpHost) {
-    phase('metro', `debug_http_host ${launched.debugHttpHost} + adb reverse ${reversedSummary}`);
-  } else if (!release) {
-    phase(
-      'metro',
-      chalk.yellow(`adb reverse ${reversedSummary}; ${launched.debugHttpHostNote || 'debug_http_host not written'}`),
-    );
-    writer.write({
-      src: 'build',
-      level: 'warn',
-      event: 'debug_http_host_failed',
-      msg: `debug_http_host was not written for ${androidPackage} on ${serial}: ${launched.debugHttpHostNote || 'unknown reason'}`,
-    });
-  }
-  if (launched.devClientNote) {
-    phase('metro', chalk.yellow(launched.devClientNote));
-    writer.write({ src: 'build', level: 'warn', event: 'dev_client_link_failed', msg: launched.devClientNote });
-  }
-
-  const uploadWasAbandoned = await finishAndroidUpload(uploadPending, remote, phase);
-  const providerOutcome = providerUploadOutcome(providerUpload ? await providerUpload : null, providerName);
-  if (providerOutcome) phase('cache', providerOutcome.warn ? chalk.yellow(providerOutcome.line) : providerOutcome.line);
-
-  persistLastBuild({ writeState, root, record, startedAt, durationMs: now() - started, status: 'ok', out });
-
-  const remoteRelease = Boolean(remoteDevice && release);
-  if (!remoteRelease) {
-    if (physical) raiseLeaseFor(0, false);
-    const collectorPid = await startCollector({
-      root,
-      serial,
-      packageName: androidPackage,
-      spawn,
-      kill,
-      alive: pidAlive,
-      verify: verifyCollector,
-      out,
-    });
-    phase('logs', `${displayPath(root, logsDir)}${collectorPid ? ` (collector pid ${collectorPid})` : ''}`);
-  }
-
-  if (physical) raiseLeaseFor(release ? RELEASE_VERIFY_WAIT_MS : DEBUG_VERIFY_STEP_MS, false);
-  const launchState = await verifyAndroidRun({
-    release,
-    remoteRelease,
-    verifyReleaseLaunched,
-    verifyLaunched,
-    serial,
-    androidPackage,
-    variant,
-    metroCheck,
-    logsDir,
-    launchedAt,
-    metroPort,
-    isExpo,
-    physical,
-    scheme,
-    phase,
-  });
-  if (launchState === LAUNCH_FATAL) {
-    return fail(
-      LAUNCH_FAILED,
-      'The app failed its launch readiness check.',
-      `Read the launch error above or run \`stim logs --errors\`. The full timeline is in ${logsDir}.`,
-      { lastBuildStatus: true, logPath: displayPath(root, logsDir) },
-    );
-  }
-  writer.write(
-    launchOutcomeRecord({ launchState, release, bundleId: androidPackage, configuration: variant, metroPort }),
-  );
-
-  const leaseFacts = lease?.facts() ?? null;
-  releaseLease();
-
-  const facts = reportAndroidResult({
-    json,
-    useBuildCache,
-    variant,
-    release,
-    metroCheck,
-    metroPort,
-    logsDir: remoteRelease ? null : logsDir,
-    serial,
-    apkPath,
-    androidPackage,
-    installSkipped,
-    record,
-    waitedForBuild,
-    remote,
-    providerName,
-    launchState,
-    launched,
-    durationMs: now() - started,
-    writer,
-    emit,
-    lease: physical ? leaseFacts : undefined,
-    recordRun,
-  });
-  if (remoteWasAbandoned || uploadWasAbandoned) exitAfterFlush(0);
-  return { ok: true, facts };
-}
-
-async function pooledAndroidDevice({
-  root,
-  selectPool,
-  listDevices,
-  isEmulatorDevice,
-  deviceModel,
-  waitSeconds,
-  noWait,
-  now,
-  warn,
-}: {
-  root: string;
-  selectPool: typeof selectFromPool;
-  listDevices: typeof listAdbDevices;
-  isEmulatorDevice: typeof probeEmulatorSerial;
-  deviceModel: typeof physicalDeviceModel;
-  waitSeconds: number;
-  noWait: boolean;
-  now: () => number;
-  warn: (line: string) => void;
-}): Promise<{ device: OwnedDeviceRecord } | { code: string; message: string; remedy: string; extra: FailExtra }> {
-  const isEmulator = memoizeEmulatorProbe(isEmulatorDevice);
-  const pooled = await selectPool({
-    root,
-    platform: PLATFORM,
-    idLabel: 'serial',
-    list: () => androidPoolCandidates(listDevices(), isEmulator).map((entry) => ({ id: entry.serial })),
-    noCandidates: () => {
-      const resolved = androidPoolNoCandidatesRefusal(listDevices(), isEmulator);
-      return { message: resolved.error as string, remedy: resolved.remedy as string };
-    },
-    waitSeconds,
-    noWait,
-    now,
-    warn,
-  });
-  if (pooled.status === 'refused') {
-    const { code, message, remedy, lease } = pooled.refusal;
-    return { code, message, remedy, extra: lease === null ? {} : { lease } };
-  }
-  return {
-    device: {
-      serial: pooled.candidate.id,
-      deviceName: deviceModel(pooled.candidate.id) ?? pooled.candidate.id,
-      owned: false,
-    },
-  };
 }
 
 function resolveRunAndroidOptions(
@@ -1536,6 +383,7 @@ function resolveRunAndroidOptions(
     onLeaseSignal = releaseLeaseOnSignal,
     listDevices = listAdbDevices,
     deviceModel = physicalDeviceModel,
+    deviceAbi = androidDeviceAbi,
     isEmulatorDevice = probeEmulatorSerial,
     readApkPackage = (apkPath: string | null) => apkPackage(dumpApkManifest(apkPath)),
     getLimits = getConcurrencyLimits,
@@ -1570,6 +418,7 @@ function resolveRunAndroidOptions(
     needsPrebuildFor = needsPrebuild,
     prebuild = runPrebuild,
     build = buildAndroid,
+    ccacheFor = resolveCcache,
     install = installAndroidApp,
     launch = launchAndroidApp,
     launchRelease = launchAndroidReleaseApp,
@@ -1579,6 +428,7 @@ function resolveRunAndroidOptions(
     spawn = (cmd, args, opts) => getExecutor().spawn(cmd, args, opts),
     kill = (pid, signal) => process.kill(pid, signal),
     createWriter = createNdjsonWriter,
+    writeLaunch = writeWorkspaceLaunch,
     writeState = writeWorkspaceState,
     recordStats = recordRunStats,
     readEstimates = readRunEstimates,
@@ -1611,6 +461,7 @@ function resolveRunAndroidOptions(
     onLeaseSignal,
     listDevices,
     deviceModel,
+    deviceAbi,
     isEmulatorDevice,
     readApkPackage,
     getLimits,
@@ -1645,6 +496,7 @@ function resolveRunAndroidOptions(
     needsPrebuildFor,
     prebuild,
     build,
+    ccacheFor,
     install,
     launch,
     launchRelease,
@@ -1654,6 +506,7 @@ function resolveRunAndroidOptions(
     spawn,
     kill,
     createWriter,
+    writeLaunch,
     writeState,
     recordStats,
     readEstimates,
@@ -1688,6 +541,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     onLeaseSignal,
     listDevices,
     deviceModel,
+    deviceAbi,
     isEmulatorDevice,
     readApkPackage,
     getLimits,
@@ -1722,6 +576,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     needsPrebuildFor,
     prebuild,
     build,
+    ccacheFor,
     install,
     launch,
     launchRelease,
@@ -1731,6 +586,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     spawn,
     kill,
     createWriter,
+    writeLaunch,
     writeState,
     recordStats,
     readEstimates,
@@ -1740,6 +596,14 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   } = resolveRunAndroidOptions(options);
   const started = now();
   const startedAt = new Date(started).toISOString();
+  const projectProblem = appProjectProblem(root);
+  if (projectProblem) {
+    const { message, remedy } = projectProblem;
+    out(phaseLine('error', chalk.red(`STIM_NO_PROJECT: ${message}`)));
+    out(phaseLine('remedy', remedy));
+    if (json) emit(JSON.stringify({ code: 'STIM_NO_PROJECT', message, remedy }));
+    return { ok: false, error: { code: 'STIM_NO_PROJECT', message, remedy } };
+  }
   try {
     await ensureStorage(root, { note: out });
   } catch (error) {
@@ -2154,6 +1018,17 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   record.avdName = device.avdName ?? null;
   record.deviceName = device.deviceName ?? device.avdName ?? null;
   record.systemImage = device.systemImage;
+  const {
+    abi: buildAbi,
+    runOptions: buildRunOptions,
+    remoteRunOptions,
+  } = androidBuildOptions({
+    release,
+    physical,
+    device,
+    variant,
+    deviceAbi,
+  });
 
   let hash = '';
   let providerUpload: Promise<ProviderCallResult<void>> | null = null;
@@ -2169,6 +1044,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   let storeKey = '';
   let storeSources: FingerprintSource[] = [];
   let apkPath: string | null = null;
+  let ccacheActivity: CcacheActivity = CCACHE_NOT_RUN;
 
   async function resolveInitialFingerprint(): Promise<boolean> {
     const fingerprintTimer = stepTimer(now);
@@ -2193,7 +1069,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       return false;
     }
     record.fingerprint = hash;
-    cacheKey = buildCacheKey(PLATFORM, hash, variant ? { variant } : {});
+    cacheKey = buildCacheKey(PLATFORM, hash, buildRunOptions);
     stats.setCacheKey(cacheKey);
     record.cacheKey = cacheKey;
     storeHash = hash;
@@ -2250,6 +1126,9 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     let uploadPending: Promise<RemoteUploadLike> | null = null;
 
     async function resolveRemoteArtifact(): Promise<void> {
+      // Expo buildCacheProvider run options cannot key Android ABIs, so targeted APKs are unsafe in this tier.
+      if (buildAbi) return;
+
       if (!apkPath) {
         const loaded: LoadProjectProviderResult = await loadProvider(root, { isExpo });
         if (loaded?.unavailable) {
@@ -2273,7 +1152,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
           platform: PLATFORM,
           projectRoot: root,
           fingerprintHash: hash,
-          runOptions: variant ? { variant } : null,
+          runOptions: remoteRunOptions,
         });
         if (hit?.appPath) {
           let stored = null;
@@ -2309,7 +1188,10 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
 
     let waitedForBuild: WaitedForBuild | null = null;
     async function waitForSharedBuild(): Promise<boolean> {
-      if (!apkPath && useBuildCache) {
+      if (!useBuildCache) return true;
+      const waitStarted = now();
+      let failedHolder: BuildLockHandle['held'];
+      while (!apkPath) {
         let attempt: BuildLockHandle | null = null;
         try {
           attempt = acquireLock({ platform: PLATFORM, key: cacheKey, root, logFile: buildLog });
@@ -2322,7 +1204,9 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
 
         if (attempt?.acquired) {
           buildLock = attempt;
-          if (attempt.tookOver) phase('build', chalk.yellow(takeoverLine(attempt.tookOver)));
+          const previous = attempt.tookOver ?? failedHolder;
+          if (previous) phase('build', chalk.yellow(takeoverLine(previous)));
+          break;
         } else if (attempt?.held) {
           const holder = attempt.held;
           const who = holder.projectRoot || 'another workspace';
@@ -2334,7 +1218,19 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
 
           let waited: WaitForBuildResult | null = null;
           try {
-            waited = await waitForBuild({ platform: PLATFORM, key: cacheKey, out });
+            const ceilingMs = WAIT_CEILING_MS - (now() - waitStarted);
+            if (ceilingMs <= 0) {
+              throw Object.assign(
+                new Error(
+                  `Waited ${formatDuration(now() - waitStarted)} for shared builds without an artifact; ${who} (pid ${holder.pid}) holds ${attempt.path}.`,
+                ),
+                {
+                  code: 'STIM_BUILD_WAIT_TIMEOUT',
+                  lockPath: attempt.path,
+                },
+              );
+            }
+            waited = await waitForBuild({ platform: PLATFORM, key: cacheKey, out, ceilingMs });
           } catch (err) {
             const wtErr = err as Error & { code?: string; lockPath?: string };
             if (wtErr?.code !== 'STIM_BUILD_WAIT_TIMEOUT') throw err;
@@ -2355,14 +1251,14 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
           } else {
             phase(
               'build',
-              chalk.yellow(`${who}'s build ended without an artifact (${waited?.builderFailed}); building here`),
+              chalk.yellow(
+                `${who}'s build ended without an artifact (${waited?.builderFailed}); retrying the build lock`,
+              ),
             );
-            try {
-              const takeover = acquireLock({ platform: PLATFORM, key: cacheKey, root, logFile: buildLog });
-              if (takeover?.acquired) buildLock = takeover;
-            } catch {}
-            phase('build', chalk.yellow(takeoverLine(holder)));
+            failedHolder = holder;
           }
+        } else {
+          break;
         }
       }
       return true;
@@ -2462,7 +1358,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
             if (after?.moved) {
               storeHash = after.hash;
               storeSources = after.sources;
-              storeKey = buildCacheKey(PLATFORM, after.hash, variant ? { variant } : {});
+              storeKey = buildCacheKey(PLATFORM, after.hash, buildRunOptions);
               record.fingerprint = storeHash;
               record.cacheKey = storeKey;
               phase('fingerprint', chalk.dim(`${shortHash(hash)} -> ${shortHash(storeHash)} (after prebuild)`));
@@ -2482,9 +1378,10 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
           if (!apkPath) {
             phase('build', `compiling ${variant || 'debug'} with Gradle`);
             const built: BuildAndroidResultLike = await build(
-              { root, logWriter: writer, variant },
-              { estimateMs: estimates().coldBuildMs },
+              { root, logWriter: writer, variant, abi: buildAbi },
+              { estimateMs: estimates().coldBuildMs, ccache: ccacheFor({ root, onNote: out }) },
             );
+            ccacheActivity = built.ccache ?? CCACHE_UNAVAILABLE;
             if (built.failed) {
               const diagnostics = built.diagnostics || [];
               for (const diag of diagnostics) {
@@ -2530,7 +1427,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
               if (afterBuild.moved) {
                 storeHash = afterBuild.hash;
                 storeSources = afterBuild.sources;
-                storeKey = buildCacheKey(PLATFORM, afterBuild.hash, variant ? { variant } : {});
+                storeKey = buildCacheKey(PLATFORM, afterBuild.hash, buildRunOptions);
                 record.fingerprint = storeHash;
                 record.cacheKey = storeKey;
                 phase(
@@ -2568,7 +1465,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
                   projectRoot: root,
                   fingerprintHash: storeHash,
                   buildPath: apkPath!,
-                  runOptions: variant ? { variant } : null,
+                  runOptions: remoteRunOptions,
                 });
               }
             }
@@ -2658,6 +1555,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         swapDir,
         record,
         waitedForBuild,
+        ccache: ccacheActivity,
         uploadPending,
         providerUpload,
         providerName,
@@ -2679,6 +1577,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         kill,
         pidAlive,
         verifyCollector,
+        writeLaunch,
         writeState,
         now,
         out,
@@ -2695,102 +1594,6 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   } catch (error) {
     recordRun({ failed: true, durationMs: now() - started });
     throw error;
-  }
-}
-
-export function cacheOutcome(cacheHit: unknown, providerName: string | null = null): string {
-  if (cacheHit === 'remote') return `cache hit from ${providerName || 'the remote cache'}`;
-  if (cacheHit === 'local') return 'cache hit';
-  return 'built';
-}
-
-function persistLastBuild({
-  writeState,
-  root,
-  record,
-  startedAt,
-  durationMs,
-  status,
-  errorCode = null,
-  out,
-}: {
-  writeState: typeof writeWorkspaceState;
-  root: string;
-  record: AndroidRecord;
-  startedAt: string;
-  durationMs: number;
-  status: string;
-  errorCode?: string | null;
-  out: (line: string) => void;
-}): Record<string, unknown> {
-  const lastBuild = lastBuildRecord({ ...record, startedAt, durationMs, status, errorCode });
-  try {
-    writeState(root, { lastBuild });
-  } catch (err) {
-    out(phaseLine('state', chalk.yellow(`could not record lastBuild: ${(err as Error)?.message || err}`)));
-  }
-  return lastBuild;
-}
-
-export async function startCollector({
-  root,
-  serial,
-  packageName,
-  spawn,
-  kill,
-  alive = isPidAlive,
-  verify = verifyCollectorOwnership,
-  waitMs = COLLECTOR_EXIT_WAIT_MS,
-  sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms)),
-  out,
-}: {
-  root: string;
-  serial?: string;
-  packageName: string;
-  spawn: (cmd: string, args: readonly string[], opts: Record<string, unknown>) => ChildProcess;
-  kill: (pid: number, signal: NodeJS.Signals) => boolean;
-  alive?: (pid: number) => boolean;
-  verify?: typeof verifyCollectorOwnership;
-  waitMs?: number;
-  sleep?: (ms: number) => Promise<void>;
-  out: (line: string) => void;
-}): Promise<number | null> {
-  const previousPid = killPreviousCollector(root, {
-    kill,
-    isAlive: alive,
-    verify,
-    note: (line) => out(phaseLine('logs', line)),
-  });
-  if (previousPid) {
-    const deadline = Date.now() + waitMs;
-    while (Date.now() < deadline && alive(previousPid)) {
-      await sleep(COLLECTOR_POLL_MS);
-    }
-  }
-
-  let stdio: 'ignore' | (number | 'ignore')[] = 'ignore';
-  try {
-    mkdirSync(workspaceLogsDir(root), { recursive: true });
-    const fd = openSync(collectorLogFile(root), 'a');
-    stdio = ['ignore', fd, fd];
-  } catch {}
-
-  try {
-    const child = spawn(
-      process.execPath,
-      [collectorEntry(), '--platform', PLATFORM, '--root', root, '--serial', serial!, '--package', packageName],
-      {
-        cwd: root,
-        detached: true,
-        stdio,
-        env: process.env,
-      },
-    );
-    child?.unref?.();
-    return child?.pid ?? null;
-  } catch (err) {
-    out(phaseLine('logs', chalk.yellow(`could not start the device log collector: ${(err as Error)?.message || err}`)));
-    return null;
   }
 }
 

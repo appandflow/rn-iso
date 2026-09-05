@@ -24,6 +24,15 @@ test('the facts topic pins how an owned emulator gets its console port', () => {
   expect(body).toMatch(/A boot that fails releases the port again and\s+keeps the AVD recorded for `gc`/);
 });
 
+test('shared-build recovery keeps waiters behind replacement builders with one deadline', () => {
+  expect(renderTopic('agent')).toMatch(
+    /one waiter takes over and the others keep waiting within the same\s+90-minute limit/,
+  );
+  expect(renderTopic('lifecycle')).toMatch(/other waiters keep waiting for that holder/);
+  expect(renderTopic('lifecycle')).toMatch(/one ~90-minute deadline, including lock acquisition between waits/);
+  expect(renderTopic('errors')).toMatch(/Replacement builders share that deadline, including time spent acquiring/);
+});
+
 test('the lifecycle topic separates an iOS install proof from dev-client preparation', () => {
   const body = renderTopic('lifecycle');
   assert(body);
@@ -110,6 +119,15 @@ test('the errors topic states that the stale-carry line only prints on a real di
   expect(body).toMatch(/a carry whose lockfile matches is\s+silent/);
 });
 
+test('the errors topic covers a directory that is not a React Native or Expo app', () => {
+  const body = renderTopic('errors');
+  assert(body);
+  expect(body).toMatch(/whose nearest package.json does not\s+parse or depends on neither react-native nor expo/);
+  expect(body).toMatch(/the refusal names that package.json and says which of the two it\s+is/);
+  expect(body).toMatch(/`doctor` reports the same directory as a finding/);
+  expect(body).toMatch(/These errors are caught before the port is reserved/);
+});
+
 test('an unknown topic renders nothing rather than throwing', () => {
   expect(renderTopic('nope')).toBe(null);
 });
@@ -125,8 +143,8 @@ test('the facts topic documents the fields each --json payload actually carries'
   assert(body);
   const sources = {
     start: readFileSync(new URL('../commands/start.ts', import.meta.url), 'utf-8'),
-    ios: readFileSync(new URL('../commands/ios.ts', import.meta.url), 'utf-8'),
-    android: readFileSync(new URL('../commands/android.ts', import.meta.url), 'utf-8'),
+    ios: readFileSync(new URL('../commands/ios/result.ts', import.meta.url), 'utf-8'),
+    android: readFileSync(new URL('../commands/android/result.ts', import.meta.url), 'utf-8'),
   };
   const fields = {
     start: ['port', 'supervisorPid', 'mode', 'logsDir', 'alreadyRunning'],
@@ -163,6 +181,7 @@ test('the facts topic documents the fields each --json payload actually carries'
       'launched',
       'durationMs',
       'systemImage',
+      'ccache',
     ],
   };
   for (const [command, names] of Object.entries(fields)) {
@@ -191,23 +210,42 @@ test('the facts topic says Android artifacts use the post-Gradle fingerprint', (
   expect(body).toMatch(/fingerprint and cacheKey are null/);
 });
 
+test('the guides explain unavailable iOS fingerprints after native mutations', () => {
+  expect(renderTopic('agent')).toContain('installs the build without caching it');
+  expect(renderTopic('facts')).toMatch(/iOS\s+fingerprint after prebuild or pod install/);
+  const lifecycle = renderTopic('lifecycle');
+  expect(lifecycle).toContain('skips local storage and remote uploads');
+  expect(lifecycle).toContain('cacheKey are null in the result and lastBuild');
+});
+
+test('the guides document Android target-ABI builds and universal fallbacks', () => {
+  expect(renderTopic('facts')).toMatch(/debug-sim-arm64-v8a/);
+  expect(renderTopic('lifecycle')).toMatch(/-PreactNativeArchitectures=<target ABI>/);
+  expect(renderTopic('lifecycle')).toMatch(/ABI-targeted Android Debug build skips this Expo\s+tier/);
+  expect(renderTopic('agent')).toMatch(/Unknown targets and Release builds stay\s+universal/);
+});
+
 test('the one-line JSON sentence names every command whose --json payload is a single line', () => {
   const body = renderTopic('facts');
   assert(body);
-  const singleLineJsonCommands = ['start', 'ios', 'android', 'stop', 'status', 'stats', 'doctor'];
+  const singleLineJsonCommands = ['start', 'ios', 'android', 'reload', 'stop', 'status', 'stats', 'doctor'];
   const files: Record<string, string> = {
     start: 'start.ts',
     ios: 'ios.ts',
     android: 'android.ts',
+    reload: 'reload.ts',
     stop: 'stop.ts',
     status: 'status.ts',
     stats: 'stats.ts',
     doctor: 'doctor.ts',
     device: 'device.ts',
   };
-  for (const [, file] of Object.entries(files)) {
+  for (const file of Object.values(files)) {
     const src = readFileSync(new URL(`../commands/${file}`, import.meta.url), 'utf-8');
     expect(src).toMatch(/--json/);
+  }
+  for (const file of [...Object.values(files), 'ios/result.ts', 'android/result.ts']) {
+    const src = readFileSync(new URL(`../commands/${file}`, import.meta.url), 'utf-8');
     expect(src).not.toMatch(/JSON\.stringify\([^)]*,\s*null\s*,\s*2\s*\)/);
     expect(src).not.toMatch(/JSON\.stringify\(\s*\n/);
   }
@@ -241,6 +279,7 @@ test('the flags the guide advertises are the flags the commands define', () => {
       '--device',
       '--remote',
     ],
+    'reload.ts': ['--json'],
     'stop.ts': ['--json', '--force'],
     'logs.ts': ['--errors', '--follow', '--since', '--grep', '--tail'],
     'gc.ts': ['--delete', '--older-than', '--cache'],
@@ -300,7 +339,7 @@ test('the guide says what a verified launch does not prove, in the words the com
   expect(facts).toMatch(/first screen may still be\s+rendering/);
   expect(facts).toMatch(/Poll the UI before you trust a\s+screenshot/);
   for (const command of ['ios', 'android']) {
-    const src = readFileSync(new URL(`../commands/${command}.ts`, import.meta.url), 'utf-8');
+    const src = readFileSync(new URL(`../commands/${command}/launch.ts`, import.meta.url), 'utf-8');
     expect(src.includes('the first screen may still be rendering')).toBeTruthy();
     expect(src.includes('ready: bundle loaded')).toBeFalsy();
   }
@@ -477,6 +516,41 @@ test('the cleanup guide documents that the shared Gradle build cache is report-o
   expect(cleanup).toMatch(/never[^.]*prunes[^.]*empties/i);
 });
 
+test('the cleanup guide lists the shared ccache directory and who bounds it', () => {
+  const cleanup = renderTopic('cleanup');
+  assert(cleanup);
+
+  expect(cleanup).toMatch(/\$STIM_HOME\/ccache \(default ~\/\.stim\/ccache\)/);
+  expect(cleanup).toMatch(/ccache keeps it under CCACHE_MAXSIZE\s+on its own/);
+  expect(cleanup).toMatch(/--older-than\s+skips it/);
+  expect(cleanup).toMatch(/it sets CCACHE_MAXSIZE on the Gradle run, which wins over\s+a max_size/);
+});
+
+test('the lifecycle guide states what Stim sets for Android C++ and what it costs', () => {
+  const lifecycle = renderTopic('lifecycle');
+  assert(lifecycle);
+
+  expect(lifecycle).toMatch(/CMAKE_C_COMPILER_LAUNCHER \/ CMAKE_CXX_COMPILER_LAUNCHER/);
+  expect(lifecycle).toMatch(/CCACHE_DIR, CCACHE_BASEDIR, CCACHE_NOHASHDIR, CCACHE_SLOPPINESS/);
+  expect(lifecycle).toMatch(/Nothing is set when ccache is\s+absent/);
+  expect(lifecycle).toMatch(/\$STIM_HOME\/ccache \(default ~\/\.stim\/ccache\)/);
+  expect(lifecycle).toMatch(/DWARF comp_dir/);
+  expect(lifecycle).toMatch(/worklets and\s+expo-modules-core precompile a header without\s+-fno-pch-timestamp/);
+  expect(lifecycle).toMatch(/reanimated passes\s+-Xclang -fno-pch-timestamp and hits across worktrees/);
+  expect(lifecycle).toMatch(/No stale \.pch is ever served/);
+  expect(lifecycle).toMatch(/\.cxx\/\*\*\/CMakeCache\.txt on the first configure/);
+  expect(lifecycle).toMatch(/keeps compiling without them until it is deleted once/);
+});
+
+test('the settings guide names the ccache variables among the fixed invocations', () => {
+  const settings = renderTopic('settings');
+  assert(settings);
+
+  expect(settings).toMatch(
+    /carries the ccache launcher and CCACHE_BASEDIR \/\s+CCACHE_NOHASHDIR when ccache is on PATH/,
+  );
+});
+
 test('the settings guide defines Metro overrides as parent roots and preserves legacy files', () => {
   const settings = renderTopic('settings');
   assert(settings);
@@ -585,7 +659,8 @@ test('the guide says a phone loses its running app when the collector ends', () 
 
   expect(cleanup).toMatch(/THE APP'S LIFETIME IS BOUND TO THAT COLLECTOR/);
   expect(cleanup).toMatch(/anything that\s+ends the collector ends the APP ON THE PHONE/);
-  expect(cleanup).toMatch(/leaves no RECORD of the\s+phone -- it never had one -- but it does close the app/);
+  expect(cleanup).toMatch(/phone has no owned-device registry\s+entry/);
+  expect(cleanup).toContain("`stop` closes the app and releases this workspace's leases");
   expect(cleanup).toMatch(/Nothing is uninstalled/);
   expect(lifecycle).toMatch(/THE APP RUNS FOR AS LONG AS THE COLLECTOR DOES/);
   expect(lifecycle).toMatch(/stays INSTALLED/);
@@ -689,10 +764,20 @@ test('the guide scopes each platform dev-menu suppression mechanism accurately',
 test('the errors topic documents every code the build commands and the iOS signing gate can emit', () => {
   const body = renderTopic('errors');
   assert(body);
-  const sources = [
-    ...['ios.ts', 'android.ts', 'start.ts'].map((f) =>
-      readFileSync(new URL(`../commands/${f}`, import.meta.url), 'utf-8'),
+  const commandFiles = [
+    'ios.ts',
+    'android.ts',
+    'start.ts',
+    'native-runtime.ts',
+    'dev-client.ts',
+    ...['ios', 'android'].flatMap((command) =>
+      readdirSync(new URL(`../commands/${command}/`, import.meta.url))
+        .filter((file) => file.endsWith('.ts'))
+        .map((file) => `${command}/${file}`),
     ),
+  ];
+  const sources = [
+    ...commandFiles.map((file) => readFileSync(new URL(`../commands/${file}`, import.meta.url), 'utf-8')),
     ...['engine/ios-profile.ts', 'engine/ios-signing.ts'].map((f) =>
       readFileSync(new URL(`../${f}`, import.meta.url), 'utf-8'),
     ),
@@ -700,7 +785,7 @@ test('the errors topic documents every code the build commands and the iOS signi
   const codes = new Set([...sources.matchAll(/STIM_[A-Z_]+/g)].map((m) => m[0]));
   expect(codes.size >= 8).toBeTruthy();
   for (const code of codes) {
-    expect(body.includes(code)).toBeTruthy();
+    expect(body).toContain(code);
   }
 });
 
@@ -910,6 +995,31 @@ test('the static skill is only the agent guide router', () => {
   }
 });
 
+test('the skill description names the task phrases an agent sees', () => {
+  const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
+  const description = skill.match(/^description: (.+)$/m)?.[1];
+  assert(description);
+  expect(description).toMatch(/^The React Native \/ Expo CLI for AI agents\./);
+
+  for (const trigger of [
+    'expo run:ios',
+    'expo run:android',
+    'react-native run-ios',
+    'react-native run-android',
+    'expo start',
+    'Metro',
+    'simulator',
+    'emulator',
+    'device',
+    'redbox',
+    'runtime',
+    'logs',
+    'parallel worktrees',
+  ]) {
+    expect(description).toContain(trigger);
+  }
+});
+
 test('every guide topic explains the npx fallback for short stim commands', () => {
   for (const name of topicNames()) {
     const topic = renderTopic(name);
@@ -957,16 +1067,70 @@ test('the website offers copyable outcome prompts and explains skill activation'
 test('the agent guide carries the normal workflow and safety rules', () => {
   const agent = renderTopic('agent');
   assert(agent);
+  const normalWorkflow = agent.match(/NORMAL WORKFLOW([\s\S]*?)RULES DURING THE LOOP/)?.[1];
+  assert(normalWorkflow);
   expect(agent).toContain('stim doctor --platform ios');
   expect(agent).toContain('stim worktree create <name> --carry-ignored');
   expect(agent).toMatch(/ios and android install the app, launch it, and check readiness/);
   expect(agent).toMatch(/give the user one compact result: exact device,[\s\S]*total duration/);
   expect(agent).toMatch(/whether stim logs\s+--errors passed/);
   expect(agent).toMatch(/Do not repeat the\s+phase transcript/);
-  expect(agent).toMatch(/Exit code 0 from logs --errors is the pass condition/);
+  expect(agent).toMatch(/requires exit code 0 AND no matching errors in\s+captured logs/);
+  expect(agent).toMatch(/Exit code 0 alone means the query succeeded, even when errors\s+were printed/);
+  expect(agent).toMatch(/does not prove launch or log\s+capture succeeded/);
   expect(agent).toContain('No matching log records');
+  expect(agent).toContain('stim reload');
+  expect(normalWorkflow).not.toContain('stim reload');
+  expect(normalWorkflow).not.toContain('agent-device metro reload');
+  expect(agent).toMatch(/app error but also says the native process is alive,[\s\S]*app did not crash/);
+  expect(agent).toMatch(/FATAL because the app process exited,[\s\S]*Metro cannot restart it/);
   expect(agent).toMatch(/Ordinary stim stop and an authorized clean\s+stim worktree remove do not need/);
-  expect(agent).not.toMatch(/agent-device/i);
+  expect(agent).toContain('It records a temporary lease, not an owned-device registry entry');
+  expect(agent).toMatch(/On a physical\s+iPhone, stop also closes the app by ending its log collector/);
+});
+
+test('physical-device guidance separates collector cleanup from device leases', () => {
+  for (const topic of ['lifecycle', 'cleanup']) {
+    const body = renderTopic(topic);
+    assert(body);
+    expect(body).toMatch(/`device lock` lease survives\s+collector exit until released or expired/);
+    expect(body).toMatch(/`gc --delete` can remove its\s+expired lease file/);
+  }
+  const facts = renderTopic('facts');
+  assert(facts);
+  expect(facts).toMatch(/ID is stored in a temporary\s+lease/);
+  const website = readFileSync(new URL('../../../../website/docs/commands.md', import.meta.url), 'utf-8');
+  expect(website).toContain("`stop` also releases this workspace's device leases");
+});
+
+test('the logs and lifecycle guides distinguish query success from a clean captured timeline', () => {
+  const logs = renderTopic('logs');
+  assert(logs);
+  expect(logs).toContain('EXIT 0 MEANS THE QUERY SUCCEEDED, whether or not records matched');
+  expect(logs).toMatch(/requires exit code 0 AND no matching errors in\s+captured logs/);
+  expect(logs).toContain('a workspace with no log directory also returns an empty result');
+  const lifecycle = renderTopic('lifecycle');
+  assert(lifecycle);
+  expect(lifecycle).toContain('Check captured errors: require exit 0 AND no matching errors');
+  expect(lifecycle).toContain('Exit 0 alone means the query succeeded, even when it printed errors');
+});
+
+test('the logs guide keeps Expo and bare React Native stack context on one human error record', () => {
+  const logs = renderTopic('logs');
+  assert(logs);
+  expect(logs).toMatch(/Expo error includes its immediately\s+following code frame and Call Stack lines/);
+  expect(logs).toMatch(/Bare React Native symbolication is\s+shown as separate context/);
+  expect(logs).toMatch(/Context does not change the error count or the raw error records\s+returned by --json/);
+});
+
+test('the agent guide tells the agent to run from the app directory', () => {
+  const agent = renderTopic('agent');
+  assert(agent);
+  expect(agent).toMatch(
+    /Run Stim from the app directory: the one whose package.json depends on\s+react-native or expo/,
+  );
+  expect(agent).toMatch(/start, ios and android refuse with STIM_NO_PROJECT naming that package.json/);
+  expect(agent).toMatch(/doctor reports it as a finding/);
 });
 
 test('the agent guide routes to every detailed topic', () => {
@@ -1069,12 +1233,59 @@ test('the binary command surface remains intentional', () => {
     'guide',
     'ios',
     'logs',
+    'reload',
     'start',
     'stats',
     'status',
     'stop',
     'worktree',
   ]);
+});
+
+test('the guide defines reload as a JavaScript-only live-app recovery', () => {
+  const agent = renderTopic('agent');
+  const facts = renderTopic('facts');
+  const lifecycle = renderTopic('lifecycle');
+  const errors = renderTopic('errors');
+  assert(agent);
+  assert(facts);
+  assert(lifecycle);
+  assert(errors);
+
+  expect(agent).toContain('stim reload');
+  expect(agent).toMatch(/failed first bundle load[\s\S]*app restart/);
+  expect(agent).toMatch(/physical device that reached Metro[\s\S]*agent-device metro reload/);
+  expect(agent).toMatch(/iOS Local Network first-load remedy[\s\S]*never established a Metro connection/);
+  expect(lifecycle).toMatch(/never builds, installs, boots, or cold-launches/);
+  expect(lifecycle).toMatch(/owned local simulator or emulator/);
+  expect(lifecycle).toMatch(/stim reload ios[\s\S]*stim reload android/);
+  expect(lifecycle).toMatch(/^  reload\s+\[ios\|android\] --json$/m);
+  expect(lifecycle).toMatch(/physical device that reached Metro[\s\S]*agent-device metro reload/);
+  expect(lifecycle).toMatch(/iOS Local Network first-load[\s\S]*no Metro peer exists yet/);
+  expect(facts).toContain('stim reload [ios|android] --json');
+  expect(facts).toMatch(/platform[\s\S]*deviceId[\s\S]*metroPort[\s\S]*strategy/);
+  expect(errors).toContain('STIM_RELOAD_AMBIGUOUS');
+  expect(errors).toContain('STIM_RELOAD_RELEASE');
+  expect(errors).toContain('STIM_RELOAD_FAILED');
+  expect(lifecycle).toMatch(/does not\s+take over\s+that stateful session/);
+});
+
+test('the documented common workflows leave reload to recovery', () => {
+  const rootReadme = readFileSync(new URL('../../../../README.md', import.meta.url), 'utf-8');
+  const packageReadme = readFileSync(new URL('../../README.md', import.meta.url), 'utf-8');
+  const website = readFileSync(new URL('../../../../website/docs/commands.md', import.meta.url), 'utf-8');
+  const agents = readFileSync(new URL('../../../../AGENTS.md', import.meta.url), 'utf-8');
+  const rootWorkflow = rootReadme.match(/The normal loop is:\n\n```bash([\s\S]*?)```/)?.[1];
+  const packageWorkflow = packageReadme.match(/## Normal workflow\n\n```bash([\s\S]*?)```/)?.[1];
+  const websiteWorkflow = website.match(/code=\{`stim doctor([\s\S]*?)stim stop`\}/)?.[0];
+  const repositoryWorkflow = agents.match(/The normal flow is:\n\n```text([\s\S]*?)```/)?.[1];
+  assert(rootWorkflow);
+  assert(packageWorkflow);
+  assert(websiteWorkflow);
+  assert(repositoryWorkflow);
+  for (const workflow of [rootWorkflow, packageWorkflow, websiteWorkflow, repositoryWorkflow]) {
+    expect(workflow).not.toContain('reload');
+  }
 });
 
 test('the guide documents the project cache provider as the tier between local and Expo', () => {
@@ -1215,6 +1426,9 @@ test('the guide documents the pool an id-less --device picks from', () => {
   expect(lifecycle).not.toMatch(/refuses with the candidate\s+list/);
   expect(lifecycle).toMatch(/no serial it takes the first device it can lease/);
   expect(lifecycle).toMatch(/with no UDID it takes the\s+first device it can lease/);
+  expect(lifecycle).toMatch(
+    /On a physical iPhone that also closes the app, because its collector owns\s+the devicectl launch session/,
+  );
 });
 
 test('the option surface lists the model and runtime flags on both platforms', () => {

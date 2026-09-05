@@ -1,4 +1,13 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { createHash } from 'node:crypto';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { userInfo } from 'node:os';
@@ -23,6 +32,9 @@ const modelPricing = {
 
 const absolutePathPattern =
   /(?<![A-Za-z0-9._/])\/(?:Applications|Library|System|Users|Volumes|private|tmp|var|opt|Pods\.build|XPCServices)(?![A-Za-z0-9._+-])(?:\/[^\s'"`,;()<>[\]]+)*/g;
+const webUrlPattern = /https?:\/\/[^\s'"`<>]+/gi;
+const nestedPrivateAbsolutePathPattern =
+  /([A-Za-z0-9._+-])(\/(?:Users|Volumes)(?![A-Za-z0-9._+-])(?:\/[^\s'"`,;()<>[\]]+)*)/g;
 const compilerFlagAbsolutePathPattern =
   /(-[FLI])((?:\/(?:Applications|Library|System|Users|Volumes|private|tmp|var|opt))(?![A-Za-z0-9._+-])(?:\/[^\s'"`,;()<>[\]]+)*)/g;
 const fileUrlAbsolutePathPattern =
@@ -43,6 +55,9 @@ const deviceInventoryPattern = /\b(?:agent-device devices|xcrun simctl list devi
 const machineStoragePattern = /\b(?:df|diskutil)(?:\s|$)/;
 const branchInventoryPattern = /\bgit\s+(?:branch|for-each-ref)(?:\s|$)/;
 const interactiveShellPattern = /^(?:bash|sh|zsh)$/;
+const adbPublicKeyMessagePattern = /(\bSending adb public key \[)[A-Za-z0-9+/=]{80,}(?:\s+[^\]\r\n]*)?(\])/g;
+const adbPublicKeyBootArgumentPattern = /(\bandroidboot\.qemu\.adb\.pubkey=)[A-Za-z0-9+/=]{80,}/g;
+const simulatorIdExactPattern = /^[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}$/i;
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
@@ -151,13 +166,26 @@ export function sanitizeBenchmarkText(value, replacements = []) {
   for (const [absolute, portable] of replacements.toSorted((a, b) => b[0].length - a[0].length)) {
     text = text.replaceAll(absolute, portable);
   }
+  const webUrls = [];
+  text = text.replace(webUrlPattern, (url) => {
+    const token = `\u0000stim-web-url-${webUrls.length}\u0000`;
+    webUrls.push([token, url]);
+    return token;
+  });
   text = text.replace(shellPathPattern, 'PATH=<toolchain-path>');
   text = text.replace(homebrewExecutablePattern, '$1');
   text = text.replace(agentDeviceBundlePattern, '<agent-device-helper>');
+  text = text.replace(adbPublicKeyMessagePattern, '$1<adb-public-key>$2');
+  text = text.replace(adbPublicKeyBootArgumentPattern, '$1<adb-public-key>');
   text = text.replace(fileUrlAbsolutePathPattern, (_match, path) => `file:///${replacementLabel(path)}`);
   text = text.replace(compilerFlagAbsolutePathPattern, (_match, flag, path) => `${flag}${replacementLabel(path)}`);
+  text = text.replace(
+    nestedPrivateAbsolutePathPattern,
+    (_match, prefix, path) => `${prefix}/${replacementLabel(path)}`,
+  );
   text = text.replace(absolutePathPattern, (path) => replacementLabel(path));
   text = text.replace(systemAbsolutePathPattern, (path) => replacementLabel(path));
+  for (const [token, url] of webUrls) text = text.replaceAll(token, url);
   text = text.replace(remoteBranchUserPattern, '$1@<user>');
   text = text.replaceAll(userInfo().username, '<local-user>');
   return text
@@ -409,6 +437,20 @@ function assertPortable(payload) {
   if (leakedFileUrl) {
     throw new Error(`benchmark export contains an absolute machine file URL: ${leakedFileUrl}`);
   }
+  const serializedWithoutWebUrls = serialized.replace(/https?:\/\/[^"\\\s]+/gi, '');
+  const leakedNestedPrivatePath = serializedWithoutWebUrls.match(
+    /[A-Za-z0-9._+-](\/(?:Users|Volumes)(?![A-Za-z0-9._+-]))/,
+  )?.[1];
+  if (leakedNestedPrivatePath) {
+    const at = serializedWithoutWebUrls.indexOf(leakedNestedPrivatePath);
+    const field = serializedWithoutWebUrls.slice(
+      Math.max(0, at - 80),
+      Math.min(serializedWithoutWebUrls.length, at + 240),
+    );
+    throw new Error(
+      `benchmark export contains a nested absolute machine path root: ${leakedNestedPrivatePath}\n${field}`,
+    );
+  }
   const leakedRoot = [
     '/Applications',
     '/Library',
@@ -463,6 +505,13 @@ function assertPortable(payload) {
   if (leakedHostname) throw new Error(`benchmark export contains a local hostname: ${leakedHostname}`);
   const leakedRemoteBranchUser = serialized.match(remoteBranchUserPattern)?.[0];
   if (leakedRemoteBranchUser) throw new Error('benchmark export contains a user-scoped remote branch');
+  if (
+    /(?:Sending adb public key \[|androidboot\.qemu\.adb\.pubkey=)(?!<adb-public-key>)[A-Za-z0-9+/=]{80,}/.test(
+      serialized,
+    )
+  ) {
+    throw new Error('benchmark export contains an ADB public key');
+  }
   if (serialized.includes('janicduplessis')) {
     throw new Error('benchmark export contains a local username');
   }
@@ -484,7 +533,23 @@ function validPng(path, expectedDimensions) {
 function validMp4(path) {
   if (!existsSync(path)) return false;
   const bytes = readFileSync(path);
-  return bytes.length >= 1_000 && bytes.subarray(4, 8).toString('ascii') === 'ftyp';
+  return (
+    bytes.length >= 1_000 && bytes.subarray(4, 8).toString('ascii') === 'ftyp' && mp4DurationSeconds(bytes) !== null
+  );
+}
+
+function mp4DurationSeconds(bytes) {
+  const marker = bytes.indexOf(Buffer.from('mvhd'));
+  if (marker < 0 || marker + 24 > bytes.length) return null;
+  const version = bytes[marker + 4];
+  const timescaleOffset = version === 1 ? marker + 24 : marker + 16;
+  const durationOffset = version === 1 ? marker + 28 : marker + 20;
+  const durationBytes = version === 1 ? 8 : 4;
+  if (timescaleOffset + 4 > bytes.length || durationOffset + durationBytes > bytes.length) return null;
+  const timescale = bytes.readUInt32BE(timescaleOffset);
+  if (timescale === 0) return null;
+  const duration = version === 1 ? Number(bytes.readBigUInt64BE(durationOffset)) : bytes.readUInt32BE(durationOffset);
+  return duration / timescale;
 }
 
 function recordMatchesMeta(record, meta) {
@@ -496,7 +561,133 @@ function recordMatchesMeta(record, meta) {
   );
 }
 
-function validateAndroidReadinessRecord(runDir, record, meta) {
+function iosReadinessCommandFailure({ meta, record, proofPath, recordingPath, screenCommands }) {
+  const stateDir = meta.agentDevice?.stateDir;
+  const session = meta.agentDevice?.session;
+  const deviceId = record.simulator?.udid;
+  if (!stateDir || session !== meta.runId || !deviceId) return 'agent-device isolation metadata missing';
+  const prefix = `env AGENT_DEVICE_STATE_DIR=${stateDir} AGENT_DEVICE_SESSION=${session} agent-device`;
+  const screenshotScratch = join('/tmp', `${meta.runId}-settings.png`);
+  const recordingScratch = join('/tmp', `${meta.runId}-session.mp4`);
+  const expectedCommands = [
+    `${prefix} open com.appandflow.trailhead --foreground --platform ios --udid ${deviceId}`,
+    `${prefix} record start ${recordingScratch} --scope device --quality high --hide-touches`,
+    `${prefix} wait text ${JSON.stringify(record.screen.expected)}`,
+    `${prefix} screenshot ${screenshotScratch}`,
+    `cp ${screenshotScratch} ${proofPath}`,
+    `${prefix} record stop`,
+    `cp ${recordingScratch} ${recordingPath}`,
+    `${prefix} close`,
+  ];
+  const normalizedExpected = expectedCommands.map((command) => sanitizeBenchmarkText(unwrapShellCommand(command), []));
+  if (
+    record.screen.commands?.length !== expectedCommands.length ||
+    record.screen.commands.some((command, index) => command !== expectedCommands[index]) ||
+    screenCommands.some((command, index) => command.command !== normalizedExpected[index])
+  ) {
+    return 'agent-device command sequence mismatch';
+  }
+  const expectedSessionState = sanitizeBenchmarkText(`Session state: ${stateDir}/sessions/${session}`, []);
+  if (
+    !screenCommands[0].output.includes(expectedSessionState) ||
+    !screenCommands.at(-1).output.includes(`Closed: ${session}`)
+  ) {
+    return 'agent-device session output mismatch';
+  }
+  return null;
+}
+
+function readinessApplicationProofFailure({ runDir, record, meta, eventsPath, commands, screenCommands, platform }) {
+  const recordedProofTarget = record.proof?.target;
+  if (!record.proof?.valid || typeof recordedProofTarget !== 'string') return 'application proof missing';
+  const applicationProofPath = join(runDir, 'proof', basename(recordedProofTarget));
+  if (record.variant === 'javascript') {
+    if (
+      !existsSync(applicationProofPath) ||
+      record.evidenceSha256?.proof !== fileSha256(applicationProofPath) ||
+      !applicationProofPath.endsWith('.bundle') ||
+      !readFileSync(applicationProofPath).includes(record.proof.expected)
+    ) {
+      return 'JavaScript bundle proof mismatch';
+    }
+    return null;
+  }
+  if (platform === 'ios') {
+    const expectedMarker = `Trailhead ${meta.runId}`;
+    if (
+      recordedProofTarget !== eventsPath ||
+      record.proof.kind !== 'agent-device-native-window-marker' ||
+      record.proof.expected !== expectedMarker ||
+      record.evidenceSha256?.proof !== record.evidenceSha256?.events ||
+      !commands.some(
+        (command) =>
+          command.startSeconds >= screenCommands[0].startSeconds &&
+          command.output.includes(`[window] "${expectedMarker}"`),
+      )
+    ) {
+      return 'iOS native window proof mismatch';
+    }
+    return null;
+  }
+  if (basename(applicationProofPath) !== 'native-application-label.txt') {
+    return 'Android native label proof missing';
+  }
+  if (!existsSync(applicationProofPath) || record.evidenceSha256?.proof !== fileSha256(applicationProofPath)) {
+    return 'application proof hash mismatch';
+  }
+  const labelProof = readFileSync(applicationProofPath, 'utf8');
+  const serial = labelProof.match(/^serial=(.*)$/m)?.[1];
+  const label = labelProof.match(/^application-label=(.*)$/m)?.[1];
+  return serial === record.simulator?.udid && label === record.proof.expected && label === record.proof.observed
+    ? null
+    : 'Android native label proof mismatch';
+}
+
+function readinessCleanupFailure(runDir, record, meta, platform) {
+  const devicesBeforePath = join(runDir, 'devices-before.json');
+  const cleanupPath = join(runDir, 'cleanup.json');
+  if (!existsSync(devicesBeforePath) || !existsSync(cleanupPath)) return 'cleanup evidence missing';
+  const devicesBefore = readJson(devicesBeforePath);
+  const cleanup = readJson(cleanupPath);
+  const actions = Array.isArray(cleanup.actions) ? cleanup.actions : [];
+  if (
+    !cleanup.cleanedAt ||
+    actions.some((action) => action.startsWith('failed:') || action.startsWith('skipped ')) ||
+    !actions.includes('verified benchmark agent-device sessions empty')
+  ) {
+    return 'cleanup did not complete';
+  }
+  if (record.arm === 'stim') {
+    if (!actions.includes('stim worktree remove --force')) return 'Stim cleanup missing';
+    if (platform !== 'ios') return null;
+    const udid = record.simulator?.udid;
+    return meta.expectedParkedSimulator?.udid === udid &&
+      devicesBefore.includes(udid) &&
+      actions.includes(`verified parked simulator ${udid}`) &&
+      actions.includes(`verified quiescent simulator ${udid}`)
+      ? null
+      : 'parked simulator cleanup not proven';
+  }
+  if (platform === 'android') {
+    const avdsBeforePath = join(runDir, 'avds-before.json');
+    if (!existsSync(avdsBeforePath)) return 'AVD baseline missing';
+    const avdsBefore = readJson(avdsBeforePath);
+    const expectedName = meta.expectedControlSimulator?.name;
+    return expectedName && !avdsBefore.includes(expectedName) && actions.includes(`delete AVD ${expectedName}`)
+      ? null
+      : 'control AVD cleanup not proven';
+  }
+  const udid = record.simulator?.udid;
+  return udid &&
+    !devicesBefore.includes(udid) &&
+    record.simulator?.name === meta.expectedControlSimulator?.name &&
+    actions.includes(`delete ${udid}`) &&
+    actions.some((action) => action.startsWith('remove worktree '))
+    ? null
+    : 'control simulator cleanup not proven';
+}
+
+function validateReadinessRecord(runDir, record, meta) {
   const reject = (reason) => {
     if (process.env.STIM_BENCH_EXPORT_DEBUG === '1') {
       process.stderr.write(`${basename(runDir)}: ${reason}\n`);
@@ -522,6 +713,11 @@ function validateAndroidReadinessRecord(runDir, record, meta) {
   if (!recordMatchesMeta(record, meta)) return reject('record metadata mismatch');
 
   const commands = eventsFor(runDir, meta.dispatchAt, []).commands;
+  const platform = meta.platform ?? 'ios';
+  const recordingCopyCommandId = record.screen?.recordingCopyCommandId;
+  if (platform === 'ios' && typeof recordingCopyCommandId !== 'string') {
+    return reject('recording copy command id missing');
+  }
   const screenIds = [
     record.screen?.openCommandId,
     record.screen?.recordStartCommandId,
@@ -529,6 +725,7 @@ function validateAndroidReadinessRecord(runDir, record, meta) {
     record.screen?.screenshotCommandId,
     record.screen?.copyCommandId,
     record.screen?.recordStopCommandId,
+    ...(typeof recordingCopyCommandId === 'string' ? [recordingCopyCommandId] : []),
     record.screen?.closeCommandId,
   ];
   if (screenIds.some((id) => typeof id !== 'string')) return reject('screen command ids missing');
@@ -538,6 +735,10 @@ function validateAndroidReadinessRecord(runDir, record, meta) {
     screenCommands.some((command, index) => index > 0 && command.startSeconds < screenCommands[index - 1].endSeconds)
   ) {
     return reject('screen command graph invalid');
+  }
+  if (platform === 'ios') {
+    const failure = iosReadinessCommandFailure({ meta, record, proofPath, recordingPath, screenCommands });
+    if (failure) return reject(failure);
   }
   const screenReadySeconds = screenCommands[3].endSeconds;
   const screenObservedAt = new Date(Date.parse(meta.dispatchAt) + screenReadySeconds * 1000).toISOString();
@@ -551,14 +752,21 @@ function validateAndroidReadinessRecord(runDir, record, meta) {
   if (
     record.recording?.valid !== true ||
     record.recording?.target !== recordingPath ||
+    record.recording?.bytes !== statSync(recordingPath).size ||
     record.recording?.startCommandId !== screenIds[1] ||
     record.recording?.stopCommandId !== screenIds[5] ||
+    (platform === 'ios' && record.recording?.copyCommandId !== screenIds[6]) ||
     record.recording?.startedAt !==
       new Date(Date.parse(meta.dispatchAt) + screenCommands[1].endSeconds * 1000).toISOString() ||
     record.recording?.endedAt !==
       new Date(Date.parse(meta.dispatchAt) + screenCommands[5].endSeconds * 1000).toISOString()
   ) {
     return reject('recording evidence mismatch');
+  }
+  const recordingDurationSeconds = mp4DurationSeconds(readFileSync(recordingPath));
+  const recordingSecondsToScreenProof = screenReadySeconds - screenCommands[1].endSeconds;
+  if (recordingDurationSeconds === null || recordingDurationSeconds + 2 < recordingSecondsToScreenProof) {
+    return reject('recording ends before Settings proof');
   }
 
   const appAlivePath = join(runDir, 'app-alive.json');
@@ -572,52 +780,18 @@ function validateAndroidReadinessRecord(runDir, record, meta) {
     return reject('app-alive evidence mismatch');
   }
 
-  const recordedProofTarget = record.proof?.target;
-  if (!record.proof?.valid || typeof recordedProofTarget !== 'string') return reject('application proof missing');
-  const applicationProofPath = join(runDir, 'proof', basename(recordedProofTarget));
-  if (!existsSync(applicationProofPath) || record.evidenceSha256?.proof !== fileSha256(applicationProofPath)) {
-    return reject('application proof hash mismatch');
-  }
-  if (record.variant === 'javascript') {
-    if (
-      !applicationProofPath.endsWith('.bundle') ||
-      !readFileSync(applicationProofPath).includes(record.proof.expected)
-    ) {
-      return reject('JavaScript bundle proof mismatch');
-    }
-  } else if (record.variant === 'native') {
-    if (basename(applicationProofPath) !== 'native-application-label.txt') {
-      return reject('Android native label proof missing');
-    }
-    const labelProof = readFileSync(applicationProofPath, 'utf8');
-    const serial = labelProof.match(/^serial=(.*)$/m)?.[1];
-    const label = labelProof.match(/^application-label=(.*)$/m)?.[1];
-    if (serial !== record.simulator?.udid || label !== record.proof.expected || label !== record.proof.observed) {
-      return reject('Android native label proof mismatch');
-    }
-  }
-
-  const avdsBeforePath = join(runDir, 'avds-before.json');
-  const cleanupPath = join(runDir, 'cleanup.json');
-  if (!existsSync(avdsBeforePath) || !existsSync(cleanupPath)) return reject('cleanup evidence missing');
-  const avdsBefore = readJson(avdsBeforePath);
-  const cleanup = readJson(cleanupPath);
-  const actions = Array.isArray(cleanup.actions) ? cleanup.actions : [];
-  if (
-    !cleanup.cleanedAt ||
-    actions.some((action) => action.startsWith('failed:') || action.startsWith('skipped ')) ||
-    !actions.includes('verified benchmark agent-device sessions empty')
-  ) {
-    return reject('cleanup did not complete');
-  }
-  if (record.arm === 'stim') {
-    if (!actions.includes('stim worktree remove --force')) return reject('Stim cleanup missing');
-  } else {
-    const expectedName = meta.expectedControlSimulator?.name;
-    if (!expectedName || avdsBefore.includes(expectedName) || !actions.includes(`delete AVD ${expectedName}`)) {
-      return reject('control AVD cleanup not proven');
-    }
-  }
+  const proofFailure = readinessApplicationProofFailure({
+    runDir,
+    record,
+    meta,
+    eventsPath,
+    commands,
+    screenCommands,
+    platform,
+  });
+  if (proofFailure) return reject(proofFailure);
+  const cleanupFailure = readinessCleanupFailure(runDir, record, meta, platform);
+  if (cleanupFailure) return reject(cleanupFailure);
   return { screenReadySeconds };
 }
 
@@ -745,7 +919,6 @@ function validateLaunchCrashRecord(runDir, record, meta) {
     record.diagnosis?.initialLaunchCommandId !== diagnosis.initialLaunchCommandId ||
     record.diagnosis?.errorCaptureCommandId !== diagnosis.errorCaptureCommandId ||
     record.diagnosis?.commandId !== diagnosis.commandId ||
-    record.recovery?.repairedLaunchCommandId !== recovery.repairedLaunchCommandId ||
     record.recovery?.screenshotCommandId !== recovery.screenshotCommandId
   ) {
     return reject('evidence command ids mismatch');
@@ -772,8 +945,8 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
         record,
         meta,
         readinessValidation:
-          record.variant !== 'launch-crash' && meta.platform === 'android'
-            ? validateAndroidReadinessRecord(runDir, record, meta)
+          record.variant === 'javascript' || record.variant === 'native'
+            ? validateReadinessRecord(runDir, record, meta)
             : true,
         launchCrashValidation:
           record.variant === 'launch-crash' ? validateLaunchCrashRecord(runDir, record, meta) : null,
@@ -790,7 +963,6 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
         record.diagnosisCommandCount > 0 &&
         record.proof?.valid === true &&
         record.recovery?.valid === true &&
-        typeof record.recovery.repairedLaunchCommandId === 'string' &&
         typeof record.recovery.screenshotCommandId === 'string' &&
         launchCrashValidation !== null
       );
@@ -823,7 +995,9 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
         ...(record.simulator?.udid
           ? [
               [record.simulator.udid, '<simulator-udid>'],
-              [record.simulator.udid.slice(0, 8), '<simulator-udid-prefix>'],
+              ...(simulatorIdExactPattern.test(record.simulator.udid)
+                ? [[record.simulator.udid.slice(0, 8), '<simulator-udid-prefix>']]
+                : []),
             ]
           : []),
         ...(runNonce ? [[runNonce, id]] : []),
@@ -868,7 +1042,6 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
                 initialLaunchCommandId: record.diagnosis.initialLaunchCommandId,
                 errorCaptureCommandId: record.diagnosis.errorCaptureCommandId,
                 diagnosisCommandId: record.diagnosis.commandId,
-                repairedLaunchCommandId: record.recovery.repairedLaunchCommandId,
                 screenshotCommandId: record.recovery.screenshotCommandId,
               }
             : null,

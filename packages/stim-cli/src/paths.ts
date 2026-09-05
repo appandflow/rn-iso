@@ -117,6 +117,10 @@ export function sharedCompilationCache(): string {
   return join(getConfigDir(), 'compilation-cache');
 }
 
+export function sharedCcache(): string {
+  return join(getConfigDir(), 'ccache');
+}
+
 export function sharedGradle(): string {
   return join(getConfigDir(), 'gradle');
 }

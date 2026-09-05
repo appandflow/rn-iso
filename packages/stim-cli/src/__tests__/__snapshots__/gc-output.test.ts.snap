@@ -1,0 +1,66 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`GC renders a mixed resource report in its established order 1`] = `
+"Dead project entries (1):
+  /gone/app
+Parked simulators (1, 2K):
+  ios stim-parked (PARK..) iPhone 17 26.5 parked 24h ago 2K
+              --delete attempts verified deletions and keeps failures.
+Orphaned devices (1):
+  android stim-orphan (stim-orphan) - 2K on disk
+Stale device records (1) - the device is gone, the project is not:
+  ios GONE is not on this machine
+              recorded by /app
+              --delete clears the RECORD only; there is no device left to touch.
+Orphaned EAS sessions (1) - current EAS project only:
+  stim-remote (S1) [ios, running]
+              project scope: /app
+              remedy: eas simulator:stop --id S1
+Stale build locks (1) - the process that was building is gone:
+  ios abcdef.. (pid 123 is not running)
+              started by /builder
+EAS session sweep notices (1):
+  one session could not be verified
+Skipped (1) - not classified as dead:
+  /Volumes/Offline/app: volume /Volumes/Offline is not mounted
+Shared build caches (1) - alive, not garbage:
+          4K  Build cache (registered)
+              /cache/build
+              a test cache
+  total: 4K"
+`;
+
+exports[`a cache-scoped report preserves its serialized shape without inspecting devices 1`] = `
+"{
+  "skipped": [],
+  "deadProjects": [],
+  "invalidProjects": [],
+  "orphanedDevices": [],
+  "staleDevices": [],
+  "staleDeviceRecords": [],
+  "buildLocks": {
+    "stale": [],
+    "live": []
+  },
+  "buildSlots": {
+    "stale": [],
+    "live": []
+  },
+  "deviceLeases": {
+    "expired": [],
+    "kept": []
+  },
+  "deviceSweepNotices": [],
+  "easSessionSweep": {
+    "projectScope": null,
+    "orphaned": [],
+    "notices": [],
+    "deletionSafe": true
+  },
+  "parkedSims": [],
+  "caches": [],
+  "cacheScope": "gc-output-test-no-matching-cache",
+  "olderThan": null,
+  "all": true
+}"
+`;
