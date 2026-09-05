@@ -172,7 +172,7 @@ node test/e2e/native/run-cache-e2e.mjs --framework bare --platform android
 # skip the single-flight race (saves one cold compile; that check reports SKIP)
 node test/e2e/native/run-cache-e2e.mjs --framework expo --platform ios --skip-race
 
-# against a checkout you already have, and keep the summary
+# against an existing checkout with matching ios/Podfile.lock and ios/Pods/Manifest.lock
 node test/e2e/native/run-cache-e2e.mjs --framework expo --platform ios \
   --app-dir ~/src/my-app --summary /tmp/cache-summary.json
 

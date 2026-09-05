@@ -1,13 +1,29 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { assertMatchingPods, createFixture, createHarness, createWarmWorktree } from './native/harness.mjs';
+import {
+  assertMatchingPods,
+  createFixture,
+  createHarness,
+  createWarmWorktree,
+  workspaceLogsDir,
+} from './native/harness.mjs';
 
 function scratch(t) {
-  const base = mkdtempSync(join(tmpdir(), 'stim-native-worktrees-'));
+  const base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-native-worktrees-')));
   t.after(() => rmSync(base, { recursive: true, force: true }));
   return base;
 }
@@ -64,6 +80,29 @@ test('a failed native warm keeps its created worktree recorded for diagnostics a
   assert.equal(existsSync(f.created[0]), true);
   assert.equal(git(f.sourceDir, 'branch', '--list'), '* main');
   git(f.sourceDir, 'worktree', 'remove', f.created[0]);
+});
+
+test('native worktrees from a symlinked parent use the same paths as logs and Git cleanup', (t) => {
+  const f = repoFixture(t);
+  const alias = `${f.workDir}-alias`;
+  symlinkSync(f.workDir, alias);
+  const previousHome = process.env.STIM_HOME;
+  process.env.STIM_HOME = f.h.env.STIM_HOME;
+  t.after(() => {
+    if (previousHome === undefined) delete process.env.STIM_HOME;
+    else process.env.STIM_HOME = previousHome;
+  });
+  f.h.cli = (_, { cwd }) => {
+    const logs = workspaceLogsDir(realpathSync(cwd));
+    mkdirSync(logs, { recursive: true });
+    writeFileSync(join(logs, 'build.log'), 'build evidence');
+    return { code: 0, stdout: '', stderr: '' };
+  };
+  const path = createWarmWorktree({ ...f, workDir: alias, name: 'aliased' });
+  assert.equal(readFileSync(join(workspaceLogsDir(path), 'build.log'), 'utf-8'), 'build evidence');
+  assert.deepEqual(f.created, [realpathSync(path)]);
+  assert.ok(git(f.sourceDir, 'worktree', 'list', '--porcelain').includes(`worktree ${f.created[0]}\n`));
+  git(f.sourceDir, 'worktree', 'remove', path);
 });
 
 test('failed Git creation does not warm or claim an existing path', (t) => {

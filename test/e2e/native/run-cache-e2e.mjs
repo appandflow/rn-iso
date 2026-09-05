@@ -225,6 +225,7 @@ async function main() {
   const appDir = args.appDir
     ? resolve(args.appDir)
     : createFixture({ framework: FRAMEWORK, platform: PLATFORM, workDir: WORK_DIR, h });
+  if (PLATFORM === 'ios' && !args.skipRace) assertMatchingPods(appDir);
   const expoSdk = FRAMEWORK === 'expo' ? readExpoSdkMajor(appDir) : null;
   log(`app: ${appDir}`);
   if (FRAMEWORK === 'expo') log(`Expo SDK: ${expoSdk ?? 'unknown'}`);

@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -157,11 +157,13 @@ export function createFixture({ framework, platform, workDir, h }) {
 }
 
 export function createWarmWorktree({ h, sourceDir, workDir, name, created }) {
-  const path = join(workDir, name);
-  const added = h.sh('git', ['-C', sourceDir, 'worktree', 'add', '--detach', path, 'HEAD'], { allowFail: true });
+  const requestedPath = join(workDir, name);
+  const added = h.sh('git', ['-C', sourceDir, 'worktree', 'add', '--detach', requestedPath, 'HEAD'], {
+    allowFail: true,
+  });
   assert(added.code === 0, `git worktree add failed: ${added.stderr}`);
+  const path = realpathSync(requestedPath);
   created.push(path);
-  assert(existsSync(path), `git worktree add did not create ${path}`);
   const warmed = h.cli(['worktree', 'warm'], { cwd: path, allowFail: true });
   assert(warmed.code === 0, `warming ${path} failed: ${warmed.stderr}`);
   h.log(`worktree ${name} (from ${sourceDir}) -> ${path}`);
@@ -171,13 +173,15 @@ export function createWarmWorktree({ h, sourceDir, workDir, name, created }) {
 export function assertMatchingPods(appDir) {
   const lock = join(appDir, 'ios', 'Podfile.lock');
   const manifest = join(appDir, 'ios', 'Pods', 'Manifest.lock');
+  const remedy =
+    "Prepare matching Pods in the main checkout before the cache suite: for Expo, run `npx --no-install expo prebuild --platform ios`; for bare React Native, run the project's normal pod install.";
   assert(
     existsSync(lock) && existsSync(manifest),
-    `Pods reuse requires Podfile.lock and Pods/Manifest.lock at ${appDir}`,
+    `Pods reuse requires Podfile.lock and Pods/Manifest.lock at ${appDir}. ${remedy}`,
   );
   assert(
     readFileSync(lock, 'utf-8') === readFileSync(manifest, 'utf-8'),
-    `Pods/Manifest.lock differs from Podfile.lock at ${appDir}`,
+    `Pods/Manifest.lock differs from Podfile.lock at ${appDir}. ${remedy}`,
   );
 }
 
