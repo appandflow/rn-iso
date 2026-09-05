@@ -100,7 +100,7 @@ If anything in the list is breaking, call it out under "Removed (breaking)" /
 Before pre-flight, write `docs/releases/X.Y.Z.md`. This is the evidence index
 for the QA gate, not a post-tag changelog exercise. Use the sections `New`,
 `Removed (breaking)`, `Fixes`, `Docs`, and `Migration notes`, omitting empty
-sections. Link prior commits with
+sections. An expedited candidate also has a `QA` section. Link prior commits with
 `[<short-sha>](https://github.com/appandflow/stim/commit/<sha>)`, and say
 which package a line concerns when it is not the CLI. The version commit later
 includes this already-reviewed file.
@@ -139,7 +139,9 @@ preparation, `git status --short` may show only the draft
    grep -H '"version"' packages/*/package.json
    ```
 
-2. **Install and run the full pre-flight against those exact files:**
+2. **Install and run the full pre-flight against those exact files.** The
+   expedited RC lane in section 3 replaces this command list with its short
+   preflight; do not combine the two lanes informally.
 
    ```bash
    pnpm install --frozen-lockfile
@@ -229,6 +231,60 @@ Before continuing:
 - [ ] every release-note claim points to evidence
 - [ ] zero CRITICAL findings remain
 - [ ] every HIGH finding is fixed, or accepted explicitly and named in the release notes
+
+### Expedited RC lane
+
+Use this lane only when the user or release owner explicitly asks for an
+expedited, quick, or no-QA release. It shortens feedback for a prerelease; it is
+not available for a stable version.
+
+All of these conditions are required:
+
+- The target version has a prerelease suffix such as `-rc.N`.
+- Every included change was merged through a reviewed pull request with its
+  blocking CI green.
+- No CRITICAL or HIGH finding remains open for the included changes.
+- The changes since the last published version do not alter package boundaries,
+  version preparation, tarball packing, trusted publishing, or the Release
+  workflow. Those changes use the full lane.
+- The registry and tag checks in section 1 show no partial release to recover.
+
+Complete section 2 steps 1, 3, and 4. In place of section 2 step 2, run this
+short preflight against the bumped candidate:
+
+```bash
+pnpm install --frozen-lockfile
+pnpm run release:prep --check
+pnpm run build
+node packages/stim-cli/dist/cli.mjs --help >/dev/null
+node packages/stim-cli/dist/cli.mjs guide agent >/dev/null
+test "$(node packages/stim-cli/dist/cli.mjs --version)" = "X.Y.Z"
+```
+
+The tarball inspection remains mandatory. It is the proof that the exact files
+about to publish have the intended versions, package contents, READMEs, and no
+unsubstituted `workspace:` ranges.
+
+The expedited lane may omit the other local checks in section 2 step 2 and all
+of the pre-tag native, runtime, end-to-end, and manual rows in section 3. Record
+that choice in the release note instead of implying those checks passed:
+
+```markdown
+## QA
+
+Expedited RC authorized on YYYY-MM-DD. Omitted locally before the version
+commit: format:check, lint, typecheck, knip, unit tests, test:e2e, test:runtime,
+and the pre-tag native/manual matrix. Retained before the version commit:
+candidate build, CLI version/help/guide, and tarball inspection. Retained after
+push: exact-release-commit CI, including its format, lint, build, typecheck,
+knip, unit, cross-platform e2e, and published-runtime jobs.
+```
+
+Section 4 is unchanged. In particular, commit and push the candidate without a
+tag, wait for every blocking CI job on that exact commit, and only then create
+the immutable tag and publish through the normal workflow. A failed short
+preflight, tarball check, or exact-commit CI ends the expedited lane; fix it and
+repeat the affected gate rather than waiving it.
 
 ## 4. Cut the release
 
@@ -339,5 +395,9 @@ Before continuing:
 - Force-push tags. Cut a new version.
 - Skip the tarball check in section 2, step 3. Untracked files have shipped
   before, and it is the only place a `workspace:` range would be caught by hand.
+- Use the expedited RC lane for a stable version, release-workflow change, or a
+  candidate with an unresolved CRITICAL or HIGH finding.
+- Treat “no QA” as permission to skip exact-release-commit CI, candidate version
+  verification, or tarball inspection.
 - Publish one package at a new version and leave the others behind. The shared
   version is the compatibility statement; a partial release makes it a lie.
