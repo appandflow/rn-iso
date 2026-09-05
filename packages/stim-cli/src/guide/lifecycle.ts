@@ -52,6 +52,9 @@ not part of the normal workflow. It is the explicit recovery path after a
 failed first bundle load, when Fast Refresh cannot clear the current screen,
 or when you explicitly need an app restart. Use \`stim reload ios\` or
 \`stim reload android\` to select a platform when both owned apps are live.
+For a physical device that reached Metro, use \`agent-device metro reload
+--metro-port <reported-port>\`. The detected iOS Local Network first-load
+remedy uses agent-device UI automation because no Metro peer exists yet.
 It never builds, installs, boots, or cold-launches. It acts only on a live app
 on this workspace's owned local simulator or emulator, and refuses release
 builds, stopped or unowned devices, a missing or foreign Metro, and an
