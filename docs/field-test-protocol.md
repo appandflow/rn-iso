@@ -67,8 +67,8 @@ For warm-cache parity, use a disposable main checkout that has completed a
 normal native build for the tested platform and configuration, and record that
 build and its clean tracked baseline before warming linked worktrees.
 Dependency installation and native setup alone can leave first-build generated
-inputs unsettled. Keep the cache suite's dedicated cache roots empty during
-source preparation.
+inputs unsettled. Prepare under a separate `STIM_HOME`; do not reuse it as the
+suite's `--home`, whose dedicated caches must start empty.
 
 ## Safety rules (non-negotiable)
 
