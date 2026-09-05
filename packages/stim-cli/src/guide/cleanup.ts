@@ -1,11 +1,13 @@
-export default {
+import type { GuideTopic } from './types.ts';
+
+const cleanup: GuideTopic = {
   summary: 'Where simulators come from, and how they get reclaimed',
-  body: () => `CLEANUP AND DISK
+  preamble: () => `CLEANUP AND DISK
 
 WHAT RECLAIMS AN OWNED DEVICE
-  stim worktree remove    parks the owned simulator (\`guide lifecycle pool\`)
-                            and
-                            deletes every other owned device under the worktree
+  stim worktree remove    parks the owned simulator
+                            (\`guide lifecycle pool\`) and deletes every other
+                            owned device under the worktree
   stim gc --delete        sweeps stim-* devices no project references, and
                             clears verified parked simulators
   stim gc --delete --older-than <days>
@@ -15,22 +17,17 @@ WHAT RECLAIMS AN OWNED DEVICE
 
 Those are the only two commands that delete. \`stim stop\` shuts a device
 DOWN and leaves it assigned, which is what makes returning to a branch cost a
-boot rather than a create, a provision and a reinstall.
-
-Neither touches $STIM_HOME/stats.json: \`gc\` never reports or trims the run
+boot rather than a create, a provision and a reinstall.`,
+  sections: {
+    gc: {
+      summary:
+        'what gc and worktree remove delete, keep and refuse: orphans, stale records, locks, leases, EAS sessions',
+      body: () => `Neither touches $STIM_HOME/stats.json: \`gc\` never reports or trims the run
 counters \`stats\` prints, and there is no reset flag. Delete that one file to
 start the counters over. A file this version cannot read -- unparseable, or
 written by a newer Stim -- costs one dim line on stderr and is otherwise left
 alone; only the next \`ios\` or \`android\` run moves an unparseable one aside
 to stats.json.corrupt-<unix ms> and starts a new one.
-
-New owned Android AVDs use an 8 GiB data partition by default. This leaves room
-for repeated app installs while capping userdata growth below the 10 GiB
-setting measured on the selected API 36 profile. Set
-\`android.dataPartitionSizeGb\` to a whole number from 6 through 16384 when a
-project needs another size. Android userdata grows but does not shrink, so the
-setting applies only to a newly created AVD; recreate the environment to adopt
-a changed value.
 
 ON THE MAIN CHECKOUT
   git cannot remove the main working tree, and deleting the source tree is not
@@ -51,63 +48,6 @@ simulator used by a UI-test runner. It never shuts down an unowned simulator.
 If a delete fails, the device's config record is KEPT and the command reports
 it. A record is what makes the device findable again, so it outlives a failed
 teardown rather than turning it into an orphan.
-
-WHAT ELSE STOP REAPS
-  The device-log collectors (\`simctl log stream\` / \`adb logcat\`) that
-  \`ios\` / \`android\` attach after launch. They are recorded in
-  the global workspace state.json, and nothing outside this workspace can name them,
-  so \`stop\` is what stands between a teardown and a log stream that outlives
-  the device it was reading. A fresh \`ios\` / \`android\` run also kills the
-  previous collector for that platform before starting its own.
-
-  A PHYSICAL IPHONE'S COLLECTOR IS THE SAME PROCESS with one difference: on
-  hardware the collector IS the launch. \`devicectl\` connects an app's
-  streams only when it is the process that starts the app, so the collector
-  runs \`devicectl device process launch --console\` itself rather than
-  attaching after the fact. It registers under the same \`ios\` key, carries
-  the same --root in its title, is proven and replaced by the same pid rules,
-  and is reaped by the same \`stop\`.
-
-  THE APP'S LIFETIME IS BOUND TO THAT COLLECTOR, and this is the one place a
-  phone behaves worse than a simulator. \`devicectl device process launch
-  --console\` keeps the app attached to the launching process, so anything that
-  ends the collector ends the APP ON THE PHONE: \`stop\`, \`gc --delete\`,
-  \`worktree remove\`, a fresh \`ios --device\` run stopping its predecessor,
-  a crash, the host sleeping, or the cable coming out. Measured: SIGTERM to the
-  collector alone terminates the app. The phone has no owned-device registry
-  entry. \`stop\` closes the app and releases this workspace's leases.
-  Nothing is uninstalled, and the next \`ios --device\` starts it again.
-
-  Unplugging the phone ends devicectl, which ends the collector: it unregisters
-  itself and exits either way. A separately held \`device lock\` lease survives
-  collector exit until released or expired; \`gc --delete\` can remove its
-  expired lease file.
-  WHICH record it writes on the way out depends on devicectl's exit code, and
-  that code is unverified until someone pulls a cable: a zero exit is
-  collector_stopped, a non-zero one is collector_failed, because on hardware
-  a non-zero devicectl exit is the only evidence a launch or console failed.
-  See \`guide logs\` for what it can and cannot carry.
-
-  Before signalling a recorded collector pid, \`stop\`, \`gc --delete\`,
-  \`worktree remove\`, and a fresh \`ios\` / \`android\` run each read that
-  pid's live command and require it to be this workspace's collector for
-  that platform. A pid that cannot be proven is reported and left alone: the
-  kernel reuses pids, and an unreaped record is a smaller problem than a
-  signal delivered to someone else's process. A fresh \`ios\` / \`android\`
-  run starts its replacement anyway, leaving the unproven pid to clear on its
-  own. A collector started by an older Stim states no root in its command, so
-  it reports as unverified until its record clears -- which happens when its
-  own device's log stream ends and it unregisters itself, or when the next
-  \`ios\` / \`android\` run overwrites the record with its own, whichever
-  comes first; the old process itself keeps running until it exits on its own.
-
-  \`stop\`, \`gc --delete\`, and \`worktree remove\` weigh an unproven live
-  pid against the record's own startedAt claim: a pid that started AFTER that
-  claim is a newer process that recycled the number, so the record is
-  genuinely stale and gets dropped, as before. A pid that started at or
-  before that claim may still be the collector Stim registered, so the
-  record is kept and reported for a retry, the same way a device teardown
-  that could not be confirmed keeps its record.
 
 BUILD LOCKS
   \`gc\` also reports the single-flight build locks (above): the ones whose
@@ -167,9 +107,70 @@ THE ONE CASE GC WILL NOT REAP
   ones, so it refuses to delete anything. It still NAMES the stim-* devices
   it found, so you can judge. Delete them yourself:
     xcrun simctl delete <udid>
-    avdmanager delete avd -n <name>
+    avdmanager delete avd -n <name>`,
+    },
+    collector: {
+      summary: 'log collector reaping: an unproven collector pid, and why the app on a phone closed',
+      body: () => `WHAT ELSE STOP REAPS
+  The device-log collectors (\`simctl log stream\` / \`adb logcat\`) that
+  \`ios\` / \`android\` attach after launch. They are recorded in
+  the global workspace state.json, and nothing outside this workspace can name them,
+  so \`stop\` is what stands between a teardown and a log stream that outlives
+  the device it was reading. A fresh \`ios\` / \`android\` run also kills the
+  previous collector for that platform before starting its own.
 
-DISK
+  A PHYSICAL IPHONE'S COLLECTOR IS THE SAME PROCESS with one difference: on
+  hardware the collector IS the launch. \`devicectl\` connects an app's
+  streams only when it is the process that starts the app, so the collector
+  runs \`devicectl device process launch --console\` itself rather than
+  attaching after the fact. It registers under the same \`ios\` key, carries
+  the same --root in its title, is proven and replaced by the same pid rules,
+  and is reaped by the same \`stop\`.
+
+  THE APP'S LIFETIME IS BOUND TO THAT COLLECTOR, and this is the one place a
+  phone behaves worse than a simulator. \`devicectl device process launch
+  --console\` keeps the app attached to the launching process, so anything that
+  ends the collector ends the APP ON THE PHONE: \`stop\`, \`gc --delete\`,
+  \`worktree remove\`, a fresh \`ios --device\` run stopping its predecessor,
+  a crash, the host sleeping, or the cable coming out. Measured: SIGTERM to the
+  collector alone terminates the app. The phone has no owned-device registry
+  entry. \`stop\` closes the app and releases this workspace's leases.
+  Nothing is uninstalled, and the next \`ios --device\` starts it again.
+
+  Unplugging the phone ends devicectl, which ends the collector: it unregisters
+  itself and exits either way. A separately held \`device lock\` lease survives
+  collector exit until released or expired; \`gc --delete\` can remove its
+  expired lease file.
+  WHICH record it writes on the way out depends on devicectl's exit code, and
+  that code is unverified until someone pulls a cable: a zero exit is
+  collector_stopped, a non-zero one is collector_failed, because on hardware
+  a non-zero devicectl exit is the only evidence a launch or console failed.
+  See \`guide logs\` for what it can and cannot carry.
+
+  Before signalling a recorded collector pid, \`stop\`, \`gc --delete\`,
+  \`worktree remove\`, and a fresh \`ios\` / \`android\` run each read that
+  pid's live command and require it to be this workspace's collector for
+  that platform. A pid that cannot be proven is reported and left alone: the
+  kernel reuses pids, and an unreaped record is a smaller problem than a
+  signal delivered to someone else's process. A fresh \`ios\` / \`android\`
+  run starts its replacement anyway, leaving the unproven pid to clear on its
+  own. A collector started by an older Stim states no root in its command, so
+  it reports as unverified until its record clears -- which happens when its
+  own device's log stream ends and it unregisters itself, or when the next
+  \`ios\` / \`android\` run overwrites the record with its own, whichever
+  comes first; the old process itself keeps running until it exits on its own.
+
+  \`stop\`, \`gc --delete\`, and \`worktree remove\` weigh an unproven live
+  pid against the record's own startedAt claim: a pid that started AFTER that
+  claim is a newer process that recycled the number, so the record is
+  genuinely stale and gets dropped, as before. A pid that started at or
+  before that claim may still be the collector Stim registered, so the
+  record is kept and reported for a retry, the same way a device teardown
+  that could not be confirmed keeps its record.`,
+    },
+    disk: {
+      summary: 'disk usage, AVD and build-log sizes, the data partition, trimming the shared caches',
+      body: () => `DISK
   Logs, state, pidfiles and Xcode DerivedData are under the global workspace
   directory, and \`worktree remove\` reclaims them. Gradle retains its normal
   project build directories while sharing task outputs through its build cache.
@@ -198,6 +199,14 @@ DISK
     stim gc                           # report dead entries, orphans, caches
   Xcode recreates default simulators on demand, so deleting them is safe.
 
+New owned Android AVDs use an 8 GiB data partition by default. This leaves room
+for repeated app installs while capping userdata growth below the 10 GiB
+setting measured on the selected API 36 profile. Set
+\`android.dataPartitionSizeGb\` to a whole number from 6 through 16384 when a
+project needs another size. Android userdata grows but does not shrink, so the
+setting applies only to a newly created AVD; recreate the environment to adopt
+a changed value.
+
 SHARED BUILD CACHES
   The caches that make a second workspace fast are alive by design and never
   included in a plain \`gc --delete\`. Every \`gc\` run reports them anyway,
@@ -218,4 +227,8 @@ SHARED BUILD CACHES
   but never prunes or empties it, including with --older-than or --cache all.
   Trim rather than empty. Emptying costs the next build in every project the
   time the cache was saving.`,
+    },
+  },
 };
+
+export default cleanup;

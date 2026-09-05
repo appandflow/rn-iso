@@ -675,7 +675,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   collector -- a crash, the host sleeping, the cable coming out) closes the app
   on the phone. It stays INSTALLED. Collector exit removes the collector's
   registration, not a separately held device lease; \`stop\` also releases
-  this workspace's leases. See \`guide cleanup\`.
+  this workspace's leases. See \`guide cleanup collector\`.
 
   THERE IS NO INSTALL SKIP ON A PHONE. The simulator path skips the install
   when the device already holds the same bundle byte for byte, which it proves

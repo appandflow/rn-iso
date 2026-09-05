@@ -582,7 +582,7 @@ test('the guide keeps Metro intent separate from the explicit device backend', (
 
 test('the guide documents Android AVD disk-space diagnosis and cleanup', () => {
   const errors = renderSection('errors', 'STIM_NO_DEVICE');
-  const cleanup = renderTopic('cleanup');
+  const cleanup = renderSection('cleanup', 'disk');
   assert(errors);
   assert(cleanup);
 
@@ -624,7 +624,7 @@ test('the guide documents remote providers and backend credential boundaries', (
 });
 
 test('the cleanup guide documents fail-closed EAS orphan recovery', () => {
-  const cleanup = renderTopic('cleanup');
+  const cleanup = renderSection('cleanup', 'gc');
   assert(cleanup);
 
   expect(cleanup).toMatch(/plain `stim gc`[^.]*dry run/i);
@@ -645,7 +645,7 @@ test('the cleanup guide documents fail-closed EAS orphan recovery', () => {
 });
 
 test('the cleanup guide documents the collector ownership proof and its upgrade window', () => {
-  const cleanup = renderTopic('cleanup');
+  const cleanup = renderSection('cleanup', 'collector');
   assert(cleanup);
 
   expect(cleanup).toMatch(/before signalling a recorded collector pid/i);
@@ -660,7 +660,7 @@ test('the cleanup guide documents the collector ownership proof and its upgrade 
 });
 
 test('the cleanup guide documents the keep-and-retry split for a live, unverified collector pid', () => {
-  const cleanup = renderTopic('cleanup');
+  const cleanup = renderSection('cleanup', 'collector');
   assert(cleanup);
 
   expect(cleanup).toMatch(/weigh an unproven live\s+pid against the record's own startedAt claim/i);
@@ -671,7 +671,7 @@ test('the cleanup guide documents the keep-and-retry split for a live, unverifie
 });
 
 test('the cleanup guide documents that the shared Gradle build cache is report-only', () => {
-  const cleanup = renderTopic('cleanup');
+  const cleanup = renderSection('cleanup', 'disk');
   assert(cleanup);
 
   expect(cleanup).toMatch(/Gradle build cache[\s\S]*report-only/i);
@@ -679,7 +679,7 @@ test('the cleanup guide documents that the shared Gradle build cache is report-o
 });
 
 test('the cleanup guide lists the shared ccache directory and who bounds it', () => {
-  const cleanup = renderTopic('cleanup');
+  const cleanup = renderSection('cleanup', 'disk');
   assert(cleanup);
 
   expect(cleanup).toMatch(/\$STIM_HOME\/ccache \(default ~\/\.stim\/ccache\)/);
@@ -748,7 +748,7 @@ test('no topic teaches a command this binary does not have', () => {
 
 test('the guide states the physical-iPhone device-log losses, and states them as losses', () => {
   const logs = renderTopic('logs');
-  const cleanup = renderTopic('cleanup');
+  const cleanup = renderSection('cleanup', 'collector');
   assert(logs);
   assert(cleanup);
 
@@ -823,7 +823,7 @@ test('the guide teaches the device install and launch that #178 phases 3 and 5 w
 // devicectl keeps the app attached to the process that launched it, so the
 // collector holding it is a fact about `stop`, not only about logs.
 test('the guide says a phone loses its running app when the collector ends', () => {
-  const cleanup = renderTopic('cleanup');
+  const cleanup = renderSection('cleanup', 'collector');
   const lifecycle = renderSection('lifecycle', 'devices');
   assert(cleanup);
   assert(lifecycle);
@@ -1130,7 +1130,7 @@ test('the safe Android AVD override contract is consistent across user guidance'
 
 test('the Android data partition contract is consistent across user guidance', () => {
   const settings = renderTopic('settings');
-  const cleanup = renderTopic('cleanup');
+  const cleanup = renderSection('cleanup', 'disk');
   assert(settings);
   assert(cleanup);
   for (const body of [settings, cleanup]) {
@@ -1260,7 +1260,7 @@ test('the agent guide carries the normal workflow and safety rules', () => {
 test('physical-device guidance separates collector cleanup from device leases', () => {
   for (const [topic, section] of [
     ['lifecycle', 'devices'],
-    ['cleanup', null],
+    ['cleanup', 'collector'],
   ] as Array<[string, string | null]>) {
     const body = section ? renderSection(topic, section) : renderTopic(topic);
     assert(body);
@@ -1314,7 +1314,7 @@ test('the agent guide routes to every detailed topic', () => {
 
 test('the agent and cleanup guides shut down owned simulators without an occupancy check', () => {
   const agent = renderTopic('agent');
-  const cleanup = renderTopic('cleanup');
+  const cleanup = renderSection('cleanup', 'gc');
   assert(agent);
   assert(cleanup);
 
@@ -1370,7 +1370,7 @@ test('advanced contracts stay in guide topics instead of the skill', () => {
     ['STIM_AT_CAPACITY', 'errors', null],
     ['.fingerprintignore', 'lifecycle', 'builds'],
     ['CoreSimulatorBridge', 'facts', 'devmenu'],
-    ['~/.android/avd', 'cleanup', null],
+    ['~/.android/avd', 'cleanup', 'disk'],
     ['android.avdConfigFile', 'settings', null],
     ['productionRelease', 'lifecycle', 'release'],
   ] as const;
@@ -1491,7 +1491,7 @@ test('the guide documents the flavor refusal that lands before the build', () =>
 });
 
 test('the cleanup guide documents what gc does with device lease files', () => {
-  const cleanup = renderTopic('cleanup');
+  const cleanup = renderSection('cleanup', 'gc');
   assert(cleanup);
   expect(cleanup).toMatch(/DEVICE LEASES/);
   expect(cleanup).toMatch(/~\/\.stim\/device-locks/);
@@ -1682,7 +1682,7 @@ test('the guide states the rule that turns runs into the numbers `stats` prints'
 
 test('the guide routes the two report questions to the two commands', () => {
   const lifecycle = renderTopic('lifecycle');
-  const cleanup = renderTopic('cleanup');
+  const cleanup = renderSection('cleanup', 'gc');
   assert(lifecycle);
   assert(cleanup);
 
