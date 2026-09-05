@@ -73,7 +73,11 @@ beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'stim-android-'));
   writeFileSync(
     join(root, 'package.json'),
-    JSON.stringify({ name: 'app', scripts: { android: 'react-native run-android' } }),
+    JSON.stringify({
+      name: 'app',
+      dependencies: { 'react-native': '0.81.0' },
+      scripts: { android: 'react-native run-android' },
+    }),
   );
   mkdirSync(join(root, 'android', 'app'), { recursive: true });
   writeFileSync(join(root, 'android', 'app', 'build.gradle'), 'android {\n  namespace "com.example.app"\n}\n');
@@ -135,6 +139,7 @@ interface BuildArgs {
   root?: string;
   logWriter?: unknown;
   variant?: string | null;
+  abi?: string | null;
 }
 interface InstallArgs {
   apkPath?: string | null;
@@ -248,6 +253,7 @@ function harness(overrides = {}) {
   const stdout: string[] = [];
   const options = {
     root,
+    deviceAbi: () => null,
     ensureDevice: async (args: unknown = {}) => {
       calls.ensureDevice.push(args);
       return { avdName: 'stim-app-412', consolePort: 5584, owned: true };
@@ -1053,6 +1059,62 @@ describe('a cache miss', () => {
     expect(result.facts.cacheHit).toBe(false);
   });
 
+  test('builds only the ABI selected for an owned emulator and scopes the cache key', async () => {
+    const abiKey = `${FINGERPRINT}-debug-sim-arm64-v8a`;
+    const h = harness({
+      json: true,
+      deviceAbi: never('the owned emulator ABI query'),
+      ensureDevice: async () => ({
+        avdName: 'stim-app-412',
+        consolePort: 5584,
+        owned: true,
+        systemImage: 'system-images;android-36;google_apis;arm64-v8a',
+      }),
+      loadProvider: never('the Expo build cache provider'),
+    });
+
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(h.calls.build[0]?.abi).toBe('arm64-v8a');
+    expect(h.calls.resolveCached[0]).toEqual(['android', abiKey]);
+    expect(h.calls.storeCached[0]?.slice(0, 2)).toEqual(['android', abiKey]);
+    expect(result.facts?.cacheKey).toBe(abiKey);
+    expect(JSON.parse(h.stdout[0] ?? '{}').cacheKey).toBe(abiKey);
+    expect(readState().lastBuild.cacheKey).toBe(abiKey);
+  });
+
+  test('keeps a universal Debug build when the owned emulator ABI is unknown', async () => {
+    const h = harness({
+      ensureDevice: async () => ({
+        avdName: 'stim-app-412',
+        consolePort: 5584,
+        owned: true,
+        systemImage: null,
+      }),
+    });
+
+    expect((await h.run()).ok).toBe(true);
+    expect(h.calls.build[0]?.abi).toBeNull();
+    expect(h.calls.resolveCached[0]).toEqual(['android', CACHE_KEY]);
+  });
+
+  test('keeps Release builds universal even when the target ABI is known', async () => {
+    const releaseKey = `${FINGERPRINT}-release-sim`;
+    const h = harness({
+      variant: 'release',
+      ensureDevice: async () => ({
+        avdName: 'stim-app-412',
+        consolePort: 5584,
+        owned: true,
+        systemImage: 'system-images;android-36;google_apis;arm64-v8a',
+      }),
+    });
+
+    expect((await h.run()).ok).toBe(true);
+    expect(h.calls.build[0]?.abi).toBeNull();
+    expect(h.calls.resolveCached[0]).toEqual(['android', releaseKey]);
+  });
+
   test('a cache that cannot be written is a warning, not a failed run', async () => {
     const h = harness({
       storeCached: () => {
@@ -1362,6 +1424,33 @@ describe('metro is verified before any build work', () => {
 });
 
 describe('the other refusals', () => {
+  test('a directory that depends on neither react-native nor expo is refused before any workspace state', async () => {
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'monorepo', devDependencies: { vitest: '5' } }));
+    const h = harness({ ensureDevice: never('the device'), build: never('the build') });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('STIM_NO_PROJECT');
+    expect(result.error?.message).toContain(join(root, 'package.json'));
+    expect(result.error?.message).toMatch(/neither react-native nor expo/);
+    expect(result.error?.remedy).toBeTruthy();
+    expect(h.calls.ensureStorage).toEqual([]);
+    expect(h.stdout).toEqual([]);
+  });
+
+  test('a package.json that does not parse is refused as unreadable, not as a missing app dependency', async () => {
+    writeFileSync(join(root, 'package.json'), '{ "name": "app", "dependencies": { "react-native": "0.81.0"');
+    const h = harness({ ensureDevice: never('the device'), build: never('the build') });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('STIM_NO_PROJECT');
+    expect(result.error?.message).toContain(join(root, 'package.json'));
+    expect(result.error?.message).toMatch(/is not valid JSON/);
+    expect(result.error?.message).not.toMatch(/neither react-native nor expo/);
+    expect(result.error?.remedy).toMatch(/Fix the JSON/);
+    expect(h.calls.ensureStorage).toEqual([]);
+    expect(h.stdout).toEqual([]);
+  });
+
   test('a fingerprint with no hash refuses without a package-install remedy', async () => {
     const h = harness({
       fingerprint: async () => null,
@@ -3784,6 +3873,38 @@ describe('the project cache provider', () => {
     expect(labelled(h.stderr, 'cache').some((line) => line.includes('uploaded (./cache.cjs)'))).toBe(true);
   });
 
+  test('an ABI-targeted build uses the key-based provider and skips the Expo provider', async () => {
+    const abiKey = `${FINGERPRINT}-debug-sim-arm64-v8a`;
+    const providerCalls: unknown[] = [];
+    const h = harness(
+      providerOptions(
+        {
+          resolve: (input: unknown) => {
+            providerCalls.push(input);
+            return null;
+          },
+          store: (input: unknown) => {
+            providerCalls.push(input);
+          },
+        },
+        {
+          ensureDevice: async () => ({
+            avdName: 'stim-app-412',
+            consolePort: 5584,
+            owned: true,
+            systemImage: 'system-images;android-36;google_apis;arm64-v8a',
+          }),
+          loadProvider: never('the Expo build cache provider'),
+        },
+      ),
+    );
+
+    expect((await h.run()).ok).toBe(true);
+    expect(providerCalls).toHaveLength(2);
+    expect(providerCalls[0]).toMatchObject({ platform: 'android', key: abiKey });
+    expect(providerCalls[1]).toMatchObject({ platform: 'android', key: abiKey });
+  });
+
   test('an unusable provider reports once and the build still succeeds', async () => {
     const h = harness({
       resolveCacheProvider: () => providerConfig(),
@@ -3876,6 +3997,40 @@ describe('--device (a physical Android device)', () => {
     expect(result.ok).toBe(true);
     expect(h.calls.install[0]?.serial).toBe('RFCR7081Q9L');
     expect(h.calls.launch[0]?.serial).toBe('RFCR7081Q9L');
+  });
+
+  test('a physical Debug run builds for the device primary ABI', async () => {
+    const serials: string[] = [];
+    const h = physicalHarness({
+      deviceAbi: (serial: string) => {
+        serials.push(serial);
+        return 'arm64-v8a';
+      },
+    });
+
+    expect((await h.run()).ok).toBe(true);
+    expect(serials).toEqual(['RFCR7081Q9L']);
+    expect(h.calls.build[0]?.abi).toBe('arm64-v8a');
+    expect(h.calls.resolveCached[0]).toEqual(['android', `${FINGERPRINT}-debug-sim-arm64-v8a`]);
+  });
+
+  test('a physical Debug run stays universal when the device ABI is unknown', async () => {
+    const h = physicalHarness({ deviceAbi: () => null });
+
+    expect((await h.run()).ok).toBe(true);
+    expect(h.calls.build[0]?.abi).toBeNull();
+    expect(h.calls.resolveCached[0]).toEqual(['android', CACHE_KEY]);
+  });
+
+  test('a physical Release run stays universal without querying the device ABI', async () => {
+    const h = physicalHarness({
+      variant: 'release',
+      deviceAbi: never('the device ABI'),
+    });
+
+    expect((await h.run()).ok).toBe(true);
+    expect(h.calls.build[0]?.abi).toBeNull();
+    expect(h.calls.resolveCached[0]).toEqual(['android', `${FINGERPRINT}-release-sim`]);
   });
 
   test('a physical run launches against localhost, not the emulator loopback', async () => {

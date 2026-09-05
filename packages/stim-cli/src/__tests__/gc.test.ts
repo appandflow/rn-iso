@@ -260,6 +260,7 @@ test('parked deletion keeps ownership records after malformed simctl list output
       throw new Error(`unexpected run: ${cmd}`);
     },
     runQuiet: () => null,
+    runFileQuiet: () => null,
     spawn: () => null,
   });
 
@@ -375,6 +376,7 @@ test('gc sizes only listed owned Android AVDs after ownership classification', a
       throw new Error(`unexpected run: ${cmd}`);
     },
     runQuiet: () => null,
+    runFileQuiet: () => null,
     spawn: () => null,
   });
 
@@ -620,6 +622,32 @@ test('findStaleProjectDevices only proposes devices present in the live listing'
   expect(stale.length).toBe(0);
 });
 
+test('findStaleProjectDevices never reaps a device recorded under a key that is not absolute', () => {
+  const now = Date.now();
+  const stale = findStaleProjectDevices({
+    config: makeConfig({
+      projects: { '.claude/stim-worktrees/nestrel': { platforms: { ios: { deviceUdid: 'U-STALE', owned: true } } } },
+    }),
+    sims: staleSims,
+    avds: [],
+    olderThanDays: 30,
+    now,
+    lastTouched: () => now - 90 * DAY_MS,
+  });
+  expect(stale.length).toBe(0);
+});
+
+test('findStaleDeviceRecords still clears a dangling claim held by a key that is not absolute', () => {
+  const stale = findStaleDeviceRecords({
+    config: makeConfig({
+      projects: { '.claude/stim-worktrees/nestrel': { platforms: { ios: { deviceUdid: 'GONE', owned: true } } } },
+    }),
+    sims: [],
+    avds: [],
+  });
+  expect(stale.map((r) => r.id)).toEqual(['GONE']);
+});
+
 test('findStaleProjectDevices skips projects the dead-entry sweep already claimed', () => {
   const now = Date.now();
   const stale = findStaleProjectDevices({
@@ -651,6 +679,9 @@ function installExecutor() {
       throw new Error(`unexpected run: ${cmd}`);
     },
     runQuiet() {
+      return null;
+    },
+    runFileQuiet() {
       return null;
     },
     spawn(cmd) {
@@ -1371,9 +1402,12 @@ describe('EAS orphan session sweep', () => {
       run(cmd) {
         throw new Error(`unexpected run: ${cmd}`);
       },
-      runQuiet(cmd) {
-        if (!cmd.includes('--git-common-dir')) return null;
-        return cmd.includes(otherWorkspace) ? otherGitCommon : projectGitCommon;
+      runQuiet() {
+        return null;
+      },
+      runFileQuiet(_file: string, args: string[]) {
+        if (!args.includes('--git-common-dir')) return null;
+        return args.some((arg) => arg.includes(otherWorkspace)) ? otherGitCommon : projectGitCommon;
       },
       spawn(cmd) {
         throw new Error(`unexpected spawn: ${cmd}`);
@@ -1881,6 +1915,83 @@ test('a dead project on an unmounted volume is not unregistered', async () => {
   expect(cfg.projects[localDeadPath]).toBe(undefined);
 });
 
+describe('a registry key that is not an absolute path', () => {
+  const relativeKey = '.claude/stim-worktrees/nestrel';
+
+  test('is an invalid record, not an unmounted volume', async () => {
+    saveConfig({
+      version: 2,
+      projects: { [relativeKey]: { metroPort: 8100, platforms: {} } },
+      repos: {},
+    });
+    installExecutor();
+
+    const report = await collectGcReport();
+
+    expect(report.invalidProjects).toEqual([relativeKey]);
+    expect(report.deadProjects).toEqual([]);
+    expect(report.skipped).toEqual([]);
+  });
+
+  test('is kept, with the real reason, while it still records a device', async () => {
+    saveConfig({
+      version: 2,
+      projects: {
+        [relativeKey]: { metroPort: 8100, platforms: { ios: { deviceUdid: 'UDID-1', owned: true } } },
+      },
+      repos: {},
+    });
+    installExecutor();
+
+    const report = await collectGcReport();
+
+    expect(report.invalidProjects).toEqual([]);
+    expect(report.deadProjects).toEqual([]);
+    expect(report.skipped).toHaveLength(1);
+    expect(report.skipped[0]?.dir).toBe(relativeKey);
+    expect(report.skipped[0]?.reason).toMatch(/not an absolute path/);
+    expect(report.skipped[0]?.reason).toMatch(/UDID-1/);
+    expect(report.skipped[0]?.reason).toMatch(/gc removes it once that claim is gone/);
+    expect(report.skipped[0]?.reason).not.toMatch(/not mounted/);
+  });
+
+  test('the report names it as an invalid record', () => {
+    const lines = formatGcReport({ invalidProjects: [relativeKey] }).join('\n');
+    expect(lines).toMatch(/Invalid project entries \(1\)/);
+    expect(lines).toMatch(/not an absolute path/);
+    expect(lines).toMatch(new RegExp(relativeKey.replace(/\./g, '\\.')));
+    expect(lines).not.toMatch(/Nothing to reclaim/);
+  });
+
+  test('--delete removes it when it claims no device', async () => {
+    saveConfig({
+      version: 2,
+      projects: { [relativeKey]: { metroPort: 8100, platforms: {} } },
+      repos: {},
+    });
+    installExecutor();
+
+    await cli(['--delete']);
+
+    expect(currentConfig().projects[relativeKey]).toBe(undefined);
+  });
+
+  test('--delete keeps it while it claims a device', async () => {
+    saveConfig({
+      version: 2,
+      projects: {
+        [relativeKey]: { metroPort: 8100, platforms: { ios: { deviceUdid: 'UDID-1', owned: true } } },
+      },
+      repos: {},
+    });
+    installExecutor();
+
+    await cli(['--delete']);
+
+    expect(currentConfig().projects[relativeKey]?.platforms?.ios?.deviceUdid).toBe('UDID-1');
+  });
+});
+
 interface DeviceSpec {
   udid: string;
   name: string;
@@ -1926,6 +2037,10 @@ function installDeviceExecutor({
       if (shutdownMatch && throwOnShutdownFor.has(shutdownMatch[1])) {
         throw new Error(`simulated shutdown failure for ${shutdownMatch[1]}`);
       }
+      return '';
+    },
+    runFileQuiet(file: string, args: string[] = []) {
+      execCalls.push([file, ...args].join(' '));
       return '';
     },
     spawn(cmd) {

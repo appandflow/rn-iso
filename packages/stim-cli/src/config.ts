@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { isAbsolute, join } from 'path';
 import { homedir } from 'os';
 import { isOnMountedVolume } from './fs-util.ts';
 import { withDirLock } from './dir-lock.ts';
@@ -91,7 +91,16 @@ export function getProject(projectPath: string): ProjectRecord | null {
   return cfg?.projects?.[projectPath] || null;
 }
 
+function requireAbsoluteProjectPath(projectPath: string): void {
+  if (isAbsolute(projectPath)) return;
+  throw new Error(
+    `Project key "${projectPath}" is not an absolute path. ` +
+      'The registry is keyed by the realpath of a workspace root, so a relative key can never resolve.',
+  );
+}
+
 export function upsertProject(projectPath: string, fields: Partial<ProjectRecord>): ProjectRecord {
+  requireAbsoluteProjectPath(projectPath);
   return withConfigLock(() => {
     const cfg = ensureConfig();
     const existing = cfg.projects[projectPath] || {
@@ -132,6 +141,7 @@ export function claimMetroPort(projectPath: string, port: number): number | null
 }
 
 export function setDevice(projectPath: string, platform: string, deviceFields: DeviceRecord): void {
+  requireAbsoluteProjectPath(projectPath);
   withConfigLock(() => {
     const cfg = ensureConfig();
     if (!cfg.projects[projectPath]) {
@@ -164,6 +174,7 @@ export function clearDevice(projectPath: string, platform: string): void {
 }
 
 export function setSupervisor(projectPath: string, { pid, port, startedAt }: SupervisorRecord): SupervisorRecord {
+  requireAbsoluteProjectPath(projectPath);
   return withConfigLock(() => {
     const cfg = ensureConfig();
     if (!cfg.projects[projectPath]) {

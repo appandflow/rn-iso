@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'fs'
 import { tmpdir } from 'os';
 import { dirname, join, relative, resolve } from 'path';
 import { getExecutor } from './exec.ts';
-import { detectIsExpo } from './project.ts';
+import { appProjectProblem, detectIsExpo } from './project.ts';
 import * as expoFingerprint from '@expo/fingerprint';
 import { diffFingerprintSources, fingerprintProject } from './build-cache.ts';
 import { dirtyFingerprintFiles, gitCommonDir, listWorktrees, repoRoot } from './worktree.ts';
@@ -689,6 +689,7 @@ export function runDoctor(
     .filter((remoteFinding): remoteFinding is Finding => remoteFinding !== null);
 
   return [
+    checkAppProject(projectRoot),
     ...checkMainCheckout(projectRoot, { platform }),
     checkDevClient(pkg, isExpo),
     checkMetroCache(metroConfig),
@@ -701,6 +702,19 @@ export function runDoctor(
     ...remoteFindings,
     ...settingShapeFindings,
   ].filter((f): f is Finding => Boolean(f));
+}
+
+function checkAppProject(projectRoot: string): Finding | null {
+  const problem = appProjectProblem(projectRoot);
+  if (!problem) return null;
+  return finding(
+    'cost',
+    problem.kind === 'unreadable'
+      ? 'This package.json does not parse'
+      : 'This directory is not a React Native or Expo app',
+    `${problem.message} \`stim start\`, \`stim ios\` and \`stim android\` refuse here with STIM_NO_PROJECT, so nothing below was measured against an app.`,
+    problem.remedy,
+  );
 }
 
 function agentDeviceIsOnPath(): boolean {
@@ -777,8 +791,9 @@ export async function detectFingerprintParity(
   } = {},
 ): Promise<Finding | null> {
   const exec = getExecutor();
-  const quotedRoot = JSON.stringify(projectRoot);
-  if (exec.runQuiet(`git -C ${quotedRoot} rev-parse --git-dir`, { timeoutMs: 10000 }) == null) return null;
+  if (exec.runFileQuiet('git', ['-C', projectRoot, 'rev-parse', '--git-dir'], { timeoutMs: 10000 }) == null) {
+    return null;
+  }
   // A fresh `git worktree add` of HEAD carries no node_modules, and @expo/fingerprint reads
   // installed packages as sources, so from an installed checkout every comparison reports drift
   // that is only the missing install. The question has an answer only on a cold checkout.
@@ -790,7 +805,7 @@ export async function detectFingerprintParity(
 
   const base = mkdtempSync(join(tmpdir(), 'stim-parity-'));
   const worktree = join(base, 'head');
-  const added = exec.runQuiet(`git -C ${quotedRoot} worktree add --detach ${JSON.stringify(worktree)} HEAD`, {
+  const added = exec.runFileQuiet('git', ['-C', projectRoot, 'worktree', 'add', '--detach', worktree, 'HEAD'], {
     timeoutMs: 60000,
   });
   if (added == null) {
@@ -818,8 +833,8 @@ export async function detectFingerprintParity(
   } catch {
     return null;
   } finally {
-    exec.runQuiet(`git -C ${quotedRoot} worktree remove --force ${JSON.stringify(worktree)}`, { timeoutMs: 30000 });
+    exec.runFileQuiet('git', ['-C', projectRoot, 'worktree', 'remove', '--force', worktree], { timeoutMs: 30000 });
     rmSync(base, { recursive: true, force: true });
-    exec.runQuiet(`git -C ${quotedRoot} worktree prune`, { timeoutMs: 10000 });
+    exec.runFileQuiet('git', ['-C', projectRoot, 'worktree', 'prune'], { timeoutMs: 10000 });
   }
 }

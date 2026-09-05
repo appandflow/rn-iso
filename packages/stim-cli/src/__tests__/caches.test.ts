@@ -38,7 +38,7 @@ afterEach(() => {
 test('discoverCaches includes declared paths and expands a leading ~', () => {
   const dir = mkdtempSync(join(tmpdir(), 'stim-declared-'));
   try {
-    setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
+    setExecutor({ run: () => '', runQuiet: () => null, runFileQuiet: () => null, spawn: () => {} });
     const found = discoverCaches({ declared: [dir, '/definitely/not/here'] });
     const declared = found.filter((c) => c.note.includes('caches` setting'));
     expect(declared.length).toBe(1);
@@ -53,7 +53,7 @@ test('metro file maps are reported as an explicit file list, never as a director
   const stray = join(tmpdir(), `metro-file-map-stim-test-${process.pid}`);
   writeFileSync(stray, 'x'.repeat(1024));
   try {
-    setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
+    setExecutor({ run: () => '', runQuiet: () => null, runFileQuiet: () => null, spawn: () => {} });
     const found = discoverCaches().find((c) => c.name === 'Metro file maps');
     expect(found).toBeTruthy();
     assert(found);
@@ -297,7 +297,7 @@ test('declaredCachePaths reads the caches setting of the project it is run in', 
     writeFileSync(join(projectRoot, 'package.json'), JSON.stringify({ name: 'demo' }));
     upsertProject(projectRoot, {});
     setProjectSetting(projectRoot, 'caches', [declared]);
-    setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
+    setExecutor({ run: () => '', runQuiet: () => null, runFileQuiet: () => null, spawn: () => {} });
 
     expect(declaredCachePaths(projectRoot)).toEqual([declared]);
 
@@ -312,7 +312,7 @@ test('declaredCachePaths reads the caches setting of the project it is run in', 
 test('declaredCachePaths is empty outside a project rather than an error', () => {
   const notAProject = mkdtempSync(join(tmpdir(), 'stim-noproj-'));
   try {
-    setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
+    setExecutor({ run: () => '', runQuiet: () => null, runFileQuiet: () => null, spawn: () => {} });
     expect(declaredCachePaths(notAProject)).toEqual([]);
   } finally {
     rmSync(notAProject, { recursive: true, force: true });
@@ -323,7 +323,7 @@ test('discoverCaches says of each cache whether a project registered it', () => 
   const registeredDir = mkdtempSync(join(tmpdir(), 'stim-src-reg-'));
   const declaredDir = mkdtempSync(join(tmpdir(), 'stim-src-decl-'));
   try {
-    setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
+    setExecutor({ run: () => '', runQuiet: () => null, runFileQuiet: () => null, spawn: () => {} });
     register({ dir: registeredDir, name: 'Registered one' });
 
     const found = discoverCaches({ declared: [declaredDir] });
@@ -342,7 +342,7 @@ test('discoverCaches says of each cache whether a project registered it', () => 
 test('a declared path that only differs in spelling dedups against the registration', () => {
   const dir = mkdtempSync(join(tmpdir(), 'stim-dedup-'));
   try {
-    setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
+    setExecutor({ run: () => '', runQuiet: () => null, runFileQuiet: () => null, spawn: () => {} });
     register({ dir, name: 'Registered one' });
 
     const found = discoverCaches({ declared: [join(dir, 'sub', '..')] });

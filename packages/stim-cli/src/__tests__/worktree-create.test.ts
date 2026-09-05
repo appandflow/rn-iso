@@ -699,9 +699,10 @@ test('create action: a branch that appears between the pre-check and the add is 
       run: (cmd: string, opts: unknown) => real.run(cmd, opts as never),
       runFile: (file: string, args: string[], opts: unknown) => real.runFile(file, args, opts as never),
       spawn: (cmd: string, args: string[], opts: unknown) => real.spawn(cmd, args, opts as never),
-      runQuiet: (cmd: string, opts: unknown) => {
-        const out = real.runQuiet(cmd, opts as never);
-        if (cmd.includes('refs/heads/worktree-feat-race') && ++verified === 1) {
+      runQuiet: (cmd: string, opts: unknown) => real.runQuiet(cmd, opts as never),
+      runFileQuiet: (file: string, args: string[], opts: unknown) => {
+        const out = real.runFileQuiet(file, args, opts as never);
+        if (args.includes('refs/heads/worktree-feat-race') && ++verified === 1) {
           git('git branch worktree-feat-race');
         }
         return out;
@@ -770,6 +771,7 @@ test('create action: the rollback compares against the base captured before the 
     setExecutor({
       run: (cmd: string, opts: unknown) => real.run(cmd, opts as never),
       runQuiet: (cmd: string, opts: unknown) => real.runQuiet(cmd, opts as never),
+      runFileQuiet: (file: string, args: string[], opts: unknown) => real.runFileQuiet(file, args, opts as never),
       spawn: (cmd: string, args: string[], opts: unknown) => real.spawn(cmd, args, opts as never),
       runFile: (file: string, args: string[], opts: unknown) => {
         if (file === 'git' && args[0] === 'worktree' && args[1] === 'add') {
