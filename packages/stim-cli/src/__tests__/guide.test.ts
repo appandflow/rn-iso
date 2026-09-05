@@ -257,6 +257,26 @@ test('the errors topic quotes the stop refusals in the column stop actually prin
   expect(src).toContain("phaseLine('stop', `refusing to signal supervisor pid ${target.pid}");
 });
 
+test('the errors topic quotes the teardown failure reason that reclaim reports', () => {
+  const body = renderSection('errors', 'teardown');
+  assert(body);
+  expect(body).toContain('"teardown failed: <reason>"');
+  const src = readFileSync(new URL('../reclaim.ts', import.meta.url), 'utf-8');
+  expect(src).toContain('reason: `teardown failed: ${r.reason}`');
+});
+
+test('the errors topic quotes the shared config-lock timeout message', () => {
+  const body = renderSection('errors', 'STIM_LOCK_TIMEOUT');
+  assert(body);
+  expect(body).toContain('"Timed out waiting for the lock at <path>."');
+  const src = readFileSync(new URL('../../../core/index.ts', import.meta.url), 'utf-8');
+  expect(src).toContain('`Timed out waiting for the lock at ${lockPath}. `');
+  const config = readFileSync(new URL('../config.ts', import.meta.url), 'utf-8');
+  expect(config).toContain('withDirLock(lockPath(), fn');
+  const wrapper = readFileSync(new URL('../dir-lock.ts', import.meta.url), 'utf-8');
+  expect(wrapper).toContain("export { withDirLock } from '@stim-cli/core'");
+});
+
 test('the errors topic quotes the carry lines exactly as worktree create writes them', () => {
   const body = renderSection('errors', 'carry');
   assert(body);
