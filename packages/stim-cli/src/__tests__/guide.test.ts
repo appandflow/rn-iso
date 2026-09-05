@@ -1246,7 +1246,7 @@ test('the agent guide carries the normal workflow and safety rules', () => {
   expect(agent).toContain('No matching log records');
   expect(agent).toContain('stim reload');
   expect(normalWorkflow).not.toContain('stim reload');
-  expect(agent).not.toContain('agent-device metro reload --metro-port <reported-port>');
+  expect(normalWorkflow).not.toContain('agent-device metro reload');
   expect(agent).toMatch(/app error but also says the native process is alive,[\s\S]*app did not crash/);
   expect(agent).toMatch(/FATAL because the app process exited,[\s\S]*Metro cannot restart it/);
   expect(agent).toMatch(/Ordinary stim stop and an authorized clean\s+stim worktree remove do not need/);
@@ -1427,9 +1427,13 @@ test('the guide defines reload as a JavaScript-only live-app recovery', () => {
 
   expect(agent).toContain('stim reload');
   expect(agent).toMatch(/failed first bundle load[\s\S]*app restart/);
+  expect(agent).toMatch(/physical device that reached Metro[\s\S]*agent-device metro reload/);
+  expect(agent).toMatch(/iOS Local Network first-load remedy[\s\S]*never established a Metro connection/);
   expect(lifecycle).toMatch(/never builds, installs, boots, or cold-launches/);
   expect(lifecycle).toMatch(/owned local simulator or emulator/);
   expect(lifecycle).toMatch(/stim reload ios[\s\S]*stim reload android/);
+  expect(lifecycle).toMatch(/physical device that reached Metro[\s\S]*agent-device metro reload/);
+  expect(lifecycle).toMatch(/iOS Local Network first-load[\s\S]*no Metro peer exists yet/);
   expect(renderSection('lifecycle', 'options')).toMatch(/^  reload\s+\[ios\|android\] --json$/m);
   expect(renderSection('facts', 'payloads')).toContain('stim reload [ios|android] --json');
   expect(renderSection('facts', 'payloads')).toMatch(/platform[\s\S]*deviceId[\s\S]*metroPort[\s\S]*strategy/);
