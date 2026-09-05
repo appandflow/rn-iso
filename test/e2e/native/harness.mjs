@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
+import { setTimeout as sleep } from 'node:timers/promises';
 
 export function createHarness({ env, cliPath, label }) {
   const log = (msg) => process.stderr.write(`[${label}] ${msg}\n`);
@@ -20,10 +21,10 @@ export function createHarness({ env, cliPath, label }) {
       maxBuffer: 64 * 1024 * 1024,
     });
     const stdout = r.stdout || '';
-    const stderr = r.stderr || '';
+    const stderr = r.stderr || r.error?.message || '';
     if (stderr) process.stderr.write(stderr);
     if (r.error && !opts.allowFail) die(`${file} ${argv.join(' ')} could not run: ${r.error.message}`);
-    const code = r.status ?? (r.signal ? 1 : 0);
+    const code = r.status ?? (r.signal || r.error ? 1 : 0);
     if (code !== 0 && !opts.allowFail)
       die(`${file} ${argv.slice(0, 3).join(' ')} exited ${code}:\n${lastLines(stderr, 40)}`);
     return { code, stdout, stderr };
@@ -183,7 +184,7 @@ export function ensureGitignore({ appDir, framework }) {
   }
 }
 
-export function createCleanupTracker({ h, platform }) {
+export function createCleanupTracker({ h, platform, processExitTimeoutMs = 5000 }) {
   const devices = new Set();
   const processes = new Map();
 
@@ -193,7 +194,16 @@ export function createCleanupTracker({ h, platform }) {
     devices.add(id);
   }
 
-  function recordProcesses(cwd) {
+  function recordWorkspace(cwd) {
+    let device;
+    try {
+      const config = JSON.parse(readFileSync(join(h.env.STIM_HOME, 'config.json'), 'utf-8'));
+      device = config.projects?.[resolve(cwd)]?.platforms?.[platform];
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+    if (device?.owned === true) recordBuild({ udid: device.deviceUdid, avdName: device.avdName });
+
     let state;
     try {
       state = JSON.parse(readFileSync(join(workspaceLogsDir(cwd), '..', 'state.json'), 'utf-8'));
@@ -208,35 +218,46 @@ export function createCleanupTracker({ h, platform }) {
     ].filter(Boolean);
     const live = processSnapshot(h);
     for (const record of records) {
+      if (!Number.isInteger(record.pid) || record.pid <= 0) continue;
       const key = JSON.stringify([cwd, record.pid, record.startedAt]);
-      if (!processes.has(key) && live.has(record.pid)) processes.set(key, live.get(record.pid));
+      if (!processes.has(key)) processes.set(key, live.get(record.pid));
     }
   }
 
   function remainingDevices() {
     const ids =
       platform === 'ios'
-        ? Object.values(JSON.parse(h.sh('xcrun', ['simctl', 'list', 'devices', '--json']).stdout).devices)
+        ? Object.values(JSON.parse(inspect(h, 'xcrun', ['simctl', 'list', 'devices', '--json'])).devices)
             .flat()
             .map((device) => device.udid)
-        : h
-            .sh('emulator', ['-list-avds'])
-            .stdout.split('\n')
+        : inspect(h, 'emulator', ['-list-avds'])
+            .split('\n')
             .map((name) => name.trim());
     return ids.filter((id) => devices.has(id));
   }
 
-  function verifyProcesses() {
-    const live = new Set(processSnapshot(h).values());
-    const leaked = [...processes.values()].filter((identity) => live.has(identity));
-    assert(leaked.length === 0, `a workspace process is still running:\n${leaked.join('\n')}`);
+  async function verifyProcesses() {
+    const deadline = Date.now() + processExitTimeoutMs;
+    while (true) {
+      const live = new Set(processSnapshot(h).values());
+      const leaked = [...processes.values()].filter((identity) => live.has(identity));
+      if (leaked.length === 0) return;
+      assert(Date.now() < deadline, `a workspace process is still running:\n${leaked.join('\n')}`);
+      await sleep(Math.min(100, deadline - Date.now()));
+    }
   }
 
-  return { recordBuild, recordProcesses, remainingDevices, verifyProcesses };
+  return { recordBuild, recordWorkspace, remainingDevices, verifyProcesses };
+}
+
+function inspect(h, file, argv) {
+  const result = h.sh(file, argv, { allowFail: true, timeout: 5000 });
+  assert(result.code === 0, `could not inspect ${file}: ${result.stderr}`);
+  return result.stdout;
 }
 
 function processSnapshot(h) {
-  const out = h.sh('ps', ['-ax', '-o', 'pid=,lstart=,command=']).stdout;
+  const out = inspect(h, 'ps', ['-ax', '-o', 'pid=,lstart=,command=']);
   return new Map(
     out
       .split('\n')
@@ -246,14 +267,14 @@ function processSnapshot(h) {
   );
 }
 
-export function verifyCleanup({ h, cleanup, appDir, created }) {
+export async function verifyCleanup({ h, cleanup, appDir, created }) {
   h.banner('cleanup checks');
 
   const devices = cleanup.remainingDevices();
   assert(devices.length === 0, `a device from this run was left behind: ${devices.join(', ')}`);
   h.log('(1) no devices from this run remain');
 
-  cleanup.verifyProcesses();
+  await cleanup.verifyProcesses();
   h.log('(2) no workspace supervisor/Metro/collector processes remain');
 
   const status = h.cli(['status'], { allowFail: true }).stdout;

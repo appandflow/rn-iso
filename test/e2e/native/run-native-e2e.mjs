@@ -91,13 +91,13 @@ async function main() {
   handleLaunch(build2, 'wt2');
   log('CACHE PROOF: second worktree installed from cache without compiling.');
 
-  cleanup.recordProcesses(wt2);
+  cleanup.recordWorkspace(wt2);
   cli(['stop'], { cwd: wt2 });
-  cleanup.recordProcesses(wt1);
+  cleanup.recordWorkspace(wt1);
   cli(['stop'], { cwd: wt1 });
   worktreeRemove(wt2);
   worktreeRemove(wt1);
-  verifyCleanup({ h, cleanup, appDir, created });
+  await verifyCleanup({ h, cleanup, appDir, created });
 }
 
 function worktreeCreate(name, appDir) {
@@ -120,7 +120,7 @@ function startAndAssertMode(cwd) {
   }
   const line = r.stdout.trim().split('\n').findLast(Boolean);
   const facts = JSON.parse(line);
-  cleanup.recordProcesses(cwd);
+  cleanup.recordWorkspace(cwd);
   assert(
     facts.mode === EXPECTED_MODE,
     `start mode for a ${FRAMEWORK} app must be ${EXPECTED_MODE}, got ${JSON.stringify(facts.mode)} ` +
@@ -133,7 +133,7 @@ function buildAndAssert(cwd, { expectCacheHit }) {
   log(`building ${PLATFORM} in ${cwd} (expect cache ${expectCacheHit ? 'HIT' : 'MISS'})...`);
   const facts = cliJson([PLATFORM, '--json'], { cwd, timeout: 40 * 60 * 1000 });
   cleanup.recordBuild(facts);
-  cleanup.recordProcesses(cwd);
+  cleanup.recordWorkspace(cwd);
   log(
     `build facts: cacheHit=${JSON.stringify(facts.cacheHit)} launched=${JSON.stringify(facts.launched)} ` +
       `waitedForBuild=${JSON.stringify(facts.waitedForBuild)} durationMs=${facts.durationMs}`,

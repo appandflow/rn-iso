@@ -52,14 +52,14 @@ async function main() {
   assert(second.udid !== first.udid, 'two workspaces shared one simulator');
 
   banner('remove: the first parks');
-  cleanup.recordProcesses(wt1);
+  cleanup.recordWorkspace(wt1);
   cli(['stop'], { cwd: wt1 });
   const removed1 = worktreeRemove(wt1);
   assert(/ {2}device {6}parked stim-parked /.test(removed1), `worktree remove did not park:\n${removed1}`);
   assertPoolSize(1);
 
   banner('remove: the second parks and evicts the first');
-  cleanup.recordProcesses(wt2);
+  cleanup.recordWorkspace(wt2);
   cli(['stop'], { cwd: wt2 });
   const removed2 = worktreeRemove(wt2);
   assert(/ {2}device {6}parked stim-parked /.test(removed2), `the second remove did not park:\n${removed2}`);
@@ -78,7 +78,7 @@ async function main() {
   assertPoolSize(0);
 
   banner('remove: the third parks');
-  cleanup.recordProcesses(wt3);
+  cleanup.recordWorkspace(wt3);
   cli(['stop'], { cwd: wt3 });
   const removed3 = worktreeRemove(wt3);
   assert(/ {2}device {6}parked stim-parked /.test(removed3), `the third remove did not park:\n${removed3}`);
@@ -94,7 +94,7 @@ async function main() {
   );
   assertPoolSize(0);
 
-  verifyCleanup({ h, cleanup, appDir, created });
+  await verifyCleanup({ h, cleanup, appDir, created });
 }
 
 function worktreeCreate(name, appDir) {
@@ -108,11 +108,11 @@ function worktreeCreate(name, appDir) {
 
 function runIos(cwd) {
   cli(['start', '--json', '--wait', '240'], { cwd });
-  cleanup.recordProcesses(cwd);
+  cleanup.recordWorkspace(cwd);
   const r = cli([PLATFORM, '--json'], { cwd, timeout: 40 * 60 * 1000 });
   const facts = JSON.parse(r.stdout.trim().split('\n').findLast(Boolean));
   cleanup.recordBuild(facts);
-  cleanup.recordProcesses(cwd);
+  cleanup.recordWorkspace(cwd);
   const deviceLine = r.stderr.split('\n').find((line) => / {2}device {6}.*(booted|adopted) /.test(line)) ?? '';
   log(`device line: ${deviceLine.trim()}`);
   return { udid: facts.udid, adopted: / adopted /.test(deviceLine), deviceLine };
