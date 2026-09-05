@@ -314,6 +314,28 @@ under the worktree root: `feature/settings` becomes `feature+settings`.
 - `--label` sets the short Stim name used by the environment and device.
 - `--carry-ignored` copies safe ignored files and compatible uncommitted changes.
 
+## `worktree warm`
+
+```text
+stim worktree warm
+```
+
+Copies missing ignored entries from the repository's main checkout into the
+current linked worktree. It takes no arguments or flags and accepts a current
+subdirectory. The main checkout must be available in the same Git repository;
+running warm in the main checkout refuses.
+
+The branch, tracked files, and existing destination entries stay untouched.
+Existing directories, including `node_modules`, are skipped whole. Eligible
+ignored `.env` and local configuration files are included. The main checkout's
+nonempty `.worktreeexclude` replaces its resolved `worktree.exclude` setting.
+See [worktree isolation](./worktrees.md) for the shared exclusions.
+
+stdout stays empty. stderr reports copied, kept, and failed entries. Failures
+exit 1; inspect failed paths before retrying, since partially published
+entries remain and existing directories are skipped. Warm does not install
+dependencies or build.
+
 ## `worktree remove`
 
 ```text

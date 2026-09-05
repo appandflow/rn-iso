@@ -1,12 +1,18 @@
 import {
+  constants,
   copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
+  readlinkSync,
   realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
+  utimesSync,
   writeFileSync,
 } from 'fs';
 import { tmpdir } from 'os';
@@ -61,6 +67,34 @@ export function isMainWorkingTree(path: string): boolean {
 export function repoRoot(cwd: string): string | null {
   const out = getExecutor().runFileQuiet('git', ['-C', cwd, 'rev-parse', '--show-toplevel']);
   return out ? out.trim() : null;
+}
+
+export function warmWorktreePaths(cwd: string): { root: string; target: string; common: string } {
+  const currentRoot = repoRoot(cwd);
+  if (!currentRoot) throw new Error('Not a git repository.');
+  const target = realpathSync(currentRoot);
+  if (isMainWorkingTree(target)) {
+    throw new Error('Run stim worktree warm from a linked worktree, not the main checkout.');
+  }
+  const entries = listWorktrees(target);
+  const current = entries.find((entry) => canonicalPath(entry.path) === target);
+  const main = entries.find((entry) => isMainWorkingTree(entry.path));
+  if (!current || !main) throw new Error('Could not identify the linked worktree and its main checkout.');
+  const root = realpathSync(main.path);
+  const sourceRoot = repoRoot(root);
+  const sourceCommon = gitCommonDir(root);
+  const targetCommon = gitCommonDir(target);
+  if (
+    root === target ||
+    !sourceRoot ||
+    realpathSync(sourceRoot) !== root ||
+    !sourceCommon ||
+    !targetCommon ||
+    realpathSync(sourceCommon) !== realpathSync(targetCommon)
+  ) {
+    throw new Error('Could not verify that the main checkout belongs to this linked worktree.');
+  }
+  return { root, target, common: realpathSync(targetCommon) };
 }
 
 export function defaultWorktreeDir(root: string): string {
@@ -245,8 +279,8 @@ export function carryOverFiles({
   return { copied, skipped, failed };
 }
 
-export function listGitignoredEntries(root: string): string[] {
-  const out = getExecutor().runFileQuiet('git', [
+export function listGitignoredEntries(root: string, strict = false): string[] {
+  const args = [
     '-C',
     root,
     'ls-files',
@@ -255,17 +289,23 @@ export function listGitignoredEntries(root: string): string[] {
     '--exclude-standard',
     '--directory',
     '--no-empty-directory',
-  ]);
+    ...(strict ? ['-z'] : []),
+  ];
+  const out = strict ? getExecutor().runFile('git', args) : getExecutor().runFileQuiet('git', args);
   if (!out) return [];
   return out
-    .split('\n')
+    .split(strict ? '\0' : '\n')
     .filter(Boolean)
     .map((e) => (e.endsWith('/') ? e.slice(0, -1) : e));
 }
 
-export function listCarryableIgnoredEntries(root: string, patterns: string[] | null | undefined): string[] {
+export function listCarryableIgnoredEntries(
+  root: string,
+  patterns: string[] | null | undefined,
+  strict = false,
+): string[] {
   const nested = nestedWorktreePaths(root);
-  return listGitignoredEntries(root).filter(
+  return listGitignoredEntries(root, strict).filter(
     (rel) => !isCarrySkipped(rel) && !overlapsNestedWorktree(rel, nested) && !matchesInclude(rel, patterns),
   );
 }
@@ -274,44 +314,93 @@ interface CloneResult extends CarryResult {
   cloned: boolean;
 }
 
+function missingDestinationReason(target: string, rel: string): string | null {
+  const parts = rel.split('/');
+  for (let i = 1; i < parts.length; i++) {
+    const parent = parts.slice(0, i).join('/');
+    const stat = lstatSync(join(target, parent), { throwIfNoEntry: false });
+    if (stat?.isSymbolicLink()) return `symlink ancestor: ${parent}`;
+    if (stat && !stat.isDirectory()) return `non-directory ancestor: ${parent}`;
+  }
+  return lstatSync(join(target, rel), { throwIfNoEntry: false }) ? 'exists' : null;
+}
+
+function publishMissingEntry(from: string, to: string): void {
+  const stat = lstatSync(from);
+  if (stat.isSymbolicLink()) {
+    symlinkSync(readlinkSync(from), to);
+  } else if (stat.isFile()) {
+    copyFileSync(from, to, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE);
+    utimesSync(to, stat.atime, stat.mtime);
+  } else if (stat.isDirectory()) {
+    mkdirSync(to, { mode: stat.mode });
+    for (const name of readdirSync(from)) publishMissingEntry(join(from, name), join(to, name));
+    utimesSync(to, stat.atime, stat.mtime);
+  } else {
+    throw new Error(`Unsupported ignored entry: ${from}`);
+  }
+}
+
 export function cloneIgnoredEntries({
   root,
   target,
   patterns,
+  preserveExisting = false,
 }: {
   root: string;
   target: string;
   patterns: string[] | null | undefined;
+  preserveExisting?: boolean;
 }): CloneResult {
   const copied: string[] = [];
   const skipped: SkippedEntry[] = [];
   const failed: FailedEntry[] = [];
   let cloned = true;
   const guard = trackedGuard(target);
-  for (const rel of listCarryableIgnoredEntries(root, patterns)) {
+  if (preserveExisting && !guard.known) throw new Error("Could not list the destination's tracked files.");
+  const nested = preserveExisting ? nestedWorktreePaths(target) : [];
+  for (const rel of listCarryableIgnoredEntries(root, patterns, preserveExisting)) {
     const from = join(root, rel);
     const to = join(target, rel);
     let isDir = false;
     try {
       isDir = statSync(from).isDirectory();
     } catch {}
-    const reason = refuseReason(guard, rel, to);
-    if (reason) {
-      skipped.push({ file: rel, reason });
-      continue;
-    }
+    let staging: string | undefined;
     try {
-      mkdirSync(dirname(to), { recursive: true });
+      const reason =
+        refuseReason(guard, rel, to) ||
+        (preserveExisting &&
+          (overlapsNestedWorktree(rel, nested) ? 'nested worktree' : missingDestinationReason(target, rel)));
+      if (reason) {
+        skipped.push({ file: rel, reason });
+        continue;
+      }
+      if (preserveExisting) staging = mkdtempSync(join(target, '.stim-warm-'));
+      const destination = staging ? join(staging, 'entry') : to;
+      mkdirSync(dirname(destination), { recursive: true });
       try {
-        getExecutor().runFile('cp', ['-Rc', from, to]);
+        getExecutor().runFile('cp', ['-Rc', from, destination]);
       } catch {
-        getExecutor().runFile('cp', ['-R', from, to]);
+        if (staging) rmSync(destination, { recursive: true, force: true });
+        getExecutor().runFile('cp', ['-R', from, destination]);
         cloned = false;
       }
-      if (isDir) pruneCarriedArtifacts(to);
+      if (isDir) pruneCarriedArtifacts(destination);
+      if (staging) {
+        const changed = missingDestinationReason(target, rel);
+        if (changed) {
+          skipped.push({ file: rel, reason: changed });
+          continue;
+        }
+        mkdirSync(dirname(to), { recursive: true });
+        publishMissingEntry(destination, to);
+      }
       copied.push(rel);
     } catch (e) {
       failed.push({ file: rel, error: String((e as Error)?.message || e) });
+    } finally {
+      if (staging) rmSync(staging, { recursive: true, force: true });
     }
   }
   return { copied, skipped, failed, cloned };

@@ -185,9 +185,11 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         finds an existing worktree-<name> still attaches to it
                         and says which ref was not applied.
   worktree.include      carry-over patterns, same role as .worktreeinclude
-  worktree.exclude      additional --carry-ignored skip list, same role as
-                        .worktreeexclude. Registered nested Git worktrees are
-                        always skipped.
+  worktree.exclude      ignored-path skip list for create --carry-ignored
+                        and worktree warm. Both read settings from the source
+                        checkout (main for warm). A nonempty .worktreeexclude
+                        in that source replaces this setting. Registered
+                        nested Git worktrees are always skipped.
   cache.provider        one optional SECOND-TIER cache provider: a module
                         path relative to the settings file that names it, or a
                         package name. It implements the @stim-cli/cache

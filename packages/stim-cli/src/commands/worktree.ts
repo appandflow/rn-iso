@@ -43,6 +43,7 @@ import {
   restoreFile,
   unpushedCommits,
   worktreePath,
+  warmWorktreePaths,
 } from '../worktree.ts';
 import type { WorktreeEntry } from '../worktree.ts';
 
@@ -362,35 +363,7 @@ export function registerCreate(worktree: Command): void {
         } else if (changes?.conflicted) {
           console.error(chalk.yellow(phaseLine('carry', carryConflictWarning(changes.files))));
         }
-        const staleDeps = depsOutOfSync(root, target, res.copied);
-        if (staleDeps.length) {
-          const manifests = staleDeps.map((d) => (d.dir === '.' ? d.lockfile : `${d.dir}/${d.lockfile}`)).join(', ');
-          const remedies = [
-            ...new Set(staleDeps.map((dependency) => dependencyInstallCommand(target, dependency.dir))),
-          ];
-          console.error(
-            chalk.yellow(
-              phaseLine(
-                'carry',
-                `carried dependencies may be stale: they do not match ${manifests}. Run ${remedies.map((command) => `\`${command}\``).join(' and ')} before building.`,
-              ),
-            ),
-          );
-        }
-        for (const p of podsOutOfSync(target, res.copied)) {
-          const where = p.dir === '.' ? 'Podfile.lock' : `${p.dir}/Podfile.lock`;
-          const pod = podInstallCommand(p.dir === '.' ? target : resolve(target, p.dir, '..'));
-          console.error(
-            chalk.yellow(
-              phaseLine(
-                'carry',
-                p.reason === 'missing'
-                  ? `carried ${p.dir === '.' ? 'Pods' : `${p.dir}/Pods`} but there is no ${where}. Run \`${pod}\` before building.`
-                  : `carried ${p.dir === '.' ? 'Pods' : `${p.dir}/Pods`} does not match the ${where} on disk here. Pods are gitignored and cloned; Podfile.lock is tracked, so the two can disagree. Run \`${pod}\` before building, or xcodebuild fails with "sandbox is not in sync" only after every pod has compiled.`,
-              ),
-            ),
-          );
-        }
+        reportCarriedStateHealth(root, target, res.copied);
       } else {
         const excluded = readWorktreeExclude(root);
         const skip = excluded && excluded.length ? excluded : settings?.worktree?.exclude || [];
@@ -430,6 +403,81 @@ export function registerCreate(worktree: Command): void {
       console.error(chalk.dim(phaseLine('ready', target)));
 
       console.log(target);
+    });
+}
+
+function reportCarriedStateHealth(root: string, target: string, copied: string[]): void {
+  const staleDeps = depsOutOfSync(root, target, copied);
+  if (staleDeps.length) {
+    const manifests = staleDeps.map((d) => (d.dir === '.' ? d.lockfile : `${d.dir}/${d.lockfile}`)).join(', ');
+    const remedies = [...new Set(staleDeps.map((dependency) => dependencyInstallCommand(target, dependency.dir)))];
+    console.error(
+      chalk.yellow(
+        phaseLine(
+          'carry',
+          `carried dependencies may be stale: they do not match ${manifests}. Run ${remedies.map((command) => `\`${command}\``).join(' and ')} before building.`,
+        ),
+      ),
+    );
+  }
+  for (const p of podsOutOfSync(target, copied)) {
+    const where = p.dir === '.' ? 'Podfile.lock' : `${p.dir}/Podfile.lock`;
+    const pod = podInstallCommand(p.dir === '.' ? target : resolve(target, p.dir, '..'));
+    console.error(
+      chalk.yellow(
+        phaseLine(
+          'carry',
+          p.reason === 'missing'
+            ? `carried ${p.dir === '.' ? 'Pods' : `${p.dir}/Pods`} but there is no ${where}. Run \`${pod}\` before building.`
+            : `carried ${p.dir === '.' ? 'Pods' : `${p.dir}/Pods`} does not match the ${where} on disk here. Pods are gitignored and cloned; Podfile.lock is tracked, so the two can disagree. Run \`${pod}\` before building, or xcodebuild fails with "sandbox is not in sync" only after every pod has compiled.`,
+        ),
+      ),
+    );
+  }
+}
+
+export function registerWarm(worktree: Command): void {
+  worktree
+    .command('warm')
+    .description('Copy missing ignored paths from the main checkout into the current linked worktree.')
+    .action(() => {
+      try {
+        const { root, target, common } = warmWorktreePaths(process.cwd());
+        const settings = resolveSettings({ gitCommonDir: common, repoRoot: root }) as WorktreeSettings;
+        const shapeErrors = settingShapeErrors(settings);
+        if (shapeErrors.length) {
+          for (const message of shapeErrors) console.error(chalk.red(message));
+          console.error(chalk.dim(SETTING_SHAPE_REMEDY));
+          process.exitCode = 1;
+          return;
+        }
+        for (const key of unknownSettingKeys(settings)) {
+          console.error(chalk.yellow(`Warning: setting "${key}" is not read by Stim and will be ignored.`));
+        }
+        const excluded = readWorktreeExclude(root);
+        const patterns = excluded?.length ? excluded : settings.worktree?.exclude || [];
+        const result = cloneIgnoredEntries({ root, target, patterns, preserveExisting: true });
+        for (const entry of result.skipped) {
+          console.error(chalk.dim(phaseLine('carry', `kept ${entry.file} (${entry.reason})`)));
+        }
+        for (const entry of result.failed) {
+          console.error(chalk.yellow(phaseLine('carry', `could not copy ${entry.file}: ${entry.error}`)));
+        }
+        if (result.copied.length) {
+          console.error(chalk.dim(phaseLine('carry', `copied ${carriedFileList(result.copied)} from ${root}`)));
+          reportCarriedStateHealth(root, target, result.copied);
+        }
+        console.error(
+          phaseLine(
+            'carry',
+            `${result.failed.length ? 'incomplete' : 'complete'}: ${result.copied.length} ignored entries copied, ${result.skipped.length} kept, ${result.failed.length} failed`,
+          ),
+        );
+        if (result.failed.length) process.exitCode = 1;
+      } catch (error) {
+        console.error(chalk.red(`Could not warm this worktree: ${(error as Error).message}`));
+        process.exitCode = 1;
+      }
     });
 }
 
@@ -1052,7 +1100,8 @@ export function registerRemove(worktree: Command): void {
 }
 
 export default function worktreeCommand(program: Command): void {
-  const worktree = program.command('worktree').description('Create and remove isolated worktrees');
+  const worktree = program.command('worktree').description('Create, warm, and remove isolated worktrees');
   registerCreate(worktree);
+  registerWarm(worktree);
   registerRemove(worktree);
 }

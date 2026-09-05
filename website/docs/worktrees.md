@@ -36,15 +36,29 @@ only the branch created by that attempt so a retry can use the requested base.
 code={`stim worktree create feature-x --carry-ignored`}
 />
 
-The option copies safe gitignored paths, such as `node_modules`, `ios/Pods`, and
-native build output. APFS clone copies remain space-efficient on one volume.
+If a harness or `git worktree add` already created the linked worktree, run
+this inside it instead:
+
+<StimTabs code={`stim worktree warm`} />
+
+Warm uses the repository's main checkout as its source, regardless of either
+branch's `HEAD`. The main checkout must still be available. It preserves the
+current branch, tracked files, and every existing destination entry, including
+dangling symlinks. An existing directory such as `node_modules` is skipped
+whole; warm does not fill missing children. It also skips destination paths
+that overlap registered nested worktrees or have symlink ancestors.
+
+Both operations copy safe gitignored paths, such as `node_modules`, `ios/Pods`, and
+native build output, `.env`, and local configuration files. APFS clone copies remain space-efficient on one volume.
 Stim reports when it must make a normal byte copy.
 
 Stim excludes:
 
 - Nested registered git worktrees.
 - Any `.DerivedData` directory.
-- Paths matched by `.worktreeexclude` or `worktree.exclude`.
+- Paths matched by the source checkout's nonempty `.worktreeexclude`, or its
+  resolved `worktree.exclude` setting when that file is absent or empty. Warm
+  reads both from main; create reads both from its current source checkout.
 
 Use `.worktreeinclude` or `worktree.include` to copy a small explicit set during
 a normal create. This is useful for `.env` files. Stim only copies paths that
@@ -53,6 +67,13 @@ git already ignores.
 Compatible uncommitted tracked changes are also applied with
 `--carry-ignored`. Untracked files that are not ignored are not copied. Review
 the reported working state before committing.
+
+Warm writes only to stderr: copied, kept, and failed entry counts, plus any
+lockfile remedies. A failure exits 1; files already published remain. Inspect
+the named failure before retrying, because a partially published directory is
+kept on retry. A completed copy does not prove dependencies are installed or
+match the current branch. Install missing dependencies with the project's
+package manager when the source has none to copy.
 
 ## Parallel environments
 

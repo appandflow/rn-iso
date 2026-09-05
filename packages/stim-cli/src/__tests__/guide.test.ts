@@ -1766,3 +1766,27 @@ test('the repository guide names stats in the command surface', () => {
 
   expect(agents).toMatch(/The command surface is[\s\S]*`status`, `stats`, `gc`/);
 });
+
+test('warm guidance covers current linked worktrees, main-source exclusions, and whole-entry preservation', () => {
+  const agent = renderTopic('agent');
+  const options = renderSection('lifecycle', 'options');
+  const settings = renderTopic('settings');
+  const errors = renderSection('errors', 'carry');
+  assert(agent);
+  assert(options);
+  assert(settings);
+  assert(errors);
+  expect(agent).toMatch(/harness already created this linked worktree[\s\S]*stim worktree warm/);
+  expect(agent).toMatch(/\.env and local\s+configuration/);
+  expect(options).toMatch(/worktree warm.*takes no arguments or flags/);
+  expect(options).toMatch(/main\s+checkout/);
+  expect(options).toMatch(/existing\s+directory such as node_modules is skipped WHOLE/i);
+  expect(options).toMatch(/dangling symlinks/);
+  expect(options).toMatch(/does not copy tracked changes/);
+  expect(options).toMatch(/stdout stays empty/);
+  expect(options).toMatch(/copy failure exits 1/);
+  expect(settings).toMatch(/source\s+checkout \(main for warm\)/);
+  expect(settings).toMatch(/nonempty .worktreeexclude\s+in that source replaces this setting/);
+  expect(errors).toMatch(/incomplete:.*ignored entries copied/);
+  expect(errors).toMatch(/partially|already published/);
+});

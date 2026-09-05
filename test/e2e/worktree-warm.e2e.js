@@ -112,3 +112,39 @@ function write(rel, contents) {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, contents);
 }
+
+test('an externally created worktree can warm from main without changing its branch or existing entries', () => {
+  const linked = join(ctx.tmp, 'external-linked');
+  git(['worktree', 'add', '-b', 'external-linked', linked]);
+  write('.gitignore', readFileSync(join(ctx.repo, '.gitignore'), 'utf-8') + '.env\n');
+  write('.env', 'main local config');
+  write('.worktreeexclude', 'ios/build\n');
+  write('package.json', '{"name":"dirty-main"}\n');
+  mkdirSync(join(linked, 'node_modules', 'own'), { recursive: true });
+  writeFileSync(join(linked, 'node_modules', 'own', 'index.js'), 'own dependency');
+  const head = execFileSync('git', ['-C', linked, 'rev-parse', 'HEAD'], { encoding: 'utf-8' });
+  const run = () =>
+    spawnSync(process.execPath, [CLI, 'worktree', 'warm'], {
+      cwd: join(linked, 'ios'),
+      env: { ...process.env, STIM_HOME: ctx.home },
+      encoding: 'utf-8',
+    });
+  const warmed = run();
+  assert.equal(warmed.status, 0, warmed.stderr);
+  assert.equal(warmed.stdout, '');
+  assert.match(warmed.stderr, /kept node_modules \(exists\)/);
+  assert.match(warmed.stderr, /complete: .*0 failed/);
+  assert.equal(readFileSync(join(linked, '.env'), 'utf-8'), 'main local config');
+  assert.equal(readFileSync(join(linked, 'node_modules', 'own', 'index.js'), 'utf-8'), 'own dependency');
+  assert.equal(existsSync(join(linked, 'node_modules', 'pkg')), false);
+  assert.equal(existsSync(join(linked, 'ios', 'build')), false);
+  assert.equal(readFileSync(join(linked, 'package.json'), 'utf-8'), '{"name":"warm-fixture","private":true}\n');
+  assert.equal(execFileSync('git', ['-C', linked, 'rev-parse', 'HEAD'], { encoding: 'utf-8' }), head);
+  assert.equal(
+    execFileSync('git', ['-C', linked, 'branch', '--show-current'], { encoding: 'utf-8' }).trim(),
+    'external-linked',
+  );
+  const repeated = run();
+  assert.equal(repeated.status, 0, repeated.stderr);
+  assert.match(repeated.stderr, /complete: 0 ignored entries copied/);
+});

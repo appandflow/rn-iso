@@ -11,7 +11,12 @@ NORMAL WORKFLOW
 
 Work in the current checkout by default. When the task needs another branch or
 an isolated environment, create a worktree and carry its dependencies and
-native outputs.
+native outputs. If a harness already created this linked worktree, run
+stim worktree warm here instead of creating another one. It copies missing
+ignored paths from the main checkout, including eligible .env and local
+configuration files. It preserves the branch, tracked files, and every existing
+destination entry; existing directories are skipped whole, not filled in.
+Read guide lifecycle options for exclusions and incomplete-copy remedies.
 
 Before native worktree work, run doctor for the platform in scope. It checks
 the main checkout from a linked worktree. Fix relevant findings and inspect the

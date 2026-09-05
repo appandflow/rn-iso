@@ -59,6 +59,13 @@ an error screen remains after a fix, or when you explicitly need an app
 restart. It is not part of the normal workflow and does not build, install,
 boot, or launch an app. The platform is optional when only one app is live.
 
+If a harness already created a linked worktree, run `stim worktree warm`
+inside it to copy missing ignored state from the main checkout, including
+eligible `.env` and local configuration files. Existing entries are preserved;
+existing directories such as `node_modules` are skipped whole. See the
+[worktree guide](https://appandflow.github.io/stim/docs/worktrees) for exclusions
+and copy-failure remedies.
+
 ## Reference
 
 The [documentation website](https://appandflow.github.io/stim/) explains the
