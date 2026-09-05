@@ -45,11 +45,6 @@ upstream gap.
   stim ios                             # or: stim android
   stim logs --errors
 
-  # JavaScript and TypeScript edits use Fast Refresh. If an error screen stays
-  # after the edit, reload the running app without rebuilding it.
-  stim reload                            # add ios or android when both are live
-  stim logs --since 30s --level error
-
   stim stop
   stim worktree remove
 
@@ -69,10 +64,14 @@ RULES DURING THE LOOP
 - Android Debug builds target the owned emulator system-image ABI or the
   physical device's primary ABI. Unknown targets and Release builds stay
   universal.
+- Reload is not part of the normal workflow. Use stim reload on an owned local
+  simulator or emulator after a failed first bundle load, when an error screen
+  remains after the fix, or when you explicitly need an app restart. On a
+  physical device, follow the printed agent-device UI automation remedy.
 - If launch reports an app error but also says the native process is alive,
-  the app did not crash. Fix JavaScript or TypeScript and use Fast Refresh; if
-  the error screen remains, use stim reload. Do not run ios or android again.
-  If launch says FATAL because the app process exited,
+  the app did not crash. Fix JavaScript or TypeScript and use Fast Refresh. If
+  the error screen remains, follow the printed reload remedy instead of
+  running ios or android again. If launch says FATAL because the app process exited,
   fix the crash and run the platform command again; Metro cannot restart it.
 - A cold native build can outlive a shell timeout. Run the same command again:
   the second call joins the active build or returns its result.
@@ -1723,10 +1722,6 @@ STIM_CONFIG_CORRUPT  ("Stim config at <path> is not valid JSON")
   stim logs --errors
 
   # 5. Edit the JS. Fast Refresh applies it; no Stim command is involved.
-  #    If a startup or error overlay stays, reload without rebuilding. The
-  #    platform is optional unless both owned apps are live. Then ask again.
-  stim reload          # or: stim reload ios / stim reload android
-  stim logs --since 30s --level error
 
   # 6. Pausing: supervisor halted, collectors reaped, owned device SHUT DOWN
   #    (never deleted), port freed. Coming back costs a boot, not a create.
@@ -1743,7 +1738,10 @@ and produces an app that cannot load a bundle.
 
 Repeat step 3 whenever a NATIVE input changes. A JS-only edit needs nothing --
 that is what Fast Refresh over the running dev server is for. \`stim reload\` is
-the explicit recovery path when Fast Refresh cannot clear the current screen.
+not part of the normal workflow. It is the explicit recovery path after a
+failed first bundle load, when Fast Refresh cannot clear the current screen,
+or when you explicitly need an app restart. Use \`stim reload ios\` or
+\`stim reload android\` to select a platform when both owned apps are live.
 It never builds, installs, boots, or cold-launches. It acts only on a live app
 on this workspace's owned local simulator or emulator, and refuses release
 builds, stopped or unowned devices, a missing or foreign Metro, and an

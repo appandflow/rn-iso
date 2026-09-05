@@ -893,6 +893,16 @@ interface VerifyAndroidRunArgs {
   phase: (label: unknown, text: string) => void;
 }
 
+function physicalAndroidReloadRemedy(androidPackage: string, serial: string): string {
+  return (
+    `continue in your existing agent-device automation session for ${androidPackage} on ${serial}. ` +
+    'Keep the exact arguments and environment that identify that session on every command. ' +
+    'Run `agent-device snapshot -i` in that session. ' +
+    'If Reload is visible on the error screen, press it by exact ref or label. ' +
+    'Otherwise open the React Native dev menu through that session, inspect again, and press Reload.'
+  );
+}
+
 async function verifyAndroidRun({
   release,
   remoteRelease,
@@ -967,10 +977,13 @@ async function verifyAndroidRun({
         chalk.yellow('Fix the crash, then run `stim android` again. A Metro reload cannot restart an exited app.'),
       );
     } else if (verification.processAlive === true && metroPort !== null) {
+      const reloadRemedy = physical
+        ? physicalAndroidReloadRemedy(androidPackage, serial)
+        : 'run `stim reload android`.';
       phase(
         'remedy',
         chalk.yellow(
-          `The native app is still running. Fix the JavaScript or TypeScript error, then run ${physical ? `\`agent-device metro reload --metro-port ${metroPort}\`` : '`stim reload android`'}. Do not run \`stim android\` unless native inputs changed or the app process exits.`,
+          `The native app is still running. Fix the JavaScript or TypeScript error, then ${reloadRemedy} Do not run \`stim android\` unless native inputs changed or the app process exits.`,
         ),
       );
     }
@@ -988,10 +1001,13 @@ async function verifyAndroidRun({
     if (report.summary) phase('launch', chalk.dim(report.summary));
     for (const line of report.lines) phase('launch', chalk.yellow(line));
     if (report.lines.length > 0 && verification.processAlive === true && metroPort !== null) {
+      const reloadRemedy = physical
+        ? physicalAndroidReloadRemedy(androidPackage, serial)
+        : 'run `stim reload android`.';
       phase(
         'remedy',
         chalk.yellow(
-          `The native app is still running. Fix the JavaScript or TypeScript error; Fast Refresh should apply the edit. If the error screen remains, run ${physical ? `\`agent-device metro reload --metro-port ${metroPort}\`` : '`stim reload android`'}. Do not run \`stim android\` unless native inputs changed or the app process exits.`,
+          `The native app is still running. Fix the JavaScript or TypeScript error; Fast Refresh should apply the edit. If the error screen remains, ${reloadRemedy} Do not run \`stim android\` unless native inputs changed or the app process exits.`,
         ),
       );
     }

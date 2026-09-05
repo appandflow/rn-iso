@@ -1008,6 +1008,8 @@ test('the website offers copyable outcome prompts and explains skill activation'
 test('the agent guide carries the normal workflow and safety rules', () => {
   const agent = renderTopic('agent');
   assert(agent);
+  const normalWorkflow = agent.match(/NORMAL WORKFLOW([\s\S]*?)RULES DURING THE LOOP/)?.[1];
+  assert(normalWorkflow);
   expect(agent).toContain('stim doctor --platform ios');
   expect(agent).toContain('stim worktree create <name> --carry-ignored');
   expect(agent).toMatch(/ios and android install the app, launch it, and check readiness/);
@@ -1017,6 +1019,7 @@ test('the agent guide carries the normal workflow and safety rules', () => {
   expect(agent).toMatch(/Exit code 0 from logs --errors is the pass condition/);
   expect(agent).toContain('No matching log records');
   expect(agent).toContain('stim reload');
+  expect(normalWorkflow).not.toContain('stim reload');
   expect(agent).not.toContain('agent-device metro reload --metro-port <reported-port>');
   expect(agent).toMatch(/app error but also says the native process is alive,[\s\S]*app did not crash/);
   expect(agent).toMatch(/FATAL because the app process exited,[\s\S]*Metro cannot restart it/);
@@ -1161,15 +1164,34 @@ test('the guide defines reload as a JavaScript-only live-app recovery', () => {
   assert(errors);
 
   expect(agent).toContain('stim reload');
+  expect(agent).toMatch(/failed first bundle load[\s\S]*app restart/);
   expect(lifecycle).toMatch(/never builds, installs, boots, or cold-launches/);
   expect(lifecycle).toMatch(/owned local simulator or emulator/);
-  expect(lifecycle).toMatch(/stim reload ios \/ stim reload android/);
+  expect(lifecycle).toMatch(/stim reload ios[\s\S]*stim reload android/);
   expect(facts).toContain('stim reload [ios|android] --json');
   expect(facts).toMatch(/platform[\s\S]*deviceId[\s\S]*metroPort[\s\S]*strategy/);
   expect(errors).toContain('STIM_RELOAD_AMBIGUOUS');
   expect(errors).toContain('STIM_RELOAD_RELEASE');
   expect(errors).toContain('STIM_RELOAD_FAILED');
   expect(lifecycle).toMatch(/does not\s+take over\s+that stateful session/);
+});
+
+test('the documented common workflows leave reload to recovery', () => {
+  const rootReadme = readFileSync(new URL('../../../../README.md', import.meta.url), 'utf-8');
+  const packageReadme = readFileSync(new URL('../../README.md', import.meta.url), 'utf-8');
+  const website = readFileSync(new URL('../../../../website/docs/commands.md', import.meta.url), 'utf-8');
+  const agents = readFileSync(new URL('../../../../AGENTS.md', import.meta.url), 'utf-8');
+  const rootWorkflow = rootReadme.match(/The normal loop is:\n\n```bash([\s\S]*?)```/)?.[1];
+  const packageWorkflow = packageReadme.match(/## Normal workflow\n\n```bash([\s\S]*?)```/)?.[1];
+  const websiteWorkflow = website.match(/code=\{`stim doctor([\s\S]*?)stim stop`\}/)?.[0];
+  const repositoryWorkflow = agents.match(/The normal flow is:\n\n```text([\s\S]*?)```/)?.[1];
+  assert(rootWorkflow);
+  assert(packageWorkflow);
+  assert(websiteWorkflow);
+  assert(repositoryWorkflow);
+  for (const workflow of [rootWorkflow, packageWorkflow, websiteWorkflow, repositoryWorkflow]) {
+    expect(workflow).not.toContain('reload');
+  }
 });
 
 test('the guide documents the project cache provider as the tier between local and Expo', () => {
