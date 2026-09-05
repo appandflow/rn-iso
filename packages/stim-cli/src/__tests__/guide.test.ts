@@ -3,7 +3,15 @@ import { readdirSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_FINGERPRINT_IGNORES } from '../build-cache.ts';
 import { OUTPUT_LABELS } from '../command-output.ts';
-import { topicNames, renderTopic, renderIndex } from '../commands/guide.ts';
+import {
+  topicNames,
+  renderTopic,
+  renderIndex,
+  renderSection,
+  renderSectionIndex,
+  sectionLookup,
+  sectionNames,
+} from '../commands/guide.ts';
 import { carriedChangesLine, carryConflictWarning } from '../commands/worktree.ts';
 import { ANDROID_AVD_CONFIG_HELP } from '../settings.ts';
 import { CONSOLE_ENV, deviceConsoleArgs } from '../collector/ios-device.ts';
@@ -130,6 +138,26 @@ test('the errors topic covers a directory that is not a React Native or Expo app
 
 test('an unknown topic renders nothing rather than throwing', () => {
   expect(renderTopic('nope')).toBe(null);
+  expect(renderSection('nope', 'anything')).toBe(null);
+  expect(renderSectionIndex('nope')).toBe(null);
+});
+
+test('an inherited property name is an unknown topic, not a prototype member', () => {
+  for (const name of ['constructor', 'toString', '__proto__']) {
+    expect(renderTopic(name)).toBe(null);
+    expect(renderSection(name, 'anything')).toBe(null);
+    expect(renderSectionIndex(name)).toBe(null);
+  }
+});
+
+test('a whole topic offers no section index and no section body', () => {
+  const whole = topicNames().filter((name) => sectionNames(name).length === 0);
+  expect(whole.length).toBeGreaterThan(0);
+  for (const name of whole) {
+    expect(renderSectionIndex(name)).toBe(null);
+    expect(renderSection(name, 'phone')).toBe(null);
+    expect(Object.keys(sectionLookup(name))).toHaveLength(0);
+  }
 });
 
 test('the index lists every topic and the running version', () => {
