@@ -94,25 +94,20 @@ import { finishIosRun } from './ios/launch.ts';
 
 export { lastBuildRecord, iosFacts, writeLastBuild, cacheDescription } from './ios/result.ts';
 
-export { devClientScheme, schemesFromInfoPlist, readBundleSchemes, pickDevClientScheme } from './dev-client.ts';
+export { devClientScheme, schemesFromInfoPlist, pickDevClientScheme } from './dev-client.ts';
 
-export { collectorLogFile, collectorEntry, stopPreviousCollector, replaceCollector } from './ios/collector.ts';
+export { collectorEntry, replaceCollector } from './ios/collector.ts';
 
 export {
-  GATE_RETRY_DELAYS_MS,
   gateShouldRetry,
   resolveMetroWithRetry,
   noMetroMessage,
-  noMetroRemedy,
   ensureWorkspaceStorageSafely,
-  launchOutcomeRecord,
 } from './native-runtime.ts';
 
 export {
-  PLATFORM,
   buildLogFile,
   deviceLabel,
-  deviceShortName,
   appNameFromPath,
   iosConfigurationSetting,
   resolveConfiguration,
@@ -120,18 +115,9 @@ export {
   resolveRuntime,
   isReleaseConfiguration,
   podAction,
-  xcodeFailureReport,
 } from './ios/support.ts';
 
-export {
-  formatDuration,
-  phaseLine,
-  shortHash,
-  shortUdid,
-  SLOW_STEP_MS,
-  stepClock,
-  stepTimer,
-} from '../command-output.ts';
+export { formatDuration, phaseLine, shortHash, shortUdid } from '../command-output.ts';
 
 function writeNote(line: string): void {
   console.error(line);
@@ -209,7 +195,7 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     });
 }
 
-export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> = {}): Promise<IosFacts | null> {
+async function runIos(opts: IosCommandOptions = {}, overrides: Partial<IosDeps> = {}): Promise<IosFacts | null> {
   let d: typeof DEFAULT_DEPS = { ...DEFAULT_DEPS, ...overrides };
   const json = Boolean(opts.json);
   const metroCheck = opts.metroCheck !== false;
