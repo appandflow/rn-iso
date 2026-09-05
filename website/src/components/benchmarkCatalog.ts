@@ -1,4 +1,5 @@
 import type { BenchmarkData, BenchmarkRun } from './benchmarkData';
+export { defaultRun } from './benchmarkSelection';
 import benchmarkJson from '@site/src/data/benchmarks/luna-rc12.json';
 import lunaAndroidBenchmarkJson from '@site/src/data/benchmarks/luna-android.json';
 import opusBenchmarkJson from '@site/src/data/benchmarks/opus-rc12.json';
@@ -22,10 +23,6 @@ export const benchmarks = (
     solLaunchCrashJson,
   ] as BenchmarkData[]
 ).filter((benchmark) => benchmark.runs.some((run) => run.valid));
-
-export function defaultRun(benchmark: BenchmarkData | undefined): BenchmarkRun | undefined {
-  return benchmark?.runs.find((run) => run.valid);
-}
 
 export function displayVariant(variant: BenchmarkRun['variant']): string {
   if (variant === 'javascript') return 'JavaScript change';
