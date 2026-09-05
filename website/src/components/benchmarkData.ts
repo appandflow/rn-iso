@@ -260,7 +260,7 @@ export function benchmarkOverview(benchmarks: BenchmarkData[], variant: Benchmar
         run,
         widthPercent: run ? (run.settingsReadySeconds / maxSeconds) * 100 : 0,
         href: run
-          ? `/benchmarks/details${benchmarkSelectionSearch({ stage: benchmark.stage, runId: run.id }, benchmarks)}#audit-title`
+          ? `/benchmarks/details?${new URLSearchParams({ benchmark: benchmark.stage, run: run.id })}#audit-title`
           : null,
       };
     }),
