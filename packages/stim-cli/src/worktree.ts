@@ -4,6 +4,7 @@ import {
   copyFileSync,
   existsSync,
   lstatSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -227,23 +228,38 @@ function missingDestinationReason(target: string, rel: string): string | null {
   return lstatSync(join(target, rel), { throwIfNoEntry: false }) ? 'exists' : null;
 }
 
-function publishMissingEntry(from: string, to: string): void {
+function publishMissingEntry(from: string, to: string): boolean {
+  let cloned = true;
   const stat = lstatSync(from);
   if (stat.isSymbolicLink()) {
     symlinkSync(readlinkSync(from), to);
   } else if (stat.isFile()) {
-    copyFileSync(from, to, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE);
+    if (process.platform === 'darwin') {
+      // libuv has no macOS clonefile backend: https://github.com/libuv/libuv/pull/3987.
+      try {
+        linkSync(from, to);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw error;
+        cloned = false;
+      }
+    }
+    if (process.platform !== 'darwin' || !cloned) {
+      copyFileSync(from, to, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE);
+    }
     utimesSync(to, stat.atime, stat.mtime);
   } else if (stat.isDirectory()) {
     mkdirSync(to, { mode: stat.mode | 0o700 });
     for (const name of readdirSync(from)) {
-      if (!CARRY_SKIP_BASENAMES.has(name)) publishMissingEntry(join(from, name), join(to, name));
+      if (!CARRY_SKIP_BASENAMES.has(name) && !publishMissingEntry(join(from, name), join(to, name))) {
+        cloned = false;
+      }
     }
     utimesSync(to, stat.atime, stat.mtime);
     chmodSync(to, stat.mode);
   } else {
     throw new Error(`Unsupported ignored entry: ${from}`);
   }
+  return cloned;
 }
 
 function removeStagedEntry(path: string): void {
@@ -302,7 +318,7 @@ export function cloneIgnoredEntries({
         continue;
       }
       mkdirSync(dirname(to), { recursive: true });
-      publishMissingEntry(destination, to);
+      if (!publishMissingEntry(destination, to)) cloned = false;
       copied.push(rel);
     } catch (e) {
       failed.push({ file: rel, error: String((e as Error)?.message || e) });
