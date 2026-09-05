@@ -52,7 +52,7 @@ export function doctorSuccessLines(platform?: DoctorPlatform): string[] {
   if (platform !== 'ios') {
     lines.push('', 'Android');
     lines.push(phaseLine('setup', 'warm state, dev client'));
-    lines.push(phaseLine('caches', 'Metro, Gradle build provider'));
+    lines.push(phaseLine('caches', 'Metro, Gradle, ccache, build provider'));
     lines.push(phaseLine('devices', 'remote device'));
   }
 
@@ -64,8 +64,8 @@ export function doctorSuccessLines(platform?: DoctorPlatform): string[] {
     platform === 'ios'
       ? 'Metro transform store, Xcode compilation cache'
       : platform === 'android'
-        ? 'Metro transform store, Gradle build cache'
-        : 'Metro transform store, Xcode compilation cache, Gradle build cache';
+        ? 'Metro transform store, Gradle build cache, ccache'
+        : 'Metro transform store, Xcode compilation cache, Gradle build cache, ccache';
   lines.push(phaseLine('caches', suppliedCaches));
   lines.push(phaseLine('meaning', 'missing project cache settings are healthy'));
   return lines;

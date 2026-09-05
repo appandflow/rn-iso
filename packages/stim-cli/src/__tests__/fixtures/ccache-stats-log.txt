@@ -1,0 +1,19 @@
+# a.c
+cache_miss
+direct_cache_miss
+local_storage_miss
+local_storage_read_miss
+local_storage_read_miss
+local_storage_write
+local_storage_write
+preprocessed_cache_miss
+# a.c
+direct_cache_hit
+local_storage_hit
+local_storage_read_hit
+local_storage_read_hit
+# a.c
+direct_cache_hit
+local_storage_hit
+local_storage_read_hit
+local_storage_read_hit

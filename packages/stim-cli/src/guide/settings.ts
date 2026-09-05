@@ -274,7 +274,11 @@ be setup steps are supplied by Stim on the command lines it composes itself:
                gradle.properties. Debug builds add
                -PreactNativeArchitectures=<target ABI> when the owned
                emulator system image or physical device proves the ABI;
-               unknown targets and Release builds stay universal.
+               unknown targets and Release builds stay universal. The same run
+               carries the ccache launcher and CCACHE_BASEDIR /
+               CCACHE_NOHASHDIR when ccache is on PATH -- so no
+               externalNativeBuild cmake arguments in a committed
+               build.gradle.
   start        a shared Metro FileStore, APPENDED to whatever the project
                configured -- so no metro.config.js. On a bare project Stim
                hosts Metro itself and adds it to the config it loaded; on Expo

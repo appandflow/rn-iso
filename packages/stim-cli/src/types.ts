@@ -103,6 +103,13 @@ export interface CompilationCacheActivity {
   hitRatePercent: number | null;
 }
 
+export interface CcacheActivity {
+  status: 'reported' | 'unavailable' | 'not-run';
+  hits: number | null;
+  misses: number | null;
+  hitRatePercent: number | null;
+}
+
 interface RunLeaseFacts {
   kind: string;
   expiresAt: string;
@@ -149,6 +156,7 @@ export interface AndroidFacts {
   bundleId: string | null;
   installSkipped: boolean;
   launched: LaunchStatus;
+  ccache: CcacheActivity;
   debugHttpHost: string | null;
   debugHttpHostNote: string | null;
   devClientUrl: string | null;
