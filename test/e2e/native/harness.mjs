@@ -185,7 +185,7 @@ export function ensureGitignore({ appDir, framework }) {
 
 export function createCleanupTracker({ h, platform }) {
   const devices = new Set();
-  const processes = new Set();
+  const processes = new Map();
 
   function recordBuild(facts) {
     const id = platform === 'ios' ? facts.udid : facts.avdName;
@@ -201,13 +201,15 @@ export function createCleanupTracker({ h, platform }) {
       if (error.code === 'ENOENT') return;
       throw error;
     }
-    const pids = new Set([
-      state.supervisor?.pid,
-      state.supervisor?.serverPid,
-      ...Object.values(state.collectors ?? {}).map((record) => record.pid),
-    ]);
-    for (const [pid, identity] of processSnapshot(h)) {
-      if (pids.has(pid)) processes.add(identity);
+    const records = [
+      state.supervisor,
+      { pid: state.supervisor?.serverPid, startedAt: state.supervisor?.startedAt },
+      ...Object.values(state.collectors ?? {}),
+    ].filter(Boolean);
+    const live = processSnapshot(h);
+    for (const record of records) {
+      const key = JSON.stringify([cwd, record.pid, record.startedAt]);
+      if (!processes.has(key) && live.has(record.pid)) processes.set(key, live.get(record.pid));
     }
   }
 
@@ -226,7 +228,7 @@ export function createCleanupTracker({ h, platform }) {
 
   function verifyProcesses() {
     const live = new Set(processSnapshot(h).values());
-    const leaked = [...processes].filter((identity) => live.has(identity));
+    const leaked = [...processes.values()].filter((identity) => live.has(identity));
     assert(leaked.length === 0, `a workspace process is still running:\n${leaked.join('\n')}`);
   }
 

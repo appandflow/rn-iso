@@ -101,9 +101,9 @@ test('native cleanup ignores unrelated supervisors when this run has no live pro
 });
 
 for (const [kind, state] of [
-  ['supervisor', { supervisor: { pid: 123 } }],
-  ['Metro child', { supervisor: { serverPid: 123 } }],
-  ['collector', { collectors: { ios: { pid: 123 } } }],
+  ['supervisor', { supervisor: { pid: 123, startedAt: '2026-09-05T01:00:00Z' } }],
+  ['Metro child', { supervisor: { serverPid: 123, startedAt: '2026-09-05T01:00:00Z' } }],
+  ['collector', { collectors: { ios: { pid: 123, startedAt: '2026-09-05T01:00:00Z' } } }],
 ]) {
   test(`native cleanup detects a leaked ${kind} after its state record disappears`, (t) => {
     const f = fixture(t);
@@ -114,6 +114,16 @@ for (const [kind, state] of [
     f.cleanup.recordProcesses(f.cwd);
     assert.throws(() => f.verify(), /a workspace process is still running/);
     f.output.processes = ' 987 Sat Sep 5 01:00:00 2026 node stim-cli supervisor --root /unrelated';
+    f.verify();
+  });
+
+  test(`native cleanup does not recapture a reused ${kind} PID from stale state`, (t) => {
+    const f = fixture(t);
+    f.writeState(state);
+    f.output.processes = ` 123 Sat Sep 5 01:00:00 2026 node stim-cli ${kind} --root ${f.cwd}`;
+    f.cleanup.recordProcesses(f.cwd);
+    f.output.processes = ' 123 Sat Sep 5 02:00:00 2026 node stim-cli supervisor --root /unrelated';
+    f.cleanup.recordProcesses(f.cwd);
     f.verify();
   });
 }
@@ -139,6 +149,18 @@ test('native cleanup retains replaced collectors and ignores a reused PID', (t) 
   assert.throws(() => f.verify(), /a workspace process is still running/);
   f.output.processes = first.replace('01:00:00', '02:00:00');
   f.verify();
+});
+
+test('native cleanup tracks a new registration even when it recycles a captured PID', (t) => {
+  const f = fixture(t);
+  f.writeState({ collectors: { ios: { pid: 123, startedAt: '2026-09-05T01:00:00Z' } } });
+  f.output.processes = ` 123 Sat Sep 5 01:00:00 2026 node collector --root ${f.cwd}`;
+  f.cleanup.recordProcesses(f.cwd);
+  f.writeState({ collectors: { ios: { pid: 123, startedAt: '2026-09-05T02:00:00Z' } } });
+  f.output.processes = ` 123 Sat Sep 5 02:00:00 2026 node collector --root ${f.cwd}`;
+  f.cleanup.recordProcesses(f.cwd);
+  rmSync(f.stateFile);
+  assert.throws(() => f.verify(), /a workspace process is still running/);
 });
 
 test('native cleanup preserves registry, checkout, worktree and GC checks', (t) => {
