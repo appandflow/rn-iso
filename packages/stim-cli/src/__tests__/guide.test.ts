@@ -156,15 +156,17 @@ test('shared-build recovery keeps waiters behind replacement builders with one d
   expect(renderTopic('agent')).toMatch(
     /one waiter takes over and the others keep waiting within the same\s+90-minute limit/,
   );
-  expect(renderTopic('lifecycle')).toMatch(/other waiters keep waiting for that holder/);
-  expect(renderTopic('lifecycle')).toMatch(/one ~90-minute deadline, including lock acquisition between waits/);
+  expect(renderSection('lifecycle', 'concurrency')).toMatch(/other waiters keep waiting for that holder/);
+  expect(renderSection('lifecycle', 'concurrency')).toMatch(
+    /one ~90-minute deadline, including lock acquisition between waits/,
+  );
   expect(renderSection('errors', 'STIM_BUILD_WAIT_TIMEOUT')).toMatch(
     /Replacement builders share that deadline, including time spent acquiring/,
   );
 });
 
 test('the lifecycle topic separates an iOS install proof from dev-client preparation', () => {
-  const body = renderTopic('lifecycle');
+  const body = renderSection('lifecycle', 'builds');
   assert(body);
   expect(body).toMatch(/install\s+unchanged \(stim-app already has this build\)/);
   expect(body).toMatch(/install\s+dev client prepared/);
@@ -183,7 +185,7 @@ function scrapedCodes(source: string): Set<string> {
 const SUMMARY_ONLY_LABELS = ['app', 'compilation cache'];
 
 test('the lifecycle topic grids every label the output vocabulary allows, and no others', () => {
-  const body = renderTopic('lifecycle');
+  const body = renderSection('lifecycle', 'progress');
   assert(body);
   const start = body.indexOf('The labels are a closed set');
   expect(start).toBeGreaterThan(-1);
@@ -201,7 +203,7 @@ test('the lifecycle topic grids every label the output vocabulary allows, and no
 });
 
 test('the lifecycle topic shows the lifecycle commands in the same label column', () => {
-  const body = renderTopic('lifecycle');
+  const body = renderSection('lifecycle', 'progress');
   assert(body);
   expect(body).toMatch(/branch\s+worktree-e2e-1 from HEAD \(9d0ebc4\)/);
   expect(body).toMatch(/carry\s+node_modules \(APFS clone\); no Pods; no native build output/);
@@ -372,15 +374,15 @@ test('the facts topic says Android artifacts use the post-Gradle fingerprint', (
 test('the guides explain unavailable iOS fingerprints after native mutations', () => {
   expect(renderTopic('agent')).toContain('installs the build without caching it');
   expect(renderTopic('facts')).toMatch(/iOS\s+fingerprint after prebuild or pod install/);
-  const lifecycle = renderTopic('lifecycle');
+  const lifecycle = renderSection('lifecycle', 'builds');
   expect(lifecycle).toContain('skips local storage and remote uploads');
   expect(lifecycle).toContain('cacheKey are null in the result and lastBuild');
 });
 
 test('the guides document Android target-ABI builds and universal fallbacks', () => {
   expect(renderTopic('facts')).toMatch(/debug-sim-arm64-v8a/);
-  expect(renderTopic('lifecycle')).toMatch(/-PreactNativeArchitectures=<target ABI>/);
-  expect(renderTopic('lifecycle')).toMatch(/ABI-targeted Android Debug build skips this Expo\s+tier/);
+  expect(renderSection('lifecycle', 'builds')).toMatch(/-PreactNativeArchitectures=<target ABI>/);
+  expect(renderSection('lifecycle', 'builds')).toMatch(/ABI-targeted Android Debug build skips this Expo\s+tier/);
   expect(renderTopic('agent')).toMatch(/Unknown targets and Release builds stay\s+universal/);
 });
 
@@ -415,7 +417,7 @@ test('the one-line JSON sentence names every command whose --json payload is a s
 });
 
 test('the flags the guide advertises are the flags the commands define', () => {
-  const lifecycle = renderTopic('lifecycle');
+  const lifecycle = renderSection('lifecycle', 'options');
   assert(lifecycle);
   const advertised = {
     'start.ts': ['--json', '--wait', '--remote'],
@@ -479,7 +481,7 @@ test('the Metro guide documents explicit remote intent and the local default', (
 });
 
 test('the guide documents the identical-artifact skip and its fail-closed rule', () => {
-  const lifecycle = renderTopic('lifecycle');
+  const lifecycle = renderSection('lifecycle', 'builds');
   assert(lifecycle);
   expect(lifecycle).toMatch(/pm path/);
   expect(lifecycle).toMatch(/sha256sum/);
@@ -513,7 +515,7 @@ test('the guide documents the one launch error a verified run drops', () => {
 });
 
 test('the guide documents the progress cadence the heartbeat actually uses', () => {
-  const lifecycle = renderTopic('lifecycle');
+  const lifecycle = renderSection('lifecycle', 'progress');
   assert(lifecycle);
   expect(HEARTBEAT_INTERVAL_MS).toBe(30_000);
   expect(lifecycle).toMatch(/PROGRESS ON A LONG RUN/);
@@ -545,7 +547,7 @@ test('the guide states once where the heartbeat estimate comes from', () => {
   expect(facts).toMatch(/never a mean/);
   expect(facts).toMatch(/read takes no lock/);
   expect(facts).toMatch(/build {7}still compiling \(1m00s of ~3m10s\)/);
-  const lifecycle = renderTopic('lifecycle');
+  const lifecycle = renderSection('lifecycle', 'progress');
   assert(lifecycle);
   expect(lifecycle).toMatch(/`guide facts` says where the\s+number comes from/);
 });
@@ -559,7 +561,7 @@ test('the guide documents scoped iOS dev-client preapproval', () => {
 });
 
 test('the guide keeps Metro intent separate from the explicit device backend', () => {
-  const lifecycle = renderTopic('lifecycle');
+  const lifecycle = renderSection('lifecycle', 'options');
   const settings = renderTopic('settings');
   const errors = renderTopic('errors');
   assert(lifecycle);
@@ -687,7 +689,7 @@ test('the cleanup guide lists the shared ccache directory and who bounds it', ()
 });
 
 test('the lifecycle guide states what Stim sets for Android C++ and what it costs', () => {
-  const lifecycle = renderTopic('lifecycle');
+  const lifecycle = renderSection('lifecycle', 'builds');
   assert(lifecycle);
 
   expect(lifecycle).toMatch(/CMAKE_C_COMPILER_LAUNCHER \/ CMAKE_CXX_COMPILER_LAUNCHER/);
@@ -773,14 +775,14 @@ test('the guide states the physical-iPhone device-log losses, and states them as
     /unverified until someone pulls a cable[\s\S]*collector_stopped, a non-zero one is\s+collector_failed/,
   );
 
-  const lifecycle = renderTopic('lifecycle');
+  const lifecycle = renderSection('lifecycle', 'devices');
   assert(lifecycle);
   expect(lifecycle).toMatch(/THE DEVICE LOG COLLECTOR IS THE LAUNCH/);
   expect(lifecycle).toContain('appandflow/stim#179');
 });
 
 test('the guide teaches the device install and launch that #178 phases 3 and 5 wired', () => {
-  const lifecycle = renderTopic('lifecycle');
+  const lifecycle = renderSection('lifecycle', 'devices');
   const errors = sectionText('errors');
   assert(lifecycle);
   assert(errors);
@@ -822,7 +824,7 @@ test('the guide teaches the device install and launch that #178 phases 3 and 5 w
 // collector holding it is a fact about `stop`, not only about logs.
 test('the guide says a phone loses its running app when the collector ends', () => {
   const cleanup = renderTopic('cleanup');
-  const lifecycle = renderTopic('lifecycle');
+  const lifecycle = renderSection('lifecycle', 'devices');
   assert(cleanup);
   assert(lifecycle);
 
@@ -1256,8 +1258,11 @@ test('the agent guide carries the normal workflow and safety rules', () => {
 });
 
 test('physical-device guidance separates collector cleanup from device leases', () => {
-  for (const topic of ['lifecycle', 'cleanup']) {
-    const body = renderTopic(topic);
+  for (const [topic, section] of [
+    ['lifecycle', 'devices'],
+    ['cleanup', null],
+  ] as Array<[string, string | null]>) {
+    const body = section ? renderSection(topic, section) : renderTopic(topic);
     assert(body);
     expect(body).toMatch(/`device lock` lease survives\s+collector exit until released or expired/);
     expect(body).toMatch(/`gc --delete` can remove its\s+expired lease file/);
@@ -1321,7 +1326,7 @@ test('the agent and cleanup guides shut down owned simulators without an occupan
 });
 
 test('the guide names every path Stim ignores by default', () => {
-  const lifecycle = renderTopic('lifecycle') ?? '';
+  const lifecycle = renderSection('lifecycle', 'builds') ?? '';
   for (const path of DEFAULT_FINGERPRINT_IGNORES) {
     // The guide prints them without the glob, e.g. android/local.properties.
     const bare = path.replace(/^\*\*\//, '').replace(/\/\*\*$/, '');
@@ -1363,11 +1368,11 @@ test('advanced contracts stay in guide topics instead of the skill', () => {
     ['metro.ngrokUrl', 'settings', null],
     ['waitedForBuild', 'facts', null],
     ['STIM_AT_CAPACITY', 'errors', null],
-    ['.fingerprintignore', 'lifecycle', null],
+    ['.fingerprintignore', 'lifecycle', 'builds'],
     ['CoreSimulatorBridge', 'facts', null],
     ['~/.android/avd', 'cleanup', null],
     ['android.avdConfigFile', 'settings', null],
-    ['productionRelease', 'lifecycle', null],
+    ['productionRelease', 'lifecycle', 'release'],
   ] as const;
 
   for (const [detail, topicName, section] of advanced) {
@@ -1424,7 +1429,7 @@ test('the guide defines reload as a JavaScript-only live-app recovery', () => {
   expect(lifecycle).toMatch(/never builds, installs, boots, or cold-launches/);
   expect(lifecycle).toMatch(/owned local simulator or emulator/);
   expect(lifecycle).toMatch(/stim reload ios[\s\S]*stim reload android/);
-  expect(lifecycle).toMatch(/^  reload\s+\[ios\|android\] --json$/m);
+  expect(renderSection('lifecycle', 'options')).toMatch(/^  reload\s+\[ios\|android\] --json$/m);
   expect(facts).toContain('stim reload [ios|android] --json');
   expect(facts).toMatch(/platform[\s\S]*deviceId[\s\S]*metroPort[\s\S]*strategy/);
   expect(errors).toContain('STIM_RELOAD_AMBIGUOUS');
@@ -1452,7 +1457,7 @@ test('the documented common workflows leave reload to recovery', () => {
 });
 
 test('the guide documents the project cache provider as the tier between local and Expo', () => {
-  const lifecycle = renderTopic('lifecycle');
+  const lifecycle = renderSection('lifecycle', 'builds');
   const settings = renderTopic('settings');
   assert(lifecycle);
   assert(settings);
@@ -1466,11 +1471,13 @@ test('the guide documents the project cache provider as the tier between local a
   expect(settings).toMatch(/cache\.options[\s\S]*Keep secrets/);
   expect(settings).toMatch(/cache\.provider[\s\S]*EXECUTABLE CODE/);
   expect(settings).toMatch(/sharedCacheStores\(\)[\s\S]*stays local-only/);
-  expect(lifecycle).toMatch(/--no-build-cache looks nothing up -- not the local cache, not either/);
+  expect(renderSection('lifecycle', 'concurrency')).toMatch(
+    /--no-build-cache looks nothing up -- not the local cache, not either/,
+  );
 });
 
 test('the guide documents the flavor refusal that lands before the build', () => {
-  const lifecycle = renderTopic('lifecycle');
+  const lifecycle = renderSection('lifecycle', 'options');
   const errors = renderTopic('errors');
   assert(lifecycle);
   assert(errors);
@@ -1499,7 +1506,7 @@ test('the cleanup guide documents what gc does with device lease files', () => {
 });
 
 test('the guide documents the run-scoped device lease and the two flags that steer it', () => {
-  const lifecycle = renderTopic('lifecycle');
+  const lifecycle = renderSection('lifecycle', 'lease');
   assert(lifecycle);
   expect(lifecycle).toMatch(/THE DEVICE LEASE ON A/);
   expect(lifecycle).toMatch(/AFTER the build[\s\S]*before the\s+install/);
@@ -1518,8 +1525,10 @@ test('the guide documents the run-scoped device lease and the two flags that ste
   expect(lifecycle).toMatch(/two flags\s+together are STIM_BAD_ARG, and so is either one without `--device`/);
   expect(lifecycle).toMatch(/`lease: \{ kind, expiresAt \}`/);
   expect(lifecycle).toMatch(/`lease: null`/);
-  expect(lifecycle).toMatch(/ios .*--device \[udid\] --wait <seconds> --no-wait/);
-  expect(lifecycle).toMatch(/android .*--device \[serial\] --wait <seconds> --no-wait/);
+  const options = renderSection('lifecycle', 'options');
+  assert(options);
+  expect(options).toMatch(/ios .*--device \[udid\] --wait <seconds> --no-wait/);
+  expect(options).toMatch(/android .*--device \[serial\] --wait <seconds> --no-wait/);
 });
 
 test('the errors topic documents both device-lease codes with their remedies', () => {
@@ -1538,7 +1547,7 @@ test('the errors topic documents both device-lease codes with their remedies', (
 });
 
 test('the guide documents holding a device across runs with lock and unlock', () => {
-  const lifecycle = renderTopic('lifecycle');
+  const lifecycle = renderSection('lifecycle', 'lease');
   assert(lifecycle);
   expect(lifecycle).toMatch(/HOLDING A DEVICE ACROSS RUNS/);
   expect(lifecycle).toMatch(/stim device lock ios --for 10m/);
@@ -1553,8 +1562,10 @@ test('the guide documents holding a device across runs with lock and unlock', ()
   expect(lifecycle).toMatch(/Releasing nothing is not an error/);
   expect(lifecycle).toMatch(/releases by holder/);
   expect(lifecycle).toMatch(/With no id, `lock` and a `--device` run pick from the POOL/);
-  expect(lifecycle).toMatch(/device\s+lock <ios\|android> \[id\] --for <duration> --wait <seconds> --json/);
-  expect(lifecycle).toMatch(/unlock \[ios\|android\] --json/);
+  const options = renderSection('lifecycle', 'options');
+  assert(options);
+  expect(options).toMatch(/device\s+lock <ios\|android> \[id\] --for <duration> --wait <seconds> --json/);
+  expect(options).toMatch(/unlock \[ios\|android\] --json/);
 });
 
 test('the busy remedy for this root own lease names the command that releases by holder', () => {
@@ -1573,7 +1584,7 @@ test('the agent guide states the permanent lease rule', () => {
 });
 
 test('the guide documents the pool an id-less --device picks from', () => {
-  const lifecycle = renderTopic('lifecycle');
+  const lifecycle = renderSection('lifecycle', 'lease');
   assert(lifecycle);
   expect(lifecycle).toMatch(/THE POOL: WHICH DEVICE AN ID-LESS/);
   expect(lifecycle).toMatch(/wired, paired, with Developer Mode on/);
@@ -1591,15 +1602,17 @@ test('the guide documents the pool an id-less --device picks from', () => {
 
   expect(lifecycle).not.toMatch(/one connected device/);
   expect(lifecycle).not.toMatch(/refuses with the candidate\s+list/);
-  expect(lifecycle).toMatch(/no serial it takes the first device it can lease/);
-  expect(lifecycle).toMatch(/with no UDID it takes the\s+first device it can lease/);
-  expect(lifecycle).toMatch(
+  const devices = renderSection('lifecycle', 'devices');
+  assert(devices);
+  expect(devices).toMatch(/no serial it takes the first device it can lease/);
+  expect(devices).toMatch(/with no UDID it takes the\s+first device it can lease/);
+  expect(devices).toMatch(
     /On a physical iPhone that also closes the app, because its collector owns\s+the devicectl launch session/,
   );
 });
 
 test('the option surface lists the model and runtime flags on both platforms', () => {
-  const lifecycle = renderTopic('lifecycle');
+  const lifecycle = renderSection('lifecycle', 'options');
   assert(lifecycle);
   expect(lifecycle).toMatch(/ios\s+--json[^\n]*--device-type <name> --runtime <version>/);
   expect(lifecycle).toMatch(/android\s+--json[^\n]*--system-image <id>/);
@@ -1628,7 +1641,7 @@ test('the errors topic names an uninstalled device name as a STIM_BAD_ARG cause 
 });
 
 test('the guide says what counts as an installed model, and the two runtime forms', () => {
-  const lifecycle = renderTopic('lifecycle');
+  const lifecycle = renderSection('lifecycle', 'options');
   assert(lifecycle);
   const flat = lifecycle.replace(/\s+/g, ' ');
   expect(flat).toMatch(/what an installed RUNTIME can create, not what `xcrun simctl list devicetypes` prints/);
@@ -1675,8 +1688,8 @@ test('the guide routes the two report questions to the two commands', () => {
 
   expect(lifecycle).toMatch(/"What is running" is `stim status`/);
   expect(lifecycle).toMatch(/"How much the\s+cache saved" is `stim stats`/);
-  expect(lifecycle).toMatch(/stats\s+--json/);
-  expect(lifecycle).toMatch(/\$STIM_HOME\/stats\.json/);
+  expect(renderSection('lifecycle', 'options')).toMatch(/stats\s+--json/);
+  expect(renderSection('lifecycle', 'builds')).toMatch(/\$STIM_HOME\/stats\.json/);
   expect(cleanup).toMatch(/gc` never reports or trims the run\s+counters/i);
   expect(cleanup).toMatch(/no reset flag[\s\S]*Delete that one file/i);
   expect(cleanup).toMatch(/cannot read[\s\S]*one dim line on stderr/i);

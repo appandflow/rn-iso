@@ -82,8 +82,9 @@ line by design (see \`guide logs\`), not this single-payload contract.
                   statistics. This field is separate from cacheHit
   waitedForBuild  { pid, ms } when ANOTHER workspace was already compiling this
                   exact fingerprint and this run waited for its artifact instead
-                  of compiling a second copy (see \`guide lifecycle\`, "one
-                  compile per fingerprint"); null when nothing was waited for.
+                  of compiling a second copy
+                  (see \`guide lifecycle concurrency\`); null when nothing was
+                  waited for.
                   cacheHit is "local" either way -- the artifact did come from
                   the local cache -- so this is what separates "it was already
                   there" (free) from "it was there twelve minutes later" (still
@@ -92,7 +93,8 @@ line by design (see \`guide logs\`), not this single-payload contract.
   bundleId        the iOS bundle id that was launched
   installSkipped  true when the artifact was ALREADY on the device byte for
                   byte, so nothing was installed and the run went straight to
-                  launch (see \`guide lifecycle\`). false means an install ran.
+                  launch (see \`guide lifecycle builds\`). false means an
+                  install ran.
                   Always false on \`--device\`: proving a phone already holds
                   the bundle would cost more than installing it
   launched        true, "bundling", or "unverified". THE THREE ARE DIFFERENT

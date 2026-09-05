@@ -3,7 +3,8 @@ export default {
   body: () => `CLEANUP AND DISK
 
 WHAT RECLAIMS AN OWNED DEVICE
-  stim worktree remove    parks the owned simulator (\`guide lifecycle\`) and
+  stim worktree remove    parks the owned simulator (\`guide lifecycle pool\`)
+                            and
                             deletes every other owned device under the worktree
   stim gc --delete        sweeps stim-* devices no project references, and
                             clears verified parked simulators

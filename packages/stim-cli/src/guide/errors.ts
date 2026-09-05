@@ -188,7 +188,8 @@ code, never on the message.`,
       summary: "waited ~90 minutes for another workspace's build of the same fingerprint",
       body: () => `STIM_BUILD_WAIT_TIMEOUT
   This run was waiting for ANOTHER workspace's build of the same fingerprint
-  (see \`guide lifecycle\`), and no artifact arrived within ~90 minutes.
+  (see \`guide lifecycle concurrency\`), and no artifact arrived within ~90
+  minutes.
   Replacement builders share that deadline, including time spent acquiring
   the lock between waits. A live builder may be wedged, or successive builders
   may have failed. The message names the current pid and lock directory:
@@ -502,7 +503,7 @@ fire BEFORE the build, because a refusal that costs a build is a bad refusal.`,
   workspace whose OWN device is already booted is never refused -- re-running
   \`ios\` on an environment you already have is idempotent. (The build cap
   behaves differently: a compile WAITS for a free slot rather than refusing.
-  See \`guide lifecycle\`, "opt-in concurrency limits".)`,
+  See \`guide lifecycle concurrency\`.)`,
     },
     STIM_BUILD_SLOT_TIMEOUT: {
       summary: 'the maxBuilds wait gave up with every slot held by a live pid',
@@ -514,8 +515,8 @@ fire BEFORE the build, because a refusal that costs a build is a bad refusal.`,
   a crash; it is either that many genuinely long compiles, or a slot directory
   whose owner is not really building. Slots live under ~/.stim/build-slots and
   the message names the directory: remove the slot of a builder that is not
-  building, or raise concurrency.maxBuilds (\`guide lifecycle\`, "opt-in
-  concurrency limits").`,
+  building, or raise concurrency.maxBuilds
+  (\`guide lifecycle concurrency\`).`,
     },
     STIM_NO_REMOTE_SESSION: {
       summary: 'the backend could not use agent-device, or metro.tunnel names an unusable provider',

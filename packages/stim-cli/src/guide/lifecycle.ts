@@ -1,6 +1,9 @@
-export default {
-  summary: 'The full worktree -> start -> ios/android -> logs -> teardown flow',
-  body: () => `ENVIRONMENT LIFECYCLE
+import type { GuideTopic } from './types.ts';
+
+const lifecycle: GuideTopic = {
+  summary:
+    'The full worktree -> start -> ios/android -> logs -> teardown flow, with sections for builds, devices and flags',
+  preamble: () => `ENVIRONMENT LIFECYCLE
 
   # 1. Isolated worktree (skip if you are already in one).
   #    It branches from the current HEAD. Use --base fresh for origin/HEAD.
@@ -62,7 +65,36 @@ Metro cannot identify one iOS peer, the command tells the agent to press Reload
 through its existing automation session on the exact simulator. Stim does not
 take over that stateful session.
 
-PROGRESS ON A LONG RUN
+DESTRUCTIVE COMMANDS -- ask the user first
+  gc --delete             deletes orphaned stim-* devices, tens of GB
+  gc --delete --cache all empties the shared build caches every project uses
+  gc --delete --cache <name>
+                          empties only the caches that carry <name>
+  worktree remove --force discards uncommitted and untracked work
+  stop --force            kills a process Stim could not identify
+
+Permanent local deletion lives in exactly TWO commands: \`worktree remove\`
+(the workspace you name) and \`gc --delete\` (the machine). For a local device,
+\`stop\` shuts it down and never deletes it. For a recorded EAS session,
+\`stop\` irreversibly ends the session. \`stop --force\` can also kill an
+unidentified process on the reserved port. There is no \`--delete\` flag on
+\`stop\`.
+
+CAPACITY
+  A booted iOS sim is roughly 1-2 GB of RAM, an Android emulator 2-3 GB. On a
+  16 GB machine plan for 2-3 live environments. Nothing enforces this;
+  \`stim status\` is how you check -- it reports every workspace on the
+  machine, not just this one.
+
+TWO REPORTS, TWO QUESTIONS
+  "What is running" is \`stim status\`: live state, right now. "How much the
+  cache saved" is \`stim stats\`: aggregate counters for this project and for
+  the machine, with a hit rate and an estimate of the time saved (see
+  \`guide facts\`).`,
+  sections: {
+    progress: {
+      summary: 'phase lines, the label set, heartbeats and their ~ estimate, what create, start, stop and remove print',
+      body: () => `PROGRESS ON A LONG RUN
   The whole summary is stderr; stdout carries only the \`--json\` payload. Every
   progress line has the same shape -- two spaces, a label padded to eleven
   columns, the FACT, and the time the step cost:
@@ -152,7 +184,15 @@ PROGRESS ON A LONG RUN
   is never touched: \`Reclaimed the environment; the working tree stays (it
   is the main checkout).\`
 
-  THE SIMULATOR POOL
+  A GAP BETWEEN HEARTBEATS IS NOT A HANG. Stim runs device tools
+  synchronously, so a long \`simctl\`, \`adb\` or copy call holds the timer
+  until it returns; the next heartbeat then lands on the grid, which is why an
+  elapsed value can jump. Read the phase lines, not the wall clock, before
+  killing a run.`,
+    },
+    pool: {
+      summary: 'parked and adopted simulators: what park and adoption clear or keep, the model and runtime match',
+      body: () => `  THE SIMULATOR POOL
   \`worktree remove\` PARKS this workspace's owned simulator instead of
   deleting it, and the next workspace that wants the same model and runtime
   ADOPTS it. A simulator that has booted before boots in about 9s; a freshly
@@ -213,15 +253,12 @@ PROGRESS ON A LONG RUN
   for unlisted \`stim-\` devices stays refused: a parked record in THIS config
   proves that simulator is Stim's and parked by this home. \`stop\` never
   parks -- it shuts the owned simulator down and keeps it assigned. Neither
-  does \`gc --delete\`, which is deleting what it finds.
-
-  A GAP BETWEEN HEARTBEATS IS NOT A HANG. Stim runs device tools
-  synchronously, so a long \`simctl\`, \`adb\` or copy call holds the timer
-  until it returns; the next heartbeat then lands on the grid, which is why an
-  elapsed value can jump. Read the phase lines, not the wall clock, before
-  killing a run.
-
-AN ARTIFACT THE DEVICE ALREADY HOLDS IS NOT INSTALLED AGAIN
+  does \`gc --delete\`, which is deleting what it finds.`,
+    },
+    builds: {
+      summary:
+        'cache hits, misses, the fingerprint shift, .fingerprintignore, install unchanged, where runtime state lives',
+      body: () => `AN ARTIFACT THE DEVICE ALREADY HOLDS IS NOT INSTALLED AGAIN
   Both platforms store the artifact verbatim, so its hash is its identity.
   Before installing, Stim hashes the artifact it is about to install and the
   one the device already has -- \`pm path\` then \`sha256sum\` on Android, the
@@ -246,22 +283,6 @@ AN ARTIFACT THE DEVICE ALREADY HOLDS IS NOT INSTALLED AGAIN
 
   \`--json\` carries installSkipped so a caller can tell a skipped run from an
   installed one.
-
-OPTIONAL SIMSLIM PROFILE
-  Install SimSlim once on each Mac:
-
-    brew install mobai-app/tap/simslim
-
-  Then commit a profile and select it in .stim.json:
-
-    { "ios": { "simslimProfile": ".simslim/dev.json" } }
-
-  SimSlim requires an iOS 18 or newer simulator. On each local \`stim ios\`,
-  Stim reconciles that profile on the owned simulator before the app build.
-  The first change can update services and reboot the simulator. A matching
-  profile is a fast no-op on later launches. The settings persist across normal
-  shutdowns and reboots. Removing the setting restores stock services when
-  Stim applied the profile. Stim never changes an unowned or remote simulator.
 
 RUNTIME STATE AND BUILD INPUTS
 Runtime state is stored outside the project tree under
@@ -412,9 +433,11 @@ WHAT MAKES THE CACHE ACTUALLY HIT: .FINGERPRINTIGNORE
   fingerprints HEAD in a temporary clean worktree, compares, and reports a
   mismatch naming the differing sources. Untracked, non-gitignored files under
   ios/ or android/ count too -- they are hashed like any other source, so a
-  stray file there moves the key on your machine and nowhere else.
-
-ONE COMPILE PER FINGERPRINT, ACROSS EVERY WORKSPACE
+  stray file there moves the key on your machine and nowhere else.`,
+    },
+    concurrency: {
+      summary: "waiting on another workspace's build, --no-build-cache, concurrency.maxBuilds and maxDevices",
+      body: () => `ONE COMPILE PER FINGERPRINT, ACROSS EVERY WORKSPACE
   The cache makes the SECOND workspace on a commit free -- but only once the
   first has finished. Three agents starting within the same minute all miss it,
   and without this all three compile the same app at once, fighting for the
@@ -467,15 +490,19 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
                             At the cap, a NEW device is REFUSED with
                             STIM_AT_CAPACITY (interactive-shaped: it does not
                             queue). A workspace whose own device is already
-                            booted is never refused. See \`guide errors\`.
+                            booted is never refused.
+                            See \`guide errors STIM_AT_CAPACITY\`.
 
   \`stim doctor\` prints one note echoing the caps and the current live count,
   but ONLY when a cap is set. \`stim gc\` reports stale build slots the way it
   reports stale build locks, and \`gc --delete\` clears them. There is no
   \`stim config\` command: set these by editing ~/.stim/config.json or via
-  the two env vars (see \`guide settings\`).
-
-THE OPTION SURFACE, IN FULL
+  the two env vars (see \`guide settings\`).`,
+    },
+    options: {
+      summary:
+        'every flag per command, Android variants and flavors, the per-run simulator model, runtime and system image',
+      body: () => `THE OPTION SURFACE, IN FULL
   start           --json --wait <seconds> --remote
   ios             --json --no-metro-check --no-build-cache --configuration <name> --device-type <name> --runtime <version> --device [udid] --wait <seconds> --no-wait --remote <proxy|eas>
   android         --json --no-metro-check --no-build-cache --variant <name> --system-image <id> --device [serial] --wait <seconds> --no-wait --remote <proxy|eas>
@@ -543,16 +570,19 @@ THE OPTION SURFACE, IN FULL
   \`--system-image\` apply at creation only, so an existing device keeps the
   version it was made with. The --json payload reports what was actually
   used: \`deviceType\` and \`runtime\` on iOS, \`systemImage\` on Android,
-  read from the device itself, so a settings-driven run reports them too.
-
-  \`android --device [serial]\` installs and launches on a physical device
+  read from the device itself, so a settings-driven run reports them too.`,
+    },
+    devices: {
+      summary:
+        'ios --device and android --device on a phone: what the run skips, signing, the LAN wiring, the collector',
+      body: () => `  \`android --device [serial]\` installs and launches on a physical device
   connected to this machine instead of this workspace's owned emulator. With
-  no serial it takes the first device it can lease (THE POOL, below). It
-  cannot be combined with --remote.
+  no serial it takes the first device it can lease (\`guide lifecycle lease\`).
+  It cannot be combined with --remote.
 
   A \`--device\` run LEASES the device from just after the build until it
-  exits, so a second workspace cannot install over it mid-run (see THE DEVICE
-  LEASE below).
+  exits, so a second workspace cannot install over it mid-run
+  (\`guide lifecycle lease\`).
 
   The build, the fingerprint, the build cache and the Metro port gate are
   unchanged. What is skipped is everything that manages an owned device:
@@ -563,19 +593,99 @@ THE OPTION SURFACE, IN FULL
 
   \`ios --device [udid]\` selects a connected iPhone, the same way
   \`android --device\` selects a connected phone: with no UDID it takes the
-  first device it can lease (THE POOL, below), and an iPhone
+  first device it can lease (\`guide lifecycle lease\`), and an iPhone
   that is unpaired or has Developer Mode off is refused with the fix. It
   cannot be combined with --remote, and it never creates, boots, or deletes
   hardware -- there is no capacity check, no simulator creation, no boot wait,
   and no owned-device registry entry. Like
-  \`android --device\`, it leases the phone for the run (below).
+  \`android --device\`, it leases the phone for the run
+  (\`guide lifecycle lease\`).
 
   \`stop\` releases this workspace's leases and stops its log collectors.
   On a physical iPhone that also closes the app, because its collector owns
   the devicectl launch session. \`gc --delete\` removes expired lease files;
   neither command shuts down the phone or uninstalls the app.
 
-THE DEVICE LEASE ON A \`--device\` RUN
+  A device build is LOCAL-TIER ONLY. Its cache key is
+  \`<fingerprint>-<configuration>-device\`, so a device app can never collide
+  with the simulator one, and neither the build-cache provider nor the Expo
+  remote cache is read or written on a \`--device\` run: every entry they hold
+  is keyed for the simulator, so consulting them would either install a
+  simulator slice on a phone or publish an iphoneos app under a key simulator
+  builds resolve.
+
+  THE BUILD is the \`iphoneos\` slice for the selected phone -- \`-sdk
+  iphoneos\`, the project's own signing settings, no signing flags on the argv.
+  It is installed with \`devicectl device install app\` and launched with
+  \`devicectl device process launch\`. Every device install is SIGNED, Debug
+  included, so the signing gate runs before it: the app's own
+  embedded.mobileprovision must be unexpired and must name this phone, and when
+  Stim modifies the bundle the identity that profile names must be in this
+  machine's keychain (see \`guide errors STIM_NO_PROFILE\`). A gate refusal on
+  a CACHED app falls back to a full build; on a freshly built one it exits on
+  its own code, because building again would produce the same app.
+
+  DEBUG REACHES METRO OVER THE LAN, because a phone shares no loopback with
+  the host and USB carries no reverse forward. Stim picks a non-internal IPv4
+  address (en0 first, RN's own order from react-native-xcode.sh), gates it as
+  this workspace's Metro, and then wires the app to it: an expo-dev-client app
+  through the deep link, passed to devicectl as \`--payload-url\` and followed
+  by \`-- -EXDevMenuShowsAtLaunch 0 -EXDevMenuShowFloatingActionButton 0\`,
+  which is how a phone gets what a simulator gets from a defaults write, and a
+  bare app by writing \`<addr>:<port>\` into the app bundle's ip.txt --
+  RCTBundleURLProvider's own mechanism, which honours a colon-bearing value
+  verbatim and never consults the compiled RCT_METRO_PORT. Stim never sets
+  that define: it would put the reserved port into a compiled input and fork
+  the device cache per workspace.
+  ip.txt is a sealed resource, so Stim writes it on a COPY of the artifact and
+  re-seals that copy with \`codesign\`. THE ORDER IS STORE, THEN COPY, THEN
+  MUTATE: the cache entry stays the pristine, shareable artifact, and the
+  per-run address lives only in the copy that is installed and then deleted.
+
+  A RELEASE device run builds fresh every time for now. A cached Release app
+  carries its BUILDER's JS, and the device JS swap (which has to re-seal what
+  it injects) lands with phase 6 of appandflow/stim#178, so the cache hit is
+  refused rather than installed with someone else's JavaScript.
+
+  THE DEVICE LOG COLLECTOR IS THE LAUNCH. \`devicectl\` connects an app's
+  streams only when it is the process that starts the app, so the collector
+  runs \`devicectl device process launch --console --terminate-existing\`
+  itself rather than attaching after the fact the way the simulator collector
+  does. The run then reads the app's pid from the phone's own process list
+  (\`devicectl device info processes\`), because \`--console\` blocks until
+  the app exits and its \`--json-output\` is written only then. That device pid
+  is also what proves a RELEASE launch: a device pid means nothing to the host,
+  so nothing on the host is ever signalled with it. Otherwise the collector is
+  the same process as every other collector -- one per platform per workspace,
+  titled with its --root, killed and replaced on the next \`ios\` run whose pid
+  still proves it is this workspace's, and reaped by \`stop\`. One difference in
+  the ordering: a device run stops the PREVIOUS collector before it installs,
+  not while starting its own, because an upgrade install terminates the running
+  app -- which would end that collector's devicectl non-zero and record a
+  failure for a normal reinstall. Unplugging the phone ends devicectl, which
+  ends the collector: it removes its own registration and exits. A separately
+  held \`device lock\` lease survives collector exit until released or expired;
+  \`gc --delete\` can remove its expired lease file. Whether it closes with collector_stopped or
+  collector_failed follows devicectl's exit code, which no one has watched a
+  cable-pull produce yet. See \`guide logs\` for what the device stream can
+  and cannot carry, and appandflow/stim#179.
+
+  THE APP RUNS FOR AS LONG AS THE COLLECTOR DOES. Because the collector is the
+  launch, the app is attached to it: \`stop\` (and any other end of that
+  collector -- a crash, the host sleeping, the cable coming out) closes the app
+  on the phone. It stays INSTALLED. Collector exit removes the collector's
+  registration, not a separately held device lease; \`stop\` also releases
+  this workspace's leases. See \`guide cleanup\`.
+
+  THERE IS NO INSTALL SKIP ON A PHONE. The simulator path skips the install
+  when the device already holds the same bundle byte for byte, which it proves
+  by hashing the installed container; there is no cheap equivalent through
+  devicectl, so a device run always installs. It is an upgrade install: the
+  app's data, and the Local Network permission the phone granted it, survive.`,
+    },
+    lease: {
+      summary: 'run-scoped leases, --wait and --no-wait, device lock and unlock, which phone an id-less --device picks',
+      body: () => `THE DEVICE LEASE ON A \`--device\` RUN
   A physical device is shared, so a \`--device\` run takes a lease on it. The
   lease step sits AFTER the build (a build touches no device) and before the
   install, and the run releases what it took when the command exits: on
@@ -668,86 +778,11 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
 
   The chosen device is on the phase line and in \`--json\` (\`udid\` or
   \`serial\`, plus \`deviceName\`), so an agent can hand the same id to its
-  device tool.
-
-  A device build is LOCAL-TIER ONLY. Its cache key is
-  \`<fingerprint>-<configuration>-device\`, so a device app can never collide
-  with the simulator one, and neither the build-cache provider nor the Expo
-  remote cache is read or written on a \`--device\` run: every entry they hold
-  is keyed for the simulator, so consulting them would either install a
-  simulator slice on a phone or publish an iphoneos app under a key simulator
-  builds resolve.
-
-  THE BUILD is the \`iphoneos\` slice for the selected phone -- \`-sdk
-  iphoneos\`, the project's own signing settings, no signing flags on the argv.
-  It is installed with \`devicectl device install app\` and launched with
-  \`devicectl device process launch\`. Every device install is SIGNED, Debug
-  included, so the signing gate runs before it: the app's own
-  embedded.mobileprovision must be unexpired and must name this phone, and when
-  Stim modifies the bundle the identity that profile names must be in this
-  machine's keychain (see \`guide errors\`). A gate refusal on a CACHED app
-  falls back to a full build; on a freshly built one it exits on its own code,
-  because building again would produce the same app.
-
-  DEBUG REACHES METRO OVER THE LAN, because a phone shares no loopback with
-  the host and USB carries no reverse forward. Stim picks a non-internal IPv4
-  address (en0 first, RN's own order from react-native-xcode.sh), gates it as
-  this workspace's Metro, and then wires the app to it: an expo-dev-client app
-  through the deep link, passed to devicectl as \`--payload-url\` and followed
-  by \`-- -EXDevMenuShowsAtLaunch 0 -EXDevMenuShowFloatingActionButton 0\`,
-  which is how a phone gets what a simulator gets from a defaults write, and a
-  bare app by writing \`<addr>:<port>\` into the app bundle's ip.txt --
-  RCTBundleURLProvider's own mechanism, which honours a colon-bearing value
-  verbatim and never consults the compiled RCT_METRO_PORT. Stim never sets
-  that define: it would put the reserved port into a compiled input and fork
-  the device cache per workspace.
-  ip.txt is a sealed resource, so Stim writes it on a COPY of the artifact and
-  re-seals that copy with \`codesign\`. THE ORDER IS STORE, THEN COPY, THEN
-  MUTATE: the cache entry stays the pristine, shareable artifact, and the
-  per-run address lives only in the copy that is installed and then deleted.
-
-  A RELEASE device run builds fresh every time for now. A cached Release app
-  carries its BUILDER's JS, and the device JS swap (which has to re-seal what
-  it injects) lands with phase 6 of appandflow/stim#178, so the cache hit is
-  refused rather than installed with someone else's JavaScript.
-
-  THE DEVICE LOG COLLECTOR IS THE LAUNCH. \`devicectl\` connects an app's
-  streams only when it is the process that starts the app, so the collector
-  runs \`devicectl device process launch --console --terminate-existing\`
-  itself rather than attaching after the fact the way the simulator collector
-  does. The run then reads the app's pid from the phone's own process list
-  (\`devicectl device info processes\`), because \`--console\` blocks until
-  the app exits and its \`--json-output\` is written only then. That device pid
-  is also what proves a RELEASE launch: a device pid means nothing to the host,
-  so nothing on the host is ever signalled with it. Otherwise the collector is
-  the same process as every other collector -- one per platform per workspace,
-  titled with its --root, killed and replaced on the next \`ios\` run whose pid
-  still proves it is this workspace's, and reaped by \`stop\`. One difference in
-  the ordering: a device run stops the PREVIOUS collector before it installs,
-  not while starting its own, because an upgrade install terminates the running
-  app -- which would end that collector's devicectl non-zero and record a
-  failure for a normal reinstall. Unplugging the phone ends devicectl, which
-  ends the collector: it removes its own registration and exits. A separately
-  held \`device lock\` lease survives collector exit until released or expired;
-  \`gc --delete\` can remove its expired lease file. Whether it closes with collector_stopped or
-  collector_failed follows devicectl's exit code, which no one has watched a
-  cable-pull produce yet. See \`guide logs\` for what the device stream can
-  and cannot carry, and appandflow/stim#179.
-
-  THE APP RUNS FOR AS LONG AS THE COLLECTOR DOES. Because the collector is the
-  launch, the app is attached to it: \`stop\` (and any other end of that
-  collector -- a crash, the host sleeping, the cable coming out) closes the app
-  on the phone. It stays INSTALLED. Collector exit removes the collector's
-  registration, not a separately held device lease; \`stop\` also releases
-  this workspace's leases. See \`guide cleanup\`.
-
-  THERE IS NO INSTALL SKIP ON A PHONE. The simulator path skips the install
-  when the device already holds the same bundle byte for byte, which it proves
-  by hashing the installed container; there is no cheap equivalent through
-  devicectl, so a device run always installs. It is an upgrade install: the
-  app's data, and the Local Network permission the phone granted it, survive.
-
-  A VARIANT WHOSE NAME ENDS IN "Release" IS A RELEASE BUILD (\`release\`,
+  device tool.`,
+    },
+    release: {
+      summary: 'Release configurations and ...Release variants: Metro skipped, process-proven launch, the JS swap',
+      body: () => `  A VARIANT WHOSE NAME ENDS IN "Release" IS A RELEASE BUILD (\`release\`,
   \`productionRelease\`), and that is the whole opt-in -- there is no second
   flag. It is the Android half of \`ios --configuration Release\` and behaves
   the same way: AGP's bundle task embeds the JS, so Metro is skipped ENTIRELY
@@ -819,32 +854,27 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   A run with no \`--device\` installs on the simulator only. \`ios --device\`
   builds the \`iphoneos\` slice for a cabled iPhone and keys its cache
   \`-device\` instead of \`-sim\`, but does not install it yet. Archives,
-  \`.ipa\` export, store signing and distribution stay out of scope.
+  \`.ipa\` export, store signing and distribution stay out of scope.`,
+    },
+    simslim: {
+      summary: 'installing SimSlim and what ios.simslimProfile does to an owned simulator',
+      body: () => `OPTIONAL SIMSLIM PROFILE
+  Install SimSlim once on each Mac:
 
-DESTRUCTIVE COMMANDS -- ask the user first
-  gc --delete             deletes orphaned stim-* devices, tens of GB
-  gc --delete --cache all empties the shared build caches every project uses
-  gc --delete --cache <name>
-                          empties only the caches that carry <name>
-  worktree remove --force discards uncommitted and untracked work
-  stop --force            kills a process Stim could not identify
+    brew install mobai-app/tap/simslim
 
-Permanent local deletion lives in exactly TWO commands: \`worktree remove\`
-(the workspace you name) and \`gc --delete\` (the machine). For a local device,
-\`stop\` shuts it down and never deletes it. For a recorded EAS session,
-\`stop\` irreversibly ends the session. \`stop --force\` can also kill an
-unidentified process on the reserved port. There is no \`--delete\` flag on
-\`stop\`.
+  Then commit a profile and select it in .stim.json:
 
-CAPACITY
-  A booted iOS sim is roughly 1-2 GB of RAM, an Android emulator 2-3 GB. On a
-  16 GB machine plan for 2-3 live environments. Nothing enforces this;
-  \`stim status\` is how you check -- it reports every workspace on the
-  machine, not just this one.
+    { "ios": { "simslimProfile": ".simslim/dev.json" } }
 
-TWO REPORTS, TWO QUESTIONS
-  "What is running" is \`stim status\`: live state, right now. "How much the
-  cache saved" is \`stim stats\`: aggregate counters for this project and for
-  the machine, with a hit rate and an estimate of the time saved (see
-  \`guide facts\`).`,
+  SimSlim requires an iOS 18 or newer simulator. On each local \`stim ios\`,
+  Stim reconciles that profile on the owned simulator before the app build.
+  The first change can update services and reboot the simulator. A matching
+  profile is a fast no-op on later launches. The settings persist across normal
+  shutdowns and reboots. Removing the setting restores stock services when
+  Stim applied the profile. Stim never changes an unowned or remote simulator.`,
+    },
+  },
 };
+
+export default lifecycle;
