@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -146,8 +146,43 @@ export function createFixture({ framework, platform, workDir, h }) {
     }
   }
 
+  if (framework === 'expo' && platform === 'ios') {
+    h.log('preparing the disposable Expo iOS fixture and Pods before its initial commit');
+    h.sh('npx', ['--no-install', 'expo', 'prebuild', '--platform', 'ios'], { cwd: appDir, timeout: 20 * 60 * 1000 });
+    assertMatchingPods(appDir);
+  }
+
   gitInitWithRemote({ appDir, workDir, framework, h });
   return appDir;
+}
+
+export function createWarmWorktree({ h, sourceDir, workDir, name, created }) {
+  const requestedPath = join(workDir, name);
+  const added = h.sh('git', ['-C', sourceDir, 'worktree', 'add', '--detach', requestedPath, 'HEAD'], {
+    allowFail: true,
+  });
+  assert(added.code === 0, `git worktree add failed: ${added.stderr}`);
+  const path = realpathSync(requestedPath);
+  created.push(path);
+  const warmed = h.cli(['worktree', 'warm'], { cwd: path, allowFail: true });
+  assert(warmed.code === 0, `warming ${path} failed: ${warmed.stderr}`);
+  h.log(`worktree ${name} (from ${sourceDir}) -> ${path}`);
+  return path;
+}
+
+export function assertMatchingPods(appDir) {
+  const lock = join(appDir, 'ios', 'Podfile.lock');
+  const manifest = join(appDir, 'ios', 'Pods', 'Manifest.lock');
+  const remedy =
+    "Prepare matching Pods in the main checkout before the cache suite: for Expo, run `npx --no-install expo prebuild --platform ios`; for bare React Native, run the project's normal pod install.";
+  assert(
+    existsSync(lock) && existsSync(manifest),
+    `Pods reuse requires Podfile.lock and Pods/Manifest.lock at ${appDir}. ${remedy}`,
+  );
+  assert(
+    readFileSync(lock, 'utf-8') === readFileSync(manifest, 'utf-8'),
+    `Pods/Manifest.lock differs from Podfile.lock at ${appDir}. ${remedy}`,
+  );
 }
 
 export function gitInitWithRemote({ appDir, workDir, framework, h }) {

@@ -172,24 +172,10 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         did not create it, so a Metro request through it is
                         still gated the same way a managed tunnel's is. Set it
                         before Expo start so the manifest advertises it.
-  worktreeDir           where worktrees are created. A relative value resolves
-                        against the settings root (the repository root), not the
-                        current directory, so a committed .stim.json can place
-                        worktrees inside the repo. worktree create --dir
-                        overrides it for one run and resolves against the
-                        current directory instead.
-  worktree.baseRef      "head" (current HEAD) or "fresh" (origin/HEAD).
-                        Unset means "head". It is a default, not an assertion:
-                        only the --base FLAG triggers the
-                        STIM_WORKTREE_BRANCH_EXISTS refusal, so a create that
-                        finds an existing worktree-<name> still attaches to it
-                        and says which ref was not applied.
-  worktree.include      carry-over patterns, same role as .worktreeinclude
-  worktree.exclude      ignored-path skip list for create --carry-ignored
-                        and worktree warm. Both read settings from the source
-                        checkout (main for warm). A nonempty .worktreeexclude
-                        in that source replaces this setting. Registered
-                        nested Git worktrees are always skipped.
+  worktree.exclude      ignored-path skip list for worktree warm. Settings
+                        come from the main checkout. A nonempty
+                        .worktreeexclude in main replaces this setting.
+                        Registered nested Git worktrees are always skipped.
   cache.provider        one optional SECOND-TIER cache provider: a module
                         path relative to the settings file that names it, or a
                         package name. It implements the @stim-cli/cache

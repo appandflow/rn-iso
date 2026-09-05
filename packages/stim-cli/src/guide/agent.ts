@@ -10,12 +10,12 @@ parse a stable payload.
 NORMAL WORKFLOW
 
 Work in the current checkout by default. When the task needs another branch or
-an isolated environment, create a worktree and carry its dependencies and
-native outputs. If a harness already created this linked worktree, run
+an isolated environment, create a linked worktree with Git and warm its
+ignored state. If a harness already created this linked worktree, run
 stim worktree warm here instead of creating another one. It copies missing
 ignored paths from the main checkout, including eligible .env and local
 configuration files. It preserves the branch, tracked files, and every existing
-destination entry; existing directories are skipped whole, not filled in.
+destination entry; existing ignored directories are skipped whole, not filled in.
 Read guide lifecycle options for exclusions and incomplete-copy remedies.
 
 Before native worktree work, run doctor for the platform in scope. It checks
@@ -30,11 +30,10 @@ upstream gap.
   stim ios                             # or: stim android
   stim stop
 
-  # Branches from HEAD. --carry-ignored carries installed dependencies and
-  # native output. Pass it on the first creation, never on a retry. The command
-  # prints the new absolute path.
-  stim worktree create <name> --carry-ignored
-  cd <printed-path>
+  # Skip Git creation if the harness already created this linked worktree.
+  git worktree add -b <branch> <worktree-path> HEAD
+  cd <worktree-path>
+  stim worktree warm
 
   stim start
   stim ios                             # or: stim android
@@ -136,8 +135,10 @@ Never reach for --force first.
 
 Ask the user before these actions:
 
-- worktree remove, because it deletes the worktree, its Stim-created branch
-  when it has no unique commits, and gives up its owned device.
+- worktree remove, because it deletes the worktree and gives up its owned
+  device. It works with any linked worktree, warmed or not, without requiring
+  a Stim registry entry. Git-created branches are kept; a branch with an
+  existing Stim ownership record is deleted only when it has no unique commits.
 - worktree remove --force, because it also discards uncommitted and untracked
   files.
 - gc --delete, because it deletes orphaned resources. gc --delete --cache all

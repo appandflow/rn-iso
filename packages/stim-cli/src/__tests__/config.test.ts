@@ -377,14 +377,14 @@ test('migrates a v1 config without touching projects', () => {
 });
 
 test('repo settings round-trip by git common dir', () => {
-  setRepoSetting('/repo/.git', 'worktreeDir', '/wt');
-  setRepoSetting('/repo/.git', 'worktree.baseRef', 'head');
+  setRepoSetting('/repo/.git', 'ios.deviceType', 'iPhone 17');
+  setRepoSetting('/repo/.git', 'worktree.exclude', ['.env']);
   expect(getRepoSettings('/repo/.git')).toEqual({
-    worktreeDir: '/wt',
-    worktree: { baseRef: 'head' },
+    ios: { deviceType: 'iPhone 17' },
+    worktree: { exclude: ['.env'] },
   });
-  expect(unsetRepoSetting('/repo/.git', 'worktree.baseRef')).toBe(true);
-  expect(getRepoSettings('/repo/.git')).toEqual({ worktreeDir: '/wt' });
+  expect(unsetRepoSetting('/repo/.git', 'worktree.exclude')).toBe(true);
+  expect(getRepoSettings('/repo/.git')).toEqual({ ios: { deviceType: 'iPhone 17' } });
 });
 
 test('getRepoSettings returns an empty object for an unknown repo', () => {

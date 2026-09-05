@@ -10,6 +10,7 @@ import {
   createCleanupTracker,
   createFixture,
   createHarness,
+  createWarmWorktree,
   dumpDiagnostics,
   preflight,
   quote,
@@ -97,13 +98,8 @@ async function main() {
   await verifyCleanup({ h, cleanup, appDir, created });
 }
 
-function worktreeCreate(name, appDir) {
-  const r = cli(['worktree', 'create', name, '--base', 'head', '--carry-ignored'], { cwd: appDir });
-  const path = r.stdout.trim().split('\n').findLast(Boolean);
-  assert(path && existsSync(path), `worktree create did not yield a real path: ${JSON.stringify(r.stdout)}`);
-  created.push(path);
-  log(`worktree ${name} -> ${path}`);
-  return path;
+function worktreeCreate(name, sourceDir) {
+  return createWarmWorktree({ h, sourceDir, workDir: WORK_DIR, name, created });
 }
 
 function runIos(cwd) {

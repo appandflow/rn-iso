@@ -16,11 +16,13 @@ import { fileURLToPath } from 'node:url';
 import {
   FIXTURE_COMMANDS,
   assert,
+  assertMatchingPods,
   buildLog,
   cleanupTmp,
   createCleanupTracker,
   createFixture,
   createHarness,
+  createWarmWorktree,
   describeGrowth,
   dirStats,
   dumpDiagnostics,
@@ -223,6 +225,7 @@ async function main() {
   const appDir = args.appDir
     ? resolve(args.appDir)
     : createFixture({ framework: FRAMEWORK, platform: PLATFORM, workDir: WORK_DIR, h });
+  if (PLATFORM === 'ios' && !args.skipRace) assertMatchingPods(appDir);
   const expoSdk = FRAMEWORK === 'expo' ? readExpoSdkMajor(appDir) : null;
   log(`app: ${appDir}`);
   if (FRAMEWORK === 'expo') log(`Expo SDK: ${expoSdk ?? 'unknown'}`);
@@ -546,8 +549,12 @@ async function main() {
   if (args.skipRace) {
     log('--skip-race: the single-flight phase (one full compile) is being skipped');
   } else {
-    const wt3 = worktreeCreate('e2e-cache-3', wt1);
-    const wt4 = worktreeCreate('e2e-cache-4', wt1);
+    const wt3 = worktreeCreate('e2e-cache-3', appDir);
+    const wt4 = worktreeCreate('e2e-cache-4', appDir);
+    if (PLATFORM === 'ios') {
+      assertMatchingPods(wt3);
+      assertMatchingPods(wt4);
+    }
     startAndAssertMode(wt3);
     startAndAssertMode(wt4);
     const casBeforeRace = dirStats(CAS_DIR);
@@ -631,14 +638,9 @@ async function main() {
     const podStats = dirStats(podsDir);
     assert(podStats.exists && podStats.files > 0, `the worktree carried no Pods to reuse (${podsDir})`);
     c.ev(`carried Pods present: ${podStats.files} files (${formatBytes(podStats.bytes)}) at ${podsDir}`);
-    const manifest = join(podsDir, 'Manifest.lock');
-    const lock = join(builder.cwd, 'ios', 'Podfile.lock');
-    if (existsSync(manifest) && existsSync(lock)) {
-      const same = readFileSync(manifest, 'utf-8') === readFileSync(lock, 'utf-8');
-      c.ev(`Pods/Manifest.lock ${same ? 'MATCHES' : 'differs from'} ios/Podfile.lock`);
-      assert(same, 'the carried Pods do not match Podfile.lock, so skipping the install would have been wrong');
-    }
-    return c.pass('a --carry-ignored worktree with matching Pods ran no pod install');
+    assertMatchingPods(builder.cwd);
+    c.ev('Pods/Manifest.lock MATCHES ios/Podfile.lock');
+    return c.pass('a warmed worktree with matching Pods ran no pod install');
   });
 
   if (PLATFORM === 'ios') annotateCasReuse(raceOutcome, casBefore1, casAfter1);
@@ -718,12 +720,7 @@ const POD_CHURN_PATHS = [
 const PREBUILD_CHURN_PATHS = [/(^|\/)package\.json$/, /(^|\/)app\.(json|config\.[cm]?[jt]s)$/];
 
 function worktreeCreate(name, sourceDir) {
-  const r = cli(['worktree', 'create', name, '--base', 'head', '--carry-ignored'], { cwd: sourceDir });
-  const path = r.stdout.trim().split('\n').findLast(Boolean);
-  assert(path && existsSync(path), `worktree create did not yield a real path: ${JSON.stringify(r.stdout)}`);
-  created.push(path);
-  log(`worktree ${name} (from ${sourceDir}) -> ${path}`);
-  return path;
+  return createWarmWorktree({ h, sourceDir, workDir: WORK_DIR, name, created });
 }
 
 function startAndAssertMode(cwd) {

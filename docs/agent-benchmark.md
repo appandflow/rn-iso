@@ -89,17 +89,16 @@ independently pinned `agent-device` skill. The control profile exposes only
 `agent-device`; the Stim binary and skill are unavailable. Both profiles have
 the same model settings, filesystem authority, and app task.
 
-The agent creates its own worktree after dispatch. Stim must use this exact
-slash-containing form, which also exercises branch/path handling:
+The Stim agent creates its own worktree with Git after dispatch:
 
 ```text
-stim worktree create bench/<run-id> --dir <worktree-parent> --carry-ignored
+git worktree add -b worktree-bench/<run-id> <worktree-parent>/bench-<run-id> HEAD
+cd <worktree-parent>/bench-<run-id>
 ```
 
-The Stim worktree must therefore use Git branch
-`worktree-bench/<run-id>`. Its filesystem leaf may encode the slash. The
-control creates the corresponding Git worktree using local Git. Both carry the
-same installed dependencies and native outputs from the fixture checkout.
+The Stim arm then runs `stim worktree warm`. The control uses branch
+`bench/<run-id>` at `<worktree-parent>/<run-id>` and copies the same installed
+dependencies and native outputs from the fixture main checkout using its own tools.
 
 The Stim arm uses the inherited isolated `STIM_HOME` and invokes the pinned
 published CLI as exactly `stim`. On iOS it requests the pinned model/runtime and

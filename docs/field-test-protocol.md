@@ -80,10 +80,11 @@ Deviate when reality demands it — and log why as a friction.
 
 1. **Orient.** `status` (what is already on this machine), `doctor` in the
    app dir (report findings; judge whether each is true of this repo).
-2. **Workspace.** `cd "$(stim worktree create <name> --carry-ignored)"`.
-   Note whether `--base <ref>` works if you need a specific commit, whether
-   the stderr said what it branched from, and what `--carry-ignored`
-   reported. Install deps with the repo's OWN tooling (read its docs;
+2. **Workspace.** Create the linked worktree with
+   `git worktree add -b <branch> <path> <ref>`, then `cd <path>` and run
+   `stim worktree warm`. Skip Git creation if the harness already did it.
+   Confirm the branch and commit with Git, and record warm's copied, kept,
+   and failed entry counts. Install deps with the repo's OWN tooling (read its docs;
    monorepos: work from the app directory, but install per the repo's rules).
 3. **Dev server.** `stim start --json`. Assert: correct mode
    (`expo-child` for Expo apps, `bare-inproc` for bare RN — a wrong detection
@@ -110,7 +111,8 @@ Deviate when reality demands it — and log why as a friction.
    the suite's directory-counting script by hand.
 8. **Teardown.** `stop` in each, then `worktree remove` each — with NO
    `--force` and NO manual `rm`. A refusal you cannot resolve by following
-   the message's own remedy is a HIGH finding.
+   the message's own remedy is a HIGH finding. A retained Git-created branch
+   is expected; it is not evidence of failed workspace removal.
 9. **Verify cleanup**, all five:
    - `xcrun simctl list devices | grep Stim` → none of yours remain
      (`emulator -list-avds` likewise on Android)
@@ -278,8 +280,9 @@ phone has to settle, and what is already settled:
 Every item needs a phone and a second workspace on the same machine. Design
 and reasoning: `docs/specs/2026-09-02-device-lease-design.md`. Set up two
 workspaces of one project sharing the phone: the checkout as A with its own
-Metro, and `stim worktree create <name> --carry-ignored` from it as B (the
-carry brings the signing settings, so B needs no Xcode run).
+Metro, and a Git-created linked worktree as B. Run `stim worktree warm` in B
+to copy missing ignored state from main. Both checkouts need signing settings
+valid for their tracked source; warm does not copy tracked changes.
 
 **D. Device leases.**
 

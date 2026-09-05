@@ -119,8 +119,9 @@ The current checkout is the default. An agent creates a separate worktree only
 when the task needs isolation or parallel work, or when you ask for one:
 
 <StimTabs
-code={`stim worktree create feature-name --carry-ignored
-cd <path-printed-by-stim>
+code={`git worktree add -b feature-name ../feature-name HEAD
+cd ../feature-name
+stim worktree warm
 stim start
 stim ios
 
@@ -130,9 +131,11 @@ stim stop
 stim worktree remove`}
 />
 
-`--carry-ignored` copies safe ignored dependencies and native outputs from the
-source checkout. This can make the first worktree build much faster. Stim skips
-nested git worktrees and patterns in `.worktreeexclude`.
+If a harness already created the linked worktree, skip Git creation and run
+`stim worktree warm` there. Warm copies missing ignored state from main,
+including dependencies, native output, and eligible `.env` and local config.
+Existing entries stay untouched. See [worktree isolation](./worktrees.md) for
+exclusions and cleanup; removal works whether or not the worktree was warmed.
 
 The worktree gets a separate port and device. It can still use native and Metro
 cache entries created by the main checkout or another worktree.

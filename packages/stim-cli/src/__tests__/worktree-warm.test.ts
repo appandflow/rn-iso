@@ -88,7 +88,7 @@ afterEach(() => {
 });
 
 function warm() {
-  return cloneIgnoredEntries({ root, target, patterns: [], preserveExisting: true });
+  return cloneIgnoredEntries({ root, target, patterns: [] });
 }
 
 test('missing-only copy preserves existing directories, files, and dangling symlinks wholesale', () => {
@@ -316,7 +316,7 @@ test('warm copies main ignored state but preserves the linked branch and tracked
 test('warm reads main exclusion settings and lets its nonempty pattern file replace them', async () => {
   write(root, '.env', 'source env');
   write(root, '.env.local', 'source local');
-  write(root, '.stim.json', '{"worktree":{"exclude":[".env"],"baseRef":"not-a-ref"}}');
+  write(root, '.stim.json', '{"worktree":{"exclude":[".env"]}}');
   write(target, '.stim.json', '{"worktree":{"exclude":[".env.local"]}}');
   const settings = await runWarm(target);
   expect(settings.code).toBe(0);
@@ -447,6 +447,17 @@ test('missing-only copy does not restore a deleted tracked file from ignored mai
   expect(result.copied).toEqual([]);
   expect(result.skipped).toEqual([{ file: '.env', reason: 'tracked' }]);
   expect(existsSync(join(target, '.env'))).toBe(false);
+});
+
+test('warm copies project-owned .stim directories unless the main exclusion file skips them', async () => {
+  write(root, '.gitignore', readFileSync(join(root, '.gitignore'), 'utf-8') + '.stim/\n');
+  write(root, '.stim/project.json', 'root project data');
+  write(root, 'apps/mobile/.stim/project.json', 'nested project data');
+  write(root, '.worktreeexclude', '/.stim\n');
+  const result = await runWarm(target);
+  expect(result.code).toBe(0);
+  expect(existsSync(join(target, '.stim'))).toBe(false);
+  expect(readFileSync(join(target, 'apps/mobile/.stim/project.json'), 'utf-8')).toBe('nested project data');
 });
 
 test('staging ignored files never exposes their contents to Git status or git add', async () => {

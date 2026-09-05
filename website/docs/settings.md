@@ -30,48 +30,35 @@ reports it as a finding instead of refusing.
 
 `.stim.json` supports these keys:
 
-| Key                           | Purpose                                                                                  |
-| ----------------------------- | ---------------------------------------------------------------------------------------- |
-| `ios.deviceType`              | iOS Simulator device type                                                                |
-| `ios.runtime`                 | iOS Simulator runtime                                                                    |
-| `ios.configuration`           | Xcode configuration, such as `Debug` or `Release`                                        |
-| `ios.remote`                  | Default remote backend, `proxy` or `eas`                                                 |
-| `ios.simslimProfile`          | SimSlim profile for local iOS devices                                                    |
-| `ios.signingIdentity`         | Keychain identity used to re-seal a device build                                         |
-| `ios.signingIdentitySha1`     | SHA-1 of that identity, when two share a name                                            |
-| `ios.lanHost`                 | Address a phone uses to reach this workspace's Metro                                     |
-| `android.systemImage`         | Android SDK system image                                                                 |
-| `android.dataPartitionSizeGb` | AVD data partition size                                                                  |
-| `android.avdConfigFile`       | Additional AVD config file                                                               |
-| `android.avdConfig`           | Validated AVD config values                                                              |
-| `android.variant`             | Gradle build variant                                                                     |
-| `android.keystore`            | Release keystore path                                                                    |
-| `android.keystorePassword`    | Release keystore password source                                                         |
-| `android.remote`              | Default remote backend, `proxy` or `eas`                                                 |
-| `metro.tunnel`                | Remote tunnel mode                                                                       |
-| `metro.ngrokUrl`              | Existing ngrok URL                                                                       |
-| `metro.publicUrl`             | Existing public Metro URL                                                                |
-| `worktreeDir`                 | Parent directory for created worktrees; `worktree create --dir` overrides it for one run |
-| `worktree.baseRef`            | Default worktree base: `head`, `fresh`, or a git ref                                     |
-| `worktree.include`            | Explicit ignored paths to carry                                                          |
-| `worktree.exclude`            | Ignored paths skipped by `create --carry-ignored` and `worktree warm`                    |
-| `cache.provider`              | Optional second-tier cache provider module                                               |
-| `cache.options`               | Options passed to that provider                                                          |
-| `caches`                      | Additional cache paths reported by `gc`                                                  |
+| Key                           | Purpose                                              |
+| ----------------------------- | ---------------------------------------------------- |
+| `ios.deviceType`              | iOS Simulator device type                            |
+| `ios.runtime`                 | iOS Simulator runtime                                |
+| `ios.configuration`           | Xcode configuration, such as `Debug` or `Release`    |
+| `ios.remote`                  | Default remote backend, `proxy` or `eas`             |
+| `ios.simslimProfile`          | SimSlim profile for local iOS devices                |
+| `ios.signingIdentity`         | Keychain identity used to re-seal a device build     |
+| `ios.signingIdentitySha1`     | SHA-1 of that identity, when two share a name        |
+| `ios.lanHost`                 | Address a phone uses to reach this workspace's Metro |
+| `android.systemImage`         | Android SDK system image                             |
+| `android.dataPartitionSizeGb` | AVD data partition size                              |
+| `android.avdConfigFile`       | Additional AVD config file                           |
+| `android.avdConfig`           | Validated AVD config values                          |
+| `android.variant`             | Gradle build variant                                 |
+| `android.keystore`            | Release keystore path                                |
+| `android.keystorePassword`    | Release keystore password source                     |
+| `android.remote`              | Default remote backend, `proxy` or `eas`             |
+| `metro.tunnel`                | Remote tunnel mode                                   |
+| `metro.ngrokUrl`              | Existing ngrok URL                                   |
+| `metro.publicUrl`             | Existing public Metro URL                            |
+| `worktree.exclude`            | Ignored paths skipped by `worktree warm`             |
+| `cache.provider`              | Optional second-tier cache provider module           |
+| `cache.options`               | Options passed to that provider                      |
+| `caches`                      | Additional cache paths reported by `gc`              |
 
-A relative `worktreeDir` resolves against the settings root, the repository
-root, so a committed `.stim.json` can place worktrees inside the repository.
-Both ignored-copy operations read exclusions from their source checkout: main
-for `worktree warm`, the current checkout for `create --carry-ignored`. A
-nonempty `.worktreeexclude` in that source replaces its resolved
-`worktree.exclude` setting; an empty or absent file uses the setting.
-
-A relative `worktree create --dir` resolves against the current directory.
-
-`worktree.baseRef` is a default, not an assertion: only the `--base` flag
-triggers the `STIM_WORKTREE_BRANCH_EXISTS` refusal, so a create that finds an
-existing `worktree-<name>` still attaches to it and says which ref was not
-applied.
+`worktree warm` reads settings from the main checkout. A nonempty
+`.worktreeexclude` in main replaces its resolved `worktree.exclude` setting;
+an empty or absent file uses the setting.
 
 Do not put secrets in a committed `.stim.json`. Keep secrets in ignored files
 and carry those files into a worktree.

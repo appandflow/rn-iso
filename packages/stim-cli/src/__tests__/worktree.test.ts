@@ -1,34 +1,24 @@
 import assert from 'node:assert';
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join } from 'node:path';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import {
-  defaultWorktreeDir,
-  defaultWorktreeLabel,
-  isValidWorktreeName,
-  worktreePath,
   matchesInclude,
   isCarrySkipped,
   unpushedCommits,
   hasUncommittedWork,
   listWorktrees,
-  carryOverFiles,
-  carryUncommittedChanges,
   cloneIgnoredEntries,
   dirtyFingerprintFiles,
   podsOutOfSync,
   depsOutOfSync,
   isPodInstallChurn,
   listGitignoredEntries,
-  listGitignoredFiles,
   listCarryableIgnoredEntries,
   listTrackedPaths,
-  addWorktree,
   removeWorktree,
-  resolveBaseRef,
-  resolveRef,
   repoRoot,
   gitCommonDir,
   isMainWorkingTree,
@@ -39,39 +29,6 @@ import {
 } from '../worktree.ts';
 
 afterEach(() => resetExecutor());
-
-test('default worktree dir is a sibling of the repo', () => {
-  expect(defaultWorktreeDir('/Volumes/ExternalSSD/Developer/tlon-apps')).toBe(
-    '/Volumes/ExternalSSD/Developer/tlon-apps-worktrees',
-  );
-});
-
-test('worktreePath joins the dir and the name', () => {
-  expect(worktreePath({ worktreeDir: '/wt', name: 'feat-x' })).toBe('/wt/feat-x');
-  expect(worktreePath({ worktreeDir: '/wt', name: 'feat_x' })).toBe('/wt/feat_x');
-  expect(worktreePath({ worktreeDir: '/wt', name: 'bench/run_1' })).toBe('/wt/bench+run_1');
-});
-
-test('worktree names accept safe branch paths without accepting traversal or invalid refs', () => {
-  expect(isValidWorktreeName('bench/run-1')).toBe(true);
-  for (const name of [
-    'bench//run',
-    '/bench',
-    'bench/',
-    'bench/../run',
-    'bench/.hidden',
-    'bench/run.lock',
-    'bench+run',
-  ]) {
-    expect(isValidWorktreeName(name)).toBe(false);
-  }
-});
-
-test('slash worktree names get collision-resistant device labels while flat names stay unchanged', () => {
-  expect(defaultWorktreeLabel('bench-run-1')).toBe('bench-run-1');
-  expect(defaultWorktreeLabel('bench/run-1')).toMatch(/^[0-9a-f]{8}-bench-run-1$/);
-  expect(defaultWorktreeLabel('bench/run-1')).not.toBe(defaultWorktreeLabel('bench-run-1'));
-});
 
 test('matchesInclude supports gitignore-style patterns', () => {
   expect(matchesInclude('apps/tlon-mobile/.env', ['.env'])).toBe(true);
@@ -143,8 +100,8 @@ test('unpushedCommits excludes only the worktree own branch from the local-branc
   ]);
 });
 
-test('unpushedCommits falls back to the remotes-only count on a detached HEAD or an unsafe branch name', () => {
-  for (const branch of [null, 'evil"; touch PWNED; "']) {
+test('unpushedCommits falls back to the remotes-only count on an unsafe branch name', () => {
+  for (const branch of ['evil"; touch PWNED; "']) {
     const calls: string[][] = [];
     setExecutor({
       runFileQuiet: (_file: string, args: string[]) => {
@@ -229,48 +186,6 @@ test('unpushedCommits against a real repo: commits inherited from a local-only b
   }
 });
 
-test('resolveBaseRef("head") returns HEAD and never touches origin/HEAD', () => {
-  const calls: string[] = [];
-  setExecutor({
-    run: () => '',
-    runFileQuiet: (file: string, args: string[]) => {
-      calls.push([file, ...args].join(' '));
-      return '';
-    },
-    spawn: () => {},
-  });
-  expect(resolveBaseRef('/repo', 'head')).toBe('HEAD');
-  expect(calls).toEqual([]);
-});
-
-test('resolveBaseRef("fresh") returns origin/HEAD\'s branch when it resolves, no warning', () => {
-  setExecutor({ run: () => '', runFileQuiet: () => 'origin/main', spawn: () => {} });
-  const errs: string[] = [];
-  const originalError = console.error;
-  console.error = (msg) => errs.push(msg);
-  try {
-    expect(resolveBaseRef('/repo', 'fresh')).toBe('origin/main');
-  } finally {
-    console.error = originalError;
-  }
-  expect(errs).toEqual([]);
-});
-
-test('resolveBaseRef("fresh") falls back to HEAD and warns on stderr when origin/HEAD is missing', () => {
-  setExecutor({ run: () => '', runFileQuiet: () => null, spawn: () => {} });
-  const errs: string[] = [];
-  const originalError = console.error;
-  console.error = (msg) => errs.push(msg);
-  try {
-    expect(resolveBaseRef('/repo', 'fresh')).toBe('HEAD');
-  } finally {
-    console.error = originalError;
-  }
-  expect(errs.length).toBe(1);
-  expect(errs[0]).toMatch(/origin\/HEAD/);
-  expect(errs[0]).toMatch(/HEAD/);
-});
-
 test('listWorktrees parses a detached-HEAD entry without dropping neighbours', () => {
   const porcelain = [
     'worktree /repo',
@@ -294,96 +209,33 @@ test('listWorktrees parses a detached-HEAD entry without dropping neighbours', (
   ]);
 });
 
-test('carryOverFiles copies only files that are both gitignored and pattern-matched (mocked)', () => {
-  const root = mkdtempSync(join(tmpdir(), 'stim-test-root-'));
-  const target = mkdtempSync(join(tmpdir(), 'stim-test-target-'));
-  try {
-    mkdirSync(join(root, 'apps/mobile'), { recursive: true });
-    writeFileSync(join(root, 'apps/mobile/.env'), 'SECRET=1');
-    mkdirSync(join(root, 'dist'), { recursive: true });
-    writeFileSync(join(root, 'dist/build.log'), 'log output');
-
-    let capturedArgs: string[] | undefined;
-    setExecutor({
-      run: (cmd) => {
-        throw new Error(`unexpected run: ${cmd}`);
-      },
-      runFileQuiet: (_file: string, args: string[]) => {
-        if (args.includes('-z')) return '';
-        capturedArgs = args;
-        return 'apps/mobile/.env\ndist/build.log';
-      },
-      spawn: () => {},
-    });
-
-    const { copied, failed } = carryOverFiles({ root, target, patterns: ['.env'] });
-
-    expect(copied).toEqual(['apps/mobile/.env']);
-    expect(failed).toEqual([]);
-    expect(existsSync(join(target, 'apps/mobile/.env'))).toBe(true);
-    expect(readFileSync(join(target, 'apps/mobile/.env'), 'utf-8')).toBe('SECRET=1');
-    expect(existsSync(join(target, 'dist/build.log'))).toBe(false);
-    expect(capturedArgs).toContain('--others');
-    expect(capturedArgs).toContain('--ignored');
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-    rmSync(target, { recursive: true, force: true });
-  }
-});
-
-test('carryOverFiles reports per-file failures instead of swallowing them', () => {
-  const root = mkdtempSync(join(tmpdir(), 'stim-test-root-'));
-  const target = mkdtempSync(join(tmpdir(), 'stim-test-target-'));
-  try {
-    mkdirSync(join(root, 'apps/mobile'), { recursive: true });
-    writeFileSync(join(root, 'apps/mobile/.env'), 'SECRET=1');
-    setExecutor({
-      run: (cmd) => {
-        throw new Error(`unexpected run: ${cmd}`);
-      },
-      runFileQuiet: (_file: string, args: string[]) =>
-        args.includes('-z') ? '' : 'apps/mobile/.env\napps/missing/.env',
-      spawn: () => {},
-    });
-
-    const { copied, failed } = carryOverFiles({ root, target, patterns: ['.env'] });
-
-    expect(copied).toEqual(['apps/mobile/.env']);
-    expect(failed.length).toBe(1);
-    expect(failed[0]?.file).toBe('apps/missing/.env');
-    expect(failed[0]?.error).toMatch(/ENOENT|no such file/i);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-    rmSync(target, { recursive: true, force: true });
-  }
-});
-
 test('listGitignoredEntries keeps collapsed directories and does not exclude node_modules', () => {
   let capturedArgs: string[] | undefined;
   setExecutor({
     run: (cmd) => {
       throw new Error(`unexpected run: ${cmd}`);
     },
-    runFileQuiet: (_file: string, args: string[]) => {
+    runFile: (_file: string, args: string[]) => {
       capturedArgs = args;
-      return 'node_modules/\nios/Pods/\nios/.xcode.env.local';
+      return 'node_modules/\0ios/Pods/\0ios/.xcode.env.local\0';
     },
     spawn: () => {},
   });
 
   expect(listGitignoredEntries('/repo')).toEqual(['node_modules', 'ios/Pods', 'ios/.xcode.env.local']);
   expect(capturedArgs).toContain('--directory');
+  expect(capturedArgs).toContain('-z');
   expect(capturedArgs?.some((arg) => arg.includes('exclude,glob'))).toBe(false);
 });
 
 test('listCarryableIgnoredEntries skips a collapsed ignored parent that contains a registered worktree', () => {
   setExecutor({
     run: () => '',
+    runFile: () => '.claude/\0node_modules/\0ios/Pods/\0',
     runFileQuiet: (_file: string, args: string[]) => {
       if (args.includes('worktree')) {
         return 'worktree /repo\nbranch refs/heads/main\n\nworktree /repo/.claude/worktrees/task\nbranch refs/heads/task\n';
       }
-      if (args.includes('ls-files')) return '.claude/\nnode_modules/\nios/Pods/';
       return '';
     },
     spawn: () => {},
@@ -395,12 +247,10 @@ test('listCarryableIgnoredEntries skips a collapsed ignored parent that contains
 test('listCarryableIgnoredEntries skips entries inside a registered nested worktree', () => {
   setExecutor({
     run: () => '',
+    runFile: () => 'tools/tasks/one/node_modules/\0tools/shared-cache/\0',
     runFileQuiet: (_file: string, args: string[]) => {
       if (args.includes('worktree')) {
         return 'worktree /repo\nbranch refs/heads/main\n\nworktree /repo/tools/tasks/one\nbranch refs/heads/one\n';
-      }
-      if (args.includes('ls-files')) {
-        return 'tools/tasks/one/node_modules/\ntools/shared-cache/\n';
       }
       return '';
     },
@@ -422,114 +272,7 @@ test('listCarryableIgnoredEntries fails closed when Git cannot list worktrees', 
   );
 });
 
-test('cloneIgnoredEntries does not copy a registered worktree nested under an ignored parent', () => {
-  const base = mkdtempSync(join(tmpdir(), 'stim-test-nested-worktree-'));
-  const root = join(base, 'repo');
-  const target = join(base, 'target');
-  try {
-    mkdirSync(root, { recursive: true });
-    mkdirSync(target, { recursive: true });
-    const git = (cmd: string) => execSync(cmd, { cwd: root, encoding: 'utf-8' });
-    git('git init -q');
-    git('git config user.email test@example.com');
-    git('git config user.name test');
-    writeFileSync(join(root, 'README.md'), 'hello');
-    writeFileSync(join(root, '.gitignore'), '.claude/\nnode_modules/\n');
-    git('git add README.md .gitignore');
-    git('git commit -q -m init');
-    git('git worktree add -q -b nested-task .claude/worktrees/task');
-    mkdirSync(join(root, 'node_modules/pkg'), { recursive: true });
-    writeFileSync(join(root, 'node_modules/pkg/index.js'), 'module.exports = true');
-
-    const { copied, failed } = cloneIgnoredEntries({ root, target, patterns: [] });
-
-    expect(copied).toEqual(['node_modules']);
-    expect(failed).toEqual([]);
-    expect(existsSync(join(target, 'node_modules/pkg/index.js'))).toBe(true);
-    expect(existsSync(join(target, '.claude'))).toBe(false);
-  } finally {
-    rmSync(base, { recursive: true, force: true });
-  }
-});
-
-test('cloneIgnoredEntries skips excluded paths and reports a clone that fell back to a real copy', () => {
-  const root = mkdtempSync(join(tmpdir(), 'stim-test-root-'));
-  const target = mkdtempSync(join(tmpdir(), 'stim-test-target-'));
-  try {
-    const fileCalls: [string, string[]][] = [];
-    setExecutor({
-      run: (cmd) => {
-        throw new Error(`unexpected shell run: ${cmd}`);
-      },
-      runFile: (file, args) => {
-        fileCalls.push([file, args]);
-        if (file === 'cp' && args[0] === '-Rc') throw new Error('clonefile refused');
-        return '';
-      },
-      runFileQuiet: (file: string, args: string[]) => {
-        if (args.includes('-z')) return '';
-        if (file === 'git') return 'node_modules/\nbench/results/logs/';
-        return '';
-      },
-      spawn: () => {},
-    });
-
-    const { copied, failed, cloned } = cloneIgnoredEntries({
-      root,
-      target,
-      patterns: ['bench/results/logs'],
-    });
-
-    expect(copied).toEqual(['node_modules']);
-    expect(failed).toEqual([]);
-    expect(cloned).toBe(false);
-    expect(fileCalls.some(([f, a]) => f === 'cp' && a[0] === '-Rc')).toBeTruthy();
-    expect(fileCalls.some(([f, a]) => f === 'cp' && a[0] === '-R')).toBeTruthy();
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-    rmSync(target, { recursive: true, force: true });
-  }
-});
-
-test('carryOverFiles against a real git repo copies only the gitignored+matched file', () => {
-  const base = mkdtempSync(join(tmpdir(), 'stim-test-realgit-'));
-  const root = join(base, 'repo');
-  const target = join(base, 'target');
-  try {
-    mkdirSync(root, { recursive: true });
-    mkdirSync(target, { recursive: true });
-    const git = (cmd: string) => execSync(cmd, { cwd: root, encoding: 'utf-8' });
-    git('git init -q');
-    git('git config user.email test@example.com');
-    git('git config user.name test');
-
-    mkdirSync(join(root, 'config'), { recursive: true });
-    writeFileSync(join(root, 'config/secrets.json'), '{"tracked": true}');
-    writeFileSync(join(root, 'README.md'), 'hello');
-    writeFileSync(join(root, '.gitignore'), '.env\ndist/\n');
-    git('git add README.md config/secrets.json .gitignore');
-    git('git commit -q -m init');
-
-    mkdirSync(join(root, 'apps/mobile'), { recursive: true });
-    writeFileSync(join(root, 'apps/mobile/.env'), 'SECRET=1');
-
-    mkdirSync(join(root, 'dist'), { recursive: true });
-    writeFileSync(join(root, 'dist/build.log'), 'log output');
-
-    const { copied, failed } = carryOverFiles({ root, target, patterns: ['.env', 'secrets.json'] });
-
-    expect(copied).toEqual(['apps/mobile/.env']);
-    expect(failed).toEqual([]);
-    expect(existsSync(join(target, 'apps/mobile/.env'))).toBe(true);
-    expect(readFileSync(join(target, 'apps/mobile/.env'), 'utf-8')).toBe('SECRET=1');
-    expect(existsSync(join(target, 'dist/build.log'))).toBe(false);
-    expect(existsSync(join(target, 'config/secrets.json'))).toBe(false);
-  } finally {
-    rmSync(base, { recursive: true, force: true });
-  }
-});
-
-test('listGitignoredFiles and carryOverFiles still find the target file when raw ls-files output exceeds 1MB', () => {
+test('ignored inventory and warm copying still find the target file when raw ls-files output exceeds 1MB', () => {
   const base = mkdtempSync(join(tmpdir(), 'stim-test-bigignore-'));
   const root = join(base, 'repo');
   const target = join(base, 'target');
@@ -545,6 +288,7 @@ test('listGitignoredFiles and carryOverFiles still find the target file when raw
     writeFileSync(join(root, '.gitignore'), '*.ignoreme\n.env\n');
     git('git add README.md .gitignore');
     git('git commit -q -m init');
+    execFileSync('git', ['-C', root, 'worktree', 'add', '-qb', 'copy-target', target]);
 
     const padding = 'x'.repeat(200);
     for (let i = 0; i < 6000; i++) {
@@ -560,125 +304,15 @@ test('listGitignoredFiles and carryOverFiles still find the target file when raw
     );
     expect(rawBytes > 1024 * 1024).toBeTruthy();
 
-    const ignored = listGitignoredFiles(root);
-    expect(ignored.includes('apps/mobile/.env')).toBeTruthy();
+    const ignored = listGitignoredEntries(root);
+    expect(ignored.includes('apps')).toBeTruthy();
 
-    const { copied, failed } = carryOverFiles({ root, target, patterns: ['.env'] });
-    expect(copied).toEqual(['apps/mobile/.env']);
+    const { copied, failed } = cloneIgnoredEntries({ root, target, patterns: ['bloat-*.ignoreme'] });
+    expect(copied).toEqual(['apps']);
     expect(failed).toEqual([]);
     expect(existsSync(join(target, 'apps/mobile/.env'))).toBe(true);
   } finally {
     rmSync(base, { recursive: true, force: true });
-  }
-});
-
-test('addWorktree runs git via runFile (no shell) with a `--` terminator, path as one argv element', () => {
-  const tmp = mkdtempSync(join(tmpdir(), 'stim-test-add-'));
-  try {
-    const path = join(tmp, 'my worktree', 'repo');
-    const calls: [string, string[]][] = [];
-    setExecutor({
-      run: (cmd) => {
-        throw new Error(`unexpected shell run: ${cmd}`);
-      },
-      runFile: (file, args) => {
-        calls.push([file, args]);
-        return '';
-      },
-      runQuiet: () => '',
-      spawn: () => {},
-    });
-
-    const result = addWorktree({ path, branch: 'feat-x', baseRef: 'origin/main', createBranch: true });
-
-    expect(result).toBe(path);
-    expect(calls).toEqual([['git', ['worktree', 'add', '-b', 'feat-x', '--', path, 'origin/main']]]);
-    expect(existsSync(dirname(path))).toBe(true);
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
-  }
-});
-
-test('addWorktree runs the form the caller chose and never re-decides for itself', () => {
-  const tmp = mkdtempSync(join(tmpdir(), 'stim-test-add-reuse-'));
-  try {
-    const path = join(tmp, 'repo2');
-    const calls: [string, string[]][] = [];
-    setExecutor({
-      run: (cmd) => {
-        throw new Error(`unexpected shell run: ${cmd}`);
-      },
-      runFile: (file, args) => {
-        calls.push([file, args]);
-        return '';
-      },
-      runQuiet: (cmd) => {
-        throw new Error(`addWorktree must not re-resolve anything: ${cmd}`);
-      },
-      spawn: () => {},
-    });
-
-    const result = addWorktree({ path, branch: 'worktree-fix-login', baseRef: 'origin/main', createBranch: false });
-
-    expect(result).toBe(path);
-    expect(calls).toEqual([['git', ['worktree', 'add', '--', path, 'worktree-fix-login']]]);
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
-  }
-});
-
-test('addWorktree uses -b when the caller says the branch is new, whatever the refs say now', () => {
-  const tmp = mkdtempSync(join(tmpdir(), 'stim-test-add-fresh-'));
-  try {
-    const path = join(tmp, 'repo3');
-    const calls: [string, string[]][] = [];
-    setExecutor({
-      run: (cmd) => {
-        throw new Error(`unexpected shell run: ${cmd}`);
-      },
-      runFile: (file, args) => {
-        calls.push([file, args]);
-        return '';
-      },
-      runQuiet: () => 'deadbeef',
-      spawn: () => {},
-    });
-
-    addWorktree({ path, branch: 'worktree-new-thing', baseRef: 'origin/main', createBranch: true });
-
-    expect(calls).toEqual([['git', ['worktree', 'add', '-b', 'worktree-new-thing', '--', path, 'origin/main']]]);
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
-  }
-});
-
-test('addWorktree forces LC_ALL=C so the branch-exists guard can match git English text', () => {
-  const tmp = mkdtempSync(join(tmpdir(), 'stim-test-add-locale-'));
-  try {
-    const path = join(tmp, 'repo4');
-    const opts: (Record<string, unknown> | undefined)[] = [];
-    setExecutor({
-      run: (cmd) => {
-        throw new Error(`unexpected shell run: ${cmd}`);
-      },
-      runFile: (_file, _args, options) => {
-        opts.push(options);
-        return '';
-      },
-      runQuiet: () => '',
-      spawn: () => {},
-    });
-
-    addWorktree({ path, branch: 'worktree-locale', baseRef: 'origin/main', createBranch: true });
-
-    expect(opts).toEqual([{ env: { LC_ALL: 'C' } }]);
-
-    opts.length = 0;
-    addWorktree({ path, branch: 'worktree-locale-attach', baseRef: 'origin/main', createBranch: false });
-
-    expect(opts).toEqual([{ env: { LC_ALL: 'C' } }]);
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
   }
 });
 
@@ -774,7 +408,7 @@ test('a Pods directory with no Manifest.lock is not reported', () => {
   rmSync(root, { recursive: true, force: true });
 });
 
-test('the Podfile.lock on disk decides, so a carried lockfile change clears the mismatch', () => {
+test('the Podfile.lock on disk decides, so reconciling it clears the mismatch', () => {
   const branchLock = 'PODS:\n  - fmt (11.0.2)\n';
   const workingLock = 'PODS:\n  - fmt (11.0.2)\n  - RNScreens (4.0.0)\n';
   const root = podsFixture({ manifest: workingLock, podfileLock: branchLock });
@@ -792,78 +426,6 @@ test('pod-install churn is recognised so the restore advice only fires when it w
   expect(isPodInstallChurn([' M ios/Podfile.lock', ' M config.json'])).toBe(false);
   expect(isPodInstallChurn([' M App/Images/ic_app_ios.png'])).toBe(false);
   expect(isPodInstallChurn([])).toBe(false);
-});
-
-test('cloneIgnoredEntries treats .stim like any other gitignored project directory', () => {
-  const root = mkdtempSync(join(tmpdir(), 'stim-test-root-'));
-  const target = mkdtempSync(join(tmpdir(), 'stim-test-target-'));
-  try {
-    setExecutor({
-      run: () => '',
-      runFile: () => '',
-      runFileQuiet: (file: string, args: string[]) => {
-        if (args.includes('-z')) return '';
-        if (file === 'git') return 'node_modules/\n.stim/\napps/mobile/.stim/\napps/mobile/ios/Pods/';
-        return '';
-      },
-      spawn: () => {},
-    });
-
-    const { copied } = cloneIgnoredEntries({ root, target, patterns: [] });
-
-    expect(copied).toEqual(['node_modules', '.stim', 'apps/mobile/.stim', 'apps/mobile/ios/Pods']);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-    rmSync(target, { recursive: true, force: true });
-  }
-});
-
-test('.worktreeexclude can skip a project-owned .stim directory normally', () => {
-  const root = mkdtempSync(join(tmpdir(), 'stim-test-root-'));
-  const target = mkdtempSync(join(tmpdir(), 'stim-test-target-'));
-  try {
-    setExecutor({
-      run: () => '',
-      runFile: () => '',
-      runFileQuiet: (file: string, args: string[]) => {
-        if (args.includes('-z')) return '';
-        if (file === 'git') return 'node_modules/\ncoverage/\napps/mobile/.stim/';
-        return '';
-      },
-      spawn: () => {},
-    });
-
-    const excluded = cloneIgnoredEntries({ root, target, patterns: ['coverage', '**/.stim'] });
-    expect(excluded.copied).toEqual(['node_modules']);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-    rmSync(target, { recursive: true, force: true });
-  }
-});
-
-test('carryOverFiles treats files inside .stim like ordinary project files', () => {
-  const root = mkdtempSync(join(tmpdir(), 'stim-test-root-'));
-  const target = mkdtempSync(join(tmpdir(), 'stim-test-target-'));
-  try {
-    mkdirSync(join(root, 'apps/mobile/.stim'), { recursive: true });
-    writeFileSync(join(root, 'apps/mobile/.stim/state.json'), '{"supervisorPid":123}');
-    mkdirSync(join(root, 'config'), { recursive: true });
-    writeFileSync(join(root, 'config/local.json'), '{}');
-    setExecutor({
-      run: () => '',
-      runFileQuiet: (_file: string, args: string[]) =>
-        args.includes('-z') ? '' : 'apps/mobile/.stim/state.json\nconfig/local.json',
-      spawn: () => {},
-    });
-
-    const { copied } = carryOverFiles({ root, target, patterns: ['**/*.json'] });
-
-    expect(copied).toEqual(['apps/mobile/.stim/state.json', 'config/local.json']);
-    expect(existsSync(join(target, 'apps/mobile/.stim/state.json'))).toBe(true);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-    rmSync(target, { recursive: true, force: true });
-  }
 });
 
 test('cloneIgnoredEntries against a real git repo never overwrites a path the destination tracks', () => {
@@ -909,46 +471,6 @@ test('cloneIgnoredEntries against a real git repo never overwrites a path the de
   }
 });
 
-test('carryOverFiles against a real git repo never overwrites a path the destination tracks', () => {
-  const base = mkdtempSync(join(tmpdir(), 'stim-test-tracked-carry-'));
-  const root = join(base, 'repo');
-  const target = join(base, 'wt');
-  try {
-    mkdirSync(root, { recursive: true });
-    const git = (cmd: string) => execSync(cmd, { cwd: root, encoding: 'utf-8' });
-    git('git init -q -b main');
-    git('git config user.email test@example.com');
-    git('git config user.name test');
-    mkdirSync(join(root, 'apps/mobile'), { recursive: true });
-    writeFileSync(join(root, '.gitignore'), '*.keystore\n.env\n');
-    writeFileSync(join(root, 'README.md'), 'hello');
-    git('git add -A');
-    git('git commit -q -m "main: every keystore ignored"');
-
-    git('git checkout -q -b feature');
-    writeFileSync(join(root, '.gitignore'), '*.keystore\n!apps/mobile/debug.keystore\n.env\n');
-    writeFileSync(join(root, 'apps/mobile/debug.keystore'), 'BRANCH-VERSION');
-    git('git add -A');
-    git('git commit -q -m "feature: track debug.keystore"');
-    git('git checkout -q main');
-
-    mkdirSync(join(root, 'apps/mobile'), { recursive: true });
-    writeFileSync(join(root, 'apps/mobile/debug.keystore'), 'SOURCE-MACHINE-LOCAL');
-    writeFileSync(join(root, 'apps/mobile/.env'), 'SECRET=1');
-
-    git(`git worktree add -q "${target}" feature`);
-
-    const { copied, skipped } = carryOverFiles({ root, target, patterns: ['*.keystore', '.env'] });
-
-    expect(copied).toEqual(['apps/mobile/.env']);
-    expect(skipped).toEqual([{ file: 'apps/mobile/debug.keystore', reason: 'tracked' }]);
-    expect(readFileSync(join(target, 'apps/mobile/debug.keystore'), 'utf-8')).toBe('BRANCH-VERSION');
-    expect(readFileSync(join(target, 'apps/mobile/.env'), 'utf-8')).toBe('SECRET=1');
-  } finally {
-    rmSync(base, { recursive: true, force: true });
-  }
-});
-
 test('carry against a real git repo leaves a tracked file under an ignored directory alone', () => {
   const base = mkdtempSync(join(tmpdir(), 'stim-test-negation-'));
   const root = join(base, 'repo');
@@ -980,10 +502,6 @@ test('carry against a real git repo leaves a tracked file under an ignored direc
     expect(copied.toSorted()).toEqual(['dir/junk.txt', 'dir/sub']);
     expect(readFileSync(join(target, 'dir/junk.txt'), 'utf-8')).toBe('junk');
     expect(readFileSync(join(target, 'dir/sub/deep.txt'), 'utf-8')).toBe('deep');
-
-    const carried = carryOverFiles({ root, target, patterns: ['keep.txt', 'junk.txt'] });
-    expect(carried.copied).toEqual(['dir/junk.txt']);
-    expect(readFileSync(join(target, 'dir/keep.txt'), 'utf-8')).toBe('BRANCH-VERSION');
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
@@ -1009,133 +527,6 @@ test('listTrackedPaths asks git for a NUL-delimited list and reports an unanswer
   expect(listTrackedPaths('/wt')).toBe(null);
 });
 
-test('carry fails closed when the destination cannot be asked what it tracks', () => {
-  const root = mkdtempSync(join(tmpdir(), 'stim-test-root-'));
-  const target = mkdtempSync(join(tmpdir(), 'stim-test-target-'));
-  try {
-    mkdirSync(join(root, 'apps/mobile'), { recursive: true });
-    writeFileSync(join(root, 'apps/mobile/.env'), 'SOURCE');
-    writeFileSync(join(root, 'apps/mobile/other.env'), 'SOURCE');
-    mkdirSync(join(target, 'apps/mobile'), { recursive: true });
-    writeFileSync(join(target, 'apps/mobile/.env'), 'ALREADY-THERE');
-
-    setExecutor({
-      run: () => '',
-      runFileQuiet: (_file: string, args: string[]) => {
-        if (args.includes('-z')) return null;
-        return 'apps/mobile/.env\napps/mobile/other.env';
-      },
-      spawn: () => {},
-    });
-
-    const { copied, skipped } = carryOverFiles({ root, target, patterns: ['*.env', '.env'] });
-
-    expect(copied).toEqual(['apps/mobile/other.env']);
-    expect(skipped).toEqual([{ file: 'apps/mobile/.env', reason: 'unverified' }]);
-    expect(readFileSync(join(target, 'apps/mobile/.env'), 'utf-8')).toBe('ALREADY-THERE');
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-    rmSync(target, { recursive: true, force: true });
-  }
-});
-
-test('C1: resolveRef never lets a $(...) baseRef reach a shell, and still resolves a real ref', () => {
-  resetExecutor();
-  const base = mkdtempSync(join(tmpdir(), 'stim-test-sec-resolveref-'));
-  const root = join(base, 'repo');
-  const cwdBefore = process.cwd();
-  try {
-    mkdirSync(root, { recursive: true });
-    const git = (cmd: string) => execSync(cmd, { cwd: root, encoding: 'utf-8' });
-    git('git init -q -b main');
-    git('git config user.email test@example.com');
-    git('git config user.name test');
-    git('git commit -q --allow-empty -m init');
-    const realHead = git('git rev-parse --short HEAD').trim();
-
-    process.chdir(base);
-    expect(resolveRef(root, '$(touch PWNED)')).toBe(null);
-    expect(existsSync(join(base, 'PWNED'))).toBe(false);
-
-    expect(resolveRef(root, 'HEAD')).toBe(realHead);
-    expect(resolveRef(root, 'main')).toBe(realHead);
-    expect(resolveRef(root, '-oops')).toBe(null);
-  } finally {
-    process.chdir(cwdBefore);
-    rmSync(base, { recursive: true, force: true });
-  }
-});
-
-test('C1: addWorktree never lets a $(...) baseRef reach a shell, and still creates a worktree', () => {
-  resetExecutor();
-  const base = mkdtempSync(join(tmpdir(), 'stim-test-sec-addwt-'));
-  const root = join(base, 'repo');
-  const cwdBefore = process.cwd();
-  try {
-    mkdirSync(root, { recursive: true });
-    const git = (cmd: string) => execSync(cmd, { cwd: root, encoding: 'utf-8' });
-    git('git init -q -b main');
-    git('git config user.email test@example.com');
-    git('git config user.name test');
-    git('git commit -q --allow-empty -m init');
-
-    process.chdir(root);
-    expect(() =>
-      addWorktree({
-        path: join(base, 'wt-evil'),
-        branch: 'worktree-evil',
-        baseRef: '$(touch PWNED2)',
-        createBranch: true,
-      }),
-    ).toThrow(/invalid reference/);
-    expect(existsSync(join(root, 'PWNED2'))).toBe(false);
-
-    const wt = join(base, 'wt-good');
-    addWorktree({ path: wt, branch: 'worktree-good', baseRef: 'HEAD', createBranch: true });
-    expect(existsSync(join(wt, '.git'))).toBe(true);
-    expect(git('git worktree list --porcelain')).toMatch(/worktree-good/);
-  } finally {
-    process.chdir(cwdBefore);
-    rmSync(base, { recursive: true, force: true });
-  }
-});
-
-test('C1: addWorktree rejects a leading-dash baseRef with a clear error (defense in depth)', () => {
-  const path = join(tmpdir(), 'stim-test-sec-dash', 'repo');
-  setExecutor({
-    run: (cmd) => {
-      throw new Error(`unexpected shell run: ${cmd}`);
-    },
-    runFile: (file, args) => {
-      throw new Error(`git must not be invoked: ${file} ${args.join(' ')}`);
-    },
-    runQuiet: () => null,
-    spawn: () => {},
-  });
-  expect(() =>
-    addWorktree({ path, branch: 'worktree-x', baseRef: '--upload-pack=touch EVIL', createBranch: true }),
-  ).toThrow(/Refusing base ref/);
-});
-
-test('C1: addWorktree rejects a worktree path with a leading dash or shell metacharacters', () => {
-  setExecutor({
-    run: (cmd) => {
-      throw new Error(`unexpected shell run: ${cmd}`);
-    },
-    runFile: (file, args) => {
-      throw new Error(`git must not be invoked: ${file} ${args.join(' ')}`);
-    },
-    runQuiet: () => null,
-    spawn: () => {},
-  });
-  expect(() => addWorktree({ path: '-evil/repo', branch: 'worktree-x', baseRef: 'HEAD', createBranch: true })).toThrow(
-    /a path beginning with "-"/,
-  );
-  expect(() =>
-    addWorktree({ path: '/tmp/a$(touch X)/repo', branch: 'worktree-x', baseRef: 'HEAD', createBranch: true }),
-  ).toThrow(/shell metacharacters/);
-});
-
 test('H1: cloneIgnoredEntries carries a top-level ignored $(...) filename as a literal file, never executing it', () => {
   resetExecutor();
   const base = mkdtempSync(join(tmpdir(), 'stim-test-sec-clone-'));
@@ -1153,6 +544,7 @@ test('H1: cloneIgnoredEntries carries a top-level ignored $(...) filename as a l
     writeFileSync(join(root, '.gitignore'), '*.log\n');
     git('git add README.md .gitignore');
     git('git commit -q -m init');
+    execFileSync('git', ['-C', root, 'worktree', 'add', '-qb', 'copy-target', target]);
 
     const evil = 'a$(touch INJECTED).log';
     writeFileSync(join(root, evil), 'payload');
@@ -1211,6 +603,7 @@ test('cloneIgnoredEntries against a real git repo drops a nested .DerivedData bu
     writeFileSync(join(root, '.gitignore'), 'node_modules/\n');
     git('git add README.md .gitignore');
     git('git commit -q -m init');
+    execFileSync('git', ['-C', root, 'worktree', 'add', '-qb', 'copy-target', target]);
 
     mkdirSync(join(root, 'node_modules/pkg/apple/.DerivedData'), { recursive: true });
     writeFileSync(join(root, 'node_modules/pkg/apple/.DerivedData/x'), 'baked');
@@ -1225,126 +618,6 @@ test('cloneIgnoredEntries against a real git repo drops a nested .DerivedData bu
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
-});
-
-test('carryOverFiles against a real git repo skips a .DerivedData file but copies its sibling', () => {
-  const base = mkdtempSync(join(tmpdir(), 'stim-test-derived-files-'));
-  const root = join(base, 'repo');
-  const target = join(base, 'target');
-  try {
-    mkdirSync(root, { recursive: true });
-    mkdirSync(target, { recursive: true });
-    const git = (cmd: string) => execSync(cmd, { cwd: root, encoding: 'utf-8' });
-    git('git init -q');
-    git('git config user.email test@example.com');
-    git('git config user.name test');
-    writeFileSync(join(root, 'README.md'), 'hello');
-    writeFileSync(join(root, '.gitignore'), '*.derived\n');
-    git('git add README.md .gitignore');
-    git('git commit -q -m init');
-
-    mkdirSync(join(root, 'apple/.DerivedData'), { recursive: true });
-    writeFileSync(join(root, 'apple/.DerivedData/cache.derived'), 'baked');
-    writeFileSync(join(root, 'apple/.DerivedData/.keep'), '');
-    writeFileSync(join(root, 'apple/Real.derived'), 'source');
-    writeFileSync(join(root, 'apple/.keep'), '');
-
-    const { copied, failed } = carryOverFiles({ root, target, patterns: ['*.derived'] });
-
-    expect(copied).toEqual(['apple/Real.derived']);
-    expect(failed).toEqual([]);
-    expect(existsSync(join(target, 'apple/Real.derived'))).toBe(true);
-    expect(existsSync(join(target, 'apple/.DerivedData/cache.derived'))).toBe(false);
-  } finally {
-    rmSync(base, { recursive: true, force: true });
-  }
-});
-
-const TEXT_PATCH = [
-  'diff --git a/app.json b/app.json',
-  'index 000000..111111 100644',
-  '--- a/app.json',
-  '+++ b/app.json',
-  '@@ -1 +1 @@',
-  '-{}',
-  '+{"dirty":true}',
-].join('\n');
-
-test('carryUncommittedChanges does nothing on a clean source tree, and when git cannot answer', () => {
-  setExecutor({
-    runFileQuiet: () => '',
-    runFile: () => {
-      throw new Error('nothing may be applied for an empty diff');
-    },
-    spawn: () => {},
-  });
-  expect(carryUncommittedChanges({ root: '/src', target: '/wt' })).toBe(null);
-
-  setExecutor({ runFileQuiet: () => null, spawn: () => {} });
-  expect(carryUncommittedChanges({ root: '/src', target: '/wt' })).toBe(null);
-});
-
-test('carryUncommittedChanges checks first, applies second, through one temp patch file it removes', () => {
-  const runFileCalls: string[][] = [];
-  setExecutor({
-    runFileQuiet: (_file: string, args: string[]) =>
-      args.includes('--binary') ? TEXT_PATCH : args.includes('--name-only') ? 'app.json' : '',
-    runFile: (file: string, args: string[]) => {
-      runFileCalls.push([file, ...args]);
-      return '';
-    },
-    spawn: () => {},
-  });
-
-  const result = carryUncommittedChanges({ root: '/src', target: '/wt' });
-  assert(result);
-  expect(result.applied).toBe(true);
-  expect(result.conflicted).toBe(false);
-  expect(result.files).toEqual(['app.json']);
-
-  expect(runFileCalls.length).toBe(2);
-  expect(runFileCalls[0]?.slice(0, 5)).toEqual(['git', '-C', '/wt', 'apply', '--check']);
-  expect(runFileCalls[1]?.slice(0, 4)).toEqual(['git', '-C', '/wt', 'apply']);
-  const checkedFile = runFileCalls[0]?.[5];
-  expect(runFileCalls[1]?.[4]).toBe(checkedFile);
-  expect(existsSync(String(checkedFile))).toBe(false);
-});
-
-test('carryUncommittedChanges reports a conflict and applies NOTHING when --check refuses', () => {
-  const runFileCalls: string[][] = [];
-  setExecutor({
-    runFileQuiet: (_file: string, args: string[]) =>
-      args.includes('--binary') ? TEXT_PATCH : args.includes('--name-only') ? 'app.json\nios/Podfile.lock' : '',
-    runFile: (file: string, args: string[]) => {
-      runFileCalls.push([file, ...args]);
-      if (args.includes('--check')) throw new Error('error: patch does not apply');
-      throw new Error('apply must not run after a failed check');
-    },
-    spawn: () => {},
-  });
-
-  const result = carryUncommittedChanges({ root: '/src', target: '/wt' });
-  assert(result);
-  expect(result.conflicted).toBe(true);
-  expect(result.applied).toBe(false);
-  expect(result.files).toEqual(['app.json', 'ios/Podfile.lock']);
-  expect(runFileCalls.length).toBe(1);
-});
-
-test('a check that passes but an apply that fails is reported as the conflict case, not as carried', () => {
-  setExecutor({
-    runFileQuiet: (_file: string, args: string[]) =>
-      args.includes('--binary') ? TEXT_PATCH : args.includes('--name-only') ? 'app.json' : '',
-    runFile: (_file: string, args: string[]) => {
-      if (args.includes('--check')) return '';
-      throw new Error('error: app.json: No such file or directory');
-    },
-    spawn: () => {},
-  });
-  const result = carryUncommittedChanges({ root: '/src', target: '/wt' });
-  assert(result);
-  expect(result.applied).toBe(false);
-  expect(result.conflicted).toBe(true);
 });
 
 test('dirtyFingerprintFiles asks git about exactly the fingerprint inputs and parses the paths', () => {
@@ -1402,7 +675,7 @@ test('git runs against a real repo whose path holds a space, a double quote, a d
     expect(branchExists(root, 'missing')).toBe(false);
     expect(hasRemote(root)).toBe(false);
     expect(listTrackedPaths(root)).toEqual(['.gitignore', 'tracked.txt']);
-    expect(listGitignoredFiles(root)).toEqual(['secrets.env']);
+    expect(listGitignoredEntries(root)).toEqual(['secrets.env']);
     expect(listWorktrees(root)).toEqual([{ path: realpathSync(root), branch: 'main' }]);
     expect(unpushedCommits(root)?.length).toBe(1);
 
@@ -1415,4 +688,44 @@ test('git runs against a real repo whose path holds a space, a double quote, a d
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
+});
+
+test('detached worktrees preserve unique commits but do not count commits already on a local branch', () => {
+  const base = mkdtempSync(join(tmpdir(), 'stim-test-detached-'));
+  const root = join(base, 'repo');
+  const target = join(base, 'detached');
+  const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf-8' });
+  try {
+    mkdirSync(root);
+    git(root, 'init', '-q', '-b', 'main');
+    git(root, 'config', 'user.name', 'test');
+    git(root, 'config', 'user.email', 'test@example.com');
+    git(root, 'config', 'commit.gpgsign', 'false');
+    writeFileSync(join(root, 'tracked.txt'), 'shared commit');
+    git(root, 'add', '.');
+    git(root, 'commit', '-qm', 'shared main commit');
+    git(root, 'worktree', 'add', '--detach', target);
+    expect(unpushedCommits(target)).toEqual([]);
+    writeFileSync(join(target, 'unique.txt'), 'detached work');
+    git(target, 'add', '.');
+    git(target, 'commit', '-qm', 'unique detached commit');
+    const unique = unpushedCommits(target);
+    expect(unique).toHaveLength(1);
+    expect(unique?.[0]).toContain('unique detached commit');
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('an unproven detached HEAD keeps the conservative remotes-only comparison', () => {
+  const calls: string[][] = [];
+  setExecutor({
+    runFileQuiet: (_file: string, args: string[]) => {
+      calls.push(args);
+      if (args.includes('log')) return 'abc123 local work';
+      return null;
+    },
+  });
+  expect(unpushedCommits('/wt')).toEqual(['abc123 local work']);
+  expect(calls.find((args) => args.includes('log'))?.slice(-2)).toEqual(['--not', '--remotes']);
 });

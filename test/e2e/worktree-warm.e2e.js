@@ -17,7 +17,7 @@ before(() => {
   ctx.repo = join(ctx.tmp, 'app');
   mkdirSync(ctx.repo, { recursive: true });
   writeFileSync(join(ctx.repo, 'package.json'), '{"name":"warm-fixture","private":true}\n');
-  writeFileSync(join(ctx.repo, '.gitignore'), 'node_modules/\nios/Pods/\nios/build/\n');
+  writeFileSync(join(ctx.repo, '.gitignore'), 'node_modules/\nios/Pods/\nios/build/\n.env\n');
   mkdirSync(join(ctx.repo, 'ios'), { recursive: true });
   writeFileSync(join(ctx.repo, 'ios', 'Podfile'), "platform :ios, '15.1'\n");
   git(['init', '-b', 'main']);
@@ -34,34 +34,33 @@ after(() => {
   }
 });
 
-test('cold and warm worktree creation report different guidance', () => {
-  const cold = create('cold');
-  assert.equal(cold.status, 0, cold.stderr);
-  assert.doesNotMatch(cold.stderr, /Warm source not carried|--carry-ignored/);
+test('create is rejected without creating a checkout', () => {
+  const removed = spawnSync(process.execPath, [CLI, 'worktree', 'create', 'removed'], {
+    cwd: ctx.repo,
+    env: { ...process.env, STIM_HOME: ctx.home },
+    encoding: 'utf-8',
+  });
+  assert.notEqual(removed.status, 0);
+  assert.match(removed.stderr, /unknown command 'create'/);
+  assert.equal(git(['worktree', 'list', '--porcelain']).split('worktree ').length - 1, 1);
+});
 
+test('Git creates a clean checkout and warm copies ignored dependencies and native output', () => {
   write('node_modules/pkg/index.js', 'dependency');
   write('ios/Pods/Manifest.lock', 'pods');
   write('ios/build/generated.cpp', 'native');
-
-  const plainWarm = create('plain-warm');
-  assert.equal(plainWarm.status, 0, plainWarm.stderr);
-  assert.match(
-    plainWarm.stderr,
-    /^ {2}carry {7}warm source not carried: dependencies, CocoaPods, native build output/m,
-  );
-  assert.match(plainWarm.stderr, /stim worktree create <name> --carry-ignored/);
-
-  const carried = create('carried', ['--carry-ignored']);
-  assert.equal(carried.status, 0, carried.stderr);
-  assert.match(carried.stderr, /^ {2}carry {7}node_modules, Pods, native build output \((APFS clone|byte copy)\)$/m);
-  assert.match(carried.stderr, /^ {2}ready {7}\//m);
-  const carriedPath = carried.stdout.trim();
-  assert.ok(existsSync(join(carriedPath, 'node_modules', 'pkg', 'index.js')));
-  assert.ok(existsSync(join(carriedPath, 'ios', 'Pods', 'Manifest.lock')));
-  assert.ok(existsSync(join(carriedPath, 'ios', 'build', 'generated.cpp')));
+  const linked = create('warmed');
+  assert.equal(existsSync(join(linked, 'node_modules')), false);
+  const warmed = warm(linked);
+  assert.equal(warmed.status, 0, warmed.stderr);
+  assert.equal(warmed.stdout, '');
+  assert.match(warmed.stderr, /complete: 3 ignored entries copied/);
+  assert.equal(readFileSync(join(linked, 'node_modules/pkg/index.js'), 'utf-8'), 'dependency');
+  assert.equal(readFileSync(join(linked, 'ios/Pods/Manifest.lock'), 'utf-8'), 'pods');
+  assert.equal(readFileSync(join(linked, 'ios/build/generated.cpp'), 'utf-8'), 'native');
 });
 
-test('carried pods are judged against the Podfile.lock the new worktree ends up with', () => {
+test('warm leaves the selected tracked base unchanged and reports mismatched copied Pods', () => {
   const repo = join(ctx.tmp, 'pods-app');
   const branchLock = 'PODS:\n  - fmt (11.0.2)\n';
   const workingLock = 'PODS:\n  - fmt (11.0.2)\n  - RNScreens (4.0.0)\n';
@@ -83,21 +82,24 @@ test('carried pods are judged against the Podfile.lock the new worktree ends up 
   mkdirSync(join(repo, 'ios', 'Pods'), { recursive: true });
   writeFileSync(join(repo, 'ios', 'Pods', 'Manifest.lock'), workingLock);
 
-  const carried = spawnSync(
-    process.execPath,
-    [CLI, 'worktree', 'create', 'pods-carried', '--base', 'head', '--carry-ignored'],
-    { cwd: repo, env: { ...process.env, STIM_HOME: ctx.home }, encoding: 'utf-8' },
-  );
-  assert.equal(carried.status, 0, carried.stderr);
-  const created = carried.stdout.trim();
-  assert.equal(readFileSync(join(created, 'ios', 'Podfile.lock'), 'utf-8'), workingLock);
-  assert.equal(readFileSync(join(created, 'ios', 'Pods', 'Manifest.lock'), 'utf-8'), workingLock);
-  assert.doesNotMatch(carried.stderr, /carried ios\/Pods does not match/);
+  const linked = create('pods-warmed', repo);
+  const warmed = warm(linked);
+  assert.equal(warmed.status, 0, warmed.stderr);
+  assert.equal(readFileSync(join(linked, 'ios/Podfile.lock'), 'utf-8'), branchLock);
+  assert.equal(readFileSync(join(linked, 'ios/Pods/Manifest.lock'), 'utf-8'), workingLock);
+  assert.equal(readFileSync(join(repo, 'ios/Podfile.lock'), 'utf-8'), workingLock);
+  assert.match(warmed.stderr, /carried ios\/Pods does not match/);
 });
 
-function create(name, extra = []) {
-  return spawnSync(process.execPath, [CLI, 'worktree', 'create', name, '--base', 'head', ...extra], {
-    cwd: ctx.repo,
+function create(name, repo = ctx.repo, detached = false) {
+  const linked = join(ctx.tmp, name);
+  execFileSync('git', ['-C', repo, 'worktree', 'add', ...(detached ? ['--detach'] : ['-b', name]), linked, 'HEAD']);
+  return linked;
+}
+
+function warm(cwd) {
+  return spawnSync(process.execPath, [CLI, 'worktree', 'warm'], {
+    cwd,
     env: { ...process.env, STIM_HOME: ctx.home },
     encoding: 'utf-8',
   });
@@ -148,3 +150,25 @@ test('an externally created worktree can warm from main without changing its bra
   assert.equal(repeated.status, 0, repeated.stderr);
   assert.match(repeated.stderr, /complete: 0 ignored entries copied/);
 });
+
+for (const warmed of [false, true]) {
+  for (const detached of [false, true]) {
+    test(`remove accepts an unregistered ${warmed ? 'warmed' : 'unwarmed'} ${detached ? 'detached' : 'branch'} worktree`, () => {
+      const name = `remove-${warmed}-${detached}`;
+      const linked = create(name, ctx.repo, detached);
+      if (warmed) {
+        const result = warm(linked);
+        assert.equal(result.status, 0, result.stderr);
+      }
+      const removed = spawnSync(process.execPath, [CLI, 'worktree', 'remove', linked], {
+        cwd: ctx.repo,
+        env: { ...process.env, STIM_HOME: ctx.home },
+        encoding: 'utf-8',
+      });
+      assert.equal(removed.status, 0, removed.stderr);
+      assert.equal(existsSync(linked), false);
+      assert.ok(!git(['worktree', 'list', '--porcelain']).includes(linked));
+      if (!detached) assert.equal(git(['show-ref', '--verify', `refs/heads/${name}`]).trim().length > 0, true);
+    });
+  }
+}

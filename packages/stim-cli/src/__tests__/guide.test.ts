@@ -219,16 +219,14 @@ test('the errors topic documents every code the build commands and the iOS signi
   }
 });
 
-test('the errors topic documents every code worktree create can emit', () => {
-  const body = renderTopic('errors');
-  assert(body);
-  const src = readFileSync(new URL('../commands/worktree.ts', import.meta.url), 'utf-8');
-  const codes = scrapedCodes(src);
-  expect(codes.has('STIM_WORKTREE_BRANCH_EXISTS')).toBeTruthy();
-  for (const code of codes) {
-    expect(body.includes(code)).toBeTruthy();
-    expect(sectionLookup('errors')[code]).toBeDefined();
-  }
+test('current guides expose warm and remove while leaving worktree creation to Git', () => {
+  const body = allBodies().join('\n');
+  expect(body).toContain('git worktree add');
+  expect(body).toContain('stim worktree warm');
+  expect(body).toContain('stim worktree remove');
+  expect(body).not.toMatch(/worktree create|--carry-ignored|STIM_WORKTREE_BRANCH_EXISTS/);
+  expect(body).not.toMatch(/worktreeDir|worktree\.baseRef|worktree\.include|\.worktreeinclude/);
+  expect(sectionLookup('errors')['STIM_WORKTREE_BRANCH_EXISTS']).toBeUndefined();
 });
 
 test('the errors topic documents every code the engine can emit under a command', () => {
@@ -354,7 +352,7 @@ test('the reload payload guide distinguishes dispatch from observed completion',
 test('warm guidance protects existing entries and tracked changes', () => {
   const options = renderSection('lifecycle', 'options');
   assert(options);
-  expect(options).toMatch(/existing\s+directory such as node_modules is skipped WHOLE/i);
+  expect(options).toMatch(/existing\s+ignored directory such as node_modules is skipped WHOLE/i);
   expect(options).toMatch(/dangling symlinks/);
   expect(options).toMatch(/does not copy tracked changes/);
 });

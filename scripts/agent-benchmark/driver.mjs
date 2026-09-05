@@ -558,14 +558,17 @@ function prepare() {
     STIM_HOME: preparingHome,
     STIM_POOL_IOS_PARKED_MAX: '1',
   };
-  const worktree = run('node', [stimCli, 'worktree', 'create', 'bench-golden-seed', '--carry-ignored'], {
+  const worktree = join(worktreeParent, 'bench-golden-seed');
+  run('git', ['worktree', 'add', '--detach', worktree, 'HEAD'], {
     cwd: main,
-    env: seedEnv,
-    timeout: 20 * 60 * 1000,
-  })
-    .split('\n')
-    .at(-1);
+    timeout: 5 * 60 * 1000,
+  });
   try {
+    run('node', [stimCli, 'worktree', 'warm'], {
+      cwd: worktree,
+      env: seedEnv,
+      timeout: 20 * 60 * 1000,
+    });
     run('node', [stimCli, 'start'], {
       cwd: worktree,
       env: seedEnv,
@@ -639,14 +642,17 @@ function prepareAndroid() {
   writeFileSync(join(seedHome, 'config.json'), `${JSON.stringify({ version: 2, projects: {}, repos: {} }, null, 2)}\n`);
   const seedEnv = { ...cleanRubyEnvironment(process.env), STIM_HOME: seedHome };
   let preparedDevice = null;
-  const worktree = run('node', [stimCli, 'worktree', 'create', 'bench-golden-android-seed', '--carry-ignored'], {
+  const worktree = join(worktreeParent, 'bench-golden-android-seed');
+  run('git', ['worktree', 'add', '--detach', worktree, 'HEAD'], {
     cwd: main,
-    env: seedEnv,
-    timeout: 20 * 60 * 1000,
-  })
-    .split('\n')
-    .at(-1);
+    timeout: 5 * 60 * 1000,
+  });
   try {
+    run('node', [stimCli, 'worktree', 'warm'], {
+      cwd: worktree,
+      env: seedEnv,
+      timeout: 20 * 60 * 1000,
+    });
     run('node', [stimCli, 'start'], {
       cwd: worktree,
       env: seedEnv,
@@ -711,24 +717,15 @@ function prepareAndroid() {
 }
 
 function prepareLaunchCrashFixture(arm, runId, environment) {
-  let fixtureCheckout;
-  let fixtureBranch;
+  const fixtureCheckout = join(worktreeParent, `fixture-${runId}`);
+  const fixtureBranch = arm === 'stim' ? `worktree-fixture/${runId}` : `bench-fixture/${runId}`;
+  run('git', ['worktree', 'add', '-b', fixtureBranch, fixtureCheckout, 'HEAD'], {
+    cwd: main,
+    timeout: 5 * 60 * 1000,
+  });
   if (arm === 'stim') {
-    fixtureCheckout = run(
-      'stim',
-      ['worktree', 'create', `fixture/${runId}`, '--dir', worktreeParent, '--carry-ignored'],
-      { cwd: main, env: environment, timeout: 20 * 60 * 1000 },
-    )
-      .split('\n')
-      .at(-1);
-    fixtureBranch = `worktree-fixture/${runId}`;
+    run('stim', ['worktree', 'warm'], { cwd: fixtureCheckout, env: environment, timeout: 20 * 60 * 1000 });
   } else {
-    fixtureCheckout = join(worktreeParent, `fixture-${runId}`);
-    fixtureBranch = `bench-fixture/${runId}`;
-    run('git', ['worktree', 'add', '-b', fixtureBranch, fixtureCheckout, 'HEAD'], {
-      cwd: main,
-      timeout: 5 * 60 * 1000,
-    });
     for (const name of ['node_modules', 'ios/Pods', 'ios/build']) {
       const source = join(main, name);
       if (!existsSync(source)) continue;
@@ -764,13 +761,14 @@ function prepareLaunchCrashFixture(arm, runId, environment) {
 function promptFor(arm, variant, runId, runDir, crash = null, requestedPlatform = 'ios') {
   const platform = checkedPlatform(requestedPlatform);
   const controlDeviceName = platform === 'ios' ? `Trailhead ${runId}` : `Trailhead_${runId}`;
+  const stimPath = join(worktreeParent, `bench-${runId}`);
+  const quotedStimPath = `'${stimPath.replaceAll("'", "'\\''")}'`;
+  const stimSource = variant === launchCrashVariant ? crash.fixtureCheckout : main;
   const worktree =
-    variant === launchCrashVariant
-      ? arm === 'stim'
-        ? `In ${crash.fixtureCheckout}, use exactly \`stim worktree create bench/${runId} --dir ${worktreeParent} --carry-ignored\` to create your worktree from the current fixture HEAD, then work only in the absolute path it prints. `
-        : `In ${crash.fixtureCheckout}, create a git worktree for branch bench/${runId} at ${join(worktreeParent, runId)} from the current fixture HEAD and carry installed dependencies and native outputs from the fixture checkout. Then work only in that run worktree. Name the new simulator exactly ${JSON.stringify(controlDeviceName)}. `
-      : arm === 'stim'
-        ? `In ${main}, use exactly \`stim worktree create bench/${runId} --dir ${worktreeParent} --carry-ignored\` to create the worktree, then work only in the absolute path it prints. `
+    arm === 'stim'
+      ? `In ${stimSource}, run exactly \`git worktree add -b worktree-bench/${runId} ${quotedStimPath} HEAD\`. Then change into ${stimPath}, run \`stim worktree warm\`, and work only in that checkout. `
+      : variant === launchCrashVariant
+        ? `In ${crash.fixtureCheckout}, create a git worktree for branch bench/${runId} at ${join(worktreeParent, runId)} from the current fixture HEAD and carry installed dependencies and native outputs from the fixture checkout. Then work only in that run worktree. Name the new simulator exactly ${JSON.stringify(controlDeviceName)}. `
         : `In ${main}, create a git worktree for branch bench/${runId} at ${join(worktreeParent, runId)} and carry installed dependencies and native outputs from the main checkout. Then work only in that worktree. Name the new ${platform === 'ios' ? 'simulator' : 'AVD'} exactly ${JSON.stringify(controlDeviceName)} so the coordinator can prove ownership and clean it safely. `;
   const screenshot = join(runDir, 'proof', 'settings.png');
   const screenshotScratch = join('/tmp', `${runId}-settings.png`);
@@ -2473,7 +2471,8 @@ function selftestLaunchCrash() {
   };
   const prompt = promptFor('stim', launchCrashVariant, runId, state, crash);
   for (const required of [
-    `stim worktree create bench/${runId}`,
+    `git worktree add -b worktree-bench/${runId}`,
+    'stim worktree warm',
     'Before inspecting source or git diff',
     'stim logs --errors',
     'Make the smallest repair',
@@ -2519,7 +2518,8 @@ function selftestAndroid() {
   const runId = 'android-selftest';
   const prompt = promptFor('stim', 'native', runId, state, null, 'android');
   for (const required of [
-    `stim worktree create bench/${runId}`,
+    `git worktree add -b worktree-bench/${runId}`,
+    'stim worktree warm',
     'android/app/src/main/res/values/strings.xml',
     'stim android --system-image',
     '--platform android --serial <run emulator serial>',
