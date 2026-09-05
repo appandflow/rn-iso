@@ -42,6 +42,7 @@ beforeEach(() => {
       if (cmd.includes('simctl list devices --json')) return listJson;
       return null;
     },
+    runFileQuiet: () => null,
     spawn() {
       throw new Error('spawn should not be called from status');
     },
@@ -126,6 +127,7 @@ test('status reports simctl as unreadable instead of warning that every sim is g
     runQuiet() {
       return null;
     },
+    runFileQuiet: () => null,
     spawn() {
       throw new Error('spawn should not be called from status');
     },
@@ -235,6 +237,7 @@ test('status reports a supervisor whose port answers as this project as healthy'
         if (cmd.startsWith('ps -o pgid=')) return String(listenerPid);
         return null;
       },
+      runFileQuiet: () => null,
       spawn() {
         throw new Error('spawn should not be called from status');
       },
@@ -428,6 +431,7 @@ function dfExecutor(byVolume: Record<string, string>) {
       asked.push(vol);
       return byVolume[vol] ?? null;
     },
+    runFileQuiet: () => null,
     spawn() {
       throw new Error('spawn should not be called from status');
     },

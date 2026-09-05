@@ -317,6 +317,49 @@ describe('benchmark viewer export', () => {
     ).toBe('-Lworktree/native-control/DerivedData/Build/Products');
   });
 
+  it('redacts absolute paths embedded in generated build paths', () => {
+    expect(sanitizeBenchmarkText('node_modules/module.dir/Volumes/ExternalSSD/Developer/project/source.cpp.o')).toBe(
+      'node_modules/module.dir/workspace/source.cpp.o',
+    );
+  });
+
+  it('preserves web URLs while redacting nested machine paths', () => {
+    expect(
+      sanitizeBenchmarkText(
+        'https://example.com/Volumes/docs See (https://example.com/Volumes/docs) ' +
+          '[docs](https://example.com/Users/guide) url=https://example.com/Volumes/docs ' +
+          'https://example.com/docs;/Volumes/public https://example.com/a,/Users/public ' +
+          'https://example.com/a(/Volumes/public) https://example.com/a[/Users/public] ' +
+          'HTTPS://example.com/Volumes/docs ' +
+          'module.dir/Volumes/ExternalSSD/private.cpp',
+      ),
+    ).toBe(
+      'https://example.com/Volumes/docs See (https://example.com/Volumes/docs) ' +
+        '[docs](https://example.com/Users/guide) url=https://example.com/Volumes/docs ' +
+        'https://example.com/docs;/Volumes/public https://example.com/a,/Users/public ' +
+        'https://example.com/a(/Volumes/public) https://example.com/a[/Users/public] ' +
+        'HTTPS://example.com/Volumes/docs ' +
+        'module.dir/workspace/private.cpp',
+    );
+  });
+
+  it('applies private replacements inside preserved web URLs', () => {
+    const root = '/Volumes/ExternalSSD/results/private-run';
+    expect(
+      sanitizeBenchmarkText(`https://example.test/open?path=${root}/proof/settings.png`, [
+        [root, 'results/luna-android/javascript-stim'],
+        ['private-run', 'javascript-stim'],
+      ]),
+    ).toBe('https://example.test/open?path=results/luna-android/javascript-stim/proof/settings.png');
+  });
+
+  it('redacts ADB public keys from emulator logs and boot arguments', () => {
+    const key = 'A'.repeat(96);
+    expect(
+      sanitizeBenchmarkText(`Sending adb public key [${key} developer@host] androidboot.qemu.adb.pubkey=${key}`),
+    ).toBe('Sending adb public key [<adb-public-key>] androidboot.qemu.adb.pubkey=<adb-public-key>');
+  });
+
   it('makes Xcode, system-tool, and root-relative build paths portable', () => {
     expect(
       sanitizeBenchmarkText(
@@ -591,7 +634,7 @@ describe('benchmark viewer export', () => {
     mkdirSync(join(runDir, 'proof'), { recursive: true });
     const dispatchAt = '2026-09-04T12:00:00.000Z';
     const commandEvents = [
-      ['open', 1, 2, 'agent-device open com.example.app', 'opened'],
+      ['open', 1, 2, 'agent-device open com.example.app', 'emulator emulator-5554'],
       ['record-start', 3, 4, 'agent-device record start proof/session.mp4', 'recording'],
       ['wait', 5, 6, 'agent-device wait text "Keep saved trail maps available offline"', 'found'],
       ['screenshot', 7, 8, 'agent-device screenshot /tmp/settings.png', 'saved'],
@@ -703,7 +746,29 @@ describe('benchmark viewer export', () => {
     };
     writeFileSync(recordPath, JSON.stringify(record));
 
-    expect(exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'public-proof')).runs).toHaveLength(1);
+    const payload = exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'public-proof'));
+    expect(payload.runs).toHaveLength(1);
+    expect(payload.runs[0].commands[0].output).toBe('emulator <simulator-udid>');
+
+    const completeRecording = readFileSync(recordingPath);
+    const shortRecording = Buffer.from(completeRecording);
+    const movieHeader = shortRecording.indexOf(Buffer.from('mvhd'));
+    const movieHeaderVersion = shortRecording[movieHeader + 4];
+    const timescaleOffset = movieHeaderVersion === 1 ? movieHeader + 24 : movieHeader + 16;
+    const durationOffset = movieHeaderVersion === 1 ? movieHeader + 28 : movieHeader + 20;
+    const timescale = shortRecording.readUInt32BE(timescaleOffset);
+    if (movieHeaderVersion === 1) shortRecording.writeBigUInt64BE(BigInt(timescale), durationOffset);
+    else shortRecording.writeUInt32BE(timescale, durationOffset);
+    writeFileSync(recordingPath, shortRecording);
+    record.evidenceSha256.recording = sha256(recordingPath);
+    writeFileSync(recordPath, JSON.stringify(record));
+    expect(() => exportBenchmark(stageDir, join(root, 'benchmark.json'), join(root, 'public-proof'))).toThrow(
+      'no valid benchmark runs found',
+    );
+    writeFileSync(recordingPath, completeRecording);
+    record.evidenceSha256.recording = sha256(recordingPath);
+    writeFileSync(recordPath, JSON.stringify(record));
+
     for (const mutate of [
       () => writeFileSync(bundlePath, 'tampered'),
       () => writeFileSync(join(runDir, 'avds-before.json'), JSON.stringify(['Trailhead_private-run-id'])),

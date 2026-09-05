@@ -48,7 +48,14 @@ import { acquireBuildSlot, releaseBuildSlot, type BuildSlotHandle } from '../eng
 import { createNdjsonWriter } from '../ndjson.ts';
 import { isPidAlive, resolveProjectMetro } from '../metro.ts';
 import { emulatorLogFile, workspaceDir, workspaceLogsDir } from '../paths.ts';
-import { detectAndroidPackage, detectBundleId, detectIsExpo, findProjectRoot, projectShortcut } from '../project.ts';
+import {
+  appProjectProblem,
+  detectAndroidPackage,
+  detectBundleId,
+  detectIsExpo,
+  findProjectRoot,
+  projectShortcut,
+} from '../project.ts';
 import {
   devClientScheme as configuredDevClientScheme,
   ensureWorkspaceStorageSafely,
@@ -111,9 +118,11 @@ import {
   verifyLaunch,
 } from '../engine/app-install.ts';
 import {
+  androidDeviceAbi,
   androidHome,
   androidPoolCandidates,
   androidPoolNoCandidatesRefusal,
+  androidSystemImageAbi,
   memoizeEmulatorProbe,
   emulatorDiskSpaceRemedy,
   emulatorFailureRemedy,
@@ -790,6 +799,7 @@ interface RunAndroidOptions {
   onLeaseSignal?: typeof releaseLeaseOnSignal;
   listDevices?: typeof listAdbDevices;
   deviceModel?: typeof physicalDeviceModel;
+  deviceAbi?: typeof androidDeviceAbi;
   isEmulatorDevice?: typeof probeEmulatorSerial;
   readApkPackage?: (apkPath: string | null) => string | null;
   remoteDevice?: RemoteDeviceBackend | null;
@@ -1558,6 +1568,34 @@ async function pooledAndroidDevice({
   };
 }
 
+function androidBuildOptions({
+  release,
+  physical,
+  device,
+  variant,
+  deviceAbi,
+}: {
+  release: boolean;
+  physical: boolean;
+  device: OwnedDeviceRecord;
+  variant: string | null;
+  deviceAbi: typeof androidDeviceAbi;
+}) {
+  let abi: string | null = null;
+  if (!release && physical && device.serial) abi = deviceAbi(device.serial);
+  if (!release && !physical) abi = androidSystemImageAbi(device.systemImage);
+
+  const runOptions: { variant?: string; abi?: string } = {};
+  if (variant) runOptions.variant = variant;
+  if (abi) runOptions.abi = abi;
+
+  return {
+    abi,
+    runOptions,
+    remoteRunOptions: Object.keys(runOptions).length === 0 ? null : runOptions,
+  };
+}
+
 function resolveRunAndroidOptions(
   {
     root,
@@ -1583,6 +1621,7 @@ function resolveRunAndroidOptions(
     onLeaseSignal = releaseLeaseOnSignal,
     listDevices = listAdbDevices,
     deviceModel = physicalDeviceModel,
+    deviceAbi = androidDeviceAbi,
     isEmulatorDevice = probeEmulatorSerial,
     readApkPackage = (apkPath: string | null) => apkPackage(dumpApkManifest(apkPath)),
     getLimits = getConcurrencyLimits,
@@ -1659,6 +1698,7 @@ function resolveRunAndroidOptions(
     onLeaseSignal,
     listDevices,
     deviceModel,
+    deviceAbi,
     isEmulatorDevice,
     readApkPackage,
     getLimits,
@@ -1737,6 +1777,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     onLeaseSignal,
     listDevices,
     deviceModel,
+    deviceAbi,
     isEmulatorDevice,
     readApkPackage,
     getLimits,
@@ -1790,6 +1831,14 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   } = resolveRunAndroidOptions(options);
   const started = now();
   const startedAt = new Date(started).toISOString();
+  const projectProblem = appProjectProblem(root);
+  if (projectProblem) {
+    const { message, remedy } = projectProblem;
+    out(phaseLine('error', chalk.red(`STIM_NO_PROJECT: ${message}`)));
+    out(phaseLine('remedy', remedy));
+    if (json) emit(JSON.stringify({ code: 'STIM_NO_PROJECT', message, remedy }));
+    return { ok: false, error: { code: 'STIM_NO_PROJECT', message, remedy } };
+  }
   try {
     await ensureStorage(root, { note: out });
   } catch (error) {
@@ -2204,6 +2253,17 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   record.avdName = device.avdName ?? null;
   record.deviceName = device.deviceName ?? device.avdName ?? null;
   record.systemImage = device.systemImage;
+  const {
+    abi: buildAbi,
+    runOptions: buildRunOptions,
+    remoteRunOptions,
+  } = androidBuildOptions({
+    release,
+    physical,
+    device,
+    variant,
+    deviceAbi,
+  });
 
   let hash = '';
   let providerUpload: Promise<ProviderCallResult<void>> | null = null;
@@ -2243,7 +2303,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       return false;
     }
     record.fingerprint = hash;
-    cacheKey = buildCacheKey(PLATFORM, hash, variant ? { variant } : {});
+    cacheKey = buildCacheKey(PLATFORM, hash, buildRunOptions);
     stats.setCacheKey(cacheKey);
     record.cacheKey = cacheKey;
     storeHash = hash;
@@ -2300,6 +2360,9 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     let uploadPending: Promise<RemoteUploadLike> | null = null;
 
     async function resolveRemoteArtifact(): Promise<void> {
+      // Expo buildCacheProvider run options cannot key Android ABIs, so targeted APKs are unsafe in this tier.
+      if (buildAbi) return;
+
       if (!apkPath) {
         const loaded: LoadProjectProviderResult = await loadProvider(root, { isExpo });
         if (loaded?.unavailable) {
@@ -2323,7 +2386,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
           platform: PLATFORM,
           projectRoot: root,
           fingerprintHash: hash,
-          runOptions: variant ? { variant } : null,
+          runOptions: remoteRunOptions,
         });
         if (hit?.appPath) {
           let stored = null;
@@ -2529,7 +2592,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
             if (after?.moved) {
               storeHash = after.hash;
               storeSources = after.sources;
-              storeKey = buildCacheKey(PLATFORM, after.hash, variant ? { variant } : {});
+              storeKey = buildCacheKey(PLATFORM, after.hash, buildRunOptions);
               record.fingerprint = storeHash;
               record.cacheKey = storeKey;
               phase('fingerprint', chalk.dim(`${shortHash(hash)} -> ${shortHash(storeHash)} (after prebuild)`));
@@ -2549,7 +2612,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
           if (!apkPath) {
             phase('build', `compiling ${variant || 'debug'} with Gradle`);
             const built: BuildAndroidResultLike = await build(
-              { root, logWriter: writer, variant },
+              { root, logWriter: writer, variant, abi: buildAbi },
               { estimateMs: estimates().coldBuildMs },
             );
             if (built.failed) {
@@ -2597,7 +2660,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
               if (afterBuild.moved) {
                 storeHash = afterBuild.hash;
                 storeSources = afterBuild.sources;
-                storeKey = buildCacheKey(PLATFORM, afterBuild.hash, variant ? { variant } : {});
+                storeKey = buildCacheKey(PLATFORM, afterBuild.hash, buildRunOptions);
                 record.fingerprint = storeHash;
                 record.cacheKey = storeKey;
                 phase(
@@ -2635,7 +2698,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
                   projectRoot: root,
                   fingerprintHash: storeHash,
                   buildPath: apkPath!,
-                  runOptions: variant ? { variant } : null,
+                  runOptions: remoteRunOptions,
                 });
               }
             }
