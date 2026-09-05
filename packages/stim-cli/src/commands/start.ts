@@ -157,7 +157,7 @@ export function startFacts({
   };
 }
 
-export function startError({
+function startError({
   code,
   message,
   remedy = null,
