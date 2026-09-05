@@ -30,6 +30,10 @@ commit, runner version, model, reasoning effort, service tier, `agent-device`
 version and executable hash, Node.js, host machine, and platform toolchain
 before preparing the block. iOS also pins CocoaPods, Xcode, iPhone model, and
 runtime. Android pins the SDK tools, emulator, adb, and system-image package.
+The coordinator gives timed shells an isolated login profile, resolves `stim`
+through that same shell before dispatch, and records its version plus executable
+and CLI hashes. A mismatch refuses dispatch; checking only the coordinator's
+own PATH is insufficient.
 
 Preparation runs outside the timer. On iOS it creates one Stim-owned simulator,
 warms the fixed fixture, removes its seed worktree, and verifies that cleanup
@@ -44,6 +48,13 @@ state, required disk space, no benchmark-owned process from an earlier run,
 and no unexpected listener on Metro ports 8081 through 8090. Wait for a
 one-minute load average at or below 3.0 for two consecutive 15-second samples.
 Runs are sequential.
+
+Each machine has targets for every platform, change kind, and arm. The
+screen-ready target is a visible performance signal, not a validity gate,
+because agent reasoning time is part of what the benchmark measures. A Stim
+platform-command target is a validity gate for abnormal host/build work, and a
+larger run timeout terminates a runaway attempt. This separates slow model
+behavior from a missing or ineffective cache.
 
 Give the campaign its own `AGENT_DEVICE_STATE_DIR`, separate from the
 operator's normal sessions, and set `AGENT_DEVICE_SESSION` to the exact run id.
@@ -107,6 +118,9 @@ pinned system image. The control must not inspect that home or use Stim; it
 creates a new benchmark-named device with the same platform configuration.
 Android control uses the same `avdmanager` default profile, 8 GiB data
 partition, system image, and default Quick Boot policy as Stim.
+Installing dependencies inside the timed interval, a failed `guide agent` or
+`worktree warm`, and an Android native build without Stim's `--build-cache`
+evidence invalidate the attempt.
 
 ## Settings readiness proof
 
@@ -168,6 +182,9 @@ of the successful, validated `agent-device screenshot` command. Report
 `dispatchToAppAliveSeconds` separately. Also retain command count, raw token
 fields, worktree and simulator evidence, cache and adoption/build output, and
 invalid-attempt reasons.
+The run record also stores its selected machine target, whether screen-ready
+met that target, the longest Stim platform-command duration, timeout status,
+and the timed shell's Stim provenance.
 
 The coordinator timestamps every runner event and reconstructs every command's
 start, end, duration, exit status, and output. The website's interactive
