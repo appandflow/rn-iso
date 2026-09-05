@@ -50,7 +50,7 @@ that overlap registered nested worktrees or have symlink ancestors.
 
 Both operations copy safe gitignored paths, such as `node_modules`, `ios/Pods`, and
 native build output, `.env`, and local configuration files. APFS clone copies remain space-efficient on one volume.
-Stim reports when it must make a normal byte copy.
+If cloning is unavailable, Stim makes a normal byte copy.
 
 Stim excludes:
 

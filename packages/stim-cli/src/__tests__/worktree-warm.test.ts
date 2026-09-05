@@ -406,6 +406,26 @@ test('missing-only copy preserves executable file modes', () => {
   expect(lstatSync(join(target, 'node_modules/pkg/bin')).mode & 0o777).toBe(0o755);
 });
 
+test('warm copies read-only directories, preserves their modes, and removes staging', async () => {
+  write(root, 'node_modules/pkg/index.js', 'read-only package');
+  write(root, 'node_modules/pkg/.DerivedData/large', 'excluded');
+  chmodSync(join(root, 'node_modules/pkg'), 0o555);
+  try {
+    const result = await runWarm(target);
+    expect(result.code).toBe(0);
+    expect(readFileSync(join(target, 'node_modules/pkg/index.js'), 'utf-8')).toBe('read-only package');
+    expect(lstatSync(join(target, 'node_modules/pkg')).mode & 0o777).toBe(0o555);
+    expect(existsSync(join(target, 'node_modules/pkg/.DerivedData'))).toBe(false);
+    expect(readdirSync(target).some((name) => name.startsWith('.stim-warm-'))).toBe(false);
+  } finally {
+    chmodSync(join(root, 'node_modules/pkg'), 0o755);
+    for (const entry of readdirSync(target)) {
+      const pkg = join(target, entry, entry.startsWith('.stim-warm-') ? 'entry/pkg' : 'pkg');
+      if (existsSync(pkg)) chmodSync(pkg, 0o755);
+    }
+  }
+});
+
 test('missing-only copy does not restore a deleted tracked file from ignored main state', () => {
   write(target, '.env', 'tracked linked env');
   git(target, 'add', '-f', '.env');

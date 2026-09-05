@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   constants,
   copyFileSync,
   existsSync,
@@ -333,12 +334,26 @@ function publishMissingEntry(from: string, to: string): void {
     copyFileSync(from, to, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE);
     utimesSync(to, stat.atime, stat.mtime);
   } else if (stat.isDirectory()) {
-    mkdirSync(to, { mode: stat.mode });
-    for (const name of readdirSync(from)) publishMissingEntry(join(from, name), join(to, name));
+    mkdirSync(to, { mode: stat.mode | 0o700 });
+    for (const name of readdirSync(from)) {
+      if (!CARRY_SKIP_BASENAMES.has(name)) publishMissingEntry(join(from, name), join(to, name));
+    }
     utimesSync(to, stat.atime, stat.mtime);
+    chmodSync(to, stat.mode);
   } else {
     throw new Error(`Unsupported ignored entry: ${from}`);
   }
+}
+
+function removeStagedEntry(path: string): void {
+  const stat = lstatSync(path, { throwIfNoEntry: false });
+  if (stat?.isDirectory()) {
+    chmodSync(path, stat.mode | 0o700);
+    for (const entry of readdirSync(path, { withFileTypes: true })) {
+      if (entry.isDirectory()) removeStagedEntry(join(path, entry.name));
+    }
+  }
+  rmSync(path, { recursive: true, force: true });
 }
 
 export function cloneIgnoredEntries({
@@ -382,11 +397,11 @@ export function cloneIgnoredEntries({
       try {
         getExecutor().runFile('cp', ['-Rc', from, destination]);
       } catch {
-        if (staging) rmSync(destination, { recursive: true, force: true });
+        if (staging) removeStagedEntry(destination);
         getExecutor().runFile('cp', ['-R', from, destination]);
         cloned = false;
       }
-      if (isDir) pruneCarriedArtifacts(destination);
+      if (isDir && !staging) pruneCarriedArtifacts(destination);
       if (staging) {
         const changed = missingDestinationReason(target, rel);
         if (changed) {
@@ -400,7 +415,7 @@ export function cloneIgnoredEntries({
     } catch (e) {
       failed.push({ file: rel, error: String((e as Error)?.message || e) });
     } finally {
-      if (staging) rmSync(staging, { recursive: true, force: true });
+      if (staging) removeStagedEntry(staging);
     }
   }
   return { copied, skipped, failed, cloned };
