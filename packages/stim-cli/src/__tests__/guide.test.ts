@@ -200,6 +200,14 @@ test('the facts topic says Android artifacts use the post-Gradle fingerprint', (
   expect(body).toMatch(/fingerprint and cacheKey are null/);
 });
 
+test('the guides explain unavailable iOS fingerprints after native mutations', () => {
+  expect(renderTopic('agent')).toContain('installs the build without caching it');
+  expect(renderTopic('facts')).toMatch(/iOS\s+fingerprint after prebuild or pod install/);
+  const lifecycle = renderTopic('lifecycle');
+  expect(lifecycle).toContain('skips local storage and remote uploads');
+  expect(lifecycle).toContain('cacheKey are null in the result and lastBuild');
+});
+
 test('the guides document Android target-ABI builds and universal fallbacks', () => {
   expect(renderTopic('facts')).toMatch(/debug-sim-arm64-v8a/);
   expect(renderTopic('lifecycle')).toMatch(/-PreactNativeArchitectures=<target ABI>/);

@@ -3210,6 +3210,63 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
     return async () => ({ hash: call++ === 0 ? COLD : WARM, sources: [{ type: 'dir', filePath: 'ios' }] });
   }
 
+  test.each([
+    ['prebuild', 'throws'],
+    ['prebuild', 'returns no hash'],
+    ['pod install', 'throws'],
+    ['pod install', 'returns no hash'],
+  ])('does not cache when the fingerprint after %s %s', async (mutation, failure) => {
+    reserve();
+    let fingerprintCalls = 0;
+    const configuredUploads: unknown[] = [];
+    const { logs, calls, exitCode, stderr, appPath } = await run(
+      { json: true },
+      {
+        detectIsExpo: () => true,
+        needsPrebuild: () => mutation === 'prebuild',
+        readPodState: () =>
+          mutation === 'pod install'
+            ? { hasPodfile: true, lockText: 'A', manifestText: 'B' }
+            : { hasPodfile: false, lockText: null, manifestText: null },
+        fingerprintProject: async () => {
+          if (fingerprintCalls++ === 0) return { hash: COLD, sources: [] };
+          if (failure === 'throws') throw new Error('unable to read updated native inputs');
+          return { hash: '', sources: [] };
+        },
+        resolveCacheProviderConfig: () => ({ provider: './cache.cjs', options: {}, baseDir: root }),
+        loadCacheProvider: async () => ({
+          name: './cache.cjs',
+          provider: { builds: { resolve: () => null, store: (input: unknown) => configuredUploads.push(input) } },
+        }),
+        loadProjectProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
+      },
+    );
+
+    expect(fingerprintCalls).toBe(2);
+    expect(exitCode).toBeNull();
+    expect(calls.args.installIosApp.appPath).toBe(appPath);
+    expect(calls.order.includes('releaseBuildLock')).toBe(true);
+    expect(calls.order.includes('storeBuild')).toBe(false);
+    expect(configuredUploads).toEqual([]);
+    expect(calls.order.includes('uploadRemote')).toBe(false);
+    expect(calls.order.filter((call) => call === 'resolveBuild')).toHaveLength(1);
+    const facts = parseFirst(logs);
+    expect(facts.fingerprint).toBeNull();
+    expect(facts.cacheKey).toBeNull();
+    const state = readWorkspaceState(root) as WorkspaceState;
+    expect(state.lastBuild?.fingerprint).toBeNull();
+    expect(state.lastBuild?.cacheKey).toBeNull();
+    expect(state.launches?.ios).toEqual({
+      appId: 'com.example.app',
+      deviceId: UDID,
+      metroPort: 8082,
+      release: false,
+      deepLinkUrl: null,
+      launchedAt: expect.any(String),
+    });
+    expect(stderr).toContain(`unavailable after ${mutation}; the build will be installed but not cached`);
+  });
+
   test('the store key is the key the NEXT run looks up across a prebuild boundary', async () => {
     reserve();
     const lookedUp: string[] = [];
@@ -4081,6 +4138,26 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     expect(existsSync(join(root, 'build', 'Fixture.app', 'ip.txt'))).toBe(false);
     const installed = calls.args.installIosDeviceApp as { appPath: string };
     expect(existsSync(installed.appPath)).toBe(false);
+  });
+
+  test('an unavailable fingerprint after pods still seals and installs the device app', async () => {
+    reserve();
+    let fingerprintCalls = 0;
+    const { calls, exitCode, logs } = await run(
+      { device: true, json: true },
+      {
+        ...connected(),
+        readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'B' }),
+        fingerprintProject: async () => (fingerprintCalls++ === 0 ? { hash: FINGERPRINT, sources: [] } : null),
+      },
+    );
+    expect(exitCode).toBeNull();
+    expect(calls.order.includes('storeBuild')).toBe(false);
+    expect(calls.order.includes('sealAppForDevice')).toBe(true);
+    expect(calls.order.includes('installIosDeviceApp')).toBe(true);
+    expect(calls.order.indexOf('sealAppForDevice')).toBeLessThan(calls.order.indexOf('installIosDeviceApp'));
+    expect(parseFirst(logs).fingerprint).toBeNull();
+    expect(parseFirst(logs).launched).toBe(true);
   });
 
   test('a malformed ios.lanHost refuses the run before the phone is looked for', async () => {

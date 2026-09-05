@@ -63,6 +63,9 @@ RULES DURING THE LOOP
   run stim start and retry.
 - Run ios or android again after a native input changes. A JavaScript-only
   change does not need one.
+- If fingerprinting fails after native inputs change during the run, Stim
+  installs the build without caching it. A null fingerprint or cacheKey is
+  unavailable cache information, not an install failure.
 - Android Debug builds target the owned emulator system-image ABI or the
   physical device's primary ABI. Unknown targets and Release builds stay
   universal.
@@ -210,9 +213,10 @@ line by design (see \`guide logs\`), not this single-payload contract.
                   beside it. Android also fingerprints after Gradle because
                   Gradle plugins can rewrite native inputs while they build;
                   its artifact is stored only under that post-build hash. A
-                  stable second fingerprint prints no shift line. If that
-                  fingerprint cannot be computed, the build is installed but
-                  not cached, and fingerprint and cacheKey are null
+                  stable second fingerprint prints no shift line. If the iOS
+                  fingerprint after prebuild or pod install, or the Android
+                  fingerprint after Gradle, cannot be computed, the build is
+                  installed but not cached, and fingerprint and cacheKey are null
   configuration   the Xcode configuration that was built ("Release" from
                   --configuration or the ios.configuration setting); null for
                   the default Debug
@@ -2037,6 +2041,10 @@ THE BUILD CACHE HAS THREE LEVELS
   post-prebuild one, so re-resolving under the moved key installs it instead
   of compiling beside it. No second line means nothing was found there and the
   run compiles.
+
+  If the iOS fingerprint after prebuild or pod install is unavailable, Stim
+  installs the build but skips local storage and remote uploads. fingerprint
+  and cacheKey are null in the result and lastBuild; the old key is not reused.
 
 WHAT MAKES THE CACHE ACTUALLY HIT: .FINGERPRINTIGNORE
   Every entry is keyed on what the tree hashes, so two workspaces share an
