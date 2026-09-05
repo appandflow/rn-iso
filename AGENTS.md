@@ -42,7 +42,11 @@ pnpm test
 ```
 
 Use only the checks that apply while iterating. Run all defined checks before a
-commit. Run `pnpm run test:e2e` when a change affects an end-to-end workflow.
+commit. The only exception is the candidate version commit in the explicitly
+authorized expedited RC lane documented in [`RELEASE.md`](./RELEASE.md); that
+commit follows the lane's short preflight, tarball inspection, and exact-commit
+CI requirements. Run `pnpm run test:e2e` when a change affects an end-to-end
+workflow.
 
 ## Tests and abstractions
 
