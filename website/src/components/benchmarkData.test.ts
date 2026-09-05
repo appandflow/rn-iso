@@ -121,6 +121,23 @@ describe('benchmark URL selection', () => {
 });
 
 describe('benchmarkOverview', () => {
+  it('links a platform-filtered overview to the matching run in the full catalog', () => {
+    const android = {
+      stage: 'luna-android',
+      title: 'Luna Android',
+      runs: [{ id: 'javascript-stim', arm: 'stim', variant: 'javascript', valid: true, settingsReadySeconds: 161 }],
+    } as BenchmarkData;
+    const overview = benchmarkOverview([android], 'javascript');
+    const href = overview.rows[0]?.arms[0]?.href;
+    expect(href).toBeTruthy();
+    const url = new URL(href!, 'https://example.test');
+
+    expect(benchmarkSelectionFromSearch(url.search, [...navigationBenchmarks, android])).toEqual({
+      stage: 'luna-android',
+      runId: 'javascript-stim',
+    });
+  });
+
   it('builds paired rows with shared scaling and exact audit links', () => {
     const overview = benchmarkOverview(
       [
@@ -146,7 +163,11 @@ describe('benchmarkOverview', () => {
 
     expect(overview.maxSeconds).toBe(200);
     expect(overview.rows[0]?.arms.map(({ arm, widthPercent, href }) => ({ arm, widthPercent, href }))).toEqual([
-      { arm: 'stim', widthPercent: 25, href: '/benchmarks/details#audit-title' },
+      {
+        arm: 'stim',
+        widthPercent: 25,
+        href: '/benchmarks/details?benchmark=first&run=first-stim#audit-title',
+      },
       {
         arm: 'control',
         widthPercent: 50,
