@@ -1,0 +1,1832 @@
+{
+  "schemaVersion": 1,
+  "stage": "opus-android",
+  "title": "Opus Android",
+  "suite": "readiness",
+  "platform": "android",
+  "protocolVersion": 4,
+  "recordedOn": "2026-09-04",
+  "primaryMetric": "Dispatch to validated Settings screenshot",
+  "pricing": null,
+  "environment": {
+    "machine": {
+      "model": "Mac mini",
+      "chip": "Apple M4 (10-core)",
+      "memory": "16 GB"
+    },
+    "macos": "macOS 26.5.2 (25F84)",
+    "xcode": "Android SDK 20.0 / Emulator 36.4.9 (build_id 14788078) (CL:N/A) / adb 36.0.2-14143358",
+    "node": "Node 26.7.0",
+    "simulator": "emu64a16k / Android-36 / system-images;android-36;google_apis_playstore_ps16k;arm64-v8a"
+  },
+  "runs": [
+    {
+      "id": "javascript-stim",
+      "model": "opus",
+      "platform": "android",
+      "variant": "javascript",
+      "arm": "stim",
+      "valid": true,
+      "invalidReasons": [],
+      "settingsReadySeconds": 185.289,
+      "appAliveSeconds": 125.407,
+      "diagnosisSeconds": null,
+      "diagnosisCommandCount": null,
+      "launchCrashAudit": null,
+      "diagnosisUsage": null,
+      "estimatedDiagnosisCostUsd": null,
+      "totalSeconds": 208.191,
+      "commandCount": 19,
+      "usage": {
+        "input_tokens": 615023,
+        "cached_input_tokens": 593877,
+        "cache_creation_input_tokens": 21098,
+        "output_tokens": 5410,
+        "reasoning_output_tokens": 276
+      },
+      "estimatedTokenCostUsd": 0.6457134999999999,
+      "summary": "Created an isolated worktree, worked on the JavaScript change, and ran Stim's Android workflow. It reached Settings and captured valid agent-device proof.",
+      "messages": [
+        {
+          "id": "b21d0621-cd1b-4993-a7cf-a292aade833f-0",
+          "atSeconds": 47.723,
+          "text": "I'll start by loading the Stim workflow guide."
+        },
+        {
+          "id": "6d90ab3a-dc27-4392-b36d-902e6168d946-0",
+          "atSeconds": 78.129,
+          "text": "Worktree ready. Now let me find the offline-map subtitle."
+        },
+        {
+          "id": "6e916d79-05f8-440a-86ab-be48e16d36e0-0",
+          "atSeconds": 83.781,
+          "text": "Now start Metro while I make the edit."
+        },
+        {
+          "id": "5ba22ebe-b417-45c9-8ba1-ea9dc593c070-0",
+          "atSeconds": 138.314,
+          "text": "App launched on `<simulator-udid>`. Now starting the agent-device session."
+        },
+        {
+          "id": "d8fcdd81-e9a9-4ce2-9244-64c151cefc94-0",
+          "atSeconds": 147.934,
+          "text": "Recording started. Now navigating to Settings."
+        },
+        {
+          "id": "534a281b-0688-414e-885e-2bd94466e4c1-0",
+          "atSeconds": 153.246,
+          "text": "The launcher is showing. Let me bring the app to the foreground."
+        },
+        {
+          "id": "faa1f024-1508-4c5e-ab55-89cf280bacde-0",
+          "atSeconds": 173.277,
+          "text": "Snapshot works now. Navigating to Settings."
+        },
+        {
+          "id": "ec5fd1d6-ed01-41e6-b821-3e1e8fb41677-0",
+          "atSeconds": 177.94,
+          "text": "The Settings screen shows the updated subtitle. Running the proof steps."
+        },
+        {
+          "id": "6a8b778f-aa05-47af-ab5a-77e4a8959dd1-0",
+          "atSeconds": 199.241,
+          "text": "Let me verify the saved screenshot shows the change."
+        },
+        {
+          "id": "b2e81db3-e7ab-4571-9968-763037beb6e2-0",
+          "atSeconds": 207.967,
+          "text": "All eight proof commands succeeded in order. The Settings screen shows \"Offline maps — Keep saved trail maps available offline\".\n\n- **Edit:** `app/(tabs)/settings.tsx:112` — subtitle changed to \"Keep saved trail maps available offline\"\n- **Run worktree:** `worktree/bench+javascript-stim`\n- **Device:** `<simulator-udid>` (stim-4f2128b9-…), Metro on port 8082, cache hit, launch verified\n- **Screenshot:** `tmp/javascript-stim-settings.png` → copied to `…/results/opus-android/javascript-stim/proof/settings.png`\n- **Recording:** `tmp/javascript-stim-session.mp4` → copied to `…/proof/session.mp4`\n\nTwo notes: the first `open` returned a snapshot-helper instrumentation failure and landed on the launcher, so I re-ran `open` and retried `snapshot -i`, which then worked — the session itself never refused to open, and I did not touch the daemon. Along the way I also wrote one extra diagnostic screenshot at `tmp/javascript-stim-check1.png` to confirm the app was foregrounded; that path was outside the list you gave me. No Expo onboarding appeared. Metro and the app are still running for your verification."
+        }
+      ],
+      "commands": [
+        {
+          "id": "toolu_018eiznVJXJM3qcgBKTqDtKK",
+          "startSeconds": 47.957,
+          "endSeconds": 48.61,
+          "command": "stim guide agent",
+          "output": "Commands use `stim`. If it is not installed globally, replace `stim` with `npx stim-cli`.\n\nAGENT WORKFLOW\n\nUse Stim to run React Native and Expo apps without sharing a Metro port or\ndevice with another workspace. Prefer plain output: it streams each phase and\nends with the facts the next step needs. Use --json only when a script must\nparse a stable payload.\n\nNORMAL WORKFLOW\n\nWork in the current checkout by default. When the task needs another branch or\nan isolated environment, create a worktree and carry its dependencies and\nnative outputs.\n\nBefore native worktree work, run doctor for the platform in scope. It checks\nthe main checkout from a linked worktree. Fix relevant findings and inspect the\nupstream gap.\n\n  stim doctor --platform ios          # or: --platform android\n\n  # In the main checkout, seed the shared build caches when more native\n  # worktrees are coming. Skip this for one-off or JavaScript-only work.\n  stim start\n  stim ios                             # or: stim android\n  stim stop\n\n  # Branches from HEAD. --carry-ignored carries installed dependencies and\n  # native output. Pass it on the first creation, never on a retry. The command\n  # prints the new absolute path.\n  stim worktree create <name> --carry-ignored\n  cd <printed-path>\n\n  stim start\n  stim ios                             # or: stim android\n  stim logs --errors\n\n  # JavaScript and TypeScript edits use Fast Refresh.\n  stim logs --since 30s --level error\n\n  stim stop\n  stim worktree remove\n\nRULES DURING THE LOOP\n\n- Run start before a debug ios or android build. If it returns STIM_NO_METRO,\n  run stim start and retry.\n- Run ios or android again after a native input changes. A JavaScript-only\n  change does not need one.\n- A cold native build can outlive a shell timeout. Run the same command again:\n  the second call joins the active build or returns its result.\n- ios and android install the app, launch it, and check readiness. Trust the\n  exact device, app, Metro, and launch facts in the final summary. Use the full\n  reported device ID. Never assume a simulator named booted belongs to this\n  workspace.\n- After each ios or android run, give the user one compact result: exact device,\n  app id, launch state, cache result, total duration, and whether stim logs\n  --errors passed. Include a remedy only when action remains. Do not repeat the\n  phase transcript.\n- An OK summary with no launch qualifier proves the launch. \"bundle requested,\n  still building\" means Metro has not finished; wait and query the logs. For\n  launch UNVERIFIED, follow the printed remedy before claiming success. JSON\n  reports these as true, \"bundling\", and \"unverified\" in launched.\n- Exit code 0 from logs --errors is the pass condition. Human output can show\n  \"No matching log records\" on stderr. JSON mode prints zero bytes when no\n  records match. Do not read the NDJSON files directly.\n- Use stim status when resuming a workspace or recovering missing device,\n  port, server, or build facts. A normal start and platform run already print\n  them. Use stim doctor when a build is unexpectedly slow or the environment\n  looks incomplete.\n\nOWNERSHIP AND DELETION\n\nStim creates, boots, and deletes only devices it created. Owned simulators use\nthe stim-<label> (<model> <runtime>) name. Never point Stim at a user-created\nemulator or simulator.\n\nworktree remove parks the workspace's simulator for later adoption. A parked\nsimulator is Stim-owned: never delete one by hand. gc --delete clears verified\nentries and keeps failures; see guide lifecycle. First launch on a physical\niPhone can need the one-time taps named by the remedy.\n\nstim android --device [serial] and stim ios --device [udid] install on a\nconnected physical device. Stim never creates, boots, or deletes hardware and\nrecords nothing about it, so stop and gc leave it alone.\n\nA --device run leases that device for the run. stim device lock ios --for 10m\nholds it across runs; stim device unlock gives it back. Never delete another\nworkspace's lease file under ~/.stim/device-locks; gc --delete removes expired\nones.\n\nTreat a refusal as an ownership or state mismatch: read its code and remedy.\nNever reach for --force first.\n\nAsk the user before these actions:\n\n- worktree remove, because it deletes the worktree, its Stim-created branch\n  when it has no unique commits, and gives up its owned device.\n- worktree remove --force, because it also discards uncommitted and untracked\n  files.\n- gc --delete, because it deletes orphaned resources. gc --delete --cache all\n  empties the shared build caches instead; it inspects nothing else.\n- stop when the workspace owns an EAS session, because it irreversibly ends\n  that remote session. For a local device, stop shuts it down but does not\n  delete it. An explicit stop shuts down a Stim-owned simulator even when\n  another process uses it. It never shuts down an unowned simulator.\n\nSANDBOXES\n\nAn agent harness that sandboxes shell commands usually permits writes inside\nthe project and little else. Stim also needs writes to STIM_HOME (~/.stim by\ndefault), simulator service access, and local access to the adb server. When\nthose sit outside the harness allowlist, the failure looks like an unwritable\ndirectory or unavailable device service rather than a broken machine. Decide\nat the start of a session whether to run Stim outside the sandbox or ask the\nuser to allow those operations. guide errors lists the exact requirements.\n\nLOAD ADVANCED GUIDANCE WHEN NEEDED\n\n  stim guide             # list topics\n  stim guide lifecycle   # full flow, flags, worktrees, builds, and capacity\n  stim guide facts       # JSON payload fields\n  stim guide metro       # supervisor, custom Metro, tunnels, and remote devices\n  stim guide logs        # filters, record shape, and capture limits\n  stim guide errors      # error codes and remedies\n  stim guide cleanup     # destructive behavior and disk cleanup\n  stim guide settings    # configuration files and supported keys\n\nRead the relevant topic before release configurations or Android variants;\nremote devices; custom Metro processes or tunnels; cache misses, bypasses, or\nconcurrent builds; capacity limits; cache statistics from stim stats; worktree\ncarry-over; fingerprint exclusions; gc; --force; cleanup failures; or\nunfamiliar states and error codes. Ordinary stim stop and an authorized clean\nstim worktree remove do not need the cleanup guide.",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01V1guSpsy5s2aQK5k9WAv9E",
+          "startSeconds": 51.141,
+          "endSeconds": 76.596,
+          "command": "stim worktree create bench/javascript-stim --dir worktree/project --carry-ignored",
+          "output": "  branch      worktree-bench/javascript-stim from HEAD (63fe92c)\n  carry       node_modules, Pods, native build output (APFS clone)\n  ready       worktree/bench+javascript-stim\nworktree/bench+javascript-stim",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01WKQEPA9aM6yJ1ntmj772VK",
+          "startSeconds": 79.497,
+          "endSeconds": 79.552,
+          "command": "grep -rn \"Keep map tiles for saved trails on device\" worktree/bench+javascript-stim --include=*.ts --include=*.tsx --include=*.js --include=*.jsx --include=*.json",
+          "output": "(eval):1: no matches found: --include=*.ts",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01SDxcHhmBQe6XM7pybGnbXt",
+          "startSeconds": 82.17,
+          "endSeconds": 82.212,
+          "command": "grep -rn \"Keep map tiles for saved trails on device\" worktree/bench+javascript-stim/src worktree/bench+javascript-stim/app 2>/dev/null",
+          "output": "worktree/bench+javascript-stim/app(tabs)/settings.tsx:112:            subtitle=\"Keep map tiles for saved trails on device\"",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01AUn1cJ5eU5J3JSet7n5YbX",
+          "startSeconds": 84.596,
+          "endSeconds": 86.463,
+          "command": "cd worktree/bench+javascript-stim && stim start",
+          "output": "  metro       starting on port 8082 (expo-child, supervisor pid 7116)\nOK: dev server on port 8082, supervisor pid 7116 (expo-child) (1.7s)\n  logs        results/opus-android/javascript-stim/stim-home/workspaces/bench-opus-android-opus-javascript-stim-17885617--453991839e6eea1e/logs\nShell cwd was reset to workspace/trailhead-v3",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_015HkNHQtQk86EA6CC9mg61e",
+          "startSeconds": 93.601,
+          "endSeconds": 136.823,
+          "command": "cd worktree/bench+javascript-stim && stim android --system-image \"system-images;android-36;google_apis_playstore_ps16k;arm64-v8a\"",
+          "output": "  metro       port 8082 (pid 7119)\n  device      waiting for <simulator-udid> to finish booting\n  device      stim-4f2128b9-bench-javascript-stim created (21.4s)\n  fingerprint 932aa4.. hit (3.9s)\n  device      stim-4f2128b9-bench-javascript-stim (<simulator-udid>) booted (100ms)\n  install     app-debug.apk -> <simulator-udid> (4.8s)\n  launch      com.appandflow.trailhead (287ms)\n  metro       debug_http_host <local-ip>:8082 + adb reverse tcp:8082->tcp:8082\n  logs        results/opus-android/javascript-stim/stim-home/workspaces/bench-opus-android-opus-javascript-stim-17885617--453991839e6eea1e/logs (collector pid 7591)\n  verify      bundle loaded, process alive, stable for 3s -- the first screen may still be rendering (12.4s total)\nOK: com.appandflow.trailhead launched on <simulator-udid>, Metro port 8082 (cache hit)\n  device      stim-4f2128b9-bench-javascript-stim (<simulator-udid>)\n  app         com.appandflow.trailhead\n  metro       running on port 8082\n  cache       cache hit\n  logs        results/opus-android/javascript-stim/stim-home/workspaces/bench-opus-android-opus-javascript-stim-17885617--453991839e6eea1e/logs\nShell cwd was reset to workspace/trailhead-v3",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01Wh193Z5DqrRZUr2UZZHXno",
+          "startSeconds": 139.895,
+          "endSeconds": 142.362,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-stim agent-device open com.appandflow.trailhead --foreground --platform android --serial <simulator-udid>",
+          "output": "Opened: com.appandflow.trailhead\nSession state: ./state/agent-device/sessions/javascript-stim\nWarning: The session is open, but the initial interactive snapshot failed (COMMAND_FAILED: Android snapshot helper failed: Android snapshot helper failed before returning parseable output: android.util.AndroidException: INSTRUMENTATION_FAILED: <agent-device-helper>/<agent-device-helper>). Run: agent-device snapshot -i",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_011KWLDjp7vBfycJmne1EzvU",
+          "startSeconds": 145.201,
+          "endSeconds": 146.058,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-stim agent-device record start tmp/javascript-stim-session.mp4 --scope device --quality high --hide-touches",
+          "output": "tmp/javascript-stim-session.mp4\nSession state: ./state/agent-device/sessions/javascript-stim",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01CcPxkrRi5W7BFxvFNH3pSV",
+          "startSeconds": 148.947,
+          "endSeconds": 150.793,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-stim agent-device snapshot -i",
+          "output": "Page: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 13 nodes\n@e1 [scroll-area] \"com.google.android.apps.nexuslauncher:id/workspace\" [scrollable]\n@e2 [viewpager] \"At a glance\"\n@e3 [group]\n@e4 [text] \"Fri, Sep 4\"\n@e5 [text] \"Phone\"\n@e6 [text] \"Messages\"\n@e7 [text] \"Play Store\"\n@e8 [text] \"Chrome\"\n@e9 [text] \"Camera\"\n@e10 [group] \"Google search\"\n@e11 [image] \"Google app\"\n@e12 [image] \"Voice search\"\n@e13 [button] \"Google Lens\"",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01PX5j8ueeEURzD3bCLsRzfU",
+          "startSeconds": 154.437,
+          "endSeconds": 158.825,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-stim agent-device open com.appandflow.trailhead --foreground --platform android --serial <simulator-udid>",
+          "output": "Opened: com.appandflow.trailhead\nSession state: ./state/agent-device/sessions/javascript-stim\nPage: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 0 nodes\nInteractive snapshot is empty after filtering 43 raw Android nodes. Likely causes: the app content is not accessibility-visible yet, a transient route change, or depth/filter options hid the target.\nHint: sparse accessibility snapshot returned 0 nodes; snapshot state is invalid or unavailable for this screen. Use plain screenshot, not screenshot --overlay-refs, as visual truth. If screenshot shows the Home Screen or another app, run open for this app again first. Then navigate away with coordinates if needed and retry snapshot -i on the next screen.",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01Xi7dbW8gGjmC1oaxMSBuyB",
+          "startSeconds": 161.25,
+          "endSeconds": 164.122,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-stim agent-device screenshot tmp/javascript-stim-check1.png",
+          "output": "tmp/javascript-stim-check1.png (320x640)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_018Que4an3Tsx2FCjay8Kbht",
+          "startSeconds": 171.344,
+          "endSeconds": 171.995,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-stim agent-device snapshot -i",
+          "output": "Page: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 22 visible nodes (64 total)\nCollapsed 42 Android helper nodes from the agent-facing text snapshot; use --raw or --json for the full hierarchy.\n@e1 [scroll-area] [scrollable]\n@e2 [text-field] \"Search trails, regions, tags\" [editable]\n@e3 [horizontalscrollview] \"Bas-Saint-Laurent, Adirondacks, All regions\" [scrollable]\n@e4 [button] \"All regions\"\n@e6 [button] \"Adirondacks\"\n@e8 [button] \"Bas-Saint-Laurent\"\n@e10 [horizontalscrollview] \"Hard, Moderate, Easy, Any level\" [scrollable]\n@e11 [button] \"Any level\"\n@e13 [button] \"Easy\"\n@e15 [button] \"Moderate\"\n@e17 [button] \"Hard\"\n@e19 [button] \"Expert\"\n@e20 [button] \"Sort by name\"\n@e22 [button] \"Sort by distance\"\n@e24 [button] \"Sort by rating\"\n@e26 [scroll-area] \"Belvedere de la Tour Bleu, Mont-Tremblant, , 1.9 km, , 701 m, , 1:31:00, Hard, , 5.0, (609), Belvedere de la Chute, Gaspesie, 11 km, 1106 m, 4:16:00, Moderate, 3.8, (837)\" [scrollable]\n  [content above scroll-area hidden]\n  [content below scroll-area hidden]\n@e27 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n@e40 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n@e53 [group] \", Trails\"\n@e56 [group] \", Record\"\n@e59 [group] \", History\"\n@e62 [group] \", Settings\"",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_013B5JrGrvPvzan4sTQAK2u8",
+          "startSeconds": 174.743,
+          "endSeconds": 176.275,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-stim agent-device click @e62 --settle",
+          "output": "Tapped @e62 (280, 592)\nsettled after 1117ms: +18 -50 (~14 unchanged)\n- @e2 [text-field] \"Search trails, regions, tags\"\n- @e3 [horizontalscrollview]\n- @e4 [button] \"All regions\"\n- @e5 [text] \"All regions\"\n- @e6 [button] \"Adirondacks\"\n- @e7 [text] \"Adirondacks\"\n- @e8 [button] \"Bas-Saint-Laurent\"\n- @e9 [text] \"Bas-Saint-Laurent\"\n- @e10 [horizontalscrollview]\n- @e11 [button] \"Any level\"\n- @e12 [text] \"Any level\"\n- @e13 [button] \"Easy\"\n- @e14 [text] \"Easy\"\n- @e15 [button] \"Moderate\"\n- @e16 [text] \"Moderate\"\n- @e17 [button] \"Hard\"\n- @e18 [text] \"Hard\"\n- @e19 [button] \"Expert\"\n- @e20 [button] \"Sort by name\"\n- @e21 [text] \"Name\"\n- @e22 [button] \"Sort by distance\"\n- @e23 [text] \"Distance\"\n- @e24 [button] \"Sort by rating\"\n- @e25 [text] \"Rating\"\n- @e27 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e28 [text] \"Belvedere de la Chute\"\n- @e29 [text] \"Gaspesie\"\n- @e30 [text] \"\"\n- @e31 [text] \"11 km\"\n- @e32 [text] \"\"\n- @e33 [text] \"1106 m\"\n- @e34 [text] \"\"\n- @e35 [text] \"4:16:00\"\n- @e36 [text] \"Moderate\"\n- @e37 [text] \"\"\n- @e38 [text] \"3.8\"\n- @e39 [text] \"(837)\"\n- @e40 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n- @e41 [text] \"Belvedere de la Tour Bleu\"\n- @e42 [text] \"Mont-Tremblant\"\n- @e43 [text] \"\"\n- @e44 [text] \"1.9 km\"\n- @e45 [text] \"\"\n- @e46 [text] \"701 m\"\n- @e47 [text] \"\"\n- @e48 [text] \"1:31:00\"\n- @e49 [text] \"Hard\"\n- @e50 [text] \"\"\n- @e51 [text] \"5.0\"\n- @e52 [text] \"(609)\"\n+ @e3~s294015 [text] \"UNITS\"\n+ @e4~s294015 [text] \"Distance\"\n+ @e5~s294015 [text] \"\"\n+ @e6~s294015 [text] \"Used across the whole app\"\n+ @e7~s294015 [button] \"Metric units\"\n+ @e8~s294015 [text] \"Metric\"\n+ @e9~s294015 [button] \"Imperial units\"\n+ @e10~s294015 [text] \"Imperial\"\n+ @e11~s294015 [text] \"PREFERENCES\"\n+ @e12~s294015 [text] \"\"\n+ @e13~s294015 [text] \"Hike reminders\"\n+ @e14~s294015 [text] \"Nudge me when I have not hiked in a while\"\n+ @e15~s294015 [switch] \"Hike reminders\"\n+ @e16~s294015 [text] \"\"\n+ @e17~s294015 [text] \"Offline maps\"\n+ @e18~s294015 [text] \"Keep saved trail maps available offline\"\n+ @e19~s294015 [switch] \"Offline maps\"\n+ @e20~s294015 [text] \"STORAGE\"",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01UPVfmmo1ViE1j6r2v2Xa61",
+          "startSeconds": 180.484,
+          "endSeconds": 181.013,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-stim agent-device wait text \"Keep saved trail maps available offline\"",
+          "output": "(Bash completed with no output)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01CgZzZtpzF5N9txfNLGaZww",
+          "startSeconds": 183.655,
+          "endSeconds": 185.289,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-stim agent-device screenshot tmp/javascript-stim-settings.png",
+          "output": "tmp/javascript-stim-settings.png (320x640)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01MiN6ao5sLNsddjhHurLVDn",
+          "startSeconds": 188.054,
+          "endSeconds": 188.086,
+          "command": "cp tmp/javascript-stim-settings.png results/opus-android/javascript-stim/proof/settings.png",
+          "output": "(Bash completed with no output)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01BU7YVE1FVoY4UsVMQHdsZF",
+          "startSeconds": 190.537,
+          "endSeconds": 192.7,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-stim agent-device record stop",
+          "output": "tmp/javascript-stim-session.mp4",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01BDcqrzai3sEdotu3MvuRyg",
+          "startSeconds": 194.919,
+          "endSeconds": 194.951,
+          "command": "cp tmp/javascript-stim-session.mp4 results/opus-android/javascript-stim/proof/session.mp4",
+          "output": "(Bash completed with no output)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01WCvGabLCzWPNPd3ZDm6wW8",
+          "startSeconds": 197.454,
+          "endSeconds": 197.564,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-stim agent-device close",
+          "output": "Closed: javascript-stim",
+          "exitCode": 0
+        }
+      ],
+      "backgroundProcesses": [],
+      "markers": [
+        {
+          "id": "app-alive",
+          "kind": "appAlive",
+          "label": "App process alive",
+          "atSeconds": 125.407
+        },
+        {
+          "id": "settings-ready",
+          "kind": "settingsReady",
+          "label": "Settings proof ready",
+          "atSeconds": 185.289
+        }
+      ],
+      "proof": {
+        "src": "benchmarks/opus-android/javascript-stim.png",
+        "expected": "Keep saved trail maps available offline",
+        "width": 320,
+        "height": 640
+      },
+      "recording": {
+        "src": "benchmarks/opus-android/javascript-stim.mp4",
+        "bytes": 1749916
+      }
+    },
+    {
+      "id": "javascript-control",
+      "model": "opus",
+      "platform": "android",
+      "variant": "javascript",
+      "arm": "control",
+      "valid": true,
+      "invalidReasons": [],
+      "settingsReadySeconds": 280.875,
+      "appAliveSeconds": 235.817,
+      "diagnosisSeconds": null,
+      "diagnosisCommandCount": null,
+      "launchCrashAudit": null,
+      "diagnosisUsage": null,
+      "estimatedDiagnosisCostUsd": null,
+      "totalSeconds": 306.3,
+      "commandCount": 82,
+      "usage": {
+        "input_tokens": 3216679,
+        "cached_input_tokens": 3165812,
+        "cache_creation_input_tokens": 50709,
+        "output_tokens": 18952,
+        "reasoning_output_tokens": 1998
+      },
+      "estimatedTokenCostUsd": 2.567117,
+      "summary": "Created an isolated worktree and carried over dependencies or native outputs, worked on the JavaScript change, and started the local Expo/Android workflow. It started 3 processes with nohup and monitored the detached work through later commands. It reached Settings and captured valid agent-device proof. The record includes 2 failed command attempts before completion.",
+      "messages": [
+        {
+          "id": "c7bd1f4c-de60-4bf1-9367-c23013bdfab9-0",
+          "atSeconds": 48.71,
+          "text": "I'll start by exploring the repo and setting up the worktree."
+        },
+        {
+          "id": "31e903c7-2121-40bd-b15c-caab872e2bd1-0",
+          "atSeconds": 90.047,
+          "text": "Now creating the AVD:"
+        },
+        {
+          "id": "76b07434-c525-4111-b79f-5c0b6227dfbe-0",
+          "atSeconds": 114.489,
+          "text": "Emulator is starting. Polling for the device to appear."
+        },
+        {
+          "id": "03fbd595-192c-4f2a-865d-b210396024eb-0",
+          "atSeconds": 123.762,
+          "text": "Metro is up on 8081. Continuing to poll boot."
+        },
+        {
+          "id": "f14fc492-5228-43ef-82a0-dcdca442d1d5-0",
+          "atSeconds": 136.258,
+          "text": "Boot complete on `<simulator-udid>`. Starting the native build/install/launch as a background process."
+        },
+        {
+          "id": "25ef4408-c4cc-4b02-9317-80e50b83bc54-0",
+          "atSeconds": 153.953,
+          "text": "Gradle is progressing through the plugin builds. Continuing to poll."
+        },
+        {
+          "id": "bbd46a0d-dd48-446b-8f8c-0737cf09c6e8-0",
+          "atSeconds": 164.539,
+          "text": "Build tasks are running with cache hits from the carried outputs. Continuing."
+        },
+        {
+          "id": "bd813a50-4748-45fb-aee8-36ab3fe26b90-0",
+          "atSeconds": 169.362,
+          "text": "Nearly at packaging."
+        },
+        {
+          "id": "19f98f1d-7270-4123-9cb6-a81ccc09fc9b-0",
+          "atSeconds": 182.782,
+          "text": "CMake configure is the long pole here. Still polling."
+        },
+        {
+          "id": "3bb4c048-fde9-4b68-821b-06d0a7d2456a-0",
+          "atSeconds": 193.187,
+          "text": "Native compile is underway. Continuing to poll compactly."
+        },
+        {
+          "id": "31b105d1-19e9-477c-a531-ea3d45126ef8-0",
+          "atSeconds": 214.761,
+          "text": "24 clang processes compiling the app's native code. Still polling."
+        },
+        {
+          "id": "2dcd45a3-30d4-4ea6-b8bd-59e6035c478c-0",
+          "atSeconds": 229.342,
+          "text": "App CMake build finished. Moving to packaging."
+        },
+        {
+          "id": "25ae5369-a086-4145-813c-2e45c547d795-0",
+          "atSeconds": 236.064,
+          "text": "Build succeeded. Now installing."
+        },
+        {
+          "id": "dc5f9d57-3941-4f7c-86d2-ab4fb2b5ae97-0",
+          "atSeconds": 238.348,
+          "text": "Build, install, and launch all completed successfully. Now the agent-device proof."
+        },
+        {
+          "id": "b5386c4b-6272-46e3-b977-a1803a474b01-0",
+          "atSeconds": 243.974,
+          "text": "Session opened. Starting the recording."
+        },
+        {
+          "id": "13b666f2-e5f5-48ac-afe0-03773833e289-0",
+          "atSeconds": 247.589,
+          "text": "Recording started. Now navigating to the Settings tab."
+        },
+        {
+          "id": "d2e2dbca-e265-4ffa-b8d9-6c5036da4085-0",
+          "atSeconds": 268.544,
+          "text": "The app is loaded on the Trails tab. Navigating to Settings."
+        },
+        {
+          "id": "103c2a0b-9f12-4817-b15e-2c6b9019a5d9-0",
+          "atSeconds": 273.804,
+          "text": "The Settings screen shows the new subtitle. Running the remaining proof steps."
+        },
+        {
+          "id": "24459897-9c0d-4e2e-8b87-961dbfe7141f-0",
+          "atSeconds": 305.991,
+          "text": "All eight proof commands succeeded in order, the `wait` matched, `record stop` reported the saved video, and both copied artifacts exist.\n\n**What was done:**\n- Created worktree at `worktree/javascript-control` on branch `bench/javascript-control`, carrying `node_modules`, `.expo`, `android/.gradle`, `android/build`, `android/app/build`, `android/app/.cxx` via APFS clone.\n- Changed `app/(tabs)/settings.tsx:112` subtitle to `\"Keep saved trail maps available offline\"`.\n- Created AVD `Trailhead_javascript-control` from `system-images;android-36;google_apis_playstore_ps16k;arm64-v8a` with avdmanager's default hardware profile, set `disk.dataPartition.size=8589934592`, booted with `-no-snapshot-save -no-snapshot-load`, and waited for `sys.boot_completed=1`.\n- Started Metro detached on `localhost:8081`; ran `expo run:android --variant debug` in the background (PID polled via `ps`/`tail`) — `BUILD SUCCESSFUL`, installed `app-debug.apk`, launched on `<simulator-udid>`.\n- agent-device session: dismissed the Expo dev-client onboarding/dev menu, tapped the Settings tab by semantic ref, confirmed the new subtitle, captured the screenshot and recording.\n\nOne note: the carried CMake caches for `react-native-reanimated` contain absolute paths from the source checkout, so that module's native objects were rebuilt into `trailhead-v3/node_modules/react-native-reanimated/android/.cxx` rather than the worktree copy. The APK itself was assembled in the worktree.\n\nPaths:\n- Run worktree: `worktree/javascript-control`\n- Screenshot: `tmp/javascript-control-settings.png` → copied to `.../results/opus-android/javascript-control/proof/settings.png`\n- Recording: `tmp/javascript-control-session.mp4` → copied to `.../proof/session.mp4`\n\nEmulator, Metro, and the app are left running."
+        }
+      ],
+      "commands": [
+        {
+          "id": "toolu_01D4VT3VzojbrpZxDeG2ykfo",
+          "startSeconds": 50.149,
+          "endSeconds": 50.547,
+          "command": "ls -a && cat package.json && git worktree list",
+          "output": ".\n..\n.env.example\n.expo\n.fingerprintignore\n.git\n.gitignore\n.m1788412929627.sock\n.worktrees\nAGENTS.md\nandroid\napp\napp.json\nassets\nbench\nCLAUDE.md\ndocs\neslint.config.js\nios\nLICENSE\nnode_modules\npackage-lock.json\npackage.json\nREADME.md\nscripts\nsrc\ntsconfig.json\n{\n  \"name\": \"trailhead\",\n  \"description\": \"Reference Expo app for local stim-cli iOS and Android testing\",\n  \"license\": \"MIT\",\n  \"repository\": \"https://github.com/appandflow/trailhead\",\n  \"main\": \"expo-router/entry\",\n  \"version\": \"1.0.0\",\n  \"scripts\": {\n    \"start\": \"expo start\",\n    \"android\": \"expo run:android\",\n    \"ios\": \"expo run:ios\",\n    \"web\": \"expo start --web\",\n    \"lint\": \"expo lint\",\n    \"typecheck\": \"tsc --noEmit\",\n    \"bench\": \"node bench/bench.mjs\"\n  },\n  \"dependencies\": {\n    \"@expo/vector-icons\": \"^15.0.2\",\n    \"@react-navigation/bottom-tabs\": \"^7.3.10\",\n    \"@react-navigation/elements\": \"^2.3.8\",\n    \"@react-navigation/native\": \"^7.1.6\",\n    \"@shopify/flash-list\": \"2.0.2\",\n    \"@shopify/react-native-skia\": \"2.6.2\",\n    \"@tanstack/react-query\": \"^5.101.4\",\n    \"date-fns\": \"^4.4.0\",\n    \"drizzle-orm\": \"^0.45.2\",\n    \"expo\": \"~57.0.18\",\n    \"expo-asset\": \"~57.0.15\",\n    \"expo-blur\": \"~57.0.2\",\n    \"expo-constants\": \"~57.0.16\",\n    \"expo-crypto\": \"~57.0.2\",\n    \"expo-dev-client\": \"~57.0.16\",\n    \"expo-device\": \"~57.0.1\",\n    \"expo-file-system\": \"~57.0.6\",\n    \"expo-font\": \"~57.0.2\",\n    \"expo-haptics\": \"~57.0.2\",\n    \"expo-image\": \"~57.0.3\",\n    \"expo-linear-gradient\": \"~57.0.1\",\n    \"expo-linking\": \"~57.0.8\",\n    \"expo-location\": \"~57.0.14\",\n    \"expo-network\": \"~57.0.1\",\n    \"expo-notifications\": \"~57.0.15\",\n    \"expo-router\": \"~57.0.17\",\n    \"expo-secure-store\": \"~57.0.2\",\n    \"expo-sharing\": \"~57.0.16\",\n    \"expo-splash-screen\": \"~57.0.8\",\n    \"expo-sqlite\": \"~57.0.2\",\n    \"expo-status-bar\": \"~57.0.1\",\n    \"expo-symbols\": \"~57.0.2\",\n    \"expo-system-ui\": \"~57.0.3\",\n    \"expo-task-manager\": \"~57.0.14\",\n    \"expo-video\": \"~57.0.3\",\n    \"expo-web-browser\": \"~57.0.2\",\n    \"lottie-react-native\": \"~7.3.8\",\n    \"react\": \"19.2.3\",\n    \"react-dom\": \"19.2.3\",\n    \"react-native\": \"0.86.3\",\n    \"react-native-gesture-handler\": \"~2.32.0\",\n    \"react-native-maps\": \"1.27.2\",\n    \"react-native-mmkv\": \"^4.3.2\",\n    \"react-native-nitro-modules\": \"^0.36.5\",\n    \"react-native-reanimated\": \"4.5.1\",\n    \"react-native-safe-area-context\": \"~5.7.0\",\n    \"react-native-screens\": \"~4.26.0\",\n    \"react-native-svg\": \"15.15.4\",\n    \"react-native-web\": \"^0.21.2\",\n    \"react-native-webview\": \"13.16.1\",\n    \"react-native-worklets\": \"0.10.1\",\n    \"zod\": \"^4.4.3\",\n    \"zustand\": \"^5.0.15\"\n  },\n  \"devDependencies\": {\n    \"@types/react\": \"~19.2.0\",\n    \"drizzle-kit\": \"^0.31.10\",\n    \"eslint\": \"^9.25.0\",\n    \"eslint-config-expo\": \"~57.0.2\",\n    \"typescript\": \"~6.0.3\"\n  },\n  \"expo\": {\n    \"doctor\": {\n      \"appConfigFieldsNotSyncedCheck\": {\n        \"enabled\": false\n      }\n    }\n  },\n  \"private\": true\n}\nworkspace/trailhead-v3                                                                                 63fe92c [benchmark/v3-fixture]\nworktree/repro+derived_data-plus-fix                             63fe92c [worktree-repro/derived_data-plus-fix]\nworktree/repro@derived-data-at-fix                               63fe92c [worktree-repro/derived-data-at-fix]\nworktree/fixture-sol-launch-crash-gpt-5-6-sol-launch-crash-control-1788524269304  8fcded7 [bench-fixture/sol-launch-crash-gpt-5-6-sol-launch-crash-control-1788524269304]",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01CtDgXwob7sDoFJXdRAomfC",
+          "startSeconds": 51.664,
+          "endSeconds": 51.727,
+          "command": "ls workspace/stim-bench-coordinator && ls worktree/project 2>/dev/null; which avdmanager emulator adb; echo \"ANDROID_HOME=$ANDROID_HOME ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT\"",
+          "output": "investigations\npr-validate\nrelease-rc5\nrelease-rc6\nrelease-rc7\nrelease-rc8\ntrailhead-derived-data-fix-worktrees\ntrailhead-derived-data-matrix-worktrees\ntrailhead-v3\ntrailhead-v3-worktrees\ntrailhead-v4-worktrees\ntrailhead-worktrees\nv2-opus-20260831\nv3-20260902\nv4-20260903\nfixture-sol-launch-crash-gpt-5-6-sol-launch-crash-control-1788524269304\n./allowed-bin/avdmanager\n./allowed-bin/emulator\n./allowed-bin/adb\nANDROID_HOME=workspace/sdk ANDROID_SDK_ROOT=",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01JQnnn59zqNV5gdnTLtkLFn",
+          "startSeconds": 53.849,
+          "endSeconds": 53.902,
+          "command": "cat AGENTS.md; echo \"=== CLAUDE ===\"; cat CLAUDE.md",
+          "output": "# Trailhead\n\nA hike recording and trail browsing app. Expo SDK 57, React Native 0.86,\nTypeScript, expo-router.\n\n## Layout\n\n```\napp/                    expo-router routes\n  _layout.tsx           providers: gesture handler, safe area, react-query, db init\n  (tabs)/               Trails, Record, History, Settings\n  trail/[id].tsx        trail detail\n  hike/[id].tsx         recorded hike detail\nsrc/\n  theme/                useTheme(), palettes, spacing, radius\n  data/trails.ts        200 seed trails with route geometry (trails.json)\n  db/                   expo-sqlite + drizzle: schema, client, seed\n  lib/                  geo math (haversine, gain, splits) and unit formatting\n  store/                zustand stores (settings, in-progress recording)\n  components/           shared presentational components\n  features/             screen-specific hooks and pieces\nbench/                  benchmark harness (npm run bench)\nios/  android/          committed native projects\n```\n\n## Conventions\n\n- `@/` resolves to the repository root.\n- Colors come from `useTheme()`. Every screen supports light and dark mode.\n- Units come from `useSettingsStore().units` and are rendered through `src/lib/format`.\n- Trail data is static and bundled. Hike data is in SQLite and seeded on first launch.\n\n## Native setup\n\nThis project is in the bare workflow: `ios/` and `android/` are committed and\n`expo prebuild` is **not** part of the build. Native configuration is changed by\nediting the native projects directly, or by changing `app.json` and re-running\nprebuild deliberately — which will overwrite local native edits, so check what is\nalready in the native projects first.\n\nAndroid map tiles need a Google Maps API key in `.env` as\n`GOOGLE_MAPS_API_KEY`. Copy `.env.example` to `.env` to supply one.\n`android/app/build.gradle` reads the environment variable first, then the\nrepo-root `.env`. The app builds without a key and shows blank map tiles.\n\n## Running\n\n```bash\nnpm install\nnpx expo run:ios       # or: npx expo run:android\n```\n\nThis public test app does not contain EAS configuration. Use local commands for\nbuilds and simulator sessions.\n\nNote that `-derivedDataPath ios/build` collides with React Native's codegen output\nin `ios/build/generated`. Use a derived data path outside `ios/build`, and re-run\n`pod install` after deleting `ios/build`.\n=== CLAUDE ===\n@AGENTS.md",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_013fWpVfQxfqAi9zkf3Gbi2u",
+          "startSeconds": 54.728,
+          "endSeconds": 54.784,
+          "command": "grep -rn \"Keep map tiles for saved trails on device\" --include=*.ts --include=*.tsx . 2>/dev/null | grep -v node_modules",
+          "output": "(eval):1: no matches found: --include=*.ts",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01S1jEUNHZqcuRJ8Veuxw9qv",
+          "startSeconds": 57.339,
+          "endSeconds": 57.397,
+          "command": "grep -rn \"Keep map tiles for saved trails\" app src 2>/dev/null",
+          "output": "app/(tabs)/settings.tsx:112:            subtitle=\"Keep map tiles for saved trails on device\"",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_012r5ESBCYdxon2n7Rwxdn8s",
+          "startSeconds": 59.261,
+          "endSeconds": 59.296,
+          "command": "ls ./allowed-bin/; ls results/opus-android/javascript-control 2>/dev/null; ls android",
+          "output": "adb\nagent-device\navdmanager\nccache\nemulator\nnode\nnpm\nnpx\npnpm\npod\nrg\nsdkmanager\navds-before.json\ndevices-before.json\nmeta.json\nprompt-input.json\nprompt.txt\nproof\nraw\nrunner-guidance.md\nrunner-home\nstim-home\ntmp\napp\nbuild\nbuild.gradle\ngradle\ngradle.properties\ngradlew\ngradlew.bat\nsettings.gradle",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01NjM3JwCrh94DQBVk64zXk3",
+          "startSeconds": 63.637,
+          "endSeconds": 63.686,
+          "command": "cat results/opus-android/javascript-control/runner-guidance.md",
+          "output": "---\nname: agent-device\ndescription: Automates Apple-platform apps (iOS, tvOS, macOS), Android devices, and Amazon Vega OS TV apps in Vega Virtual Devices. Use when navigating apps, taking snapshots/screenshots where supported, driving TV remotes, tapping, typing, scrolling, extracting UI info, collecting evidence, or planning agent-device CLI commands.\n---\n\n# agent-device\n\nFor a normal app-driving task, start immediately. Do not probe first with `--help`, `--version`, `devices`, `appstate`, `snapshot`, or `screenshot`:\n\n```bash\nagent-device open <app> --foreground\n```\n\nThat starts the session and returns the initial interactive snapshot with `@refs`.\n\nLoop: act with `press|click|fill|longpress <target> ... --settle`, `scroll <direction> --settle`, or `back --settle`; continue from the printed diff, verify the named expectation (`wait text \"...\"`, `is`, `get`, or `find`), then run `agent-device close`.\n\nCopy refs byte-for-byte: `@e12`, `@e12~s4` — keep the `@` and any `~sN`. Prefer current refs, then `id`/`label`/`role` selectors; coordinates are a last resort. If snapshot reports sparse/AX-unavailable, its refs and selectors are invalid: run `agent-device screenshot`, inspect the image, use coordinates, then retry `snapshot -i` after navigating. Otherwise run `snapshot -i` only when the diff lacks the next target.\n\nError output includes corrective hints; follow them instead of re-planning. Only when the task is specialized (for example gestures, scripting, TV, macOS, remote, or debugging) or a command shape is unclear, run `agent-device help <topic>`. `agent-device --help` lists topics, but is not a startup step.",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_015LgRg8UHk6UXZxTFjaorMW",
+          "startSeconds": 64.265,
+          "endSeconds": 64.407,
+          "command": "git worktree add worktree/javascript-control -b bench/javascript-control 2>&1 | tail -5",
+          "output": "Preparing worktree (new branch 'bench/javascript-control')\nHEAD is now at 63fe92c test: stabilize benchmark native fingerprint",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01K5gpzFtWjiDHWFHmU6Ermn",
+          "startSeconds": 68.142,
+          "endSeconds": 69.713,
+          "command": "ls -d node_modules .expo .env android/.gradle android/build android/app/build android/app/.cxx 2>&1; du -sh node_modules 2>/dev/null; df -h . | tail -2",
+          "output": "<machine storage inventory omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_015JoeWXRdf5HH4JfFNyby2e",
+          "startSeconds": 77.794,
+          "endSeconds": 77.875,
+          "command": "WT=worktree/javascript-control; nohup sh -c 'set -e; SRC=workspace/trailhead-v3; WT='\"$WT\"'; cp -Rc \"$SRC/node_modules\" \"$WT/node_modules\"; cp -Rc \"$SRC/.expo\" \"$WT/.expo\"; cp -Rc \"$SRC/android/.gradle\" \"$WT/android/.gradle\"; cp -Rc \"$SRC/android/build\" \"$WT/android/build\"; cp -Rc \"$SRC/android/app/build\" \"$WT/android/app/build\"; cp -Rc \"$SRC/android/app/.cxx\" \"$WT/android/app/.cxx\"; echo CARRY_DONE' > tmp/javascript-control-carry.log 2>&1 &\necho $!",
+          "output": "10423",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01FWoDgRfYJBsDQd4rE34WYS",
+          "startSeconds": 85.349,
+          "endSeconds": 85.934,
+          "command": "ls workspace/android-36 2>&1; ls workspace/google_apis_playstore_ps16k 2>&1; ./allowed-bin/avdmanager list avd 2>/dev/null | grep -i \"Name:\" ",
+          "output": "google_apis_playstore_ps16k\narm64-v8a\n    Name: Android16_16KB",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01WFSMe387nr15CAZAWw43UC",
+          "startSeconds": 91.063,
+          "endSeconds": 91.611,
+          "command": "echo no | ./allowed-bin/avdmanager create avd --name \"Trailhead_javascript-control\" --package \"system-images;android-36;google_apis_playstore_ps16k;arm64-v8a\" 2>&1 | tail -20",
+          "output": "Warning: This version only understands SDK XML versions up to 3 but an SDK XML file of version 4 was encountered. This can happen if you use versions of Android Studio and the command-line tools that were released at different times.\nAuto-selecting single ABI arm64-v8a\nDo you wish to create a custom hardware profile? [no]",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01BCBjbZvL572fo9BKSwEf11",
+          "startSeconds": 94.399,
+          "endSeconds": 94.455,
+          "command": "ls ~/.android/avd/ && grep -n \"disk.dataPartition.size\" ~/.android/avd/Trailhead_javascript-control.avd/config.ini; echo \"---exit $?\"; tail -3 tmp/javascript-control-carry.log; ps -p 10423 >/dev/null && echo CARRY_RUNNING || echo CARRY_EXITED",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01QNcZnRPe9wS3aWUU3La3EY",
+          "startSeconds": 98.04,
+          "endSeconds": 98.092,
+          "command": "sed -i '' 's/^disk\\.dataPartition\\.size=.*/disk.dataPartition.size=8589934592/' ~/.android/avd/Trailhead_javascript-control.avd/config.ini && grep -n \"disk.dataPartition.size\" ~/.android/avd/Trailhead_javascript-control.avd/config.ini",
+          "output": "9:disk.dataPartition.size=8589934592",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_0197UkSLJJbzDDtqQZiZHfv8",
+          "startSeconds": 99.879,
+          "endSeconds": 102.238,
+          "command": "WT=worktree/javascript-control; ls \"$WT\" ; du -sh \"$WT/node_modules\" \"$WT/android/app/build\" 2>&1; ls \"$WT/node_modules\" | wc -l; ls workspace/node_modules | wc -l",
+          "output": "AGENTS.md\nandroid\napp\napp.json\nassets\nbench\nCLAUDE.md\ndocs\neslint.config.js\nios\nLICENSE\nnode_modules\npackage-lock.json\npackage.json\nREADME.md\nscripts\nsrc\ntsconfig.json\n 68G\tworktree/javascript-control/node_modules\n4.0G\tworktree/javascript-control/android/app/build\n     586\n     586",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01Y7hmQizEMfiephtHq4qrVu",
+          "startSeconds": 107.957,
+          "endSeconds": 108.028,
+          "command": "./allowed-bin/adb devices -l",
+          "output": "List of devices attached",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01SEHJrnJfPJ3GcC8MhPEeiJ",
+          "startSeconds": 110.981,
+          "endSeconds": 111.018,
+          "command": "cd worktree/javascript-control && nohup ./allowed-bin/emulator -avd Trailhead_javascript-control -no-snapshot-save -no-snapshot-load > tmp/javascript-control-emulator.log 2>&1 & echo EMU_PID=$!",
+          "output": "EMU_PID=10637\nShell cwd was reset to workspace/trailhead-v3",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01MJFdU2XF68wjsaNA9sJv7Q",
+          "startSeconds": 112.913,
+          "endSeconds": 112.947,
+          "command": "./allowed-bin/adb devices -l; tail -5 tmp/javascript-control-emulator.log",
+          "output": "List of devices attached\n\nINFO         | Setting ICD filenames for the loader = workspace/lvp_icd.json\nINFO         | SharedLibrary::open for [workspace/libvulkan.dylib]\nINFO         | Added library: workspace/libvulkan.dylib\nINFO         | Enabling Vulkan portability.\nINFO         | Selecting Vulkan device: llvmpipe (LLVM 21.1.4, 128 bits), Version: 1.4.330",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01Rhy6fmYTm7giTVAB9jkWmE",
+          "startSeconds": 115.631,
+          "endSeconds": 115.668,
+          "command": "./allowed-bin/adb devices -l; tail -3 tmp/javascript-control-emulator.log",
+          "output": "List of devices attached\n<simulator-udid>          offline transport_id:309\n\nINFO         | AVD supportsNativeGLES=1, supportsGuestAngle=1\nINFO         | Guest Angle is still unstable for API > 35.\nINFO         | Created extended window in 224.755ms",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01J89ZtnungaLp2TsugW39Me",
+          "startSeconds": 119.941,
+          "endSeconds": 119.966,
+          "command": "cd worktree/javascript-control && nohup ./allowed-bin/npx expo start > tmp/javascript-control-metro.log 2>&1 & echo METRO_PID=$!",
+          "output": "METRO_PID=10699\nShell cwd was reset to workspace/trailhead-v3",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01QnGEr4F8EycPwdJ9XMXRLd",
+          "startSeconds": 122.442,
+          "endSeconds": 122.482,
+          "command": "./allowed-bin/adb -s <simulator-udid> shell getprop sys.boot_completed 2>&1; tail -5 tmp/javascript-control-metro.log",
+          "output": "adb: device offline\nStarting Metro Bundler\n\nWaiting on http://localhost:8081\n\nLogs for your project will appear below.",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_018pX1RPejf49kN8BKqEWMzX",
+          "startSeconds": 125.01,
+          "endSeconds": 125.461,
+          "command": "./allowed-bin/adb -s <simulator-udid> wait-for-device shell getprop sys.boot_completed 2>&1",
+          "output": "(Bash completed with no output)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01BVjWW23gRKsadV2Y7jsBAD",
+          "startSeconds": 127.444,
+          "endSeconds": 127.482,
+          "command": "./allowed-bin/adb -s <simulator-udid> shell getprop sys.boot_completed 2>&1",
+          "output": "(Bash completed with no output)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01DC8sBoLggiYJLeDsD6fTRV",
+          "startSeconds": 129.854,
+          "endSeconds": 129.913,
+          "command": "./allowed-bin/adb -s <simulator-udid> shell getprop sys.boot_completed; ./allowed-bin/adb devices",
+          "output": "List of devices attached\n<simulator-udid>\toffline",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_016YQZbuKPBuReHxUxADMD8q",
+          "startSeconds": 132.483,
+          "endSeconds": 132.526,
+          "command": "./allowed-bin/adb devices; tail -4 tmp/javascript-control-emulator.log",
+          "output": "List of devices attached\n<simulator-udid>\tdevice\n\nINFO         | Boot completed in 19160 ms\nINFO         | Increasing screen off timeout, logcat buffer size to 2M.\nWARNING      | adb command 'workspace/adb -s <simulator-udid> shell settings put system screen_off_timeout 2147483647 ' failed: 'adb: device '<simulator-udid>' not found'\nWARNING      | adb command './allowed-bin/adb -s <simulator-udid> shell settings put system screen_off_timeout 2147483647 ' failed: 'adb: device '<simulator-udid>' not found'",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01Q3ccQ5To52K8qJHvaHFUPe",
+          "startSeconds": 134.611,
+          "endSeconds": 134.673,
+          "command": "./allowed-bin/adb -s <simulator-udid> shell getprop sys.boot_completed",
+          "output": "1",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01TQsxKY7cBFQ42pBcsBLaZM",
+          "startSeconds": 138.469,
+          "endSeconds": 138.526,
+          "command": "cd worktree/javascript-control && nohup ./allowed-bin/npx expo run:android --device <simulator-udid> --variant debug --no-bundler > tmp/javascript-control-build.log 2>&1 & echo $! > tmp/javascript-control-build.pid; cat tmp/javascript-control-build.pid",
+          "output": "10884\nShell cwd was reset to workspace/trailhead-v3",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01CjDKt1i6JUxUWG5zicYPNR",
+          "startSeconds": 140.713,
+          "endSeconds": 140.748,
+          "command": "ps -p 10884 > /dev/null && echo RUNNING || echo EXITED; tail -20 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01W62XQwSXS5uvWbSsaiguoA",
+          "startSeconds": 144.397,
+          "endSeconds": 144.427,
+          "command": "cd worktree/javascript-control && nohup ./allowed-bin/npx expo run:android --device Trailhead_javascript-control --variant debug --no-bundler > tmp/javascript-control-build.log 2>&1 & echo $! > tmp/javascript-control-build.pid; cat tmp/javascript-control-build.pid",
+          "output": "10950\nShell cwd was reset to workspace/trailhead-v3",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01QKdE8yYJ87acoSFfgLCqoE",
+          "startSeconds": 146.576,
+          "endSeconds": 146.615,
+          "command": "ps -p 10950 > /dev/null && echo RUNNING || echo EXITED; tail -20 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01WakAs7NnCvVBvLGXLh5Dhn",
+          "startSeconds": 148.569,
+          "endSeconds": 148.608,
+          "command": "ps -p 10950 > /dev/null && echo RUNNING || echo EXITED; tail -6 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01MrpizthkEMaNJNuanKSTvc",
+          "startSeconds": 150.375,
+          "endSeconds": 150.412,
+          "command": "ps -p 10950 > /dev/null && echo RUNNING || echo EXITED; tail -6 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_011xAiFUWbuHiuEV8u69gv6H",
+          "startSeconds": 152.55,
+          "endSeconds": 152.586,
+          "command": "ps -p 10950 > /dev/null && echo RUNNING || echo EXITED; tail -6 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01WES4GJpGwyu8LE33wVuDYb",
+          "startSeconds": 154.969,
+          "endSeconds": 155.008,
+          "command": "ps -p 10950 > /dev/null && echo RUNNING || echo EXITED; tail -6 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01MpVRBoh48aLF2XQxxNd5AC",
+          "startSeconds": 156.961,
+          "endSeconds": 157.005,
+          "command": "ps -p 10950 > /dev/null && echo RUNNING || echo EXITED; tail -6 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01TzphV2YQ2d9pVqrQrqGBCe",
+          "startSeconds": 158.861,
+          "endSeconds": 158.907,
+          "command": "ps -p 10950 > /dev/null && echo RUNNING || echo EXITED; tail -6 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_011GQP19ajTwWXv2rU9n1iEk",
+          "startSeconds": 160.752,
+          "endSeconds": 160.805,
+          "command": "ps -p 10950 > /dev/null && echo RUNNING || echo EXITED; tail -6 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01RkdrX3YmCeLngFxrgcfS9C",
+          "startSeconds": 162.797,
+          "endSeconds": 162.85,
+          "command": "ps -p 10950 > /dev/null && echo RUNNING || echo EXITED; tail -6 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01FwUGmB1n8hzSeBzUwHxZTG",
+          "startSeconds": 165.415,
+          "endSeconds": 165.484,
+          "command": "ps -p 10950 > /dev/null && echo RUNNING || echo EXITED; tail -6 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01U1xkMzs4Qna3wtv47UGKtv",
+          "startSeconds": 167.637,
+          "endSeconds": 167.672,
+          "command": "ps -p 10950 > /dev/null && echo RUNNING || echo EXITED; tail -6 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01WFvhUpWtfceA55uFFhgeY4",
+          "startSeconds": 169.959,
+          "endSeconds": 170.006,
+          "command": "ps -p 10950 > /dev/null && echo RUNNING || echo EXITED; tail -8 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01T1PAnu7q8XfHtTk1VD4Cvf",
+          "startSeconds": 171.837,
+          "endSeconds": 171.865,
+          "command": "ps -p 10950 > /dev/null && echo RUNNING || echo EXITED; tail -8 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01N6rpYK3iBjQvHQhS6dCxde",
+          "startSeconds": 173.805,
+          "endSeconds": 173.834,
+          "command": "ps -p 10950 > /dev/null && echo RUNNING || echo EXITED; tail -8 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01FaQ6JjHxpQfMk2xcPoqrFY",
+          "startSeconds": 175.764,
+          "endSeconds": 175.832,
+          "command": "ps -p 10950 > /dev/null && echo RUNNING || echo EXITED; tail -8 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01AeccJA8HZkbxytNMtwuP7j",
+          "startSeconds": 178.259,
+          "endSeconds": 178.315,
+          "command": "ps -p 10950 > /dev/null && echo RUNNING || echo EXITED; tail -8 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01TZ3oxygo4TUUjuoNiHsAQb",
+          "startSeconds": 180.677,
+          "endSeconds": 180.746,
+          "command": "ps -p 10950 > /dev/null && echo RUNNING || echo EXITED; wc -l tmp/javascript-control-build.log; tail -4 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01QUcCB1fnSfq8Ecxep97u1F",
+          "startSeconds": 183.363,
+          "endSeconds": 183.415,
+          "command": "ps -p 10950 > /dev/null && echo RUNNING || echo EXITED; wc -l tmp/javascript-control-build.log; tail -4 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01RxmZKN4RLfybx57bE6r2Jh",
+          "startSeconds": 185.754,
+          "endSeconds": 185.843,
+          "command": "ps -p 10950 > /dev/null && echo RUNNING || echo EXITED; wc -l tmp/javascript-control-build.log; tail -4 tmp/javascript-control-build.log; pgrep -fl cmake | head -3",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01XMzmhTfHS6LNDaQyVAAoqz",
+          "startSeconds": 195.17,
+          "endSeconds": 195.21,
+          "command": "ps -p 10950 > /dev/null && echo RUNNING || echo EXITED; grep -c \"^> Task\" tmp/javascript-control-build.log; grep \"^> Task\" tmp/javascript-control-build.log | tail -3",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_018yGNPriaWQmEWqSpjDqhLK",
+          "startSeconds": 197.294,
+          "endSeconds": 197.326,
+          "command": "ps -p 10950 > /dev/null && echo RUNNING || echo EXITED; grep \"^> Task\" tmp/javascript-control-build.log | tail -3",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01TTXo7P6XJLfmq5hpu7DMoX",
+          "startSeconds": 199.25,
+          "endSeconds": 199.35,
+          "command": "ps -p 10950 > /dev/null && echo RUNNING || echo EXITED; grep \"^> Task\" tmp/javascript-control-build.log | tail -3",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01Gt67oZexpWzVEwYVViAczd",
+          "startSeconds": 201.295,
+          "endSeconds": 201.352,
+          "command": "ps -p 10950 > /dev/null && echo RUNNING || echo EXITED; grep \"^> Task\" tmp/javascript-control-build.log | tail -3",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01AMWuuzHhJc2ci8eMyrJjmi",
+          "startSeconds": 203.417,
+          "endSeconds": 203.472,
+          "command": "ps -p 10950 > /dev/null && echo RUNNING || echo EXITED; grep \"^> Task\" tmp/javascript-control-build.log | tail -3",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01WKrCc6cmi18rkYBT8sJs9d",
+          "startSeconds": 205.753,
+          "endSeconds": 205.818,
+          "command": "ps -p 10950 > /dev/null && echo RUNNING || echo EXITED; grep \"^> Task\" tmp/javascript-control-build.log | tail -3; tail -3 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_013kB6nN8KdCeuBpDnssxNsV",
+          "startSeconds": 208.42,
+          "endSeconds": 208.498,
+          "command": "ps -p 10950 > /dev/null && echo RUNNING || echo EXITED; tail -2 tmp/javascript-control-build.log; pgrep -c clang++",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 1
+        },
+        {
+          "id": "toolu_01MSDKp9qp1bdP16UvHfeodq",
+          "startSeconds": 210.603,
+          "endSeconds": 210.674,
+          "command": "ps -p 10950 > /dev/null && echo RUNNING || echo EXITED; tail -2 tmp/javascript-control-build.log; pgrep clang++ | wc -l",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01NFfmkHonUyXv5G2W7WWY2d",
+          "startSeconds": 212.995,
+          "endSeconds": 213.131,
+          "command": "ps -p 10950 > /dev/null && echo RUNNING || echo EXITED; tail -2 tmp/javascript-control-build.log; ps aux | grep -c \"[c]lang\"",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_0157aJxajpS6dW3Mmuosao7H",
+          "startSeconds": 215.655,
+          "endSeconds": 215.795,
+          "command": "ps -p 10950 > /dev/null && echo RUNNING || echo EXITED; tail -2 tmp/javascript-control-build.log; ps aux | grep -c \"[c]lang\"",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_011a4HZxkQZT7JJAKiCaFK7c",
+          "startSeconds": 217.96,
+          "endSeconds": 218.109,
+          "command": "ps -p 10950 > /dev/null && echo RUNNING || echo EXITED; tail -2 tmp/javascript-control-build.log; ps aux | grep -c \"[c]lang\"",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_011CKmffec2K1v9tvmJGY16b",
+          "startSeconds": 220.022,
+          "endSeconds": 220.18,
+          "command": "ps -p 10950 > /dev/null && echo RUNNING || echo EXITED; tail -2 tmp/javascript-control-build.log; ps aux | grep -c \"[c]lang\"",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_019YyhFQHSnqULdCM4mGzqjU",
+          "startSeconds": 222.081,
+          "endSeconds": 222.226,
+          "command": "ps -p 10950 > /dev/null && echo RUNNING || echo EXITED; tail -2 tmp/javascript-control-build.log; ps aux | grep -c \"[c]lang\"",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01LDi1xm9XSn2Bct1oMkYRyW",
+          "startSeconds": 224.526,
+          "endSeconds": 224.673,
+          "command": "ps -p 10950 > /dev/null && echo RUNNING || echo EXITED; tail -2 tmp/javascript-control-build.log; ps aux | grep -c \"[c]lang\"",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01CA22Tbsu2vgG9SNi73CyBA",
+          "startSeconds": 228.103,
+          "endSeconds": 228.216,
+          "command": "ps -p 10950 > /dev/null && echo RUNNING || echo EXITED; tail -2 tmp/javascript-control-build.log; ps aux | grep -c \"[c]lang\"",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01YbUorcQt9hnPtUNZwgNCmY",
+          "startSeconds": 230.407,
+          "endSeconds": 230.474,
+          "command": "ps -p 10950 > /dev/null && echo RUNNING || echo EXITED; tail -4 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_019vQcQyr1FcS7zhhi7aKXqQ",
+          "startSeconds": 232.407,
+          "endSeconds": 232.447,
+          "command": "ps -p 10950 > /dev/null && echo RUNNING || echo EXITED; tail -4 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01WqudEi7mNSEUwSeSfeSu5d",
+          "startSeconds": 234.489,
+          "endSeconds": 234.519,
+          "command": "ps -p 10950 > /dev/null && echo RUNNING || echo EXITED; tail -4 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_016SmFWHu2XnrazRaotFJCq7",
+          "startSeconds": 236.621,
+          "endSeconds": 236.677,
+          "command": "ps -p 10950 > /dev/null && echo RUNNING || echo EXITED; tail -6 tmp/javascript-control-build.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01CHBsNyr6aTCEGnoG3JXM4U",
+          "startSeconds": 239.929,
+          "endSeconds": 242.426,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device open com.appandflow.trailhead --foreground --platform android --serial <simulator-udid>",
+          "output": "Opened: com.appandflow.trailhead\nSession state: ./state/agent-device/sessions/javascript-control\nWarning: The session is open, but the initial interactive snapshot failed (COMMAND_FAILED: Android snapshot helper failed: Android snapshot helper failed before returning parseable output: android.util.AndroidException: INSTRUMENTATION_FAILED: <agent-device-helper>/<agent-device-helper>). Run: agent-device snapshot -i",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_015ZaDy4RzkCSYtTRVFNHoWd",
+          "startSeconds": 245.412,
+          "endSeconds": 245.909,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device record start tmp/javascript-control-session.mp4 --scope device --quality high --hide-touches",
+          "output": "tmp/javascript-control-session.mp4\nSession state: ./state/agent-device/sessions/javascript-control",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_018KtUjSe9qUL7QBSSaEcmDK",
+          "startSeconds": 248.951,
+          "endSeconds": 250.156,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device snapshot -i",
+          "output": "Page: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 3 visible nodes (5 total)\nCollapsed 2 Android helper nodes from the agent-facing text snapshot; use --raw or --json for the full hierarchy.\n@e1 [group] \"Close\"\n@e3 [scroll-area] [scrollable]\n@e4 [group] \"Continue\"",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01B5fePEXrKE3JcSHmyuKEje",
+          "startSeconds": 253.32,
+          "endSeconds": 254.636,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device press @e4 --settle",
+          "output": "Tapped @e4 (160, 552)\nsettled after 1008ms: +14 -1 (~4 unchanged)\n- @e5 [text] \"Continue\"\n+ @e5~s530337 [group] \"Reload\"\n+ @e6~s530337 [text] \"Reload\"\n+ @e7~s530337 [group]\n+ @e8~s530337 [group] \"Home\"\n+ @e9~s530337 [text] \"Go home\"\n+ @e10~s530337 [group]\n+ @e11~s530337 [group] \"Performance monitor\"\n+ @e12~s530337 [text] \"Toggle performance monitor\"\n+ @e13~s530337 [group]\n+ @e14~s530337 [group] \"Element inspector\"\n+ @e15~s530337 [text] \"Toggle element inspector\"\n+ @e16~s530337 [group]\n+ @e17~s530337 [group] \"DevTools\"\n+ @e18~s530337 [text] \"Open DevTools\"",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01WmYG2XiwQuMa2kRUZm1KUT",
+          "startSeconds": 259.558,
+          "endSeconds": 259.673,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device press @e1 --settle",
+          "output": "Exit code 1\nError (COMMAND_FAILED): Ref @e1 needs a complete snapshot — the current frame only authorizes its emitted refs\nHint: Capture a fresh interactive snapshot (snapshot -i) or use a stable selector, then retry.\nDiagnostic ID: mtnjve5d-9aef4c23\nDiagnostics Log: ./state/agent-device/sessions/javascript-control/requests/73e6b9e781622ca7.ndjson",
+          "exitCode": 1
+        },
+        {
+          "id": "toolu_01271bzEWKb5zpezwuuxdvoL",
+          "startSeconds": 262.085,
+          "endSeconds": 262.502,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device snapshot -i",
+          "output": "Page: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 7 visible nodes (18 total)\nCollapsed 11 Android helper nodes from the agent-facing text snapshot; use --raw or --json for the full hierarchy.\n@e1 [group] \"Close\"\n@e3 [scroll-area] [scrollable]\n  [content below scroll-area hidden]\n@e4 [group] \"Reload\"\n@e7 [group] \"Home, Go home\"\n@e10 [group] \"Performance monitor, Toggle performance monitor\"\n@e13 [group] \"Element inspector, Toggle element inspector\"\n@e16 [group] \"DevTools, Open DevTools\"",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01YMykKYHLPgKQZNvU5thSNL",
+          "startSeconds": 264.908,
+          "endSeconds": 266.826,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device press @e1 --settle",
+          "output": "Tapped @e1 (293, 302)\nsettled after 1652ms: +63 -17 (~1 unchanged)\n- @e1 [group]\n- @e2 [group] \"Close\"\n- @e4 [group]\n- @e5 [group] \"Reload\"\n- @e6 [text] \"Reload\"\n- @e7 [group]\n- @e8 [group] \"Home\"\n- @e9 [text] \"Go home\"\n- @e10 [group]\n- @e11 [group] \"Performance monitor\"\n- @e12 [text] \"Toggle performance monitor\"\n- @e13 [group]\n- @e14 [group] \"Element inspector\"\n- @e15 [text] \"Toggle element inspector\"\n- @e16 [group]\n- @e17 [group] \"DevTools\"\n- @e18 [text] \"Open DevTools\"\n+ @e2~s530340 [text-field] \"Search trails, regions, tags\"\n+ @e3~s530340 [horizontalscrollview]\n+ @e4~s530340 [button] \"All regions\"\n+ @e5~s530340 [text] \"All regions\"\n+ @e6~s530340 [button] \"Adirondacks\"\n+ @e7~s530340 [text] \"Adirondacks\"\n+ @e8~s530340 [button] \"Bas-Saint-Laurent\"\n+ @e9~s530340 [text] \"Bas-Saint-Laurent\"\n+ @e10~s530340 [horizontalscrollview]\n+ @e11~s530340 [button] \"Any level\"\n+ @e12~s530340 [text] \"Any level\"\n+ @e13~s530340 [button] \"Easy\"\n+ @e14~s530340 [text] \"Easy\"\n+ @e15~s530340 [button] \"Moderate\"\n+ @e16~s530340 [text] \"Moderate\"\n+ @e17~s530340 [button] \"Hard\"\n+ @e18~s530340 [text] \"Hard\"\n+ @e19~s530340 [button] \"Expert\"\n+ @e20~s530340 [button] \"Sort by name\"\n+ @e21~s530340 [text] \"Name\"\n+ @e22~s530340 [button] \"Sort by distance\"\n+ @e23~s530340 [text] \"Distance\"\n+ @e24~s530340 [button] \"Sort by rating\"\n+ @e25~s530340 [text] \"Rating\"\n+ @e26~s530340 [scroll-area]\n+ @e27~s530340 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n+ @e28~s530340 [text] \"Belvedere de la Chute\"\n+ @e29~s530340 [text] \"Gaspesie\"\n+ @e30~s530340 [text] \"\"\n+ @e31~s530340 [text] \"11 km\"\n+ @e32~s530340 [text] \"\"\n+ @e33~s530340 [text] \"1106 m\"\n+ @e34~s530340 [text] \"\"\n+ @e35~s530340 [text] \"4:16:00\"\n+ @e36~s530340 [text] \"Moderate\"\n+ @e37~s530340 [text] \"\"\n+ @e38~s530340 [text] \"3.8\"\n+ @e39~s530340 [text] \"(837)\"\n+ @e40~s530340 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n+ @e41~s530340 [text] \"Belvedere de la Tour Bleu\"\n+ @e42~s530340 [text] \"Mont-Tremblant\"\n+ @e43~s530340 [text] \"\"\n+ @e44~s530340 [text] \"1.9 km\"\n+ @e45~s530340 [text] \"\"\n+ @e46~s530340 [text] \"701 m\"\n+ @e47~s530340 [text] \"\"\n+ @e48~s530340 [text] \"1:31:00\"\n+ @e49~s530340 [text] \"Hard\"\n+ @e50~s530340 [text] \"\"\n+ @e51~s530340 [text] \"5.0\"\n+ @e52~s530340 [text] \"(609)\"\n+ @e53~s530340 [group] \", Trails\"\n+ @e54~s530340 [text] \"\"\n+ @e55~s530340 [text] \"Trails\"\n+ @e56~s530340 [group] \", Record\"\n+ @e57~s530340 [text] \"\"\n+ @e58~s530340 [text] \"Record\"\n+ @e59~s530340 [group] \", History\"\n+ @e60~s530340 [text] \"\"\n+ @e61~s530340 [text] \"History\"\n+ @e62~s530340 [group] \", Settings\"\n+ @e63~s530340 [text] \"\"\n+ @e64~s530340 [text] \"Settings\"",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_013wFWQT5DLyN1z6MVLNQCpx",
+          "startSeconds": 271.109,
+          "endSeconds": 272.373,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device press @e62~s530340 --settle",
+          "output": "Tapped @e62 (280, 592)\nsettled after 963ms: +18 -50 (~14 unchanged)\n- @e2 [text-field] \"Search trails, regions, tags\"\n- @e3 [horizontalscrollview]\n- @e4 [button] \"All regions\"\n- @e5 [text] \"All regions\"\n- @e6 [button] \"Adirondacks\"\n- @e7 [text] \"Adirondacks\"\n- @e8 [button] \"Bas-Saint-Laurent\"\n- @e9 [text] \"Bas-Saint-Laurent\"\n- @e10 [horizontalscrollview]\n- @e11 [button] \"Any level\"\n- @e12 [text] \"Any level\"\n- @e13 [button] \"Easy\"\n- @e14 [text] \"Easy\"\n- @e15 [button] \"Moderate\"\n- @e16 [text] \"Moderate\"\n- @e17 [button] \"Hard\"\n- @e18 [text] \"Hard\"\n- @e19 [button] \"Expert\"\n- @e20 [button] \"Sort by name\"\n- @e21 [text] \"Name\"\n- @e22 [button] \"Sort by distance\"\n- @e23 [text] \"Distance\"\n- @e24 [button] \"Sort by rating\"\n- @e25 [text] \"Rating\"\n- @e27 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e28 [text] \"Belvedere de la Chute\"\n- @e29 [text] \"Gaspesie\"\n- @e30 [text] \"\"\n- @e31 [text] \"11 km\"\n- @e32 [text] \"\"\n- @e33 [text] \"1106 m\"\n- @e34 [text] \"\"\n- @e35 [text] \"4:16:00\"\n- @e36 [text] \"Moderate\"\n- @e37 [text] \"\"\n- @e38 [text] \"3.8\"\n- @e39 [text] \"(837)\"\n- @e40 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n- @e41 [text] \"Belvedere de la Tour Bleu\"\n- @e42 [text] \"Mont-Tremblant\"\n- @e43 [text] \"\"\n- @e44 [text] \"1.9 km\"\n- @e45 [text] \"\"\n- @e46 [text] \"701 m\"\n- @e47 [text] \"\"\n- @e48 [text] \"1:31:00\"\n- @e49 [text] \"Hard\"\n- @e50 [text] \"\"\n- @e51 [text] \"5.0\"\n- @e52 [text] \"(609)\"\n+ @e3~s530342 [text] \"UNITS\"\n+ @e4~s530342 [text] \"Distance\"\n+ @e5~s530342 [text] \"\"\n+ @e6~s530342 [text] \"Used across the whole app\"\n+ @e7~s530342 [button] \"Metric units\"\n+ @e8~s530342 [text] \"Metric\"\n+ @e9~s530342 [button] \"Imperial units\"\n+ @e10~s530342 [text] \"Imperial\"\n+ @e11~s530342 [text] \"PREFERENCES\"\n+ @e12~s530342 [text] \"\"\n+ @e13~s530342 [text] \"Hike reminders\"\n+ @e14~s530342 [text] \"Nudge me when I have not hiked in a while\"\n+ @e15~s530342 [switch] \"Hike reminders\"\n+ @e16~s530342 [text] \"\"\n+ @e17~s530342 [text] \"Offline maps\"\n+ @e18~s530342 [text] \"Keep saved trail maps available offline\"\n+ @e19~s530342 [switch] \"Offline maps\"\n+ @e20~s530342 [text] \"STORAGE\"",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01XJH9aUkzEnRTJbcHtTKCCs",
+          "startSeconds": 276.198,
+          "endSeconds": 276.558,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device wait text \"Keep saved trail maps available offline\"",
+          "output": "(Bash completed with no output)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01X9q4mTXTZ8yQeBw4Hnppj7",
+          "startSeconds": 279.302,
+          "endSeconds": 280.875,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device screenshot tmp/javascript-control-settings.png",
+          "output": "tmp/javascript-control-settings.png (320x640)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_015p1P4Y9uH8YCtAfMMX42Lx",
+          "startSeconds": 283.194,
+          "endSeconds": 283.25,
+          "command": "cp tmp/javascript-control-settings.png results/opus-android/javascript-control/proof/settings.png",
+          "output": "(Bash completed with no output)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_012W2AAKdzZn5VnYfJueaks9",
+          "startSeconds": 285.655,
+          "endSeconds": 287.82,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device record stop",
+          "output": "tmp/javascript-control-session.mp4",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01BCnByiT6oHd93njTU3Ndfq",
+          "startSeconds": 290.351,
+          "endSeconds": 290.401,
+          "command": "cp tmp/javascript-control-session.mp4 results/opus-android/javascript-control/proof/session.mp4",
+          "output": "(Bash completed with no output)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_013pGBjhvrpvEWpgAESwLhCq",
+          "startSeconds": 292.647,
+          "endSeconds": 292.747,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device close",
+          "output": "Closed: javascript-control",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_019vMS8wNPRSfxDb6xihGG2i",
+          "startSeconds": 295.028,
+          "endSeconds": 295.287,
+          "command": "ls -l results/opus-android/javascript-control/proof/",
+          "output": "total 30232\n-rw-r--r--@ 1 <local-user>  staff  15064600 Sep  4 18:53 metro-8081-at-app-alive.bundle\n-rw-r--r--@ 1 <local-user>  staff    371645 Sep  4 18:53 session.mp4\n-rw-r--r--@ 1 <local-user>  staff     40203 Sep  4 18:53 settings.png",
+          "exitCode": 0
+        }
+      ],
+      "backgroundProcesses": [
+        {
+          "id": "background-toolu_015JoeWXRdf5HH4JfFNyby2e",
+          "label": "sh -c 'set -e; SRC=workspace/trailhead-v3; WT='\"$WT\"'; cp -Rc \"$SRC/node_modules\" \"$WT/node_modules\"; cp -Rc \"$SRC/.expo\" \"$WT/.expo\"; cp -Rc \"$SRC/android/.gradle\" \"$WT/android/.gradle\"; cp -Rc \"$SRC/android/build\" \"$WT/android/build\"; cp -Rc \"$SRC/android/app/build\" \"$WT/android/app/build\"; cp -Rc \"$SRC/android/app/.cxx\" \"$WT/android/app/.cxx\"; echo CARRY_DONE'",
+          "startSeconds": 77.875,
+          "endSeconds": 94.455,
+          "launcherCommandId": "toolu_015JoeWXRdf5HH4JfFNyby2e",
+          "monitorCount": 1
+        },
+        {
+          "id": "background-toolu_01TQsxKY7cBFQ42pBcsBLaZM",
+          "label": "./allowed-bin/npx expo run:android --device <simulator-udid> --variant debug --no-bundler",
+          "startSeconds": 138.526,
+          "endSeconds": 140.748,
+          "launcherCommandId": "toolu_01TQsxKY7cBFQ42pBcsBLaZM",
+          "monitorCount": 1
+        },
+        {
+          "id": "background-toolu_01W62XQwSXS5uvWbSsaiguoA",
+          "label": "./allowed-bin/npx expo run:android --device Trailhead_javascript-control --variant debug --no-bundler",
+          "startSeconds": 144.427,
+          "endSeconds": 236.677,
+          "launcherCommandId": "toolu_01W62XQwSXS5uvWbSsaiguoA",
+          "monitorCount": 38
+        }
+      ],
+      "markers": [
+        {
+          "id": "app-alive",
+          "kind": "appAlive",
+          "label": "App process alive",
+          "atSeconds": 235.817
+        },
+        {
+          "id": "settings-ready",
+          "kind": "settingsReady",
+          "label": "Settings proof ready",
+          "atSeconds": 280.875
+        }
+      ],
+      "proof": {
+        "src": "benchmarks/opus-android/javascript-control.png",
+        "expected": "Keep saved trail maps available offline",
+        "width": 320,
+        "height": 640
+      },
+      "recording": {
+        "src": "benchmarks/opus-android/javascript-control.mp4",
+        "bytes": 371645
+      }
+    },
+    {
+      "id": "native-stim",
+      "model": "opus",
+      "platform": "android",
+      "variant": "native",
+      "arm": "stim",
+      "valid": true,
+      "invalidReasons": [],
+      "settingsReadySeconds": 429.991,
+      "appAliveSeconds": 397.178,
+      "diagnosisSeconds": null,
+      "diagnosisCommandCount": null,
+      "launchCrashAudit": null,
+      "diagnosisUsage": null,
+      "estimatedDiagnosisCostUsd": null,
+      "totalSeconds": 455.549,
+      "commandCount": 13,
+      "usage": {
+        "input_tokens": 415089,
+        "cached_input_tokens": 399900,
+        "cache_creation_input_tokens": 15155,
+        "output_tokens": 3810,
+        "reasoning_output_tokens": 134
+      },
+      "estimatedTokenCostUsd": 0.449311,
+      "summary": "Created an isolated worktree, worked on the native Android change, and ran Stim's Android workflow. It reached Settings and captured valid agent-device proof.",
+      "messages": [
+        {
+          "id": "59ab4389-0aab-4a8c-9b5a-cd7aa8e45f59-0",
+          "atSeconds": 47.856,
+          "text": "I'll start by loading the Stim workflow guide."
+        },
+        {
+          "id": "6f6ba8e0-222e-4fab-b69e-592d5fc5af71-0",
+          "atSeconds": 50.387,
+          "text": "Now creating the worktree with the exact command specified."
+        },
+        {
+          "id": "a2fa8c49-76d3-42ed-9758-9d4f82b57e40-0",
+          "atSeconds": 79.136,
+          "text": "Worktree ready. Now editing the strings.xml in that worktree."
+        },
+        {
+          "id": "dc65ad3d-0397-441b-9a24-1092ea7a98d5-0",
+          "atSeconds": 83.502,
+          "text": "Now starting Metro in the worktree."
+        },
+        {
+          "id": "1cfbbdef-fdb8-4e2e-b19d-7c6c13d38a56-0",
+          "atSeconds": 410.231,
+          "text": "App launched on `<simulator-udid>`. Now step 1 of the proof protocol."
+        },
+        {
+          "id": "e70f63f7-67a1-478e-9dcc-13a7156372fc-0",
+          "atSeconds": 416.236,
+          "text": "Session open — no onboarding dialog, app is on the Trails tab. Step 2: start recording."
+        },
+        {
+          "id": "f499b19c-2428-4271-8d3f-ba8abe6a6bb7-0",
+          "atSeconds": 419.504,
+          "text": "Recording started. Now navigating to the Settings tab using the semantic ref `@e62`."
+        },
+        {
+          "id": "cf57584c-cd8b-439c-80ff-3b4fda0b7571-0",
+          "atSeconds": 423.607,
+          "text": "On the Settings screen with \"Offline maps\" visible. Step 3:"
+        },
+        {
+          "id": "5c36b3cc-16df-40e4-89bc-f997070ee0cf-0",
+          "atSeconds": 455.244,
+          "text": "All eight commands succeeded in order. The Settings screen is confirmed with \"Offline maps\" visible, and both proof artifacts were copied.\n\n**Run details:**\n- Worktree: `worktree/bench+native-stim`\n- `app_name` set to `Trailhead native-stim` in `android/app/src/main/res/values/strings.xml`\n- Metro on port 8082; native rebuild (fingerprint miss, 4m36s) then launched `com.appandflow.trailhead` on `<simulator-udid>` (`stim-b296dde9-bench-native-stim`)\n- No Expo onboarding appeared; navigated to Settings via semantic ref `@e62` (\"Settings\" tab)\n\n**Artifacts:**\n- Screenshot: `tmp/native-stim-settings.png` → `.../results/opus-android/native-stim/proof/settings.png`\n- Recording: `tmp/native-stim-session.mp4` → `.../results/opus-android/native-stim/proof/session.mp4`\n\nMetro and the emulator are still running for coordinator verification and cleanup."
+        }
+      ],
+      "commands": [
+        {
+          "id": "toolu_01UJ2SZE2nYc1rbEpem8QtQo",
+          "startSeconds": 48.212,
+          "endSeconds": 48.776,
+          "command": "stim guide agent",
+          "output": "Commands use `stim`. If it is not installed globally, replace `stim` with `npx stim-cli`.\n\nAGENT WORKFLOW\n\nUse Stim to run React Native and Expo apps without sharing a Metro port or\ndevice with another workspace. Prefer plain output: it streams each phase and\nends with the facts the next step needs. Use --json only when a script must\nparse a stable payload.\n\nNORMAL WORKFLOW\n\nWork in the current checkout by default. When the task needs another branch or\nan isolated environment, create a worktree and carry its dependencies and\nnative outputs.\n\nBefore native worktree work, run doctor for the platform in scope. It checks\nthe main checkout from a linked worktree. Fix relevant findings and inspect the\nupstream gap.\n\n  stim doctor --platform ios          # or: --platform android\n\n  # In the main checkout, seed the shared build caches when more native\n  # worktrees are coming. Skip this for one-off or JavaScript-only work.\n  stim start\n  stim ios                             # or: stim android\n  stim stop\n\n  # Branches from HEAD. --carry-ignored carries installed dependencies and\n  # native output. Pass it on the first creation, never on a retry. The command\n  # prints the new absolute path.\n  stim worktree create <name> --carry-ignored\n  cd <printed-path>\n\n  stim start\n  stim ios                             # or: stim android\n  stim logs --errors\n\n  # JavaScript and TypeScript edits use Fast Refresh.\n  stim logs --since 30s --level error\n\n  stim stop\n  stim worktree remove\n\nRULES DURING THE LOOP\n\n- Run start before a debug ios or android build. If it returns STIM_NO_METRO,\n  run stim start and retry.\n- Run ios or android again after a native input changes. A JavaScript-only\n  change does not need one.\n- A cold native build can outlive a shell timeout. Run the same command again:\n  the second call joins the active build or returns its result.\n- ios and android install the app, launch it, and check readiness. Trust the\n  exact device, app, Metro, and launch facts in the final summary. Use the full\n  reported device ID. Never assume a simulator named booted belongs to this\n  workspace.\n- After each ios or android run, give the user one compact result: exact device,\n  app id, launch state, cache result, total duration, and whether stim logs\n  --errors passed. Include a remedy only when action remains. Do not repeat the\n  phase transcript.\n- An OK summary with no launch qualifier proves the launch. \"bundle requested,\n  still building\" means Metro has not finished; wait and query the logs. For\n  launch UNVERIFIED, follow the printed remedy before claiming success. JSON\n  reports these as true, \"bundling\", and \"unverified\" in launched.\n- Exit code 0 from logs --errors is the pass condition. Human output can show\n  \"No matching log records\" on stderr. JSON mode prints zero bytes when no\n  records match. Do not read the NDJSON files directly.\n- Use stim status when resuming a workspace or recovering missing device,\n  port, server, or build facts. A normal start and platform run already print\n  them. Use stim doctor when a build is unexpectedly slow or the environment\n  looks incomplete.\n\nOWNERSHIP AND DELETION\n\nStim creates, boots, and deletes only devices it created. Owned simulators use\nthe stim-<label> (<model> <runtime>) name. Never point Stim at a user-created\nemulator or simulator.\n\nworktree remove parks the workspace's simulator for later adoption. A parked\nsimulator is Stim-owned: never delete one by hand. gc --delete clears verified\nentries and keeps failures; see guide lifecycle. First launch on a physical\niPhone can need the one-time taps named by the remedy.\n\nstim android --device [serial] and stim ios --device [udid] install on a\nconnected physical device. Stim never creates, boots, or deletes hardware and\nrecords nothing about it, so stop and gc leave it alone.\n\nA --device run leases that device for the run. stim device lock ios --for 10m\nholds it across runs; stim device unlock gives it back. Never delete another\nworkspace's lease file under ~/.stim/device-locks; gc --delete removes expired\nones.\n\nTreat a refusal as an ownership or state mismatch: read its code and remedy.\nNever reach for --force first.\n\nAsk the user before these actions:\n\n- worktree remove, because it deletes the worktree, its Stim-created branch\n  when it has no unique commits, and gives up its owned device.\n- worktree remove --force, because it also discards uncommitted and untracked\n  files.\n- gc --delete, because it deletes orphaned resources. gc --delete --cache all\n  empties the shared build caches instead; it inspects nothing else.\n- stop when the workspace owns an EAS session, because it irreversibly ends\n  that remote session. For a local device, stop shuts it down but does not\n  delete it. An explicit stop shuts down a Stim-owned simulator even when\n  another process uses it. It never shuts down an unowned simulator.\n\nSANDBOXES\n\nAn agent harness that sandboxes shell commands usually permits writes inside\nthe project and little else. Stim also needs writes to STIM_HOME (~/.stim by\ndefault), simulator service access, and local access to the adb server. When\nthose sit outside the harness allowlist, the failure looks like an unwritable\ndirectory or unavailable device service rather than a broken machine. Decide\nat the start of a session whether to run Stim outside the sandbox or ask the\nuser to allow those operations. guide errors lists the exact requirements.\n\nLOAD ADVANCED GUIDANCE WHEN NEEDED\n\n  stim guide             # list topics\n  stim guide lifecycle   # full flow, flags, worktrees, builds, and capacity\n  stim guide facts       # JSON payload fields\n  stim guide metro       # supervisor, custom Metro, tunnels, and remote devices\n  stim guide logs        # filters, record shape, and capture limits\n  stim guide errors      # error codes and remedies\n  stim guide cleanup     # destructive behavior and disk cleanup\n  stim guide settings    # configuration files and supported keys\n\nRead the relevant topic before release configurations or Android variants;\nremote devices; custom Metro processes or tunnels; cache misses, bypasses, or\nconcurrent builds; capacity limits; cache statistics from stim stats; worktree\ncarry-over; fingerprint exclusions; gc; --force; cleanup failures; or\nunfamiliar states and error codes. Ordinary stim stop and an authorized clean\nstim worktree remove do not need the cleanup guide.",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_017nm6dyYvEYrutvq4Tjs72i",
+          "startSeconds": 51.575,
+          "endSeconds": 77.641,
+          "command": "stim worktree create bench/native-stim --dir worktree/project --carry-ignored",
+          "output": "  branch      worktree-bench/native-stim from HEAD (63fe92c)\n  carry       node_modules, Pods, native build output (APFS clone)\n  ready       worktree/bench+native-stim\nworktree/bench+native-stim",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_016hTMWTof11PckmCU5n8Jwx",
+          "startSeconds": 84.219,
+          "endSeconds": 86.101,
+          "command": "cd worktree/bench+native-stim && stim start",
+          "output": "  metro       starting on port 8082 (expo-child, supervisor pid 15817)\nOK: dev server on port 8082, supervisor pid 15817 (expo-child) (1.7s)\n  logs        results/opus-android/native-stim/stim-home/workspaces/bench-opus-android-opus-native-stim-178856263494--966c52572dbddeb5/logs\nShell cwd was reset to workspace/trailhead-v3",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_013iVGezraWygnNJW2K5Yyjz",
+          "startSeconds": 88.769,
+          "endSeconds": 407.373,
+          "command": "cd worktree/bench+native-stim && stim android --system-image \"system-images;android-36;google_apis_playstore_ps16k;arm64-v8a\"",
+          "output": "  metro       port 8082 (pid 15820)\n  device      waiting for <simulator-udid> to finish booting\n  device      stim-b296dde9-bench-native-stim created (21.4s)\n  fingerprint 9bb73f.. miss (3.9s)\n  build       compiling debug with Gradle\n  cache       gradle build cache on (--build-cache, shared under the Gradle user home)\n  build       still compiling (30s of ~4m31s)\n  build       still compiling (1m00s of ~4m31s)\n  build       still compiling (1m30s of ~4m31s)\n  build       still compiling (2m00s of ~4m31s)\n  build       still compiling (2m30s of ~4m31s)\n  build       still compiling (3m00s of ~4m31s)\n  build       still compiling (3m30s of ~4m31s)\n  build       still compiling (4m00s of ~4m31s)\n  build       still compiling (4m30s of ~4m31s)\n  build       ok (4m36s)\n  device      stim-b296dde9-bench-native-stim (<simulator-udid>) booted (98ms)\n  install     app-debug.apk -> <simulator-udid> (1.1s)\n  launch      com.appandflow.trailhead (336ms)\n  metro       debug_http_host <local-ip>:8082 + adb reverse tcp:8082->tcp:8082\n  logs        results/opus-android/native-stim/stim-home/workspaces/bench-opus-android-opus-native-stim-178856263494--966c52572dbddeb5/logs (collector pid 22150)\n  verify      bundle loaded, process alive, stable for 3s -- the first screen may still be rendering (11.5s total)\nOK: com.appandflow.trailhead launched on <simulator-udid>, Metro port 8082 (built)\n  device      stim-b296dde9-bench-native-stim (<simulator-udid>)\n  app         com.appandflow.trailhead\n  metro       running on port 8082\n  cache       built\n  logs        results/opus-android/native-stim/stim-home/workspaces/bench-opus-android-opus-native-stim-178856263494--966c52572dbddeb5/logs\nShell cwd was reset to workspace/trailhead-v3",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01Hf2h8t3VaT32j4aXVUVgVC",
+          "startSeconds": 411.495,
+          "endSeconds": 413.769,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-stim agent-device open com.appandflow.trailhead --foreground --platform android --serial <simulator-udid>",
+          "output": "Opened: com.appandflow.trailhead\nSession state: ./state/agent-device/sessions/native-stim\nPage: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 22 visible nodes (64 total)\nCollapsed 42 Android helper nodes from the agent-facing text snapshot; use --raw or --json for the full hierarchy.\n@e1 [scroll-area] [scrollable]\n@e2 [text-field] \"Search trails, regions, tags\" [editable]\n@e3 [horizontalscrollview] \"Bas-Saint-Laurent, Adirondacks, All regions\" [scrollable]\n@e4 [button] \"All regions\"\n@e6 [button] \"Adirondacks\"\n@e8 [button] \"Bas-Saint-Laurent\"\n@e10 [horizontalscrollview] \"Hard, Moderate, Easy, Any level\" [scrollable]\n@e11 [button] \"Any level\"\n@e13 [button] \"Easy\"\n@e15 [button] \"Moderate\"\n@e17 [button] \"Hard\"\n@e19 [button] \"Expert\"\n@e20 [button] \"Sort by name\"\n@e22 [button] \"Sort by distance\"\n@e24 [button] \"Sort by rating\"\n@e26 [scroll-area] \"Belvedere de la Tour Bleu, Mont-Tremblant, , 1.9 km, , 701 m, , 1:31:00, Hard, , 5.0, (609), Belvedere de la Chute, Gaspesie, 11 km, 1106 m, 4:16:00, Moderate, 3.8, (837)\" [scrollable]\n  [content above scroll-area hidden]\n  [content below scroll-area hidden]\n@e27 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n@e40 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n@e53 [group] \", Trails\"\n@e56 [group] \", Record\"\n@e59 [group] \", History\"\n@e62 [group] \", Settings\"",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_011ZrWHo41qXqXSMVmW3visj",
+          "startSeconds": 417.603,
+          "endSeconds": 417.958,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-stim agent-device record start tmp/native-stim-session.mp4 --scope device --quality high --hide-touches",
+          "output": "tmp/native-stim-session.mp4\nSession state: ./state/agent-device/sessions/native-stim",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_013jvuNQcNCf211JgRqUasU9",
+          "startSeconds": 420.794,
+          "endSeconds": 422.216,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-stim agent-device click @e62 --settle",
+          "output": "Tapped @e62 (280, 592)\nsettled after 1040ms: +18 -50 (~14 unchanged)\n- @e2 [text-field] \"Search trails, regions, tags\"\n- @e3 [horizontalscrollview]\n- @e4 [button] \"All regions\"\n- @e5 [text] \"All regions\"\n- @e6 [button] \"Adirondacks\"\n- @e7 [text] \"Adirondacks\"\n- @e8 [button] \"Bas-Saint-Laurent\"\n- @e9 [text] \"Bas-Saint-Laurent\"\n- @e10 [horizontalscrollview]\n- @e11 [button] \"Any level\"\n- @e12 [text] \"Any level\"\n- @e13 [button] \"Easy\"\n- @e14 [text] \"Easy\"\n- @e15 [button] \"Moderate\"\n- @e16 [text] \"Moderate\"\n- @e17 [button] \"Hard\"\n- @e18 [text] \"Hard\"\n- @e19 [button] \"Expert\"\n- @e20 [button] \"Sort by name\"\n- @e21 [text] \"Name\"\n- @e22 [button] \"Sort by distance\"\n- @e23 [text] \"Distance\"\n- @e24 [button] \"Sort by rating\"\n- @e25 [text] \"Rating\"\n- @e27 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e28 [text] \"Belvedere de la Chute\"\n- @e29 [text] \"Gaspesie\"\n- @e30 [text] \"\"\n- @e31 [text] \"11 km\"\n- @e32 [text] \"\"\n- @e33 [text] \"1106 m\"\n- @e34 [text] \"\"\n- @e35 [text] \"4:16:00\"\n- @e36 [text] \"Moderate\"\n- @e37 [text] \"\"\n- @e38 [text] \"3.8\"\n- @e39 [text] \"(837)\"\n- @e40 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n- @e41 [text] \"Belvedere de la Tour Bleu\"\n- @e42 [text] \"Mont-Tremblant\"\n- @e43 [text] \"\"\n- @e44 [text] \"1.9 km\"\n- @e45 [text] \"\"\n- @e46 [text] \"701 m\"\n- @e47 [text] \"\"\n- @e48 [text] \"1:31:00\"\n- @e49 [text] \"Hard\"\n- @e50 [text] \"\"\n- @e51 [text] \"5.0\"\n- @e52 [text] \"(609)\"\n+ @e3~s161386 [text] \"UNITS\"\n+ @e4~s161386 [text] \"Distance\"\n+ @e5~s161386 [text] \"\"\n+ @e6~s161386 [text] \"Used across the whole app\"\n+ @e7~s161386 [button] \"Metric units\"\n+ @e8~s161386 [text] \"Metric\"\n+ @e9~s161386 [button] \"Imperial units\"\n+ @e10~s161386 [text] \"Imperial\"\n+ @e11~s161386 [text] \"PREFERENCES\"\n+ @e12~s161386 [text] \"\"\n+ @e13~s161386 [text] \"Hike reminders\"\n+ @e14~s161386 [text] \"Nudge me when I have not hiked in a while\"\n+ @e15~s161386 [switch] \"Hike reminders\"\n+ @e16~s161386 [text] \"\"\n+ @e17~s161386 [text] \"Offline maps\"\n+ @e18~s161386 [text] \"Keep map tiles for saved trails on device\"\n+ @e19~s161386 [switch] \"Offline maps\"\n+ @e20~s161386 [text] \"STORAGE\"",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01LA19Za7Dd3AnqEHhaHc6EX",
+          "startSeconds": 425.939,
+          "endSeconds": 426.107,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-stim agent-device wait text \"Offline maps\"",
+          "output": "(Bash completed with no output)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01Jt9LoEjkWcAJezbqC3CuLR",
+          "startSeconds": 428.551,
+          "endSeconds": 429.991,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-stim agent-device screenshot tmp/native-stim-settings.png",
+          "output": "tmp/native-stim-settings.png (320x640)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01AV6iSPUkaJ1mbHBZ3hqKbQ",
+          "startSeconds": 432.146,
+          "endSeconds": 432.204,
+          "command": "cp tmp/native-stim-settings.png results/opus-android/native-stim/proof/settings.png",
+          "output": "(Bash completed with no output)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_015MuWiLtGTDWtxyaTaVTGUr",
+          "startSeconds": 434.556,
+          "endSeconds": 440.827,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-stim agent-device record stop",
+          "output": "tmp/native-stim-session.mp4",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01BGxuPEMMKWL6qEFRPAk7ct",
+          "startSeconds": 443.318,
+          "endSeconds": 443.37,
+          "command": "cp tmp/native-stim-session.mp4 results/opus-android/native-stim/proof/session.mp4",
+          "output": "(Bash completed with no output)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01H1BxVuxtg5uZeHQApNoGSJ",
+          "startSeconds": 446.085,
+          "endSeconds": 446.318,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-stim agent-device close",
+          "output": "Closed: native-stim",
+          "exitCode": 0
+        }
+      ],
+      "backgroundProcesses": [],
+      "markers": [
+        {
+          "id": "app-alive",
+          "kind": "appAlive",
+          "label": "App process alive",
+          "atSeconds": 397.178
+        },
+        {
+          "id": "settings-ready",
+          "kind": "settingsReady",
+          "label": "Settings proof ready",
+          "atSeconds": 429.991
+        }
+      ],
+      "proof": {
+        "src": "benchmarks/opus-android/native-stim.png",
+        "expected": "Offline maps",
+        "width": 320,
+        "height": 640
+      },
+      "recording": {
+        "src": "benchmarks/opus-android/native-stim.mp4",
+        "bytes": 126519
+      }
+    },
+    {
+      "id": "native-control",
+      "model": "opus",
+      "platform": "android",
+      "variant": "native",
+      "arm": "control",
+      "valid": true,
+      "invalidReasons": [],
+      "settingsReadySeconds": 381.706,
+      "appAliveSeconds": 241.607,
+      "diagnosisSeconds": null,
+      "diagnosisCommandCount": null,
+      "launchCrashAudit": null,
+      "diagnosisUsage": null,
+      "estimatedDiagnosisCostUsd": null,
+      "totalSeconds": 409.656,
+      "commandCount": 44,
+      "usage": {
+        "input_tokens": 1250975,
+        "cached_input_tokens": 1224495,
+        "cache_creation_input_tokens": 26394,
+        "output_tokens": 11982,
+        "reasoning_output_tokens": 2072
+      },
+      "estimatedTokenCostUsd": 1.1787554999999998,
+      "summary": "Created an isolated worktree, worked on the native Android change, and started the local Expo/Android workflow. It started 3 processes with nohup and monitored the detached work through later commands. It reached Settings and captured valid agent-device proof.",
+      "messages": [
+        {
+          "id": "50c3d6bb-e8e9-40ad-9fdd-4078b714a00b-0",
+          "atSeconds": 47.388,
+          "text": "I'll start by setting up the worktree."
+        },
+        {
+          "id": "23d84f13-1551-41e7-9058-2249c638bdb1-0",
+          "atSeconds": 53.262,
+          "text": "Worktree created. Now carrying dependencies and native build outputs."
+        },
+        {
+          "id": "6b3c9803-892c-4634-b779-2dd33d7259f9-0",
+          "atSeconds": 69.594,
+          "text": "While that runs, let me locate the Android SDK tooling."
+        },
+        {
+          "id": "e7338549-4777-4805-a665-3661e23ba0ec-0",
+          "atSeconds": 80.967,
+          "text": "Now creating the AVD."
+        },
+        {
+          "id": "247bf98a-6b11-45c7-ae8c-43445e94a8d7-0",
+          "atSeconds": 93.496,
+          "text": "Dependencies carried. Booting the emulator."
+        },
+        {
+          "id": "25845d22-c396-46f3-a173-3bb452e9c041-0",
+          "atSeconds": 122.487,
+          "text": "Boot complete — serial `<simulator-udid>`. Starting the native build in background."
+        },
+        {
+          "id": "90680914-88a6-4026-8f91-7bae185e89d2-0",
+          "atSeconds": 135.067,
+          "text": "Expo's `--device` expects the AVD name, not the serial. Only `<simulator-udid>` is connected, so let me target it by AVD name."
+        },
+        {
+          "id": "d3f6b0b2-e6a5-4f66-8e01-bf3c73612b7e-0",
+          "atSeconds": 139.872,
+          "text": "Build started. Polling."
+        },
+        {
+          "id": "3fcc7b1e-253a-4d76-afe7-f6345e5d2468-0",
+          "atSeconds": 210.778,
+          "text": "Debug variant compiling native libs. Continuing to poll."
+        },
+        {
+          "id": "8c1cb132-2895-4d1e-828c-d7b9365603bd-0",
+          "atSeconds": 338.586,
+          "text": "Build succeeded, installing the debug APK."
+        },
+        {
+          "id": "1726e493-7a81-43b1-b9e9-0e282b6b0714-0",
+          "atSeconds": 348.945,
+          "text": "App is launched and in the foreground on `<simulator-udid>`. Starting the agent-device proof."
+        },
+        {
+          "id": "f8730602-3c03-456a-a7dd-63aa92b1fcda-0",
+          "atSeconds": 358.559,
+          "text": "Recording started. Now handling the Expo onboarding overlay."
+        },
+        {
+          "id": "dd9dc6ee-7a74-45e4-a29f-c4f22a9f95b5-0",
+          "atSeconds": 362.177,
+          "text": "That opened the Expo dev menu. Let me close it."
+        },
+        {
+          "id": "7d18b828-bdf6-45a8-82d2-34470506e6c4-0",
+          "atSeconds": 368.927,
+          "text": "The app is showing the Trails tab. Navigating to Settings."
+        },
+        {
+          "id": "d766279b-d715-4222-a4d8-840f156e13a4-0",
+          "atSeconds": 374.072,
+          "text": "On the Settings screen. Running step 3."
+        },
+        {
+          "id": "c2135cf0-89ad-4b8b-843f-cc763512b186-0",
+          "atSeconds": 409.309,
+          "text": "All eight proof commands succeeded in order. The screenshot shows the Settings screen with \"Offline maps\" visible and the Settings tab active.\n\n**Run worktree:** `worktree/native-control` (branch `bench/native-control`)\n\n**Screenshot:** `tmp/native-control-settings.png` → copied to `.../results/opus-android/native-control/proof/settings.png`\n\n**Recording:** `tmp/native-control-session.mp4` → copied to `.../proof/session.mp4` (258 KB)\n\nWhat was done:\n- Worktree created; `node_modules`, `.expo`, `android/.gradle`, `android/build`, `android/app/build`, `android/app/.cxx` carried over as APFS clones.\n- `app_name` set to `Trailhead native-control`.\n- AVD `Trailhead_native-control` created via `avdmanager` from `system-images;android-36;google_apis_playstore_ps16k;arm64-v8a` with the default hardware profile; `disk.dataPartition.size` changed from `6G` to `8589934592`.\n- Booted with `-no-snapshot-save -no-snapshot-load`; `sys.boot_completed=1` on serial **<simulator-udid>**.\n- `npx expo run:android --device Trailhead_native-control` run as a background process (PID 25616, log `tmp/build-native-control.log`), polled with short foreground `ps`/`tail` calls. `BUILD SUCCESSFUL in 1m 39s`, installed `app/build/outputs/apk/debug/app-debug.apk` (Debug variant only), `MainActivity` confirmed as top resumed activity.\n\nOne deviation worth noting: the first background build attempt failed immediately with `Could not find device with name: <simulator-udid>` because `expo run:android --device` matches on AVD name rather than adb serial; I relaunched it with the AVD name. The emulator and app are left running, with the Metro dev server still alive under PID 25616."
+        }
+      ],
+      "commands": [
+        {
+          "id": "toolu_01WatcsjWdwdVfL1TAtR7DFF",
+          "startSeconds": 50.012,
+          "endSeconds": 50.468,
+          "command": "git worktree add worktree/native-control -b bench/native-control 2>&1 | tail -20",
+          "output": "Preparing worktree (new branch 'bench/native-control')\nHEAD is now at 63fe92c test: stabilize benchmark native fingerprint",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01FqEyvtB8zb9bmBtrvDPWiP",
+          "startSeconds": 51.113,
+          "endSeconds": 51.165,
+          "command": "ls -a && cat package.json",
+          "output": ".\n..\n.env.example\n.expo\n.fingerprintignore\n.git\n.gitignore\n.m1788412929627.sock\n.worktrees\nAGENTS.md\nandroid\napp\napp.json\nassets\nbench\nCLAUDE.md\ndocs\neslint.config.js\nios\nLICENSE\nnode_modules\npackage-lock.json\npackage.json\nREADME.md\nscripts\nsrc\ntsconfig.json\n{\n  \"name\": \"trailhead\",\n  \"description\": \"Reference Expo app for local stim-cli iOS and Android testing\",\n  \"license\": \"MIT\",\n  \"repository\": \"https://github.com/appandflow/trailhead\",\n  \"main\": \"expo-router/entry\",\n  \"version\": \"1.0.0\",\n  \"scripts\": {\n    \"start\": \"expo start\",\n    \"android\": \"expo run:android\",\n    \"ios\": \"expo run:ios\",\n    \"web\": \"expo start --web\",\n    \"lint\": \"expo lint\",\n    \"typecheck\": \"tsc --noEmit\",\n    \"bench\": \"node bench/bench.mjs\"\n  },\n  \"dependencies\": {\n    \"@expo/vector-icons\": \"^15.0.2\",\n    \"@react-navigation/bottom-tabs\": \"^7.3.10\",\n    \"@react-navigation/elements\": \"^2.3.8\",\n    \"@react-navigation/native\": \"^7.1.6\",\n    \"@shopify/flash-list\": \"2.0.2\",\n    \"@shopify/react-native-skia\": \"2.6.2\",\n    \"@tanstack/react-query\": \"^5.101.4\",\n    \"date-fns\": \"^4.4.0\",\n    \"drizzle-orm\": \"^0.45.2\",\n    \"expo\": \"~57.0.18\",\n    \"expo-asset\": \"~57.0.15\",\n    \"expo-blur\": \"~57.0.2\",\n    \"expo-constants\": \"~57.0.16\",\n    \"expo-crypto\": \"~57.0.2\",\n    \"expo-dev-client\": \"~57.0.16\",\n    \"expo-device\": \"~57.0.1\",\n    \"expo-file-system\": \"~57.0.6\",\n    \"expo-font\": \"~57.0.2\",\n    \"expo-haptics\": \"~57.0.2\",\n    \"expo-image\": \"~57.0.3\",\n    \"expo-linear-gradient\": \"~57.0.1\",\n    \"expo-linking\": \"~57.0.8\",\n    \"expo-location\": \"~57.0.14\",\n    \"expo-network\": \"~57.0.1\",\n    \"expo-notifications\": \"~57.0.15\",\n    \"expo-router\": \"~57.0.17\",\n    \"expo-secure-store\": \"~57.0.2\",\n    \"expo-sharing\": \"~57.0.16\",\n    \"expo-splash-screen\": \"~57.0.8\",\n    \"expo-sqlite\": \"~57.0.2\",\n    \"expo-status-bar\": \"~57.0.1\",\n    \"expo-symbols\": \"~57.0.2\",\n    \"expo-system-ui\": \"~57.0.3\",\n    \"expo-task-manager\": \"~57.0.14\",\n    \"expo-video\": \"~57.0.3\",\n    \"expo-web-browser\": \"~57.0.2\",\n    \"lottie-react-native\": \"~7.3.8\",\n    \"react\": \"19.2.3\",\n    \"react-dom\": \"19.2.3\",\n    \"react-native\": \"0.86.3\",\n    \"react-native-gesture-handler\": \"~2.32.0\",\n    \"react-native-maps\": \"1.27.2\",\n    \"react-native-mmkv\": \"^4.3.2\",\n    \"react-native-nitro-modules\": \"^0.36.5\",\n    \"react-native-reanimated\": \"4.5.1\",\n    \"react-native-safe-area-context\": \"~5.7.0\",\n    \"react-native-screens\": \"~4.26.0\",\n    \"react-native-svg\": \"15.15.4\",\n    \"react-native-web\": \"^0.21.2\",\n    \"react-native-webview\": \"13.16.1\",\n    \"react-native-worklets\": \"0.10.1\",\n    \"zod\": \"^4.4.3\",\n    \"zustand\": \"^5.0.15\"\n  },\n  \"devDependencies\": {\n    \"@types/react\": \"~19.2.0\",\n    \"drizzle-kit\": \"^0.31.10\",\n    \"eslint\": \"^9.25.0\",\n    \"eslint-config-expo\": \"~57.0.2\",\n    \"typescript\": \"~6.0.3\"\n  },\n  \"expo\": {\n    \"doctor\": {\n      \"appConfigFieldsNotSyncedCheck\": {\n        \"enabled\": false\n      }\n    }\n  },\n  \"private\": true\n}",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01R3v1dBHETg2Dowp54LVYim",
+          "startSeconds": 54.775,
+          "endSeconds": 57.02,
+          "command": "du -sh node_modules 2>/dev/null; ls android; echo \"---\"; ls android/app | head -30; echo \"--- gradle caches\"; ls -d android/.gradle android/build android/app/build android/app/.cxx 2>/dev/null",
+          "output": " 33G\tnode_modules\napp\nbuild\nbuild.gradle\ngradle\ngradle.properties\ngradlew\ngradlew.bat\nsettings.gradle\n---\nbuild\nbuild.gradle\ndebug.keystore\nproguard-rules.pro\nsrc\n--- gradle caches\nandroid/.gradle\nandroid/app/.cxx\nandroid/app/build\nandroid/build",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01LMDvyDjbG6bJQPV6umqneY",
+          "startSeconds": 61.098,
+          "endSeconds": 61.242,
+          "command": "diskutil info workspace/ExternalSSD 2>/dev/null | grep -i \"File System Personality\"",
+          "output": "<machine storage inventory omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01NxX9zLuuZP9rDqUTrFMVG1",
+          "startSeconds": 67.16,
+          "endSeconds": 67.213,
+          "command": "cat > tmp/carry-deps-native-control.sh <<'EOF'\nset -e\nSRC=workspace/trailhead-v3\nDST=worktree/native-control\nfor p in node_modules .expo android/.gradle android/build android/app/build android/app/.cxx; do\n  if [ -e \"$SRC/$p\" ]; then\n    echo \"carrying $p\"\n    rm -rf \"$DST/$p\"\n    cp -Rc \"$SRC/$p\" \"$DST/$p\"\n  fi\ndone\necho CARRY_DONE\nEOF\nnohup bash tmp/carry-deps-native-control.sh > tmp/carry-deps-native-control.log 2>&1 &\necho \"PID=$!\"",
+          "output": "PID=25078",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_019pD1g66LnS5NKNGgHvYnec",
+          "startSeconds": 71.715,
+          "endSeconds": 71.743,
+          "command": "echo \"ANDROID_HOME=$ANDROID_HOME\"; echo \"ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT\"; ls ~system/Library/Android/sdk 2>/dev/null; echo \"--- cmdline-tools\"; ls ~system/Library/Android/sdk/cmdline-tools 2>/dev/null; echo \"--- sysimg\"; ls ~system/Library/Android/sdk/system-images/android-36 2>/dev/null",
+          "output": "ANDROID_HOME=workspace/sdk\nANDROID_SDK_ROOT=\nbuild-tools\ncmake\ncmdline-tools\nemulator\nlicenses\nndk\nplatform-tools\nplatforms\nsystem-images\n--- cmdline-tools\nlatest\n--- sysimg\ngoogle_apis_playstore_ps16k",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01PZBHPsuvSpJuHqVwxWfjgK",
+          "startSeconds": 72.338,
+          "endSeconds": 72.364,
+          "command": "cat worktree/native-control/android/app/src/main/res/values/strings.xml",
+          "output": "<resources>\n  <string name=\"app_name\">Trailhead</string>\n  <string name=\"expo_system_ui_user_interface_style\" translatable=\"false\">automatic</string>\n  <string name=\"expo_splash_screen_resize_mode\" translatable=\"false\">contain</string>\n</resources>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_018RSDuXdJ3Yg77UFvrSNA86",
+          "startSeconds": 76.268,
+          "endSeconds": 76.298,
+          "command": "ls ~system/Library/Android/sdk/system-images/android-36/google_apis_playstore_ps16k/; echo \"--- avds\"; ls ~/.android/avd/ 2>/dev/null; echo \"--- carry log\"; cat tmp/carry-deps-native-control.log",
+          "output": "arm64-v8a\n--- avds\nAndroid16_16KB.avd\nAndroid16_16KB.ini\n--- carry log\ncarrying node_modules",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01VxNjpxNxVhgMY6SbgooDMi",
+          "startSeconds": 82.34,
+          "endSeconds": 83.181,
+          "command": "echo no | workspace/avdmanager create avd -n \"Trailhead_native-control\" -k \"system-images;android-36;google_apis_playstore_ps16k;arm64-v8a\" 2>&1 | tail -20",
+          "output": "Warning: This version only understands SDK XML versions up to 3 but an SDK XML file of version 4 was encountered. This can happen if you use versions of Android Studio and the command-line tools that were released at different times.\nAuto-selecting single ABI arm64-v8a\nDo you wish to create a custom hardware profile? [no]",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01SpkzFTzCChawZLrqbD9CH6",
+          "startSeconds": 85.255,
+          "endSeconds": 85.285,
+          "command": "ls ~/.android/avd/ && grep -c . ~/.android/avd/Trailhead_native-control.avd/config.ini",
+          "output": "Android16_16KB.avd\nAndroid16_16KB.ini\nTrailhead_native-control.avd\nTrailhead_native-control.ini\n136",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01W8u4bBodSKf6faQgLcvVXT",
+          "startSeconds": 88.271,
+          "endSeconds": 88.324,
+          "command": "grep -n \"dataPartition\" ~/.android/avd/Trailhead_native-control.avd/config.ini || echo \"NOT_PRESENT\"",
+          "output": "8:disk.dataPartition.path=<temp>\n9:disk.dataPartition.size=6G",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_018pqkFaBPNqeg3Wdibne4MX",
+          "startSeconds": 90.893,
+          "endSeconds": 90.948,
+          "command": "sed -i '' 's/^disk\\.dataPartition\\.size=.*$/disk.dataPartition.size=8589934592/' ~/.android/avd/Trailhead_native-control.avd/config.ini && grep -n \"dataPartition\" ~/.android/avd/Trailhead_native-control.avd/config.ini",
+          "output": "8:disk.dataPartition.path=<temp>\n9:disk.dataPartition.size=8589934592",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01AZEimaSfGNhxQTPbu5TbPL",
+          "startSeconds": 91.92,
+          "endSeconds": 91.974,
+          "command": "cat tmp/carry-deps-native-control.log; ps -p 25078 >/dev/null && echo \"CARRY_RUNNING\" || echo \"CARRY_EXITED\"",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01H5JusFJkL5FagG1sCdrjqY",
+          "startSeconds": 95.458,
+          "endSeconds": 95.511,
+          "command": "nohup workspace/emulator -avd Trailhead_native-control -no-snapshot-save -no-snapshot-load > tmp/emulator-native-control.log 2>&1 &\necho \"EMU_PID=$!\" | tee tmp/emulator-native-control.pid",
+          "output": "EMU_PID=25266",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01Y6zLksacsQkSip17Gnvgsn",
+          "startSeconds": 97.519,
+          "endSeconds": 97.554,
+          "command": "workspace/adb devices; tail -5 tmp/emulator-native-control.log",
+          "output": "List of devices attached\n\nINFO         | Setting ICD filenames for the loader = workspace/lvp_icd.json\nINFO         | SharedLibrary::open for [workspace/libvulkan.dylib]\nINFO         | Added library: workspace/libvulkan.dylib\nINFO         | Enabling Vulkan portability.\nINFO         | Selecting Vulkan device: llvmpipe (LLVM 21.1.4, 128 bits), Version: 1.4.330",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01QeaHXNcFJVPoBAsNy5fTVh",
+          "startSeconds": 99.283,
+          "endSeconds": 99.317,
+          "command": "workspace/adb devices; tail -3 tmp/emulator-native-control.log",
+          "output": "List of devices attached\n<simulator-udid>\toffline\n\nINFO         | AVD supportsNativeGLES=1, supportsGuestAngle=1\nINFO         | Guest Angle is still unstable for API > 35.\nINFO         | Created extended window in 226.109ms",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01HQTx8HbJHBKBvQxgpUY9Jf",
+          "startSeconds": 103.747,
+          "endSeconds": 103.794,
+          "command": "workspace/adb -s <simulator-udid> shell getprop sys.boot_completed 2>&1; workspace/adb devices",
+          "output": "adb: device offline\nList of devices attached\n<simulator-udid>\toffline",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01VmrKqGsaQtZX7zZugUDdXP",
+          "startSeconds": 105.733,
+          "endSeconds": 105.783,
+          "command": "workspace/adb -s <simulator-udid> shell getprop sys.boot_completed 2>&1; workspace/adb devices",
+          "output": "adb: device offline\nList of devices attached\n<simulator-udid>\toffline",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01RjCjJaSHXN7YnuGCLeRQdK",
+          "startSeconds": 112.516,
+          "endSeconds": 116.645,
+          "command": "ADB=workspace/adb; for i in $(seq 1 30); do s=$($ADB -s <simulator-udid> shell getprop sys.boot_completed 2>/dev/null | tr -d '\\r'); if [ \"$s\" = \"1\" ]; then echo \"BOOT_COMPLETED after ${i} polls\"; break; fi; sleep 2; done; $ADB devices",
+          "output": "BOOT_COMPLETED after 3 polls\nList of devices attached\n<simulator-udid>\tdevice",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01PoVBu7cBxSoWsU1TQXhCau",
+          "startSeconds": 126.296,
+          "endSeconds": 126.336,
+          "command": "cat > tmp/build-native-control.sh <<'EOF'\ncd worktree/native-control\nexport ANDROID_HOME=workspace/sdk\nexport PATH=<toolchain-path>\nnpx expo run:android --device <simulator-udid>\necho \"EXPO_RUN_EXIT=$?\"\nEOF\nnohup bash tmp/build-native-control.sh > tmp/build-native-control.log 2>&1 &\necho $! > tmp/build-native-control.pid; cat tmp/build-native-control.pid",
+          "output": "25508",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01SEEqLBdeA8DYaDzwdbKR76",
+          "startSeconds": 127.892,
+          "endSeconds": 127.927,
+          "command": "ps -p 25508 >/dev/null && echo RUNNING || echo EXITED; tail -20 tmp/build-native-control.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01BEpwSfJMmqLVzB5wz6iGi6",
+          "startSeconds": 137.175,
+          "endSeconds": 137.233,
+          "command": "cat > tmp/build-native-control.sh <<'EOF'\ncd worktree/native-control\nexport ANDROID_HOME=workspace/sdk\nexport PATH=<toolchain-path>\nnpx expo run:android --device Trailhead_native-control\necho \"EXPO_RUN_EXIT=$?\"\nEOF\nnohup bash tmp/build-native-control.sh > tmp/build-native-control.log 2>&1 &\necho $! > tmp/build-native-control.pid; cat tmp/build-native-control.pid",
+          "output": "25616",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_015uhEGuh5Yt9RsfVrw4Le96",
+          "startSeconds": 138.788,
+          "endSeconds": 138.834,
+          "command": "ps -p 25616 >/dev/null && echo RUNNING || echo EXITED; tail -20 tmp/build-native-control.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01R7tyFYmT661J5X9NxinS3g",
+          "startSeconds": 140.646,
+          "endSeconds": 140.687,
+          "command": "ps -p 25616 >/dev/null && echo RUNNING || echo EXITED; tail -12 tmp/build-native-control.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_011NjHeEvErGkduJ92nfndwx",
+          "startSeconds": 142.239,
+          "endSeconds": 142.274,
+          "command": "ps -p 25616 >/dev/null && echo RUNNING || echo EXITED; tail -6 tmp/build-native-control.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01SNRtdtCzMSWhtpn8tCrtPu",
+          "startSeconds": 148.514,
+          "endSeconds": 209.123,
+          "command": "for i in $(seq 1 20); do ps -p 25616 >/dev/null || break; grep -qE \"Starting the app|BUILD FAILED|error:|FAILURE:\" tmp/build-native-control.log && break; sleep 3; done; ps -p 25616 >/dev/null && echo RUNNING || echo EXITED; tail -6 tmp/build-native-control.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_016M9ZdiiJ7QBKgKQA2gEQAE",
+          "startSeconds": 212.134,
+          "endSeconds": 272.739,
+          "command": "for i in $(seq 1 20); do ps -p 25616 >/dev/null || break; grep -qE \"Starting the app|BUILD FAILED|FAILURE:\" tmp/build-native-control.log && break; sleep 3; done; ps -p 25616 >/dev/null && echo RUNNING || echo EXITED; tail -6 tmp/build-native-control.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01ErnLSAeBkA8tvcYmtF58H5",
+          "startSeconds": 276.303,
+          "endSeconds": 337.004,
+          "command": "for i in $(seq 1 20); do ps -p 25616 >/dev/null || break; grep -qE \"Starting the app|BUILD FAILED|FAILURE:\" tmp/build-native-control.log && break; sleep 3; done; ps -p 25616 >/dev/null && echo RUNNING || echo EXITED; grep -E \"Starting the app|BUILD SUCCESSFUL|BUILD FAILED|FAILURE:|Installing\" tmp/build-native-control.log | tail -10",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01WfY6KBYHZYFGgRpZQUPUQG",
+          "startSeconds": 339.886,
+          "endSeconds": 339.949,
+          "command": "for i in $(seq 1 20); do grep -qE \"Starting the app|Opening|error\" tmp/build-native-control.log && break; sleep 3; done; ps -p 25616 >/dev/null && echo RUNNING || echo EXITED; tail -8 tmp/build-native-control.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01FLyW5o3XTfdPatGL43UQ4z",
+          "startSeconds": 344.076,
+          "endSeconds": 344.169,
+          "command": "grep -aE \"Starting the app|Opening on|Logs for your project|error\" tmp/build-native-control.log | tail -10; echo \"---pm\"; workspace/adb -s <simulator-udid> shell pm list packages | grep trailhead",
+          "output": "› Logs for your project will appear below.\n---pm\npackage:com.appandflow.trailhead",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01MJpC2knarQHxzHhuPQNUgu",
+          "startSeconds": 347.321,
+          "endSeconds": 347.403,
+          "command": "workspace/adb -s <simulator-udid> shell dumpsys activity activities | grep -m3 -E \"ResumedActivity|topResumedActivity\"",
+          "output": "    topResumedActivity=ActivityRecord{262896267 u0 com.appandflow.trailhead/.MainActivity t8}\n  ResumedActivity: ActivityRecord{262896267 u0 com.appandflow.trailhead/.MainActivity t8}",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01Fo6Pmn1dhYihRavQHgmkzj",
+          "startSeconds": 350.643,
+          "endSeconds": 353.124,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device open com.appandflow.trailhead --foreground --platform android --serial <simulator-udid>",
+          "output": "Opened: com.appandflow.trailhead\nSession state: ./state/agent-device/sessions/native-control\nPage: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 3 visible nodes (5 total)\nCollapsed 2 Android helper nodes from the agent-facing text snapshot; use --raw or --json for the full hierarchy.\n@e1 [group] \"Close\"\n@e3 [scroll-area] [scrollable]\n@e4 [group] \"Continue\"",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01QUDZJ6MwcTf8FPmqS94rKk",
+          "startSeconds": 356.331,
+          "endSeconds": 357.024,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device record start tmp/native-control-session.mp4 --scope device --quality high --hide-touches",
+          "output": "tmp/native-control-session.mp4\nSession state: ./state/agent-device/sessions/native-control",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01Cv1eg5VwemVtmhQDRZsdne",
+          "startSeconds": 359.552,
+          "endSeconds": 360.54,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device click @e4 --settle",
+          "output": "Tapped @e4 (160, 552)\nsettled after 672ms: +14 -1 (~4 unchanged)\n- @e5 [text] \"Continue\"\n+ @e5~s468155 [group] \"Reload\"\n+ @e6~s468155 [text] \"Reload\"\n+ @e7~s468155 [group]\n+ @e8~s468155 [group] \"Home\"\n+ @e9~s468155 [text] \"Go home\"\n+ @e10~s468155 [group]\n+ @e11~s468155 [group] \"Performance monitor\"\n+ @e12~s468155 [text] \"Toggle performance monitor\"\n+ @e13~s468155 [group]\n+ @e14~s468155 [group] \"Element inspector\"\n+ @e15~s468155 [text] \"Toggle element inspector\"\n+ @e16~s468155 [group]\n+ @e17~s468155 [group] \"DevTools\"\n+ @e18~s468155 [text] \"Open DevTools\"",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_013cL5ULM2SE89QyWXihHCcq",
+          "startSeconds": 363.474,
+          "endSeconds": 363.615,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device snapshot -i",
+          "output": "Page: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 7 visible nodes (18 total)\nCollapsed 11 Android helper nodes from the agent-facing text snapshot; use --raw or --json for the full hierarchy.\n@e1 [group] \"Close\"\n@e3 [scroll-area] [scrollable]\n  [content below scroll-area hidden]\n@e4 [group] \"Reload\"\n@e7 [group] \"Home, Go home\"\n@e10 [group] \"Performance monitor, Toggle performance monitor\"\n@e13 [group] \"Element inspector, Toggle element inspector\"\n@e16 [group] \"DevTools, Open DevTools\"",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01MZeuR4ezDbgKVmbQpsNWAn",
+          "startSeconds": 365.875,
+          "endSeconds": 367.656,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device click @e1 --settle",
+          "output": "Tapped @e1 (293, 302)\nsettled after 1476ms: +63 -17 (~1 unchanged)\n- @e1 [group]\n- @e2 [group] \"Close\"\n- @e4 [group]\n- @e5 [group] \"Reload\"\n- @e6 [text] \"Reload\"\n- @e7 [group]\n- @e8 [group] \"Home\"\n- @e9 [text] \"Go home\"\n- @e10 [group]\n- @e11 [group] \"Performance monitor\"\n- @e12 [text] \"Toggle performance monitor\"\n- @e13 [group]\n- @e14 [group] \"Element inspector\"\n- @e15 [text] \"Toggle element inspector\"\n- @e16 [group]\n- @e17 [group] \"DevTools\"\n- @e18 [text] \"Open DevTools\"\n+ @e2~s468159 [text-field] \"Search trails, regions, tags\"\n+ @e3~s468159 [horizontalscrollview]\n+ @e4~s468159 [button] \"All regions\"\n+ @e5~s468159 [text] \"All regions\"\n+ @e6~s468159 [button] \"Adirondacks\"\n+ @e7~s468159 [text] \"Adirondacks\"\n+ @e8~s468159 [button] \"Bas-Saint-Laurent\"\n+ @e9~s468159 [text] \"Bas-Saint-Laurent\"\n+ @e10~s468159 [horizontalscrollview]\n+ @e11~s468159 [button] \"Any level\"\n+ @e12~s468159 [text] \"Any level\"\n+ @e13~s468159 [button] \"Easy\"\n+ @e14~s468159 [text] \"Easy\"\n+ @e15~s468159 [button] \"Moderate\"\n+ @e16~s468159 [text] \"Moderate\"\n+ @e17~s468159 [button] \"Hard\"\n+ @e18~s468159 [text] \"Hard\"\n+ @e19~s468159 [button] \"Expert\"\n+ @e20~s468159 [button] \"Sort by name\"\n+ @e21~s468159 [text] \"Name\"\n+ @e22~s468159 [button] \"Sort by distance\"\n+ @e23~s468159 [text] \"Distance\"\n+ @e24~s468159 [button] \"Sort by rating\"\n+ @e25~s468159 [text] \"Rating\"\n+ @e26~s468159 [scroll-area]\n+ @e27~s468159 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n+ @e28~s468159 [text] \"Belvedere de la Chute\"\n+ @e29~s468159 [text] \"Gaspesie\"\n+ @e30~s468159 [text] \"\"\n+ @e31~s468159 [text] \"11 km\"\n+ @e32~s468159 [text] \"\"\n+ @e33~s468159 [text] \"1106 m\"\n+ @e34~s468159 [text] \"\"\n+ @e35~s468159 [text] \"4:16:00\"\n+ @e36~s468159 [text] \"Moderate\"\n+ @e37~s468159 [text] \"\"\n+ @e38~s468159 [text] \"3.8\"\n+ @e39~s468159 [text] \"(837)\"\n+ @e40~s468159 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n+ @e41~s468159 [text] \"Belvedere de la Tour Bleu\"\n+ @e42~s468159 [text] \"Mont-Tremblant\"\n+ @e43~s468159 [text] \"\"\n+ @e44~s468159 [text] \"1.9 km\"\n+ @e45~s468159 [text] \"\"\n+ @e46~s468159 [text] \"701 m\"\n+ @e47~s468159 [text] \"\"\n+ @e48~s468159 [text] \"1:31:00\"\n+ @e49~s468159 [text] \"Hard\"\n+ @e50~s468159 [text] \"\"\n+ @e51~s468159 [text] \"5.0\"\n+ @e52~s468159 [text] \"(609)\"\n+ @e53~s468159 [group] \", Trails\"\n+ @e54~s468159 [text] \"\"\n+ @e55~s468159 [text] \"Trails\"\n+ @e56~s468159 [group] \", Record\"\n+ @e57~s468159 [text] \"\"\n+ @e58~s468159 [text] \"Record\"\n+ @e59~s468159 [group] \", History\"\n+ @e60~s468159 [text] \"\"\n+ @e61~s468159 [text] \"History\"\n+ @e62~s468159 [group] \", Settings\"\n+ @e63~s468159 [text] \"\"\n+ @e64~s468159 [text] \"Settings\"",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01XUCS5j3xp3PH9BkDfHBVoH",
+          "startSeconds": 371.666,
+          "endSeconds": 373.036,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device click @e62~s468159 --settle",
+          "output": "Tapped @e62 (280, 592)\nsettled after 1041ms: +18 -50 (~14 unchanged)\n- @e2 [text-field] \"Search trails, regions, tags\"\n- @e3 [horizontalscrollview]\n- @e4 [button] \"All regions\"\n- @e5 [text] \"All regions\"\n- @e6 [button] \"Adirondacks\"\n- @e7 [text] \"Adirondacks\"\n- @e8 [button] \"Bas-Saint-Laurent\"\n- @e9 [text] \"Bas-Saint-Laurent\"\n- @e10 [horizontalscrollview]\n- @e11 [button] \"Any level\"\n- @e12 [text] \"Any level\"\n- @e13 [button] \"Easy\"\n- @e14 [text] \"Easy\"\n- @e15 [button] \"Moderate\"\n- @e16 [text] \"Moderate\"\n- @e17 [button] \"Hard\"\n- @e18 [text] \"Hard\"\n- @e19 [button] \"Expert\"\n- @e20 [button] \"Sort by name\"\n- @e21 [text] \"Name\"\n- @e22 [button] \"Sort by distance\"\n- @e23 [text] \"Distance\"\n- @e24 [button] \"Sort by rating\"\n- @e25 [text] \"Rating\"\n- @e27 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e28 [text] \"Belvedere de la Chute\"\n- @e29 [text] \"Gaspesie\"\n- @e30 [text] \"\"\n- @e31 [text] \"11 km\"\n- @e32 [text] \"\"\n- @e33 [text] \"1106 m\"\n- @e34 [text] \"\"\n- @e35 [text] \"4:16:00\"\n- @e36 [text] \"Moderate\"\n- @e37 [text] \"\"\n- @e38 [text] \"3.8\"\n- @e39 [text] \"(837)\"\n- @e40 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n- @e41 [text] \"Belvedere de la Tour Bleu\"\n- @e42 [text] \"Mont-Tremblant\"\n- @e43 [text] \"\"\n- @e44 [text] \"1.9 km\"\n- @e45 [text] \"\"\n- @e46 [text] \"701 m\"\n- @e47 [text] \"\"\n- @e48 [text] \"1:31:00\"\n- @e49 [text] \"Hard\"\n- @e50 [text] \"\"\n- @e51 [text] \"5.0\"\n- @e52 [text] \"(609)\"\n+ @e3~s468163 [text] \"UNITS\"\n+ @e4~s468163 [text] \"Distance\"\n+ @e5~s468163 [text] \"\"\n+ @e6~s468163 [text] \"Used across the whole app\"\n+ @e7~s468163 [button] \"Metric units\"\n+ @e8~s468163 [text] \"Metric\"\n+ @e9~s468163 [button] \"Imperial units\"\n+ @e10~s468163 [text] \"Imperial\"\n+ @e11~s468163 [text] \"PREFERENCES\"\n+ @e12~s468163 [text] \"\"\n+ @e13~s468163 [text] \"Hike reminders\"\n+ @e14~s468163 [text] \"Nudge me when I have not hiked in a while\"\n+ @e15~s468163 [switch] \"Hike reminders\"\n+ @e16~s468163 [text] \"\"\n+ @e17~s468163 [text] \"Offline maps\"\n+ @e18~s468163 [text] \"Keep map tiles for saved trails on device\"\n+ @e19~s468163 [switch] \"Offline maps\"\n+ @e20~s468163 [text] \"STORAGE\"",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01W4SXvtnbLr1wUYAJ1zCrd9",
+          "startSeconds": 376.474,
+          "endSeconds": 376.619,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device wait text \"Offline maps\"",
+          "output": "(Bash completed with no output)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_0175Y3BtTirjPLxcxzqqeTA7",
+          "startSeconds": 380.26,
+          "endSeconds": 381.706,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device screenshot tmp/native-control-settings.png",
+          "output": "tmp/native-control-settings.png (320x640)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_015SvWNEGNjNk1tVGAgFuR1N",
+          "startSeconds": 383.74,
+          "endSeconds": 383.793,
+          "command": "cp tmp/native-control-settings.png results/opus-android/native-control/proof/settings.png",
+          "output": "(Bash completed with no output)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01MU9JhUb4vgQj6hwodjdHtF",
+          "startSeconds": 385.79,
+          "endSeconds": 391.965,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device record stop",
+          "output": "tmp/native-control-session.mp4",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01Xf2WuEe41CZ6QrvZtoh6ad",
+          "startSeconds": 394.119,
+          "endSeconds": 394.171,
+          "command": "cp tmp/native-control-session.mp4 results/opus-android/native-control/proof/session.mp4",
+          "output": "(Bash completed with no output)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01F9FLiJ7ugy8rjhhThUidb8",
+          "startSeconds": 396.121,
+          "endSeconds": 396.339,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device close",
+          "output": "Closed: native-control",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01F1JFRHvGT6wMnw7cAKR6nU",
+          "startSeconds": 398.83,
+          "endSeconds": 399.075,
+          "command": "ls -l results/opus-android/native-control/proof/",
+          "output": "total 600\n-rw-r--r--@ 1 <local-user>  staff      96 Sep  4 19:12 native-application-label.txt\n-rw-r--r--@ 1 <local-user>  staff  258050 Sep  4 19:14 session.mp4\n-rw-r--r--@ 1 <local-user>  staff   40309 Sep  4 19:14 settings.png",
+          "exitCode": 0
+        }
+      ],
+      "backgroundProcesses": [
+        {
+          "id": "background-toolu_01NxX9zLuuZP9rDqUTrFMVG1",
+          "label": "bash tmp/carry-deps-native-control.sh",
+          "startSeconds": 67.213,
+          "endSeconds": 91.974,
+          "launcherCommandId": "toolu_01NxX9zLuuZP9rDqUTrFMVG1",
+          "monitorCount": 1
+        },
+        {
+          "id": "background-toolu_01PoVBu7cBxSoWsU1TQXhCau",
+          "label": "bash tmp/build-native-control.sh",
+          "startSeconds": 126.336,
+          "endSeconds": 127.927,
+          "launcherCommandId": "toolu_01PoVBu7cBxSoWsU1TQXhCau",
+          "monitorCount": 1
+        },
+        {
+          "id": "background-toolu_01BEpwSfJMmqLVzB5wz6iGi6",
+          "label": "bash tmp/build-native-control.sh",
+          "startSeconds": 137.233,
+          "endSeconds": 339.949,
+          "launcherCommandId": "toolu_01BEpwSfJMmqLVzB5wz6iGi6",
+          "monitorCount": 7
+        }
+      ],
+      "markers": [
+        {
+          "id": "app-alive",
+          "kind": "appAlive",
+          "label": "App process alive",
+          "atSeconds": 241.607
+        },
+        {
+          "id": "settings-ready",
+          "kind": "settingsReady",
+          "label": "Settings proof ready",
+          "atSeconds": 381.706
+        }
+      ],
+      "proof": {
+        "src": "benchmarks/opus-android/native-control.png",
+        "expected": "Offline maps",
+        "width": 320,
+        "height": 640
+      },
+      "recording": {
+        "src": "benchmarks/opus-android/native-control.mp4",
+        "bytes": 258050
+      }
+    }
+  ]
+}
