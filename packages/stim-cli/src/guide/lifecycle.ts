@@ -68,6 +68,11 @@ Metro cannot identify one iOS peer, the command tells the agent to press Reload
 through its existing automation session on the exact simulator. Stim does not
 take over that stateful session.
 
+A successful reload confirms that the request was sent. It does not wait for
+new JavaScript or observe the resulting UI. Verify the expected screen or
+interaction on the reported device and inspect \`stim logs --errors\` before
+claiming recovery; exit 0 alone does not prove it.
+
 DESTRUCTIVE COMMANDS -- ask the user first
   gc --delete             deletes orphaned stim-* devices, tens of GB
   gc --delete --cache all empties the shared build caches every project uses

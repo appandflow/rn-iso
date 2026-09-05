@@ -60,6 +60,9 @@ RULES DURING THE LOOP
   physical device that reached Metro, use agent-device metro reload with the
   reported port. The detected iOS Local Network first-load remedy uses UI
   automation instead because that app never established a Metro connection.
+- A successful stim reload confirms that the request was sent, not that new
+  JavaScript loaded or the screen recovered. Verify the expected UI on the
+  reported device and inspect stim logs --errors before claiming recovery.
 - If launch reports an app error but also says the native process is alive,
   the app did not crash. Fix JavaScript or TypeScript and use Fast Refresh. If
   the error screen remains, follow the printed reload remedy instead of

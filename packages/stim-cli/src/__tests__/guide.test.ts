@@ -1477,6 +1477,7 @@ test('the guide defines reload as a JavaScript-only live-app recovery', () => {
   expect(lifecycle).toMatch(/iOS Local Network first-load[\s\S]*no Metro peer exists yet/);
   expect(renderSection('lifecycle', 'options')).toMatch(/^  reload\s+\[ios\|android\] --json$/m);
   expect(renderSection('facts', 'payloads')).toContain('stim reload [ios|android] --json');
+  expect(renderSection('facts', 'payloads')).toMatch(/reload request was sent[\s\S]*does not observe completion/);
   expect(renderSection('facts', 'payloads')).toMatch(/platform[\s\S]*deviceId[\s\S]*metroPort[\s\S]*strategy/);
   expect(errors).toContain('STIM_RELOAD_AMBIGUOUS');
   expect(errors).toContain('STIM_RELOAD_RELEASE');
