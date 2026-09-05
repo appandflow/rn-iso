@@ -18,6 +18,7 @@ import {
   assert,
   buildLog,
   cleanupTmp,
+  createCleanupTracker,
   createFixture,
   createHarness,
   describeGrowth,
@@ -148,6 +149,7 @@ function ownerIsAlive(home) {
 const RACE_CACHE_ROOT = args.dryRun ? '<dry-run>' : join(WORK_DIR, 'race-build-cache');
 
 const h = createHarness({ env: ENV, cliPath: CLI, label: `cache-e2e ${VARIANT}` });
+const cleanup = createCleanupTracker({ h, platform: PLATFORM });
 const { cli, cliJson, sh, log, banner, die } = h;
 
 const created = [];
@@ -418,6 +420,8 @@ async function main() {
 
       log('forcing gradle to execute in wt2 with --no-build-cache so its task cache can be observed...');
       const forced = cliJson([PLATFORM, '--json', '--no-build-cache'], { cwd: wt2, timeout: 40 * 60 * 1000 });
+      cleanup.recordBuild(forced);
+      cleanup.recordProcesses(wt2);
       c.ev(`wt2 forced run: cacheSkipped=${JSON.stringify(forced.cacheSkipped)} durationMs=${forced.durationMs}`);
       const lines = readNdjson(buildLog(wt2))
         .map((r) => String(r.msg || ''))
@@ -649,7 +653,7 @@ async function main() {
     dirtyByWorktree.push({ wt, porcelain: entries.join('\n'), diffs });
     worktreeRemove(wt);
   }
-  verifyCleanup({ h, platform: PLATFORM, appDir, created });
+  verifyCleanup({ h, cleanup, appDir, created });
 
   await runCheck('zero-config', (c) => {
     let critical = 0;
@@ -730,6 +734,7 @@ function startAndAssertMode(cwd) {
     die(`stim start failed (exit ${r.code}):\n${lastLines(r.stderr, 40)}`);
   }
   const facts = JSON.parse(r.stdout.trim().split('\n').findLast(Boolean));
+  cleanup.recordProcesses(cwd);
   assert(
     facts.mode === EXPECTED_MODE,
     `start mode for a ${FRAMEWORK} app must be ${EXPECTED_MODE}, got ${JSON.stringify(facts.mode)}`,
@@ -740,6 +745,8 @@ function startAndAssertMode(cwd) {
 function build(cwd, label) {
   log(`building ${PLATFORM} in ${cwd} (${label})...`);
   const facts = cliJson([PLATFORM, '--json'], { cwd, timeout: 40 * 60 * 1000 });
+  cleanup.recordBuild(facts);
+  cleanup.recordProcesses(cwd);
   log(
     `${label}: cacheHit=${JSON.stringify(facts.cacheHit)} key=${facts.cacheKey} launched=${JSON.stringify(facts.launched)} ` +
       `waitedForBuild=${JSON.stringify(facts.waitedForBuild)} durationMs=${facts.durationMs}`,
@@ -757,6 +764,7 @@ function assertArtifact(appPath) {
 
 function stopWorkspace(cwd) {
   if (!existsSync(cwd)) return;
+  cleanup.recordProcesses(cwd);
   cli(['stop'], { cwd, allowFail: true });
 }
 
@@ -882,6 +890,12 @@ function cliAsync(argv, { cwd, env = ENV, timeout = 40 * 60 * 1000 } = {}) {
       } catch {}
       resolveP({ code: code ?? 1, stdout, stderr, facts, cwd });
     });
+  }).then((result) => {
+    if (result.code === 0) {
+      cleanup.recordBuild(result.facts);
+      cleanup.recordProcesses(cwd);
+    }
+    return result;
   });
 }
 

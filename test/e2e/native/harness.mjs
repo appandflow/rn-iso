@@ -183,21 +183,76 @@ export function ensureGitignore({ appDir, framework }) {
   }
 }
 
-export function verifyCleanup({ h, platform, appDir, created }) {
+export function createCleanupTracker({ h, platform }) {
+  const devices = new Set();
+  const processes = new Set();
+
+  function recordBuild(facts) {
+    const id = platform === 'ios' ? facts.udid : facts.avdName;
+    assert(typeof id === 'string' && id.length > 0, `the ${platform} build did not identify its device`);
+    devices.add(id);
+  }
+
+  function recordProcesses(cwd) {
+    let state;
+    try {
+      state = JSON.parse(readFileSync(join(workspaceLogsDir(cwd), '..', 'state.json'), 'utf-8'));
+    } catch (error) {
+      if (error.code === 'ENOENT') return;
+      throw error;
+    }
+    const pids = new Set([
+      state.supervisor?.pid,
+      state.supervisor?.serverPid,
+      ...Object.values(state.collectors ?? {}).map((record) => record.pid),
+    ]);
+    for (const [pid, identity] of processSnapshot(h)) {
+      if (pids.has(pid)) processes.add(identity);
+    }
+  }
+
+  function remainingDevices() {
+    const ids =
+      platform === 'ios'
+        ? Object.values(JSON.parse(h.sh('xcrun', ['simctl', 'list', 'devices', '--json']).stdout).devices)
+            .flat()
+            .map((device) => device.udid)
+        : h
+            .sh('emulator', ['-list-avds'])
+            .stdout.split('\n')
+            .map((name) => name.trim());
+    return ids.filter((id) => devices.has(id));
+  }
+
+  function verifyProcesses() {
+    const live = new Set(processSnapshot(h).values());
+    const leaked = [...processes].filter((identity) => live.has(identity));
+    assert(leaked.length === 0, `a workspace process is still running:\n${leaked.join('\n')}`);
+  }
+
+  return { recordBuild, recordProcesses, remainingDevices, verifyProcesses };
+}
+
+function processSnapshot(h) {
+  const out = h.sh('ps', ['-ax', '-o', 'pid=,lstart=,command=']).stdout;
+  return new Map(
+    out
+      .split('\n')
+      .map((line) => /^\s*(\d+)\s+(.+)$/.exec(line))
+      .filter(Boolean)
+      .map((match) => [Number(match[1]), match[0].trim()]),
+  );
+}
+
+export function verifyCleanup({ h, cleanup, appDir, created }) {
   h.banner('cleanup checks');
 
-  if (platform === 'ios') {
-    const out = h.sh('xcrun', ['simctl', 'list', 'devices']).stdout;
-    assert(!/stim-/.test(out), 'an stim-* simulator was left behind');
-  } else {
-    const out = h.sh('emulator', ['-list-avds'], { allowFail: true }).stdout;
-    assert(!/stim-/.test(out), 'an stim-* AVD was left behind');
-  }
-  h.log('(1) no stim-* devices remain');
+  const devices = cleanup.remainingDevices();
+  assert(devices.length === 0, `a device from this run was left behind: ${devices.join(', ')}`);
+  h.log('(1) no devices from this run remain');
 
-  const ps = h.sh('ps', ['ax'], { allowFail: true }).stdout;
-  assert(!/stim-cli.*supervisor|supervisor\/run\.js/.test(ps), 'a supervisor process is still running');
-  h.log('(2) no supervisor/collector processes');
+  cleanup.verifyProcesses();
+  h.log('(2) no workspace supervisor/Metro/collector processes remain');
 
   const status = h.cli(['status'], { allowFail: true }).stdout;
   assert(!created.some((p) => status.includes(p)), 'status still lists a removed workspace');

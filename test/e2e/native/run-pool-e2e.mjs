@@ -7,6 +7,7 @@ import {
   FIXTURE_COMMANDS,
   assert,
   cleanupTmp,
+  createCleanupTracker,
   createFixture,
   createHarness,
   dumpDiagnostics,
@@ -29,6 +30,7 @@ const ENV = { ...process.env, STIM_HOME: HOME_DIR, CI: '1', STIM_POOL_IOS_PARKED
 process.env.STIM_HOME = HOME_DIR;
 
 const h = createHarness({ env: ENV, cliPath: CLI, label: `pool-e2e ${FRAMEWORK}` });
+const cleanup = createCleanupTracker({ h, platform: PLATFORM });
 const { cli, sh, log, banner, die } = h;
 
 const created = [];
@@ -50,12 +52,14 @@ async function main() {
   assert(second.udid !== first.udid, 'two workspaces shared one simulator');
 
   banner('remove: the first parks');
+  cleanup.recordProcesses(wt1);
   cli(['stop'], { cwd: wt1 });
   const removed1 = worktreeRemove(wt1);
   assert(/ {2}device {6}parked stim-parked /.test(removed1), `worktree remove did not park:\n${removed1}`);
   assertPoolSize(1);
 
   banner('remove: the second parks and evicts the first');
+  cleanup.recordProcesses(wt2);
   cli(['stop'], { cwd: wt2 });
   const removed2 = worktreeRemove(wt2);
   assert(/ {2}device {6}parked stim-parked /.test(removed2), `the second remove did not park:\n${removed2}`);
@@ -74,6 +78,7 @@ async function main() {
   assertPoolSize(0);
 
   banner('remove: the third parks');
+  cleanup.recordProcesses(wt3);
   cli(['stop'], { cwd: wt3 });
   const removed3 = worktreeRemove(wt3);
   assert(/ {2}device {6}parked stim-parked /.test(removed3), `the third remove did not park:\n${removed3}`);
@@ -89,7 +94,7 @@ async function main() {
   );
   assertPoolSize(0);
 
-  verifyCleanup({ h, platform: PLATFORM, appDir, created });
+  verifyCleanup({ h, cleanup, appDir, created });
 }
 
 function worktreeCreate(name, appDir) {
@@ -103,8 +108,11 @@ function worktreeCreate(name, appDir) {
 
 function runIos(cwd) {
   cli(['start', '--json', '--wait', '240'], { cwd });
+  cleanup.recordProcesses(cwd);
   const r = cli([PLATFORM, '--json'], { cwd, timeout: 40 * 60 * 1000 });
   const facts = JSON.parse(r.stdout.trim().split('\n').findLast(Boolean));
+  cleanup.recordBuild(facts);
+  cleanup.recordProcesses(cwd);
   const deviceLine = r.stderr.split('\n').find((line) => / {2}device {6}.*(booted|adopted) /.test(line)) ?? '';
   log(`device line: ${deviceLine.trim()}`);
   return { udid: facts.udid, adopted: / adopted /.test(deviceLine), deviceLine };
@@ -128,9 +136,12 @@ function assertPoolSize(expected) {
 }
 
 function assertSimCount(expected) {
-  const out = sh('xcrun', ['simctl', 'list', 'devices']).stdout;
-  const actual = out.split('\n').filter((line) => line.includes('stim-')).length;
-  assert(actual === expected, `${actual} stim-* simulators exist, expected ${expected}:\n${out}`);
+  const remaining = cleanup.remainingDevices();
+  const actual = remaining.length;
+  assert(
+    actual === expected,
+    `${actual} simulators from this run exist, expected ${expected}:\n${remaining.join('\n')}`,
+  );
 }
 
 function cleanupAfterFailure() {
