@@ -172,13 +172,15 @@ node test/e2e/native/run-cache-e2e.mjs --framework bare --platform android
 # skip the single-flight race (saves one cold compile; that check reports SKIP)
 node test/e2e/native/run-cache-e2e.mjs --framework expo --platform ios --skip-race
 
-# against an existing checkout with matching ios/Podfile.lock and ios/Pods/Manifest.lock
+# warm-cache parity: use a previously built disposable main checkout with matching Pods
 node test/e2e/native/run-cache-e2e.mjs --framework expo --platform ios \
-  --app-dir ~/src/my-app --summary /tmp/cache-summary.json
+  --app-dir /tmp/my-app-fixture --summary /tmp/cache-summary.json
 
 # print the plan, no side effects
 node test/e2e/native/run-cache-e2e.mjs --framework bare --platform ios --dry-run
 ```
+
+See the [source-fixture preparation requirements](./field-test-protocol.md#use-a-fixture-that-looks-like-a-real-repo).
 
 On CI it is `workflow_dispatch` only: **Actions -> Native E2E -> Run workflow ->
 suite: `caches`** (or `all` for both). The default stays `loop`, so the nightly
