@@ -23,11 +23,17 @@ import { registerWarm } from '../commands/worktree.ts';
 const publication = vi.hoisted(() => ({
   beforeCopy: null as ((path: string) => void) | null,
   beforeMkdir: null as ((path: string) => void) | null,
+  stagingPaths: [] as string[],
 }));
 vi.mock('fs', async (importOriginal) => {
   const fs = await importOriginal<typeof import('fs')>();
   return {
     ...fs,
+    mkdtempSync: (prefix: string) => {
+      const path = fs.mkdtempSync(prefix);
+      if (prefix.endsWith('.stim-warm-')) publication.stagingPaths.push(path);
+      return path;
+    },
     mkdirSync: (path: string, options?: import('fs').MakeDirectoryOptions) => {
       publication.beforeMkdir?.(path);
       return fs.mkdirSync(path, options);
@@ -53,6 +59,7 @@ function write(dir: string, rel: string, value: string): void {
 }
 
 beforeEach(() => {
+  publication.stagingPaths = [];
   base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-test-warm-')));
   root = join(base, 'main');
   target = join(base, 'linked');
@@ -77,6 +84,7 @@ afterEach(() => {
   process.exitCode = 0;
   delete process.env.STIM_HOME;
   rmSync(base, { recursive: true, force: true });
+  for (const path of publication.stagingPaths) rmSync(path, { recursive: true, force: true });
 });
 
 function warm() {
@@ -144,7 +152,7 @@ test('missing-only copy discards partial clone output before byte-copy fallback'
   expect(result.copied).toEqual(['node_modules']);
   expect(readdirSync(join(target, 'node_modules'))).toEqual(['pkg']);
   expect(readFileSync(join(target, 'node_modules/pkg/index.js'), 'utf-8')).toBe('source package');
-  expect(readdirSync(target).some((name) => name.startsWith('.stim-warm-'))).toBe(false);
+  expect(publication.stagingPaths.every((path) => !existsSync(path))).toBe(true);
 });
 
 test.each(['file', 'empty directory', 'dangling symlink'])(
@@ -195,7 +203,7 @@ test('failed missing-only copies leave no partial destination and retain their e
   expect(result.copied).toEqual([]);
   expect(result.failed).toEqual([{ file: 'node_modules', error: 'copy failed' }]);
   expect(existsSync(join(target, 'node_modules'))).toBe(false);
-  expect(readdirSync(target).some((name) => name.startsWith('.stim-warm-'))).toBe(false);
+  expect(publication.stagingPaths.every((path) => !existsSync(path))).toBe(true);
 });
 
 test('missing-only copy preserves relative symlinks without linking files back to the source', () => {
@@ -416,11 +424,14 @@ test('warm copies read-only directories, preserves their modes, and removes stag
     expect(readFileSync(join(target, 'node_modules/pkg/index.js'), 'utf-8')).toBe('read-only package');
     expect(lstatSync(join(target, 'node_modules/pkg')).mode & 0o777).toBe(0o555);
     expect(existsSync(join(target, 'node_modules/pkg/.DerivedData'))).toBe(false);
-    expect(readdirSync(target).some((name) => name.startsWith('.stim-warm-'))).toBe(false);
+    expect(publication.stagingPaths.every((path) => !existsSync(path))).toBe(true);
   } finally {
     chmodSync(join(root, 'node_modules/pkg'), 0o755);
-    for (const entry of readdirSync(target)) {
-      const pkg = join(target, entry, entry.startsWith('.stim-warm-') ? 'entry/pkg' : 'pkg');
+    for (const entry of [
+      join(target, 'node_modules'),
+      ...publication.stagingPaths.map((path) => join(path, 'entry')),
+    ]) {
+      const pkg = join(entry, 'pkg');
       if (existsSync(pkg)) chmodSync(pkg, 0o755);
     }
   }
@@ -436,4 +447,30 @@ test('missing-only copy does not restore a deleted tracked file from ignored mai
   expect(result.copied).toEqual([]);
   expect(result.skipped).toEqual([{ file: '.env', reason: 'tracked' }]);
   expect(existsSync(join(target, '.env'))).toBe(false);
+});
+
+test('staging ignored files never exposes their contents to Git status or git add', async () => {
+  write(root, '.env', 'source secret');
+  const observations: { status: string; add: string; staged: string }[] = [];
+  const real = getExecutor();
+  setExecutor({
+    ...real,
+    runFile(file, args, opts) {
+      const result = real.runFile(file, args, opts);
+      if (file === 'cp') {
+        observations.push({
+          status: git(target, 'status', '--porcelain', '--untracked-files=all'),
+          add: git(target, 'add', '--dry-run', '--all'),
+          staged: readFileSync(args[2], 'utf-8'),
+        });
+      }
+      return result;
+    },
+  });
+  const result = await runWarm(target);
+  expect(result.code).toBe(0);
+  expect(observations).toEqual([{ status: '', add: '', staged: 'source secret' }]);
+  expect(publication.stagingPaths.map((path) => realpathSync(dirname(path)))).toEqual([realpathSync(tmpdir())]);
+  expect(publication.stagingPaths.every((path) => !existsSync(path))).toBe(true);
+  expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('source secret');
 });

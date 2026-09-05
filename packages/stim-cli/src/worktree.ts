@@ -391,7 +391,7 @@ export function cloneIgnoredEntries({
         skipped.push({ file: rel, reason });
         continue;
       }
-      if (preserveExisting) staging = mkdtempSync(join(target, '.stim-warm-'));
+      if (preserveExisting) staging = mkdtempSync(join(tmpdir(), '.stim-warm-'));
       const destination = staging ? join(staging, 'entry') : to;
       mkdirSync(dirname(destination), { recursive: true });
       try {
