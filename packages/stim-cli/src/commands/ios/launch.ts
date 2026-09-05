@@ -65,6 +65,16 @@ interface VerifyIosRunArgs {
   metroOrigin: string | null;
 }
 
+function physicalIosReloadRemedy(bundleId: string, udid: string): string {
+  return (
+    `continue in your existing agent-device automation session for ${bundleId} on ${udid}. ` +
+    'Keep the exact arguments and environment that identify that session on every command. ' +
+    'Run `agent-device snapshot -i` in that session. ' +
+    'If Reload is visible on the error screen, press it by exact ref or label. ' +
+    'Otherwise open the React Native dev menu through that session, inspect again, and press Reload.'
+  );
+}
+
 async function verifyIosRun({
   d,
   release,
@@ -155,11 +165,16 @@ async function verifyIosRun({
         ),
       );
     } else if (verification.processAlive === true && metroPort !== null) {
+      const reloadRemedy = physical
+        ? physicalIosReloadRemedy(bundleId, udid)
+        : remoteDevice
+          ? `run \`agent-device metro reload --metro-port ${metroPort}\`.`
+          : 'run `stim reload ios`.';
       note(
         chalk.yellow(
           phaseLine(
             'remedy',
-            `The native app is still running. Fix the JavaScript or TypeScript error, then run ${physical || remoteDevice ? `\`agent-device metro reload --metro-port ${metroPort}\`` : '`stim reload ios`'}. Do not run \`stim ios\` unless native inputs changed or the app process exits.`,
+            `The native app is still running. Fix the JavaScript or TypeScript error, then ${reloadRemedy} Do not run \`stim ios\` unless native inputs changed or the app process exits.`,
           ),
         ),
       );
@@ -176,11 +191,16 @@ async function verifyIosRun({
     );
     const hasAppErrors = reportLaunchErrors(verification.errors ?? [], note);
     if (hasAppErrors && verification.processAlive === true && metroPort !== null) {
+      const reloadRemedy = physical
+        ? physicalIosReloadRemedy(bundleId, udid)
+        : remoteDevice
+          ? `run \`agent-device metro reload --metro-port ${metroPort}\`.`
+          : 'run `stim reload ios`.';
       note(
         chalk.yellow(
           phaseLine(
             'remedy',
-            `The native app is still running. Fix the JavaScript or TypeScript error; Fast Refresh should apply the edit. If the error screen remains, run ${physical || remoteDevice ? `\`agent-device metro reload --metro-port ${metroPort}\`` : '`stim reload ios`'}. Do not run \`stim ios\` unless native inputs changed or the app process exits.`,
+            `The native app is still running. Fix the JavaScript or TypeScript error; Fast Refresh should apply the edit. If the error screen remains, ${reloadRemedy} Do not run \`stim ios\` unless native inputs changed or the app process exits.`,
           ),
         ),
       );
@@ -272,8 +292,8 @@ interface FinishIosRunArgs {
   abandonedRemote: boolean;
   elapsed: () => number;
   startedAt: string;
-  storeHash: string;
-  storeKey: string;
+  storeHash: string | null;
+  storeKey: string | null;
   cacheHit: CacheHitLevel;
   compilationCache: CompilationCacheActivity;
   useBuildCache: boolean;

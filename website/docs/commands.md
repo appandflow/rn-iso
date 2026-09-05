@@ -18,13 +18,16 @@ reference that ships with the installed version.
 code={`stim doctor
 stim start
 stim ios                 # or: stim android
-stim reload              # after a JS-only edit when Fast Refresh needs help
 stim logs --errors
 stim stop`}
 />
 
 `ios` and `android` require a running dev server for a Debug build. Release
 builds embed the JavaScript bundle and skip that requirement.
+
+`reload` is a recovery or explicit restart command. Use it after a failed first
+bundle load or when an error screen remains after a fix, not after every
+JavaScript edit.
 
 ## `doctor`
 

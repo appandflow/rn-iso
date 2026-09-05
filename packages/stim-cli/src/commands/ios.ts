@@ -51,7 +51,7 @@ import {
   untrackedMissLine,
 } from '../build-cache.ts';
 import { DEFAULT_METRO_PORT } from '../engine/app-install.ts';
-import { takeoverLine, type BuildLockHandle, type WaitForBuildResult } from '../engine/build-lock.ts';
+import { takeoverLine, WAIT_CEILING_MS, type BuildLockHandle, type WaitForBuildResult } from '../engine/build-lock.ts';
 import type { BuildSlotHandle } from '../engine/build-slots.ts';
 import { ensureOwnedDevice } from '../engine/device.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../sim-pool.ts';
@@ -74,6 +74,7 @@ import { createRunRecorder, statsProjectKey, type RunEstimates } from '../engine
 import { COMPILATION_CACHE_NOT_RUN, COMPILATION_CACHE_UNAVAILABLE } from '../engine/xcode.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { workspaceDir, workspaceLogsDir } from '../paths.ts';
+import { appProjectProblem } from '../project.ts';
 import { type SupervisorLike, noMetroMessage, noMetroRemedy } from './native-runtime.ts';
 import {
   PLATFORM,
@@ -228,6 +229,16 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     return null;
   }
   const root = foundRoot;
+  const projectProblem = appProjectProblem(root);
+  if (projectProblem) {
+    const { message, remedy } = projectProblem;
+    note(chalk.red(phaseLine('error', message)));
+    note(chalk.dim(phaseLine('remedy', remedy)));
+    note(chalk.red(phaseLine('failed', 'STIM_NO_PROJECT')));
+    if (json) console.log(JSON.stringify({ code: 'STIM_NO_PROJECT', message, remedy }));
+    process.exit(1);
+    return null;
+  }
 
   try {
     await d.ensureWorkspaceStorage(root, { note });
@@ -560,8 +571,8 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   let fingerprint = '';
   let fingerprintSources: FingerprintSource[] = [];
   let cacheKey = '';
-  let storeHash = '';
-  let storeKey = '';
+  let storeHash: string | null = null;
+  let storeKey: string | null = null;
   let storeSources: FingerprintSource[] = [];
   let appPath: string | null = null;
   let bundleId: string | null = null;
@@ -861,7 +872,10 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   }
 
   async function waitForSharedBuild(): Promise<boolean> {
-    if (!appPath && useBuildCache) {
+    if (!useBuildCache) return true;
+    const waitStarted = d.now();
+    let failedHolder: BuildLockHandle['held'];
+    while (!appPath) {
       let attempt: BuildLockHandle | null = null;
       try {
         attempt = d.acquireBuildLock({ platform: PLATFORM, key: cacheKey, root, logFile });
@@ -875,7 +889,9 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
 
       if (attempt?.acquired) {
         buildLock = attempt;
-        if (attempt.tookOver) note(chalk.yellow(phaseLine('build', takeoverLine(attempt.tookOver))));
+        const previous = attempt.tookOver ?? failedHolder;
+        if (previous) note(chalk.yellow(phaseLine('build', takeoverLine(previous))));
+        break;
       } else if (attempt?.held) {
         const held = attempt.held;
         const who = held.projectRoot || 'another workspace';
@@ -887,7 +903,19 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
 
         let waited: WaitForBuildResult | null = null;
         try {
-          waited = await d.waitForBuild({ platform: PLATFORM, key: cacheKey, out: note });
+          const ceilingMs = WAIT_CEILING_MS - (d.now() - waitStarted);
+          if (ceilingMs <= 0) {
+            throw Object.assign(
+              new Error(
+                `Waited ${formatDuration(d.now() - waitStarted)} for shared builds without an artifact; ${who} (pid ${held.pid}) holds ${attempt.path}.`,
+              ),
+              {
+                code: 'STIM_BUILD_WAIT_TIMEOUT',
+                lockPath: attempt.path,
+              },
+            );
+          }
+          waited = await d.waitForBuild({ platform: PLATFORM, key: cacheKey, out: note, ceilingMs });
         } catch (e) {
           const err = e as Error & { code?: string; lockPath?: string };
           if (err?.code !== 'STIM_BUILD_WAIT_TIMEOUT') throw e;
@@ -908,15 +936,16 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
         } else {
           note(
             chalk.yellow(
-              phaseLine('build', `${who}'s build ended without an artifact (${waited?.builderFailed}); building here`),
+              phaseLine(
+                'build',
+                `${who}'s build ended without an artifact (${waited?.builderFailed}); retrying the build lock`,
+              ),
             ),
           );
-          try {
-            const takeover = d.acquireBuildLock({ platform: PLATFORM, key: cacheKey, root, logFile });
-            if (takeover?.acquired) buildLock = takeover;
-          } catch {}
-          note(chalk.yellow(phaseLine('build', takeoverLine(held))));
+          failedHolder = held;
         }
+      } else {
+        break;
       }
     }
     return true;
@@ -1104,7 +1133,19 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
             previousHash: fingerprint,
             fingerprint: d.fingerprintProject,
           });
-          if (after?.moved) {
+          if (!after) {
+            storeHash = null;
+            storeKey = null;
+            buildFailure = { ...buildFailure, fingerprint: null, cacheKey: null };
+            note(
+              chalk.yellow(
+                phaseLine(
+                  'fingerprint',
+                  `unavailable after ${mutatingSteps.join(', ')}; the build will be installed but not cached`,
+                ),
+              ),
+            );
+          } else if (after.moved) {
             storeHash = after.hash;
             storeSources = after.sources;
             storeKey = buildCacheKey(PLATFORM, after.hash, {
@@ -1162,19 +1203,25 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
           appPath = result.appPath ?? null;
           bundleId = result.bundleId ?? null;
 
-          try {
-            const stored = await storeTieredBuild({
-              local: filesystemBuildCapability({ resolve: d.resolveBuild, store: d.storeBuild, sources: storeSources }),
-              loadProvider,
-              target: { projectRoot: root, platform: PLATFORM, key: storeKey },
-              sourcePath: appPath!,
-              overwrite: !useBuildCache || swapFellBack,
-              warn: cacheWarn,
-            });
-            providerUpload = stored.providerUpload;
-            providerName = stored.providerName ?? providerName;
-          } catch (e) {
-            note(chalk.yellow(`Could not store the build in the shared cache: ${(e as Error)?.message || e}`));
+          if (storeKey) {
+            try {
+              const stored = await storeTieredBuild({
+                local: filesystemBuildCapability({
+                  resolve: d.resolveBuild,
+                  store: d.storeBuild,
+                  sources: storeSources,
+                }),
+                loadProvider,
+                target: { projectRoot: root, platform: PLATFORM, key: storeKey },
+                sourcePath: appPath!,
+                overwrite: !useBuildCache || swapFellBack,
+                warn: cacheWarn,
+              });
+              providerUpload = stored.providerUpload;
+              providerName = stored.providerName ?? providerName;
+            } catch (e) {
+              note(chalk.yellow(`Could not store the build in the shared cache: ${(e as Error)?.message || e}`));
+            }
           }
 
           if (physical) {
@@ -1183,7 +1230,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
             appPath = prepared;
           }
 
-          if (remote && !physical) {
+          if (remote && !physical && storeHash) {
             uploadPending = d.uploadRemote({
               logWriter: logWriter(),
               provider: remote.provider,

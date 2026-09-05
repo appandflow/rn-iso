@@ -180,8 +180,8 @@ export interface ReportIosResultArgs {
   installSkipped: boolean;
   elapsed: () => number;
   startedAt: string;
-  storeHash: string;
-  storeKey: string;
+  storeHash: string | null;
+  storeKey: string | null;
   cacheHit: CacheHitLevel;
   compilationCache: CompilationCacheActivity;
   useBuildCache: boolean;

@@ -11,6 +11,7 @@ export interface Executor {
   run(cmd: string, opts?: ExecOptions): string;
   runFile(file: string, args?: string[], opts?: ExecOptions): string;
   runQuiet(cmd: string, opts?: ExecOptions): string | null;
+  runFileQuiet(file: string, args?: string[], opts?: ExecOptions): string | null;
   spawn(cmd: string, args?: readonly string[], opts?: SpawnOptions): ChildProcess;
 }
 
@@ -45,6 +46,13 @@ const defaultExecutor: Executor = {
   runQuiet(cmd, opts) {
     try {
       return this.run(cmd, opts);
+    } catch {
+      return null;
+    }
+  },
+  runFileQuiet(file, args, opts) {
+    try {
+      return this.runFile(file, args, opts);
     } catch {
       return null;
     }

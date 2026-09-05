@@ -124,6 +124,7 @@ test('checkMainCheckout runs its expensive probes only when their preconditions 
   setExecutor({
     run: () => '',
     runQuiet: () => null,
+    runFileQuiet: () => null,
     runFile: (file: string, args: string[] = []) => {
       calls.push([file, ...args]);
       return '';
@@ -363,6 +364,7 @@ test('detectXcodeMajor reports unknown rather than throwing when xcodebuild is m
       throw new Error('not found');
     },
     runQuiet: () => null,
+    runFileQuiet: () => null,
     spawn: () => {},
   });
   try {
@@ -590,6 +592,54 @@ test('checkConcurrency echoes the caps and the current live count when set', () 
   expect(f.detail).toMatch(/maxBuilds 2/);
   expect(f.detail).toMatch(/maxDevices 3/);
   expect(f.detail).toMatch(/1 /);
+});
+
+describe('a directory that is not an app', () => {
+  let home: string;
+  let project: string;
+
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'stim-doc-home-'));
+    process.env.STIM_HOME = home;
+    project = mkdtempSync(join(tmpdir(), 'stim-doc-app-'));
+  });
+
+  afterEach(() => {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(project, { recursive: true, force: true });
+    delete process.env.STIM_HOME;
+  });
+
+  const findings = () => runDoctor(project, { concurrency: () => ({ maxBuilds: 0, maxDevices: 0 }) });
+
+  test('runDoctor reports a package.json that depends on neither react-native nor expo', () => {
+    writeFileSync(
+      join(project, 'package.json'),
+      JSON.stringify({ name: 'monorepo', devDependencies: { vitest: '5' } }),
+    );
+    const reported = findings().find((f) => /not a React Native or Expo app/.test(f.title));
+    assert(reported);
+    expect(reported.level).toBe('cost');
+    expect(reported.detail).toContain(join(project, 'package.json'));
+    expect(reported.detail).toMatch(/STIM_NO_PROJECT/);
+    expect(reported.fix).toMatch(/app directory/);
+  });
+
+  test('runDoctor reports a package.json that does not parse as its own finding', () => {
+    writeFileSync(join(project, 'package.json'), '{ "name": "app", "dependencies": { "react-native": "0.81.0"');
+    const reported = findings().find((f) => /does not parse/.test(f.title));
+    assert(reported);
+    expect(reported.level).toBe('cost');
+    expect(reported.detail).toContain(join(project, 'package.json'));
+    expect(reported.detail).not.toMatch(/neither react-native nor expo/);
+    expect(reported.fix).toMatch(/Fix the JSON/);
+    expect(findings().some((f) => /not a React Native or Expo app/.test(f.title))).toBe(false);
+  });
+
+  test('runDoctor stays silent when the package.json depends on react-native', () => {
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.81.0' } }));
+    expect(findings().some((f) => /not a React Native or Expo app/.test(f.title))).toBe(false);
+  });
 });
 
 test('runDoctor stays silent about concurrency when nothing is set', () => {
@@ -1166,6 +1216,10 @@ test('doctor --platform android does not invoke Xcode tooling', async () => {
     runFile: (file: string, args: string[]) => {
       calls.push([file, ...args].join(' '));
       return '';
+    },
+    runFileQuiet: (file: string, args: string[]) => {
+      calls.push([file, ...args].join(' '));
+      return null;
     },
     spawn: () => {
       throw new Error('unexpected spawn');

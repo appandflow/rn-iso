@@ -24,6 +24,15 @@ test('the facts topic pins how an owned emulator gets its console port', () => {
   expect(body).toMatch(/A boot that fails releases the port again and\s+keeps the AVD recorded for `gc`/);
 });
 
+test('shared-build recovery keeps waiters behind replacement builders with one deadline', () => {
+  expect(renderTopic('agent')).toMatch(
+    /one waiter takes over and the others keep waiting within the same\s+90-minute limit/,
+  );
+  expect(renderTopic('lifecycle')).toMatch(/other waiters keep waiting for that holder/);
+  expect(renderTopic('lifecycle')).toMatch(/one ~90-minute deadline, including lock acquisition between waits/);
+  expect(renderTopic('errors')).toMatch(/Replacement builders share that deadline, including time spent acquiring/);
+});
+
 test('the lifecycle topic separates an iOS install proof from dev-client preparation', () => {
   const body = renderTopic('lifecycle');
   assert(body);
@@ -110,6 +119,15 @@ test('the errors topic states that the stale-carry line only prints on a real di
   expect(body).toMatch(/a carry whose lockfile matches is\s+silent/);
 });
 
+test('the errors topic covers a directory that is not a React Native or Expo app', () => {
+  const body = renderTopic('errors');
+  assert(body);
+  expect(body).toMatch(/whose nearest package.json does not\s+parse or depends on neither react-native nor expo/);
+  expect(body).toMatch(/the refusal names that package.json and says which of the two it\s+is/);
+  expect(body).toMatch(/`doctor` reports the same directory as a finding/);
+  expect(body).toMatch(/These errors are caught before the port is reserved/);
+});
+
 test('an unknown topic renders nothing rather than throwing', () => {
   expect(renderTopic('nope')).toBe(null);
 });
@@ -189,6 +207,21 @@ test('the facts topic says Android artifacts use the post-Gradle fingerprint', (
   expect(body).toMatch(/Android also fingerprints after Gradle/);
   expect(body).toMatch(/stored only under that post-build hash/);
   expect(body).toMatch(/fingerprint and cacheKey are null/);
+});
+
+test('the guides explain unavailable iOS fingerprints after native mutations', () => {
+  expect(renderTopic('agent')).toContain('installs the build without caching it');
+  expect(renderTopic('facts')).toMatch(/iOS\s+fingerprint after prebuild or pod install/);
+  const lifecycle = renderTopic('lifecycle');
+  expect(lifecycle).toContain('skips local storage and remote uploads');
+  expect(lifecycle).toContain('cacheKey are null in the result and lastBuild');
+});
+
+test('the guides document Android target-ABI builds and universal fallbacks', () => {
+  expect(renderTopic('facts')).toMatch(/debug-sim-arm64-v8a/);
+  expect(renderTopic('lifecycle')).toMatch(/-PreactNativeArchitectures=<target ABI>/);
+  expect(renderTopic('lifecycle')).toMatch(/ABI-targeted Android Debug build skips this Expo\s+tier/);
+  expect(renderTopic('agent')).toMatch(/Unknown targets and Release builds stay\s+universal/);
 });
 
 test('the one-line JSON sentence names every command whose --json payload is a single line', () => {
@@ -922,6 +955,31 @@ test('the static skill is only the agent guide router', () => {
   }
 });
 
+test('the skill description names the task phrases an agent sees', () => {
+  const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
+  const description = skill.match(/^description: (.+)$/m)?.[1];
+  assert(description);
+  expect(description).toMatch(/^The React Native \/ Expo CLI for AI agents\./);
+
+  for (const trigger of [
+    'expo run:ios',
+    'expo run:android',
+    'react-native run-ios',
+    'react-native run-android',
+    'expo start',
+    'Metro',
+    'simulator',
+    'emulator',
+    'device',
+    'redbox',
+    'runtime',
+    'logs',
+    'parallel worktrees',
+  ]) {
+    expect(description).toContain(trigger);
+  }
+});
+
 test('every guide topic explains the npx fallback for short stim commands', () => {
   for (const name of topicNames()) {
     const topic = renderTopic(name);
@@ -969,6 +1027,8 @@ test('the website offers copyable outcome prompts and explains skill activation'
 test('the agent guide carries the normal workflow and safety rules', () => {
   const agent = renderTopic('agent');
   assert(agent);
+  const normalWorkflow = agent.match(/NORMAL WORKFLOW([\s\S]*?)RULES DURING THE LOOP/)?.[1];
+  assert(normalWorkflow);
   expect(agent).toContain('stim doctor --platform ios');
   expect(agent).toContain('stim worktree create <name> --carry-ignored');
   expect(agent).toMatch(/ios and android install the app, launch it, and check readiness/);
@@ -978,6 +1038,7 @@ test('the agent guide carries the normal workflow and safety rules', () => {
   expect(agent).toMatch(/Exit code 0 from logs --errors is the pass condition/);
   expect(agent).toContain('No matching log records');
   expect(agent).toContain('stim reload');
+  expect(normalWorkflow).not.toContain('stim reload');
   expect(agent).not.toContain('agent-device metro reload --metro-port <reported-port>');
   expect(agent).toMatch(/app error but also says the native process is alive,[\s\S]*app did not crash/);
   expect(agent).toMatch(/FATAL because the app process exited,[\s\S]*Metro cannot restart it/);
@@ -990,6 +1051,16 @@ test('the logs guide keeps Expo and bare React Native stack context on one human
   expect(logs).toMatch(/Expo error includes its immediately\s+following code frame and Call Stack lines/);
   expect(logs).toMatch(/Bare React Native symbolication is\s+shown as separate context/);
   expect(logs).toMatch(/Context does not change the error count or the raw error records\s+returned by --json/);
+});
+
+test('the agent guide tells the agent to run from the app directory', () => {
+  const agent = renderTopic('agent');
+  assert(agent);
+  expect(agent).toMatch(
+    /Run Stim from the app directory: the one whose package.json depends on\s+react-native or expo/,
+  );
+  expect(agent).toMatch(/start, ios and android refuse with STIM_NO_PROJECT naming that package.json/);
+  expect(agent).toMatch(/doctor reports it as a finding/);
 });
 
 test('the agent guide routes to every detailed topic', () => {
@@ -1112,15 +1183,34 @@ test('the guide defines reload as a JavaScript-only live-app recovery', () => {
   assert(errors);
 
   expect(agent).toContain('stim reload');
+  expect(agent).toMatch(/failed first bundle load[\s\S]*app restart/);
   expect(lifecycle).toMatch(/never builds, installs, boots, or cold-launches/);
   expect(lifecycle).toMatch(/owned local simulator or emulator/);
-  expect(lifecycle).toMatch(/stim reload ios \/ stim reload android/);
+  expect(lifecycle).toMatch(/stim reload ios[\s\S]*stim reload android/);
   expect(facts).toContain('stim reload [ios|android] --json');
   expect(facts).toMatch(/platform[\s\S]*deviceId[\s\S]*metroPort[\s\S]*strategy/);
   expect(errors).toContain('STIM_RELOAD_AMBIGUOUS');
   expect(errors).toContain('STIM_RELOAD_RELEASE');
   expect(errors).toContain('STIM_RELOAD_FAILED');
   expect(lifecycle).toMatch(/does not\s+take over\s+that stateful session/);
+});
+
+test('the documented common workflows leave reload to recovery', () => {
+  const rootReadme = readFileSync(new URL('../../../../README.md', import.meta.url), 'utf-8');
+  const packageReadme = readFileSync(new URL('../../README.md', import.meta.url), 'utf-8');
+  const website = readFileSync(new URL('../../../../website/docs/commands.md', import.meta.url), 'utf-8');
+  const agents = readFileSync(new URL('../../../../AGENTS.md', import.meta.url), 'utf-8');
+  const rootWorkflow = rootReadme.match(/The normal loop is:\n\n```bash([\s\S]*?)```/)?.[1];
+  const packageWorkflow = packageReadme.match(/## Normal workflow\n\n```bash([\s\S]*?)```/)?.[1];
+  const websiteWorkflow = website.match(/code=\{`stim doctor([\s\S]*?)stim stop`\}/)?.[0];
+  const repositoryWorkflow = agents.match(/The normal flow is:\n\n```text([\s\S]*?)```/)?.[1];
+  assert(rootWorkflow);
+  assert(packageWorkflow);
+  assert(websiteWorkflow);
+  assert(repositoryWorkflow);
+  for (const workflow of [rootWorkflow, packageWorkflow, websiteWorkflow, repositoryWorkflow]) {
+    expect(workflow).not.toContain('reload');
+  }
 });
 
 test('the guide documents the project cache provider as the tier between local and Expo', () => {

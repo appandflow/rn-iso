@@ -2,6 +2,8 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { relative } from 'node:path';
 import type { SettingsObject } from '../../types.ts';
 import {
+  androidDeviceAbi,
+  androidSystemImageAbi,
   listInstalledSystemImages,
   androidHome,
   findBuildTool,
@@ -328,5 +330,37 @@ export async function pooledAndroidDevice({
       deviceName: deviceModel(pooled.candidate.id) ?? pooled.candidate.id,
       owned: false,
     },
+  };
+}
+
+export function androidBuildOptions({
+  release,
+  physical,
+  device,
+  variant,
+  deviceAbi,
+}: {
+  release: boolean;
+  physical: boolean;
+  device: OwnedDeviceRecord;
+  variant: string | null;
+  deviceAbi: typeof androidDeviceAbi;
+}): {
+  abi: string | null;
+  runOptions: { variant?: string; abi?: string };
+  remoteRunOptions: { variant?: string; abi?: string } | null;
+} {
+  let abi: string | null = null;
+  if (!release && physical && device.serial) abi = deviceAbi(device.serial);
+  if (!release && !physical) abi = androidSystemImageAbi(device.systemImage);
+
+  const runOptions: { variant?: string; abi?: string } = {};
+  if (variant) runOptions.variant = variant;
+  if (abi) runOptions.abi = abi;
+
+  return {
+    abi,
+    runOptions,
+    remoteRunOptions: Object.keys(runOptions).length === 0 ? null : runOptions,
   };
 }
