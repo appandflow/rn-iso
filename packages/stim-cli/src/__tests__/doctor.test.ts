@@ -1,8 +1,17 @@
 import { execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { Command } from 'commander';
 import {
   checkBuildCacheProvider,
@@ -24,11 +33,19 @@ import {
   parseXcodeMajor,
   checkConcurrency,
 } from '../doctor.ts';
-import doctorCommand, { doctorSuccessLines, parseDoctorPlatform } from '../commands/doctor.ts';
+import doctorCommand, { doctorSuccessLines, parseDoctorPlatform, shadowedStimFinding } from '../commands/doctor.ts';
 import type { Finding } from '../doctor.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import type { EasAuthResult } from '../engine/remote-cache.ts';
 import assert from 'node:assert';
+import {
+  analyzeStimVersions,
+  compareStimVersions,
+  inspectStimVersions,
+  parseStimVersionOutput,
+} from '../stim-installations.ts';
+
+const testStimVersions = analyzeStimVersions('1.2.3', '/tools/stim-cli', []);
 
 test('checkMainCheckout reports missing dependencies, Pods, and native output', () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doctor-source-cold-'));
@@ -78,6 +95,72 @@ test('parseDoctorPlatform accepts the two native platforms and rejects other val
   expect(parseDoctorPlatform('ios')).toBe('ios');
   expect(parseDoctorPlatform('android')).toBe('android');
   expect(() => parseDoctorPlatform('web')).toThrow(/ios, android/);
+});
+
+test('Stim version comparison follows semver prerelease precedence', () => {
+  expect(compareStimVersions('1.0.0-rc.14', '1.0.0-rc.15')).toBeLessThan(0);
+  expect(compareStimVersions('1.0.0-rc.15', '1.0.0')).toBeLessThan(0);
+  expect(compareStimVersions('2.0.0', '1.99.99')).toBeGreaterThan(0);
+  expect(compareStimVersions('1.0.0-1', '1.0.0-alpha')).toBeLessThan(0);
+  expect(compareStimVersions('1.0.0-A', '1.0.0-a')).toBeLessThan(0);
+  expect(compareStimVersions('1.0.0-01', '1.0.0-1')).toBe(null);
+  expect(parseStimVersionOutput('v1.2.3\n')).toBe('1.2.3');
+  expect(parseStimVersionOutput('stim 1.2.3')).toBe(null);
+});
+
+test('Stim installation inspection finds a shadowed older executable and deduplicates real paths', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'stim-doctor-versions-'));
+  const oldBin = join(root, 'old');
+  const newBin = join(root, 'new');
+  const aliasBin = join(root, 'alias');
+  mkdirSync(oldBin);
+  mkdirSync(newBin);
+  mkdirSync(aliasBin);
+  writeFileSync(join(oldBin, 'stim'), '#!/bin/sh\nprintf "1.0.0-rc.14\\n"\n');
+  writeFileSync(join(newBin, 'stim'), '#!/bin/sh\nprintf "1.0.0-rc.15\\n"\n');
+  chmodSync(join(oldBin, 'stim'), 0o755);
+  chmodSync(join(newBin, 'stim'), 0o755);
+  symlinkSync(join(newBin, 'stim'), join(aliasBin, 'stim'));
+  try {
+    const report = await inspectStimVersions('1.0.0-rc.15', {
+      pathValue: [oldBin, newBin, aliasBin].join(delimiter),
+      runningPath: join(newBin, 'stim'),
+    });
+    expect(report.resolved).toMatchObject({ path: join(oldBin, 'stim'), version: '1.0.0-rc.14' });
+    expect(report.installations).toHaveLength(2);
+    expect(report.versions).toEqual(['1.0.0-rc.15', '1.0.0-rc.14']);
+    expect(report.highestVersion).toBe('1.0.0-rc.15');
+    expect(report.resolvedIsOlder).toBe(true);
+    expect(shadowedStimFinding(report)).toMatchObject({
+      level: 'cost',
+      title: 'The Stim resolved from PATH is older than another installation',
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Stim installation probes share one timeout window', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'stim-doctor-version-timeout-'));
+  const first = join(root, 'first');
+  const second = join(root, 'second');
+  mkdirSync(first);
+  mkdirSync(second);
+  for (const directory of [first, second]) {
+    writeFileSync(join(directory, 'stim'), "#!/bin/sh\ntrap '' TERM\nsleep 1\n");
+    chmodSync(join(directory, 'stim'), 0o755);
+  }
+  try {
+    const startedAt = Date.now();
+    const report = await inspectStimVersions('1.0.0-rc.15', {
+      pathValue: [first, second].join(delimiter),
+      probeTimeoutMs: 50,
+    });
+    expect(Date.now() - startedAt).toBeLessThan(500);
+    expect(report.installations.map((entry) => entry.version)).toEqual([null, null]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('checkMainCheckout recognizes non-npm dependency installs', () => {
@@ -1285,7 +1368,7 @@ test('doctor --json prints exactly one line of JSON on stdout', async () => {
   const originalLog = console.log;
   writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
   const program = new Command();
-  doctorCommand(program);
+  doctorCommand(program, '1.2.3', () => testStimVersions);
   console.log = (msg) => logs.push(String(msg));
   process.chdir(project);
   try {
@@ -1305,14 +1388,18 @@ test('doctor --json prints exactly one line of JSON on stdout', async () => {
   expect(Array.isArray(payload.findings)).toBe(true);
   expect(typeof payload.project).toBe('string');
   expect(payload.platform).toBe(null);
+  expect(payload.stim.runningVersion).toBe('1.2.3');
+  expect(payload.stim.resolved).toBe(null);
 });
 
 test('doctor success output groups iOS checks and optional capabilities', () => {
-  const output = doctorSuccessLines('ios').join('\n');
+  const output = doctorSuccessLines('ios', testStimVersions).join('\n');
 
   expect(output).toContain('Doctor (iOS)');
   expect(output).toContain('result      PASS');
   expect(output).toContain('findings    0');
+  expect(output).toContain('version     1.2.3');
+  expect(output).toContain('resolved    not found on PATH');
   expect(output).toContain('Project');
   expect(output).toContain('iOS');
   expect(output).toContain('setup       CocoaPods, warm state, dev client');
@@ -1324,7 +1411,7 @@ test('doctor success output groups iOS checks and optional capabilities', () => 
 });
 
 test('doctor success output scopes native checks to Android', () => {
-  const output = doctorSuccessLines('android').join('\n');
+  const output = doctorSuccessLines('android', testStimVersions).join('\n');
 
   expect(output).toContain('Doctor (Android)');
   expect(output).toContain('Android');
@@ -1346,7 +1433,7 @@ test('doctor --platform includes the selection in JSON and suppresses the other 
   mkdirSync(join(project, 'ios'));
   mkdirSync(join(project, 'android'));
   const program = new Command();
-  doctorCommand(program);
+  doctorCommand(program, '1.2.3', () => testStimVersions);
   console.log = (msg) => logs.push(String(msg));
   process.chdir(project);
   try {
@@ -1398,7 +1485,7 @@ test('doctor --platform android does not invoke Xcode tooling', async () => {
     },
   });
   const program = new Command();
-  doctorCommand(program);
+  doctorCommand(program, '1.2.3', () => testStimVersions);
   console.log = (msg) => logs.push(String(msg));
   process.chdir(project);
   try {

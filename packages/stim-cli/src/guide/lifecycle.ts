@@ -153,11 +153,13 @@ result as proof instead of requiring an unrelated screenshot.`,
 
     branch      build       cache       caches      carry       device
     devices     error       failed      findings    fingerprint gems
-    install     ip.txt      lan         launch      lease       log
+    install     installs    ip.txt      lan         launch      lease
+    log
     logs        meaning     metro       pods        port        prebuild
-    project     ready       remedy      removed     result      services
+    project     ready       remedy      removed     resolved    result
+    services
     setting     settings    setup       state       stats       stop
-    swap        verify      workspace
+    swap        verify      version     workspace
 
   \`app\` and \`compilation cache\` join them in the stdout block a successful
   run ends with, and nowhere else. A line states a fact; the reason a fact

@@ -90,6 +90,7 @@ export const OUTPUT_LABELS: readonly string[] = [
   'fingerprint',
   'gems',
   'install',
+  'installs',
   'ip.txt',
   'lan',
   'launch',
@@ -105,6 +106,7 @@ export const OUTPUT_LABELS: readonly string[] = [
   'ready',
   'remedy',
   'removed',
+  'resolved',
   'result',
   'services',
   'setting',
@@ -115,6 +117,7 @@ export const OUTPUT_LABELS: readonly string[] = [
   'stop',
   'swap',
   'verify',
+  'version',
   'workspace',
 ];
 

@@ -224,6 +224,20 @@ line by design (see \`guide logs\`), not this single-payload contract.`,
   strategy        "deep-link" for Expo/dev-client, "android-broadcast" for
                   bare Android, or "metro-websocket" for an identifiable bare iOS peer
 
+  stim doctor --json
+
+  project         the resolved app root
+  platform        "ios" | "android" | null
+  stim            { runningVersion, runningPath, resolved, installations,
+                    versions, highestVersion, resolvedIsOlder }
+                  resolved is the first executable named stim on PATH;
+                  installations contains every distinct real executable on
+                  PATH and the version each reports. resolvedIsOlder is true
+                  only when that first executable is below the highest version
+                  available from this invocation or PATH
+  findings        the diagnostic findings; a lower resolved Stim is a
+                  costs-time finding with a PATH or installation remedy
+
 ON FAILURE
   \`start\`, \`ios\` and \`android\` all print the error contract instead,
   still one line on stdout, and exit 1:

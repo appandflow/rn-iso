@@ -20,7 +20,9 @@ Read guide lifecycle options for exclusions and incomplete-copy remedies.
 
 Before native worktree work, run doctor for the platform in scope. It checks
 the main checkout from a linked worktree. Fix relevant findings and inspect the
-upstream gap.
+upstream gap. It also prints the running CLI version and the stim installation
+resolved from PATH. If that resolved installation is older than another one,
+fix PATH or the installation before continuing so commands and guidance match.
 
   stim doctor --platform ios          # or: --platform android
 

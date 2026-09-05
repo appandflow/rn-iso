@@ -20,7 +20,7 @@ const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url),
 const program = new Command();
 program.name('stim').description('Isolated React Native dev environments per project/worktree').version(pkg.version);
 
-doctorCommand(program);
+doctorCommand(program, pkg.version);
 worktreeCommand(program);
 startCommand(program);
 stopCommand(program);
