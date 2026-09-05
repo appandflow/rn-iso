@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { benchmarkDimensions, benchmarkForDimensions, benchmarkModelLabel, defaultRun } from './benchmarkSelection';
+import {
+  benchmarkDimensions,
+  benchmarkForDimensions,
+  benchmarkModelLabel,
+  benchmarkPlatforms,
+  benchmarkSuites,
+  defaultRun,
+  exactBenchmarkForDimensions,
+} from './benchmarkSelection';
 import type { BenchmarkData } from './benchmarkData';
 
 function benchmark(
@@ -44,6 +52,20 @@ describe('benchmark catalog selection', () => {
     expect(
       benchmarkForDimensions(catalog, { model: 'gpt-5.6-sol', platform: 'android', suite: 'launch-crash' })?.stage,
     ).toBe('sol-android');
+  });
+
+  it('distinguishes an exact published combination from a fallback', () => {
+    expect(
+      exactBenchmarkForDimensions(catalog, { model: 'gpt-5.6-sol', platform: 'ios', suite: 'launch-crash' })?.stage,
+    ).toBe('sol-crash');
+    expect(
+      exactBenchmarkForDimensions(catalog, { model: 'gpt-5.6-sol', platform: 'android', suite: 'launch-crash' }),
+    ).toBeUndefined();
+  });
+
+  it('keeps every known platform and scenario available to render', () => {
+    expect(benchmarkPlatforms).toEqual(['ios', 'android']);
+    expect(benchmarkSuites).toEqual(['readiness', 'launch-crash']);
   });
 
   it('preserves a run when the destination provides it', () => {

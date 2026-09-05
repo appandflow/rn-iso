@@ -10,7 +10,10 @@ import {
   benchmarkDimensions,
   benchmarkForDimensions,
   benchmarkModelLabel,
+  benchmarkPlatforms,
+  benchmarkSuites,
   defaultRun,
+  exactBenchmarkForDimensions,
   type BenchmarkDimensions,
 } from '@site/src/components/benchmarkSelection';
 import BenchmarkTimeline from '@site/src/components/BenchmarkTimeline';
@@ -107,31 +110,8 @@ export default function BenchmarkDetails(): ReactNode {
       ),
     [],
   );
-  const platformOptions = useMemo(
-    () =>
-      dimensions
-        ? benchmarks
-            .filter((candidate) => benchmarkDimensions(candidate).model === dimensions.model)
-            .map((candidate) => benchmarkDimensions(candidate).platform)
-            .filter((platform, index, values) => values.indexOf(platform) === index)
-        : [],
-    [dimensions?.model],
-  );
-  const suiteOptions = useMemo(
-    () =>
-      dimensions
-        ? benchmarks
-            .filter((candidate) => {
-              const candidateDimensions = benchmarkDimensions(candidate);
-              return (
-                candidateDimensions.model === dimensions.model && candidateDimensions.platform === dimensions.platform
-              );
-            })
-            .map((candidate) => benchmarkDimensions(candidate).suite)
-            .filter((suite, index, values) => values.indexOf(suite) === index)
-        : [],
-    [dimensions?.model, dimensions?.platform],
-  );
+  const isAvailable = (next: Partial<BenchmarkDimensions>) =>
+    dimensions ? Boolean(exactBenchmarkForDimensions(benchmarks, { ...dimensions, ...next })) : false;
   const navigateTo = (nextStage: string, nextRunId: string) => {
     history.push({
       pathname: location.pathname,
@@ -196,11 +176,14 @@ export default function BenchmarkDetails(): ReactNode {
               <div className={styles.pickerOptions}>
                 {modelOptions.map((candidate) => {
                   const model = benchmarkDimensions(candidate).model;
+                  const available = isAvailable({ model });
                   return (
                     <button
                       key={model}
                       type="button"
                       aria-pressed={model === dimensions?.model}
+                      disabled={!available}
+                      title={available ? undefined : 'No published benchmark for this combination'}
                       onClick={() => selectDimensions({ model })}
                     >
                       {benchmarkModelLabel(model)}
@@ -213,36 +196,44 @@ export default function BenchmarkDetails(): ReactNode {
             <nav className={styles.benchmarkPicker} aria-label="Benchmark platform">
               <span>Platform</span>
               <div className={styles.pickerOptions}>
-                {platformOptions.map((platform) => (
-                  <button
-                    key={platform}
-                    type="button"
-                    aria-pressed={platform === dimensions?.platform}
-                    onClick={() => selectDimensions({ platform })}
-                  >
-                    {platform === 'ios' ? 'iOS' : 'Android'}
-                  </button>
-                ))}
+                {benchmarkPlatforms.map((platform) => {
+                  const available = isAvailable({ platform });
+                  return (
+                    <button
+                      key={platform}
+                      type="button"
+                      aria-pressed={platform === dimensions?.platform}
+                      disabled={!available}
+                      title={available ? undefined : 'No published benchmark for this combination'}
+                      onClick={() => selectDimensions({ platform })}
+                    >
+                      {platform === 'ios' ? 'iOS' : 'Android'}
+                    </button>
+                  );
+                })}
               </div>
             </nav>
 
-            {suiteOptions.length > 1 ? (
-              <nav className={styles.benchmarkPicker} aria-label="Benchmark scenario">
-                <span>Scenario</span>
-                <div className={styles.pickerOptions}>
-                  {suiteOptions.map((suite) => (
+            <nav className={styles.benchmarkPicker} aria-label="Benchmark scenario">
+              <span>Scenario</span>
+              <div className={styles.pickerOptions}>
+                {benchmarkSuites.map((suite) => {
+                  const available = isAvailable({ suite });
+                  return (
                     <button
                       key={suite}
                       type="button"
                       aria-pressed={suite === dimensions?.suite}
+                      disabled={!available}
+                      title={available ? undefined : 'No published benchmark for this combination'}
                       onClick={() => selectDimensions({ suite })}
                     >
                       {suite === 'readiness' ? 'App readiness' : 'Launch crash'}
                     </button>
-                  ))}
-                </div>
-              </nav>
-            ) : null}
+                  );
+                })}
+              </div>
+            </nav>
           </div>
 
           <section className={styles.comparison} aria-labelledby="comparison-title">

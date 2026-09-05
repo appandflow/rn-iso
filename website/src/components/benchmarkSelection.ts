@@ -6,6 +6,9 @@ export type BenchmarkDimensions = {
   suite: 'readiness' | 'launch-crash';
 };
 
+export const benchmarkPlatforms: BenchmarkDimensions['platform'][] = ['ios', 'android'];
+export const benchmarkSuites: BenchmarkDimensions['suite'][] = ['readiness', 'launch-crash'];
+
 export function defaultRun(benchmark: BenchmarkData | undefined, preferredId?: string): BenchmarkRun | undefined {
   return benchmark?.runs.find((run) => run.valid && run.id === preferredId) ?? benchmark?.runs.find((run) => run.valid);
 }
@@ -28,6 +31,20 @@ export function benchmarkModelLabel(model: string): string {
   return `${name.charAt(0).toUpperCase()}${name.slice(1)}`;
 }
 
+export function exactBenchmarkForDimensions(
+  catalog: BenchmarkData[],
+  requested: BenchmarkDimensions,
+): BenchmarkData | undefined {
+  return catalog.find((candidate) => {
+    const dimensions = benchmarkDimensions(candidate);
+    return (
+      dimensions.model === requested.model &&
+      dimensions.platform === requested.platform &&
+      dimensions.suite === requested.suite
+    );
+  });
+}
+
 export function benchmarkForDimensions(
   catalog: BenchmarkData[],
   requested: BenchmarkDimensions,
@@ -37,7 +54,7 @@ export function benchmarkForDimensions(
     (candidate) => benchmarkDimensions(candidate).platform === requested.platform,
   );
   return (
-    platformMatches.find((candidate) => benchmarkDimensions(candidate).suite === requested.suite) ??
+    exactBenchmarkForDimensions(catalog, requested) ??
     platformMatches.find((candidate) => benchmarkDimensions(candidate).suite === 'readiness') ??
     platformMatches[0] ??
     modelMatches.find((candidate) => benchmarkDimensions(candidate).suite === requested.suite) ??
