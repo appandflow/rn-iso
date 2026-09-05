@@ -14,6 +14,10 @@ const lifecycle: GuideTopic = {
   # checkout remains one flat + separated directory directly under worktreeDir.
   # Default device labels include a stable hash so flat names cannot collide.
 
+  # Already in a linked worktree created by a harness? Instead of step 1:
+  #   stim worktree warm
+  # It copies missing ignored paths from the main checkout.
+
   # 2. The dev server, under a detached supervisor. Blocks until it is
   #    verifiably THIS project's, then hands your shell back.
   stim start
@@ -563,12 +567,36 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   doctor          --json --fix --platform <ios|android>
                                   (--platform keeps shared checks and filters native findings)
   gc              --delete --older-than <days> --cache <name|all>
-  worktree create <name> --carry-ignored --base <ref> --dir <path> --label <label>; remove [path] --force
+  worktree create <name> --carry-ignored --base <ref> --dir <path> --label <label>; warm; remove [path] --force
 
   That is the whole surface today, and it is deliberately small. It can grow
   when a flag is genuinely the best answer -- but project-specific knowledge
   (release builds, variants, device targets) belongs in a script the repo owns,
   not in a flag here.
+
+  \`stim worktree warm\` takes no arguments or flags. Run it anywhere inside
+  the current linked worktree to copy missing ignored entries from its main
+  checkout, regardless of either branch's HEAD or worktree.baseRef. Both roots
+  must be registered worktrees of the same Git repository; the main checkout
+  must be available. Running it in the main checkout refuses.
+
+  The ignored scope matches create --carry-ignored from that source: installed
+  dependencies, Pods, native output, and any other eligible ignored paths,
+  including .env and local configuration. The source's nonempty
+  .worktreeexclude replaces its resolved worktree.exclude setting. Nested
+  registered worktrees and .DerivedData are excluded. Warm also skips paths
+  overlapping a nested destination worktree or below a symlink ancestor.
+
+  Existing entries, including dangling symlinks, stay untouched. An existing
+  directory such as node_modules is skipped WHOLE; missing children are not
+  filled in. Warm does not copy tracked changes, switch branches, install
+  dependencies, or build. stdout stays empty; stderr reports copied, kept,
+  and failed entry counts. A copy failure exits 1 and reports incomplete;
+  files published before a failure remain. Inspect the named failed entry
+  before retrying: a partially published directory will be kept on the retry.
+  A completed copy is not proof that dependencies match this branch. Follow
+  any lockfile remedies before building, and install missing dependencies
+  with the project's package manager when the source has none to copy.
 
   \`android --variant <name>\` selects the gradle variant to assemble and
   install on a project with product flavors -- \`--variant productionDebug\`

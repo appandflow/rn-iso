@@ -62,6 +62,13 @@ Success confirms that the request was sent; Stim does not observe completion.
 Verify the expected UI on the reported device and inspect `stim logs --errors`
 before claiming recovery.
 
+If a harness already created a linked worktree, run `stim worktree warm`
+inside it to copy missing ignored state from the main checkout, including
+eligible `.env` and local configuration files. Existing entries are preserved;
+existing directories such as `node_modules` are skipped whole. See the
+[worktree guide](https://appandflow.github.io/stim/docs/worktrees) for exclusions
+and copy-failure remedies.
+
 ## Reference
 
 The [documentation website](https://appandflow.github.io/stim/) explains the

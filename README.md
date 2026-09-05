@@ -43,6 +43,13 @@ not after every JavaScript edit.
 Stim needs no project initialization. Runtime state stays under `~/.stim` by
 default.
 
+If a harness already created a linked worktree, run `stim worktree warm`
+inside it to copy missing ignored state from the main checkout, including
+eligible `.env` and local configuration files. Existing entries are preserved;
+existing directories such as `node_modules` are skipped whole. See the
+[worktree guide](https://appandflow.github.io/stim/docs/worktrees) for exclusions
+and copy-failure remedies.
+
 ## Documentation
 
 Read the [Stim documentation](https://appandflow.github.io/stim/) for the

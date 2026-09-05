@@ -350,3 +350,11 @@ test('the package exposes only the stim binary', () => {
 test('the reload payload guide distinguishes dispatch from observed completion', () => {
   expect(renderSection('facts', 'payloads')).toMatch(/reload request was sent[\s\S]*does not observe completion/);
 });
+
+test('warm guidance protects existing entries and tracked changes', () => {
+  const options = renderSection('lifecycle', 'options');
+  assert(options);
+  expect(options).toMatch(/existing\s+directory such as node_modules is skipped WHOLE/i);
+  expect(options).toMatch(/dangling symlinks/);
+  expect(options).toMatch(/does not copy tracked changes/);
+});

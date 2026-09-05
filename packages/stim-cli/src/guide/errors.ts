@@ -816,8 +816,17 @@ not on any remote"  (worktree remove)
   Every keep names \`git branch -D\`.`,
     },
     carry: {
-      summary: 'every carry line worktree create prints, and what each means',
-      body: () => `"carry       carried <dir>/Pods does not match the <dir>/Podfile.lock on
+      summary: 'worktree create and warm copy results, lockfile mismatches, and remedies',
+      body: () => `"carry       incomplete: ... ignored entries copied, ... kept, ... failed"
+(worktree warm)
+  At least one entry could not be copied. The command exits 1 and names each
+  failure. Existing entries stay untouched; any files already published remain.
+  Inspect failed paths before retrying, because existing directories are skipped
+  whole. "complete" means the eligible copy finished, not that dependencies
+  are installed or match this branch. Lockfile mismatch remedies below also
+  apply to warm. It writes progress and results to stderr, with empty stdout.
+
+"carry       carried <dir>/Pods does not match the <dir>/Podfile.lock on
 disk here"  (worktree create)
   \`ios/Pods\` is gitignored, so --carry-ignored clones it; \`ios/Podfile.lock\`
   is tracked. The check compares the cloned

@@ -54,13 +54,18 @@ reports it as a finding instead of refusing.
 | `worktreeDir`                 | Parent directory for created worktrees; `worktree create --dir` overrides it for one run |
 | `worktree.baseRef`            | Default worktree base: `head`, `fresh`, or a git ref                                     |
 | `worktree.include`            | Explicit ignored paths to carry                                                          |
-| `worktree.exclude`            | Ignored paths skipped by `--carry-ignored`                                               |
+| `worktree.exclude`            | Ignored paths skipped by `create --carry-ignored` and `worktree warm`                    |
 | `cache.provider`              | Optional second-tier cache provider module                                               |
 | `cache.options`               | Options passed to that provider                                                          |
 | `caches`                      | Additional cache paths reported by `gc`                                                  |
 
 A relative `worktreeDir` resolves against the settings root, the repository
 root, so a committed `.stim.json` can place worktrees inside the repository.
+Both ignored-copy operations read exclusions from their source checkout: main
+for `worktree warm`, the current checkout for `create --carry-ignored`. A
+nonempty `.worktreeexclude` in that source replaces its resolved
+`worktree.exclude` setting; an empty or absent file uses the setting.
+
 A relative `worktree create --dir` resolves against the current directory.
 
 `worktree.baseRef` is a default, not an assertion: only the `--base` flag
