@@ -32,6 +32,9 @@ const modelPricing = {
 
 const absolutePathPattern =
   /(?<![A-Za-z0-9._/])\/(?:Applications|Library|System|Users|Volumes|private|tmp|var|opt|Pods\.build|XPCServices)(?![A-Za-z0-9._+-])(?:\/[^\s'"`,;()<>[\]]+)*/g;
+const webUrlPattern = /https?:\/\/[^\s'"`<>]+/gi;
+const nestedPrivateAbsolutePathPattern =
+  /([A-Za-z0-9._+-])(\/(?:Users|Volumes)(?![A-Za-z0-9._+-])(?:\/[^\s'"`,;()<>[\]]+)*)/g;
 const compilerFlagAbsolutePathPattern =
   /(-[FLI])((?:\/(?:Applications|Library|System|Users|Volumes|private|tmp|var|opt))(?![A-Za-z0-9._+-])(?:\/[^\s'"`,;()<>[\]]+)*)/g;
 const fileUrlAbsolutePathPattern =
@@ -52,6 +55,9 @@ const deviceInventoryPattern = /\b(?:agent-device devices|xcrun simctl list devi
 const machineStoragePattern = /\b(?:df|diskutil)(?:\s|$)/;
 const branchInventoryPattern = /\bgit\s+(?:branch|for-each-ref)(?:\s|$)/;
 const interactiveShellPattern = /^(?:bash|sh|zsh)$/;
+const adbPublicKeyMessagePattern = /(\bSending adb public key \[)[A-Za-z0-9+/=]{80,}(?:\s+[^\]\r\n]*)?(\])/g;
+const adbPublicKeyBootArgumentPattern = /(\bandroidboot\.qemu\.adb\.pubkey=)[A-Za-z0-9+/=]{80,}/g;
+const simulatorIdExactPattern = /^[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}$/i;
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
@@ -160,13 +166,26 @@ export function sanitizeBenchmarkText(value, replacements = []) {
   for (const [absolute, portable] of replacements.toSorted((a, b) => b[0].length - a[0].length)) {
     text = text.replaceAll(absolute, portable);
   }
+  const webUrls = [];
+  text = text.replace(webUrlPattern, (url) => {
+    const token = `\u0000stim-web-url-${webUrls.length}\u0000`;
+    webUrls.push([token, url]);
+    return token;
+  });
   text = text.replace(shellPathPattern, 'PATH=<toolchain-path>');
   text = text.replace(homebrewExecutablePattern, '$1');
   text = text.replace(agentDeviceBundlePattern, '<agent-device-helper>');
+  text = text.replace(adbPublicKeyMessagePattern, '$1<adb-public-key>$2');
+  text = text.replace(adbPublicKeyBootArgumentPattern, '$1<adb-public-key>');
   text = text.replace(fileUrlAbsolutePathPattern, (_match, path) => `file:///${replacementLabel(path)}`);
   text = text.replace(compilerFlagAbsolutePathPattern, (_match, flag, path) => `${flag}${replacementLabel(path)}`);
+  text = text.replace(
+    nestedPrivateAbsolutePathPattern,
+    (_match, prefix, path) => `${prefix}/${replacementLabel(path)}`,
+  );
   text = text.replace(absolutePathPattern, (path) => replacementLabel(path));
   text = text.replace(systemAbsolutePathPattern, (path) => replacementLabel(path));
+  for (const [token, url] of webUrls) text = text.replaceAll(token, url);
   text = text.replace(remoteBranchUserPattern, '$1@<user>');
   text = text.replaceAll(userInfo().username, '<local-user>');
   return text
@@ -418,6 +437,20 @@ function assertPortable(payload) {
   if (leakedFileUrl) {
     throw new Error(`benchmark export contains an absolute machine file URL: ${leakedFileUrl}`);
   }
+  const serializedWithoutWebUrls = serialized.replace(/https?:\/\/[^"\\\s]+/gi, '');
+  const leakedNestedPrivatePath = serializedWithoutWebUrls.match(
+    /[A-Za-z0-9._+-](\/(?:Users|Volumes)(?![A-Za-z0-9._+-]))/,
+  )?.[1];
+  if (leakedNestedPrivatePath) {
+    const at = serializedWithoutWebUrls.indexOf(leakedNestedPrivatePath);
+    const field = serializedWithoutWebUrls.slice(
+      Math.max(0, at - 80),
+      Math.min(serializedWithoutWebUrls.length, at + 240),
+    );
+    throw new Error(
+      `benchmark export contains a nested absolute machine path root: ${leakedNestedPrivatePath}\n${field}`,
+    );
+  }
   const leakedRoot = [
     '/Applications',
     '/Library',
@@ -472,6 +505,13 @@ function assertPortable(payload) {
   if (leakedHostname) throw new Error(`benchmark export contains a local hostname: ${leakedHostname}`);
   const leakedRemoteBranchUser = serialized.match(remoteBranchUserPattern)?.[0];
   if (leakedRemoteBranchUser) throw new Error('benchmark export contains a user-scoped remote branch');
+  if (
+    /(?:Sending adb public key \[|androidboot\.qemu\.adb\.pubkey=)(?!<adb-public-key>)[A-Za-z0-9+/=]{80,}/.test(
+      serialized,
+    )
+  ) {
+    throw new Error('benchmark export contains an ADB public key');
+  }
   if (serialized.includes('janicduplessis')) {
     throw new Error('benchmark export contains a local username');
   }
@@ -493,7 +533,23 @@ function validPng(path, expectedDimensions) {
 function validMp4(path) {
   if (!existsSync(path)) return false;
   const bytes = readFileSync(path);
-  return bytes.length >= 1_000 && bytes.subarray(4, 8).toString('ascii') === 'ftyp';
+  return (
+    bytes.length >= 1_000 && bytes.subarray(4, 8).toString('ascii') === 'ftyp' && mp4DurationSeconds(bytes) !== null
+  );
+}
+
+function mp4DurationSeconds(bytes) {
+  const marker = bytes.indexOf(Buffer.from('mvhd'));
+  if (marker < 0 || marker + 24 > bytes.length) return null;
+  const version = bytes[marker + 4];
+  const timescaleOffset = version === 1 ? marker + 24 : marker + 16;
+  const durationOffset = version === 1 ? marker + 28 : marker + 20;
+  const durationBytes = version === 1 ? 8 : 4;
+  if (timescaleOffset + 4 > bytes.length || durationOffset + durationBytes > bytes.length) return null;
+  const timescale = bytes.readUInt32BE(timescaleOffset);
+  if (timescale === 0) return null;
+  const duration = version === 1 ? Number(bytes.readBigUInt64BE(durationOffset)) : bytes.readUInt32BE(durationOffset);
+  return duration / timescale;
 }
 
 function recordMatchesMeta(record, meta) {
@@ -706,6 +762,11 @@ function validateReadinessRecord(runDir, record, meta) {
       new Date(Date.parse(meta.dispatchAt) + screenCommands[5].endSeconds * 1000).toISOString()
   ) {
     return reject('recording evidence mismatch');
+  }
+  const recordingDurationSeconds = mp4DurationSeconds(readFileSync(recordingPath));
+  const recordingSecondsToScreenProof = screenReadySeconds - screenCommands[1].endSeconds;
+  if (recordingDurationSeconds === null || recordingDurationSeconds + 2 < recordingSecondsToScreenProof) {
+    return reject('recording ends before Settings proof');
   }
 
   const appAlivePath = join(runDir, 'app-alive.json');
@@ -934,7 +995,9 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
         ...(record.simulator?.udid
           ? [
               [record.simulator.udid, '<simulator-udid>'],
-              [record.simulator.udid.slice(0, 8), '<simulator-udid-prefix>'],
+              ...(simulatorIdExactPattern.test(record.simulator.udid)
+                ? [[record.simulator.udid.slice(0, 8), '<simulator-udid-prefix>']]
+                : []),
             ]
           : []),
         ...(runNonce ? [[runNonce, id]] : []),

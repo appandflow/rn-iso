@@ -45,27 +45,38 @@ upstream gap.
   stim ios                             # or: stim android
   stim logs --errors
 
-  # JavaScript and TypeScript edits use Fast Refresh. If an error screen stays
-  # after the edit, reload the running app without rebuilding it.
-  stim reload                            # add ios or android when both are live
-  stim logs --since 30s --level error
-
   stim stop
   stim worktree remove
 
 RULES DURING THE LOOP
 
+- Run Stim from the app directory: the one whose package.json depends on
+  react-native or expo. Anywhere else -- a monorepo root, a tools package --
+  start, ios and android refuse with STIM_NO_PROJECT naming that package.json,
+  and doctor reports it as a finding.
 - Run start before a debug ios or android build. If it returns STIM_NO_METRO,
   run stim start and retry.
 - Run ios or android again after a native input changes. A JavaScript-only
   change does not need one.
+- If fingerprinting fails after native inputs change during the run, Stim
+  installs the build without caching it. A null fingerprint or cacheKey is
+  unavailable cache information, not an install failure.
+- Android Debug builds target the owned emulator system-image ABI or the
+  physical device's primary ABI. Unknown targets and Release builds stay
+  universal.
+- Reload is not part of the normal workflow. Use stim reload on an owned local
+  simulator or emulator after a failed first bundle load, when an error screen
+  remains after the fix, or when you explicitly need an app restart. On a
+  physical device, follow the printed agent-device UI automation remedy.
 - If launch reports an app error but also says the native process is alive,
-  the app did not crash. Fix JavaScript or TypeScript and use Fast Refresh; if
-  the error screen remains, use stim reload. Do not run ios or android again.
-  If launch says FATAL because the app process exited,
+  the app did not crash. Fix JavaScript or TypeScript and use Fast Refresh. If
+  the error screen remains, follow the printed reload remedy instead of
+  running ios or android again. If launch says FATAL because the app process exited,
   fix the crash and run the platform command again; Metro cannot restart it.
 - A cold native build can outlive a shell timeout. Run the same command again:
-  the second call joins the active build or returns its result.
+  the second call joins the active build or returns its result. If a builder
+  fails, one waiter takes over and the others keep waiting within the same
+  90-minute limit. Follow the remedy if STIM_BUILD_WAIT_TIMEOUT is returned.
 - ios and android install the app, launch it, and check readiness. Trust the
   exact device, app, Metro, and launch facts in the final summary. Use the full
   reported device ID. Never assume a simulator named booted belongs to this
@@ -210,9 +221,10 @@ line by design (see \`guide logs\`), not this single-payload contract.
                   beside it. Android also fingerprints after Gradle because
                   Gradle plugins can rewrite native inputs while they build;
                   its artifact is stored only under that post-build hash. A
-                  stable second fingerprint prints no shift line. If that
-                  fingerprint cannot be computed, the build is installed but
-                  not cached, and fingerprint and cacheKey are null
+                  stable second fingerprint prints no shift line. If the iOS
+                  fingerprint after prebuild or pod install, or the Android
+                  fingerprint after Gradle, cannot be computed, the build is
+                  installed but not cached, and fingerprint and cacheKey are null
   configuration   the Xcode configuration that was built ("Release" from
                   --configuration or the ios.configuration setting); null for
                   the default Debug
@@ -405,8 +417,9 @@ line by design (see \`guide logs\`), not this single-payload contract.
   fingerprint / cacheKey / cacheHit / cacheSkipped / waitedForBuild /
   appPath / installSkipped / launched
                   as above -- cacheKey keys on the VARIANT here
-                  (<fingerprint>-productionrelease-sim) the way the iOS one
-                  keys on the configuration
+                  (<fingerprint>-productionrelease-sim). A Debug artifact for
+                  a proven target ABI also ends in that ABI
+                  (<fingerprint>-debug-sim-arm64-v8a)
   variant         the gradle variant that was built ("productionDebug" from
                   --variant or the android.variant setting); null for the
                   default assembleDebug. A variant whose name ENDS IN Release
@@ -1008,12 +1021,12 @@ FALLBACK NOTES THAT ARE NOT CODES (release cache hits)
 
 STIM_BUILD_WAIT_TIMEOUT
   This run was waiting for ANOTHER workspace's build of the same fingerprint
-  (see \`guide lifecycle\`), and after ~90 minutes that process was still alive
-  and had still produced nothing. A wait is normally bounded by the builder
-  being alive at all -- a crash or a kill frees it within a second -- so this
-  means a genuinely wedged xcodebuild/gradle, not a slow one. The message names
-  the pid and the lock directory: check the pid, and if it is not really
-  building, remove that directory and run the command again.
+  (see \`guide lifecycle\`), and no artifact arrived within ~90 minutes.
+  Replacement builders share that deadline, including time spent acquiring
+  the lock between waits. A live builder may be wedged, or successive builders
+  may have failed. The message names the current pid and lock directory:
+  check the pid, and if it is not really building, remove that directory and
+  run the command again.
 
 STIM_INSTALL_FAILED
   The artifact built or came from cache, but \`simctl install\` / \`adb install\` /
@@ -1416,8 +1429,11 @@ STIM_BAD_ARG / STIM_NO_PROJECT
   android.avdConfig key or fragment, a malformed ios.signingIdentity,
   ios.signingIdentitySha1 or ios.lanHost value, \`--device\` with an empty
   serial or UDID, \`--device\` together with \`--remote\`, a working directory
-  with no package.json above it, an android/app/build.gradle that
-  declares product flavors with
+  with no package.json above it, or one whose nearest package.json does not
+  parse or depends on neither react-native nor expo, so the directory is not
+  an app (the refusal names that package.json and says which of the two it
+  is; \`doctor\` reports the same directory as a finding), an
+  android/app/build.gradle that declares product flavors with
   no variant selected (the refusal names the debug variants), or a
   \`--device-type\`, \`--runtime\` or \`--system-image\` name that is BLANK or
   is not installed on this machine. For the unknown-name case the installed
@@ -1717,10 +1733,6 @@ STIM_CONFIG_CORRUPT  ("Stim config at <path> is not valid JSON")
   stim logs --errors
 
   # 5. Edit the JS. Fast Refresh applies it; no Stim command is involved.
-  #    If a startup or error overlay stays, reload without rebuilding. The
-  #    platform is optional unless both owned apps are live. Then ask again.
-  stim reload          # or: stim reload ios / stim reload android
-  stim logs --since 30s --level error
 
   # 6. Pausing: supervisor halted, collectors reaped, owned device SHUT DOWN
   #    (never deleted), port freed. Coming back costs a boot, not a create.
@@ -1737,7 +1749,10 @@ and produces an app that cannot load a bundle.
 
 Repeat step 3 whenever a NATIVE input changes. A JS-only edit needs nothing --
 that is what Fast Refresh over the running dev server is for. \`stim reload\` is
-the explicit recovery path when Fast Refresh cannot clear the current screen.
+not part of the normal workflow. It is the explicit recovery path after a
+failed first bundle load, when Fast Refresh cannot clear the current screen,
+or when you explicitly need an app restart. Use \`stim reload ios\` or
+\`stim reload android\` to select a platform when both owned apps are live.
 It never builds, installs, boots, or cold-launches. It acts only on a live app
 on this workspace's owned local simulator or emulator, and refuses release
 builds, stopped or unowned devices, a missing or foreign Metro, and an
@@ -1966,7 +1981,9 @@ committing. The shared caches need no project-file edits:
            Podfile post_install block. Xcode 26+ only, and skipped entirely
            when the project configured ccache (the two defeat each other).
   android  gradlew carries --build-cache, so task outputs cross worktrees with
-           no org.gradle.caching=true in gradle.properties.
+           no org.gradle.caching=true in gradle.properties. Debug builds also
+           carry -PreactNativeArchitectures=<target ABI> when Stim can prove
+           the emulator or physical-device ABI; otherwise they stay universal.
   start    the dev server gets a shared Metro FileStore APPENDED to whatever
            the project configured -- in-process on a bare project, and through
            Expo's config override on SDK 54+. Expo SDK 53 and older use their
@@ -1997,7 +2014,9 @@ THE BUILD CACHE HAS THREE LEVELS
      remote cannot stall the loop, and a hit is copied into level one on the
      way past so the next workspace on this machine gets it for free. After a
      build, the result is stored locally AND handed to both providers, which
-     run independently.
+     run independently. An ABI-targeted Android Debug build skips this Expo
+     tier because its run-options contract cannot distinguish ABIs; levels one
+     and two remain ABI-keyed and active.
 
   Stim never configures a provider and never suggests changing one: a
   project without one is a perfectly ordinary local-only project (doctor does
@@ -2028,6 +2047,10 @@ THE BUILD CACHE HAS THREE LEVELS
   post-prebuild one, so re-resolving under the moved key installs it instead
   of compiling beside it. No second line means nothing was found there and the
   run compiles.
+
+  If the iOS fingerprint after prebuild or pod install is unavailable, Stim
+  installs the build but skips local storage and remote uploads. fingerprint
+  and cacheKey are null in the result and lastBuild; the old key is not reused.
 
 WHAT MAKES THE CACHE ACTUALLY HIT: .FINGERPRINTIGNORE
   Every entry is keyed on what the tree hashes, so two workspaces share an
@@ -2072,9 +2095,10 @@ ONE COMPILE PER FINGERPRINT, ACROSS EVERY WORKSPACE
 
   Nothing can deadlock on it. The lock is held by a PID, so a builder that
   crashes, is killed, or whose build simply fails frees it: the waiters see a
-  released lock with no artifact, and one of them takes over and builds. A
-  builder that is alive but wedged is the only case a wait can outlive, and
-  that ends after ~90 minutes with STIM_BUILD_WAIT_TIMEOUT naming the lock.
+  released lock with no artifact, and one of them takes over and builds. The
+  other waiters keep waiting for that holder. All replacement builders share
+  one ~90-minute deadline, including lock acquisition between waits; reaching
+  it returns STIM_BUILD_WAIT_TIMEOUT naming the current holder and lock.
 
   --no-build-cache looks nothing up -- not the local cache, not either
   provider -- and takes no lock and never waits, because it asked for a compile
@@ -2974,7 +2998,10 @@ be setup steps are supplied by Stim on the command lines it composes itself:
                (Xcode 26+ only, and skipped when the project configured ccache,
                which defeats it)
   gradlew      --build-cache -- so no org.gradle.caching=true in a committed
-               gradle.properties
+               gradle.properties. Debug builds add
+               -PreactNativeArchitectures=<target ABI> when the owned
+               emulator system image or physical device proves the ABI;
+               unknown targets and Release builds stay universal.
   start        a shared Metro FileStore, APPENDED to whatever the project
                configured -- so no metro.config.js. On a bare project Stim
                hosts Metro itself and adds it to the config it loaded; on Expo

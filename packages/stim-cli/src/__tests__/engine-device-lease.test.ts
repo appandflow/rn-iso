@@ -419,8 +419,9 @@ describe('choosing a device from the pool', () => {
   });
 });
 
-describe('the real file protocol', () => {
+describe('the real file protocol', { timeout: 30_000 }, () => {
   const LEASE_URL = new URL('../engine/device-lease.ts', import.meta.url).href;
+  const CHILD_TIMEOUT_MS = 20_000;
   let scratch: string;
 
   beforeEach(() => {
@@ -442,8 +443,9 @@ describe('the real file protocol', () => {
       execFile(
         process.execPath,
         [path, ...args],
-        { env: { ...process.env, STIM_HOME: home }, timeout: 60000 },
+        { env: { ...process.env, STIM_HOME: home }, timeout: CHILD_TIMEOUT_MS },
         (err, stdout, stderr) => {
+          if (err?.killed) return reject(new Error(`${path} was killed after ${CHILD_TIMEOUT_MS}ms (${err.signal})`));
           if (err && err.code === undefined) return reject(err);
           resolve({ stdout: String(stdout), stderr: String(stderr) });
         },

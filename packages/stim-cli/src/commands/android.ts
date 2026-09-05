@@ -39,6 +39,7 @@ import {
   acquireBuildLock,
   releaseBuildLock,
   takeoverLine,
+  WAIT_CEILING_MS,
   waitForBuild as waitForOtherBuild,
   type BuildLockHandle,
   type WaitForBuildResult,
@@ -47,7 +48,14 @@ import { acquireBuildSlot, releaseBuildSlot, type BuildSlotHandle } from '../eng
 import { createNdjsonWriter } from '../ndjson.ts';
 import { isPidAlive, resolveProjectMetro } from '../metro.ts';
 import { emulatorLogFile, workspaceDir, workspaceLogsDir } from '../paths.ts';
-import { detectAndroidPackage, detectBundleId, detectIsExpo, findProjectRoot, projectShortcut } from '../project.ts';
+import {
+  appProjectProblem,
+  detectAndroidPackage,
+  detectBundleId,
+  detectIsExpo,
+  findProjectRoot,
+  projectShortcut,
+} from '../project.ts';
 import {
   devClientScheme as configuredDevClientScheme,
   ensureWorkspaceStorageSafely,
@@ -110,9 +118,11 @@ import {
   verifyLaunch,
 } from '../engine/app-install.ts';
 import {
+  androidDeviceAbi,
   androidHome,
   androidPoolCandidates,
   androidPoolNoCandidatesRefusal,
+  androidSystemImageAbi,
   memoizeEmulatorProbe,
   emulatorDiskSpaceRemedy,
   emulatorFailureRemedy,
@@ -789,6 +799,7 @@ interface RunAndroidOptions {
   onLeaseSignal?: typeof releaseLeaseOnSignal;
   listDevices?: typeof listAdbDevices;
   deviceModel?: typeof physicalDeviceModel;
+  deviceAbi?: typeof androidDeviceAbi;
   isEmulatorDevice?: typeof probeEmulatorSerial;
   readApkPackage?: (apkPath: string | null) => string | null;
   remoteDevice?: RemoteDeviceBackend | null;
@@ -883,6 +894,16 @@ interface VerifyAndroidRunArgs {
   phase: (label: unknown, text: string) => void;
 }
 
+function physicalAndroidReloadRemedy(androidPackage: string, serial: string): string {
+  return (
+    `continue in your existing agent-device automation session for ${androidPackage} on ${serial}. ` +
+    'Keep the exact arguments and environment that identify that session on every command. ' +
+    'Run `agent-device snapshot -i` in that session. ' +
+    'If Reload is visible on the error screen, press it by exact ref or label. ' +
+    'Otherwise open the React Native dev menu through that session, inspect again, and press Reload.'
+  );
+}
+
 async function verifyAndroidRun({
   release,
   remoteRelease,
@@ -957,10 +978,13 @@ async function verifyAndroidRun({
         chalk.yellow('Fix the crash, then run `stim android` again. A Metro reload cannot restart an exited app.'),
       );
     } else if (verification.processAlive === true && metroPort !== null) {
+      const reloadRemedy = physical
+        ? physicalAndroidReloadRemedy(androidPackage, serial)
+        : 'run `stim reload android`.';
       phase(
         'remedy',
         chalk.yellow(
-          `The native app is still running. Fix the JavaScript or TypeScript error, then run ${physical ? `\`agent-device metro reload --metro-port ${metroPort}\`` : '`stim reload android`'}. Do not run \`stim android\` unless native inputs changed or the app process exits.`,
+          `The native app is still running. Fix the JavaScript or TypeScript error, then ${reloadRemedy} Do not run \`stim android\` unless native inputs changed or the app process exits.`,
         ),
       );
     }
@@ -978,10 +1002,13 @@ async function verifyAndroidRun({
     if (report.summary) phase('launch', chalk.dim(report.summary));
     for (const line of report.lines) phase('launch', chalk.yellow(line));
     if (report.lines.length > 0 && verification.processAlive === true && metroPort !== null) {
+      const reloadRemedy = physical
+        ? physicalAndroidReloadRemedy(androidPackage, serial)
+        : 'run `stim reload android`.';
       phase(
         'remedy',
         chalk.yellow(
-          `The native app is still running. Fix the JavaScript or TypeScript error; Fast Refresh should apply the edit. If the error screen remains, run ${physical ? `\`agent-device metro reload --metro-port ${metroPort}\`` : '`stim reload android`'}. Do not run \`stim android\` unless native inputs changed or the app process exits.`,
+          `The native app is still running. Fix the JavaScript or TypeScript error; Fast Refresh should apply the edit. If the error screen remains, ${reloadRemedy} Do not run \`stim android\` unless native inputs changed or the app process exits.`,
         ),
       );
     }
@@ -1557,6 +1584,34 @@ async function pooledAndroidDevice({
   };
 }
 
+function androidBuildOptions({
+  release,
+  physical,
+  device,
+  variant,
+  deviceAbi,
+}: {
+  release: boolean;
+  physical: boolean;
+  device: OwnedDeviceRecord;
+  variant: string | null;
+  deviceAbi: typeof androidDeviceAbi;
+}) {
+  let abi: string | null = null;
+  if (!release && physical && device.serial) abi = deviceAbi(device.serial);
+  if (!release && !physical) abi = androidSystemImageAbi(device.systemImage);
+
+  const runOptions: { variant?: string; abi?: string } = {};
+  if (variant) runOptions.variant = variant;
+  if (abi) runOptions.abi = abi;
+
+  return {
+    abi,
+    runOptions,
+    remoteRunOptions: Object.keys(runOptions).length === 0 ? null : runOptions,
+  };
+}
+
 function resolveRunAndroidOptions(
   {
     root,
@@ -1582,6 +1637,7 @@ function resolveRunAndroidOptions(
     onLeaseSignal = releaseLeaseOnSignal,
     listDevices = listAdbDevices,
     deviceModel = physicalDeviceModel,
+    deviceAbi = androidDeviceAbi,
     isEmulatorDevice = probeEmulatorSerial,
     readApkPackage = (apkPath: string | null) => apkPackage(dumpApkManifest(apkPath)),
     getLimits = getConcurrencyLimits,
@@ -1658,6 +1714,7 @@ function resolveRunAndroidOptions(
     onLeaseSignal,
     listDevices,
     deviceModel,
+    deviceAbi,
     isEmulatorDevice,
     readApkPackage,
     getLimits,
@@ -1736,6 +1793,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     onLeaseSignal,
     listDevices,
     deviceModel,
+    deviceAbi,
     isEmulatorDevice,
     readApkPackage,
     getLimits,
@@ -1789,6 +1847,14 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   } = resolveRunAndroidOptions(options);
   const started = now();
   const startedAt = new Date(started).toISOString();
+  const projectProblem = appProjectProblem(root);
+  if (projectProblem) {
+    const { message, remedy } = projectProblem;
+    out(phaseLine('error', chalk.red(`STIM_NO_PROJECT: ${message}`)));
+    out(phaseLine('remedy', remedy));
+    if (json) emit(JSON.stringify({ code: 'STIM_NO_PROJECT', message, remedy }));
+    return { ok: false, error: { code: 'STIM_NO_PROJECT', message, remedy } };
+  }
   try {
     await ensureStorage(root, { note: out });
   } catch (error) {
@@ -2203,6 +2269,17 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   record.avdName = device.avdName ?? null;
   record.deviceName = device.deviceName ?? device.avdName ?? null;
   record.systemImage = device.systemImage;
+  const {
+    abi: buildAbi,
+    runOptions: buildRunOptions,
+    remoteRunOptions,
+  } = androidBuildOptions({
+    release,
+    physical,
+    device,
+    variant,
+    deviceAbi,
+  });
 
   let hash = '';
   let providerUpload: Promise<ProviderCallResult<void>> | null = null;
@@ -2242,7 +2319,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       return false;
     }
     record.fingerprint = hash;
-    cacheKey = buildCacheKey(PLATFORM, hash, variant ? { variant } : {});
+    cacheKey = buildCacheKey(PLATFORM, hash, buildRunOptions);
     stats.setCacheKey(cacheKey);
     record.cacheKey = cacheKey;
     storeHash = hash;
@@ -2299,6 +2376,9 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     let uploadPending: Promise<RemoteUploadLike> | null = null;
 
     async function resolveRemoteArtifact(): Promise<void> {
+      // Expo buildCacheProvider run options cannot key Android ABIs, so targeted APKs are unsafe in this tier.
+      if (buildAbi) return;
+
       if (!apkPath) {
         const loaded: LoadProjectProviderResult = await loadProvider(root, { isExpo });
         if (loaded?.unavailable) {
@@ -2322,7 +2402,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
           platform: PLATFORM,
           projectRoot: root,
           fingerprintHash: hash,
-          runOptions: variant ? { variant } : null,
+          runOptions: remoteRunOptions,
         });
         if (hit?.appPath) {
           let stored = null;
@@ -2358,7 +2438,10 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
 
     let waitedForBuild: WaitedForBuild | null = null;
     async function waitForSharedBuild(): Promise<boolean> {
-      if (!apkPath && useBuildCache) {
+      if (!useBuildCache) return true;
+      const waitStarted = now();
+      let failedHolder: BuildLockHandle['held'];
+      while (!apkPath) {
         let attempt: BuildLockHandle | null = null;
         try {
           attempt = acquireLock({ platform: PLATFORM, key: cacheKey, root, logFile: buildLog });
@@ -2371,7 +2454,9 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
 
         if (attempt?.acquired) {
           buildLock = attempt;
-          if (attempt.tookOver) phase('build', chalk.yellow(takeoverLine(attempt.tookOver)));
+          const previous = attempt.tookOver ?? failedHolder;
+          if (previous) phase('build', chalk.yellow(takeoverLine(previous)));
+          break;
         } else if (attempt?.held) {
           const holder = attempt.held;
           const who = holder.projectRoot || 'another workspace';
@@ -2383,7 +2468,19 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
 
           let waited: WaitForBuildResult | null = null;
           try {
-            waited = await waitForBuild({ platform: PLATFORM, key: cacheKey, out });
+            const ceilingMs = WAIT_CEILING_MS - (now() - waitStarted);
+            if (ceilingMs <= 0) {
+              throw Object.assign(
+                new Error(
+                  `Waited ${formatDuration(now() - waitStarted)} for shared builds without an artifact; ${who} (pid ${holder.pid}) holds ${attempt.path}.`,
+                ),
+                {
+                  code: 'STIM_BUILD_WAIT_TIMEOUT',
+                  lockPath: attempt.path,
+                },
+              );
+            }
+            waited = await waitForBuild({ platform: PLATFORM, key: cacheKey, out, ceilingMs });
           } catch (err) {
             const wtErr = err as Error & { code?: string; lockPath?: string };
             if (wtErr?.code !== 'STIM_BUILD_WAIT_TIMEOUT') throw err;
@@ -2404,14 +2501,14 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
           } else {
             phase(
               'build',
-              chalk.yellow(`${who}'s build ended without an artifact (${waited?.builderFailed}); building here`),
+              chalk.yellow(
+                `${who}'s build ended without an artifact (${waited?.builderFailed}); retrying the build lock`,
+              ),
             );
-            try {
-              const takeover = acquireLock({ platform: PLATFORM, key: cacheKey, root, logFile: buildLog });
-              if (takeover?.acquired) buildLock = takeover;
-            } catch {}
-            phase('build', chalk.yellow(takeoverLine(holder)));
+            failedHolder = holder;
           }
+        } else {
+          break;
         }
       }
       return true;
@@ -2511,7 +2608,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
             if (after?.moved) {
               storeHash = after.hash;
               storeSources = after.sources;
-              storeKey = buildCacheKey(PLATFORM, after.hash, variant ? { variant } : {});
+              storeKey = buildCacheKey(PLATFORM, after.hash, buildRunOptions);
               record.fingerprint = storeHash;
               record.cacheKey = storeKey;
               phase('fingerprint', chalk.dim(`${shortHash(hash)} -> ${shortHash(storeHash)} (after prebuild)`));
@@ -2531,7 +2628,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
           if (!apkPath) {
             phase('build', `compiling ${variant || 'debug'} with Gradle`);
             const built: BuildAndroidResultLike = await build(
-              { root, logWriter: writer, variant },
+              { root, logWriter: writer, variant, abi: buildAbi },
               { estimateMs: estimates().coldBuildMs },
             );
             if (built.failed) {
@@ -2579,7 +2676,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
               if (afterBuild.moved) {
                 storeHash = afterBuild.hash;
                 storeSources = afterBuild.sources;
-                storeKey = buildCacheKey(PLATFORM, afterBuild.hash, variant ? { variant } : {});
+                storeKey = buildCacheKey(PLATFORM, afterBuild.hash, buildRunOptions);
                 record.fingerprint = storeHash;
                 record.cacheKey = storeKey;
                 phase(
@@ -2617,7 +2714,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
                   projectRoot: root,
                   fingerprintHash: storeHash,
                   buildPath: apkPath!,
-                  runOptions: variant ? { variant } : null,
+                  runOptions: remoteRunOptions,
                 });
               }
             }

@@ -349,6 +349,14 @@ describe('gradleArgs', () => {
   test('a caller can turn it off, and then the argv is exactly the task', () => {
     expect(gradleArgs('assembleDebug', { buildCache: false })).toEqual(['assembleDebug']);
   });
+
+  test('limits React Native native compilation to a proven target ABI', () => {
+    expect(gradleArgs('assembleDebug', { abi: 'arm64-v8a' })).toEqual([
+      'assembleDebug',
+      '--build-cache',
+      '-PreactNativeArchitectures=arm64-v8a',
+    ]);
+  });
 });
 
 describe('buildAndroid', () => {
@@ -399,13 +407,20 @@ describe('buildAndroid', () => {
     }
   });
 
-  test('writes a build_start record carrying the resolved gradlew path and its full argv', async () => {
+  test('forwards the target ABI to Gradle and records it in the full argv', async () => {
     makeAndroidProject();
     const writer = recordingWriter();
+    const calls: string[][] = [];
     await buildAndroid(
-      { root, logWriter: writer },
-      { spawnFn: () => fakeChild({ lines: ['BUILD SUCCESSFUL in 1s'], onExit: () => writeApk() }) },
+      { root, logWriter: writer, abi: 'arm64-v8a' },
+      {
+        spawnFn: (_cmd, args) => {
+          calls.push(args);
+          return fakeChild({ lines: ['BUILD SUCCESSFUL in 1s'], onExit: () => writeApk() });
+        },
+      },
     );
+    expect(calls).toEqual([['assembleDebug', '--build-cache', '-PreactNativeArchitectures=arm64-v8a']]);
     const starts = writer.records.filter((r) => r.event === 'build_start');
     expect(starts.length).toBe(1);
     const start = starts[0];
@@ -413,7 +428,9 @@ describe('buildAndroid', () => {
     expect(start.src).toBe('build');
     expect(start.level).toBe('info');
     expect(start.raw).toBe(undefined);
-    expect(start.msg).toBe(`${join(root, 'android', 'gradlew')} assembleDebug --build-cache`);
+    expect(start.msg).toBe(
+      `${join(root, 'android', 'gradlew')} assembleDebug --build-cache -PreactNativeArchitectures=arm64-v8a`,
+    );
   });
 
   test('the build_start record shows the argv WITHOUT --build-cache when the cache is off', async () => {

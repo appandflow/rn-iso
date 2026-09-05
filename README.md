@@ -32,10 +32,13 @@ Then ask your coding agent to build and run the app. The normal loop is:
 stim doctor
 stim start
 stim ios                  # or: stim android
-stim reload               # after a JS-only edit when Fast Refresh needs help
 stim logs --errors
 stim stop
 ```
+
+`stim reload [ios|android]` is a recovery or explicit restart command. Use it
+after a failed first bundle load or when an error screen remains after a fix,
+not after every JavaScript edit.
 
 Stim needs no project initialization. Runtime state stays under `~/.stim` by
 default.
