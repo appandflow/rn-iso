@@ -167,10 +167,6 @@ function writeProfile(ctx: RemoteContext, daemon: RemoteDaemon): string {
   return path;
 }
 
-function exec() {
-  return getExecutor();
-}
-
 function remoteDeviceDeps(ctx: RemoteContext) {
   let session: RemoteSession | null = null;
   let createdSession: string | null = null;
@@ -236,7 +232,7 @@ function remoteDeviceDeps(ctx: RemoteContext) {
         note('Creating an EAS Simulator session (this takes a moment).');
         let stdout: string;
         try {
-          stdout = exec().runFile(
+          stdout = getExecutor().runFile(
             ctx.easBin,
             createSessionArgs({
               label: ctx.label,
@@ -273,7 +269,7 @@ function remoteDeviceDeps(ctx: RemoteContext) {
         return { failed: true, reason };
       }
       try {
-        exec().runFile(ctx.agentDeviceBin, closeArgs(profilePath), {
+        getExecutor().runFile(ctx.agentDeviceBin, closeArgs(profilePath), {
           cwd: ctx.root,
           env: daemonEnv(daemon),
         });
@@ -281,7 +277,7 @@ function remoteDeviceDeps(ctx: RemoteContext) {
         /* nothing to close, or a lease already expired: connect proceeds */
       }
       try {
-        exec().runFile(ctx.agentDeviceBin, connectArgs(profilePath), {
+        getExecutor().runFile(ctx.agentDeviceBin, connectArgs(profilePath), {
           cwd: ctx.root,
           env: daemonEnv(daemon),
         });
@@ -299,7 +295,7 @@ function remoteDeviceDeps(ctx: RemoteContext) {
     installArtifact: (artifactPath: string): InstallResult => {
       if (!session) return notConnected(INSTALL_ERROR);
       try {
-        exec().runFile(ctx.agentDeviceBin, installArgs(session.profilePath, artifactPath), {
+        getExecutor().runFile(ctx.agentDeviceBin, installArgs(session.profilePath, artifactPath), {
           cwd: ctx.root,
           env: daemonEnv(session.daemon),
         });
@@ -325,7 +321,7 @@ function remoteDeviceDeps(ctx: RemoteContext) {
       if (!session) return notConnected(LAUNCH_ERROR);
       if (metroPort === null) {
         try {
-          exec().runFile(ctx.agentDeviceBin, openArgs(session.profilePath, appId, null, null), {
+          getExecutor().runFile(ctx.agentDeviceBin, openArgs(session.profilePath, appId, null, null), {
             cwd: ctx.root,
             env: daemonEnv(session.daemon),
           });
@@ -346,13 +342,17 @@ function remoteDeviceDeps(ctx: RemoteContext) {
 
       const url = devClientScheme ? devClientDeepLink(devClientScheme, origin.origin) : null;
       try {
-        exec().runFile(ctx.agentDeviceBin, openArgs(session.profilePath, appId, url, metroHintFrom(origin.origin)), {
-          cwd: ctx.root,
-          env: daemonEnv(session.daemon),
-        });
+        getExecutor().runFile(
+          ctx.agentDeviceBin,
+          openArgs(session.profilePath, appId, url, metroHintFrom(origin.origin)),
+          {
+            cwd: ctx.root,
+            env: daemonEnv(session.daemon),
+          },
+        );
         if (url) {
           try {
-            exec().runFile(ctx.agentDeviceBin, acceptAlertArgs(session.profilePath), {
+            getExecutor().runFile(ctx.agentDeviceBin, acceptAlertArgs(session.profilePath), {
               cwd: ctx.root,
               env: daemonEnv(session.daemon),
             });

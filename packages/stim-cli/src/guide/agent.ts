@@ -33,7 +33,15 @@ upstream gap.
 
   stim start
   stim ios                             # or: stim android
+
+  # Reproduce the affected behavior and capture the baseline errors.
   stim logs --errors
+
+  # Edit JavaScript or TypeScript; Fast Refresh applies the change.
+  # For UI work, wait for the expected UI and repeat the affected interaction
+  # on the reported device. Keep using the existing automation session, if any.
+  stim logs --errors
+  # Retain proof before cleanup: a screenshot, recording, or relevant runtime output.
 
   stim stop
   stim worktree remove
@@ -154,6 +162,7 @@ LOAD ADVANCED GUIDANCE WHEN NEEDED
   stim guide errors unverified    # launch unverified, and the Local Network reason
   stim guide errors fallbacks     # swap, cache, and install notes on a release cache hit
   stim guide lifecycle            # the ordered flow, consent rules, and capacity
+  stim guide lifecycle verification # reproduce, edit, verify the UI, and retain proof
   stim guide lifecycle builds     # cache hits, misses, fingerprints, .fingerprintignore
   stim guide lifecycle options    # every flag, Android variants, --device-type, --system-image
   stim guide lifecycle devices    # ios --device and android --device on a physical phone
