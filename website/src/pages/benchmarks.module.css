@@ -289,6 +289,14 @@
   color: var(--ifm-color-primary-contrast-background);
 }
 
+.benchmarkPicker button:disabled {
+  border-color: var(--ifm-color-emphasis-300);
+  background: var(--ifm-background-surface-color);
+  color: var(--ifm-color-emphasis-600);
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .comparison {
   margin-bottom: 3rem;
 }
