@@ -181,6 +181,7 @@ test('the facts topic documents the fields each --json payload actually carries'
       'launched',
       'durationMs',
       'systemImage',
+      'ccache',
     ],
   };
   for (const [command, names] of Object.entries(fields)) {
@@ -522,6 +523,7 @@ test('the cleanup guide lists the shared ccache directory and who bounds it', ()
   expect(cleanup).toMatch(/\$STIM_HOME\/ccache \(default ~\/\.stim\/ccache\)/);
   expect(cleanup).toMatch(/ccache keeps it under CCACHE_MAXSIZE\s+on its own/);
   expect(cleanup).toMatch(/--older-than\s+skips it/);
+  expect(cleanup).toMatch(/it sets CCACHE_MAXSIZE on the Gradle run, which wins over\s+a max_size/);
 });
 
 test('the lifecycle guide states what Stim sets for Android C++ and what it costs', () => {
@@ -533,7 +535,9 @@ test('the lifecycle guide states what Stim sets for Android C++ and what it cost
   expect(lifecycle).toMatch(/Nothing is set when ccache is\s+absent/);
   expect(lifecycle).toMatch(/\$STIM_HOME\/ccache \(default ~\/\.stim\/ccache\)/);
   expect(lifecycle).toMatch(/DWARF comp_dir/);
-  expect(lifecycle).toMatch(/reanimated, worklets and\s+expo-modules-core use target_precompile_headers/);
+  expect(lifecycle).toMatch(/worklets and\s+expo-modules-core precompile a header without\s+-fno-pch-timestamp/);
+  expect(lifecycle).toMatch(/reanimated passes\s+-Xclang -fno-pch-timestamp and hits across worktrees/);
+  expect(lifecycle).toMatch(/No stale \.pch is ever served/);
   expect(lifecycle).toMatch(/\.cxx\/\*\*\/CMakeCache\.txt on the first configure/);
   expect(lifecycle).toMatch(/keeps compiling without them until it is deleted once/);
 });

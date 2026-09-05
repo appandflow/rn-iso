@@ -319,11 +319,14 @@ The trade-off is the same class as the iOS CAS one: an object reused from
 worktree A carries A's directory as its DWARF comp_dir, so a debugger stepping
 into reused C++ resolves sources against that path.
 
-Three modules miss by construction. reanimated, worklets and
-expo-modules-core use target_precompile_headers, CMake writes an absolute
-include into cmake_pch.hxx, and the precompiled header embeds the worktree
-path -- so their hash cannot match across paths and they recompile in every
-workspace. Everything else hits.
+Precompiled headers are where the misses are, and the cause is mtime, not
+paths. worklets and expo-modules-core precompile a header without
+-fno-pch-timestamp, so ccache re-checks the mtime of the PCH inputs
+(\`Precompiled header includes ..., which has a new mtime\`), rebuilds the
+header, and every translation unit that includes it misses too -- 5 to 11
+seconds per module, paid again after anything that rewrites those mtimes,
+a fresh npm ci included. No stale .pch is ever served. reanimated passes
+-Xclang -fno-pch-timestamp and hits across worktrees like everything else.
 
 The launcher persists in the project. AGP writes it into each
 .cxx/**/CMakeCache.txt on the first configure, so a plain \`./gradlew\` in that
