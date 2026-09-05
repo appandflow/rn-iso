@@ -42,6 +42,8 @@ import {
   shutdownAndroidEmulator,
   physicalDeviceModel,
   resolvePhysicalDevice,
+  assertOwnedAvdStopped,
+  waitForAndroidEmulatorShutdown,
   waitForBoot,
   withAvdConfigOverrides,
   withAvdDataPartitionSize,
@@ -139,18 +141,17 @@ test('nextConsolePort returns next even port above max claimed', () => {
 
 test('headlessEmulatorArgs is headless on displayless linux only', () => {
   expect(headlessEmulatorArgs({}, 'linux')).toEqual([
-    '-no-snapshot-save',
-    '-no-snapshot-load',
     '-no-window',
     '-noaudio',
     '-no-boot-anim',
     '-gpu',
     'swiftshader_indirect',
+    '-no-snapshot-save',
+    '-no-snapshot-load',
   ]);
-  const snapshotArgs = ['-no-snapshot-save', '-no-snapshot-load'];
-  expect(headlessEmulatorArgs({ DISPLAY: ':0' }, 'linux')).toEqual(snapshotArgs);
-  expect(headlessEmulatorArgs({ WAYLAND_DISPLAY: 'wayland-0' }, 'linux')).toEqual(snapshotArgs);
-  expect(headlessEmulatorArgs({}, 'darwin')).toEqual(snapshotArgs);
+  expect(headlessEmulatorArgs({ DISPLAY: ':0' }, 'linux')).toEqual([]);
+  expect(headlessEmulatorArgs({ WAYLAND_DISPLAY: 'wayland-0' }, 'linux')).toEqual([]);
+  expect(headlessEmulatorArgs({}, 'darwin')).toEqual([]);
 });
 
 test('parseAvdRootIni keeps the content paths and ignores unrelated lines', () => {
@@ -450,8 +451,254 @@ test('resolveOwnedAvdSerial reports notRunning when the recorded port is held by
   expect(resolveOwnedAvdSerial('stim-mine')).toEqual({ notRunning: true });
 });
 
+test('resolveOwnedAvdSerial resolves an offline emulator through its console identity', () => {
+  setExecutor({
+    run: (cmd) => {
+      if (cmd === 'emulator -list-avds') return 'stim-mine\n';
+      if (cmd === 'adb devices') return 'List of devices attached\nemulator-5554\toffline\n';
+      return '';
+    },
+    runQuiet: (cmd) => (/adb -s emulator-5554 emu avd name/.test(cmd) ? 'stim-mine\nOK' : null),
+    spawn: () => null,
+  });
+
+  expect(resolveOwnedAvdSerial('stim-mine')).toEqual({ serial: 'emulator-5554' });
+});
+
+test('assertOwnedAvdStopped rejects a live process and accepts a stale lock', () => {
+  expect(() =>
+    assertOwnedAvdStopped('stim-app', {
+      resolveDirectory: () => '/avds/stim-app.avd',
+      readProcessId: () => 123,
+      processAlive: () => true,
+    }),
+  ).toThrow(/still has a live emulator process/);
+
+  expect(() =>
+    assertOwnedAvdStopped('stim-app', {
+      resolveDirectory: () => '/avds/stim-app.avd',
+      readProcessId: () => 123,
+      processAlive: () => false,
+    }),
+  ).not.toThrow();
+});
+
+test.each([
+  { timeoutMs: 12_345, flushMs: 5000, killTimeoutMs: 7345 },
+  { timeoutMs: 250, flushMs: 250, killTimeoutMs: 1 },
+])(
+  'shutdownAndroidEmulator shares a $timeoutMs ms deadline across sync and kill',
+  ({ timeoutMs, flushMs, killTimeoutMs }) => {
+    const calls: Array<{ command: string; timeoutMs: number | undefined }> = [];
+    const now = vi.spyOn(Date, 'now').mockReturnValueOnce(0).mockReturnValue(flushMs);
+    setExecutor({
+      run: () => '',
+      runQuiet: (command, options) => {
+        calls.push({ command, timeoutMs: options?.timeoutMs });
+        return '';
+      },
+      spawn: () => null,
+    });
+
+    try {
+      shutdownAndroidEmulator('emulator-5554', timeoutMs);
+    } finally {
+      now.mockRestore();
+    }
+
+    expect(calls).toEqual([
+      { command: 'adb -s emulator-5554 shell sync', timeoutMs: Math.min(5000, timeoutMs) },
+      { command: 'adb -s emulator-5554 emu kill', timeoutMs: killTimeoutMs },
+    ]);
+  },
+);
+
+test('waitForAndroidEmulatorShutdown waits for the owned AVD process lock to disappear', () => {
+  let locked = true;
+  const sleeps: number[] = [];
+  const calls: string[] = [];
+
+  waitForAndroidEmulatorShutdown('stim-app', (timeoutMs) => calls.push(`shutdown:${timeoutMs}`), {
+    resolveDirectory: () => '/avds/stim-app.avd',
+    readProcessId: () => 123,
+    processAlive: () => locked,
+    directoryExists: () => true,
+    sleep: (ms) => {
+      calls.push('wait');
+      sleeps.push(ms);
+      locked = false;
+    },
+  });
+
+  expect(sleeps).toEqual([100]);
+  expect(calls).toEqual(['shutdown:60000', 'wait']);
+});
+
+test('waitForAndroidEmulatorShutdown includes the shutdown command in its deadline', () => {
+  let elapsed = 0;
+  let commandTimeout = 0;
+
+  expect(() =>
+    waitForAndroidEmulatorShutdown(
+      'stim-app',
+      (timeoutMs) => {
+        commandTimeout = timeoutMs;
+        elapsed += 200;
+      },
+      {
+        timeoutMs: 250,
+        resolveDirectory: () => '/avds/stim-app.avd',
+        readProcessId: () => 123,
+        processAlive: () => true,
+        directoryExists: () => true,
+        now: () => elapsed,
+        sleep: (ms) => {
+          elapsed += ms;
+        },
+      },
+    ),
+  ).toThrow(/did not finish shutting down within 1s/);
+  expect(commandTimeout).toBe(250);
+});
+
+test('waitForAndroidEmulatorShutdown reads Android emulator lock PIDs on Unix and Windows', () => {
+  const avdDirectory = join(tmpHome, 'stim-app.avd');
+  for (const [platform, lockPath] of [
+    ['darwin', join(avdDirectory, 'hardware-qemu.ini.lock')],
+    ['win32', join(avdDirectory, 'hardware-qemu.ini.lock', 'pid')],
+  ] as const) {
+    rmSync(avdDirectory, { recursive: true, force: true });
+    mkdirSync(join(lockPath, '..'), { recursive: true });
+    writeFileSync(lockPath, '412503\0');
+    let observedPid: number | null = null;
+
+    waitForAndroidEmulatorShutdown('stim-app', () => {}, {
+      platform,
+      resolveDirectory: () => avdDirectory,
+      processAlive: (pid) => {
+        observedPid = pid;
+        return false;
+      },
+    });
+
+    expect(observedPid).toBe(412503);
+  }
+});
+
+test.each(['darwin', 'win32'] as const)(
+  'assertOwnedAvdStopped refuses a present invalid %s process lock',
+  (platform) => {
+    const avdDirectory = join(tmpHome, 'stim-app.avd');
+    const lockPath = join(avdDirectory, 'hardware-qemu.ini.lock', ...(platform === 'win32' ? ['pid'] : []));
+    mkdirSync(join(lockPath, '..'), { recursive: true });
+    const options = { platform, resolveDirectory: () => avdDirectory };
+
+    for (const content of ['', 'invalid', '123garbage']) {
+      writeFileSync(lockPath, content);
+      expect(() => assertOwnedAvdStopped('stim-app', options)).toThrow(/Could not read the emulator PID/);
+    }
+
+    rmSync(lockPath);
+    expect(() => assertOwnedAvdStopped('stim-app', options)).not.toThrow();
+  },
+);
+
+test('waitForAndroidEmulatorShutdown prefers the active process lock over the legacy fallback', () => {
+  const paths: string[] = [];
+  let observedPid: number | null = null;
+
+  waitForAndroidEmulatorShutdown('stim-app', () => {}, {
+    resolveDirectory: () => '/avds/stim-app.avd',
+    readProcessId: (path) => {
+      paths.push(path);
+      return path.endsWith('hardware-qemu.ini.lock') ? 123 : 456;
+    },
+    processAlive: (pid) => {
+      observedPid = pid;
+      return false;
+    },
+    directoryExists: () => true,
+  });
+
+  expect(paths).toEqual(['/avds/stim-app.avd/hardware-qemu.ini.lock']);
+  expect(observedPid).toBe(123);
+});
+
+test('waitForAndroidEmulatorShutdown falls back to the legacy process lock', () => {
+  const paths: string[] = [];
+  let observedPid: number | null = null;
+
+  waitForAndroidEmulatorShutdown('stim-app', () => {}, {
+    resolveDirectory: () => '/avds/stim-app.avd',
+    readProcessId: (path) => {
+      paths.push(path);
+      return path.endsWith('userdata-qemu.img.lock') ? 456 : null;
+    },
+    processAlive: (pid) => {
+      observedPid = pid;
+      return false;
+    },
+    directoryExists: () => true,
+  });
+
+  expect(paths).toEqual(['/avds/stim-app.avd/hardware-qemu.ini.lock', '/avds/stim-app.avd/userdata-qemu.img.lock']);
+  expect(observedPid).toBe(456);
+});
+
+test('waitForAndroidEmulatorShutdown times out while the owned AVD process lock remains', () => {
+  let elapsed = 0;
+
+  expect(() =>
+    waitForAndroidEmulatorShutdown('stim-app', () => {}, {
+      timeoutMs: 250,
+      pollMs: 100,
+      resolveDirectory: () => '/avds/stim-app.avd',
+      readProcessId: () => 123,
+      processAlive: () => true,
+      directoryExists: () => true,
+      now: () => elapsed,
+      sleep: (ms) => {
+        elapsed += ms;
+      },
+    }),
+  ).toThrow(/did not finish shutting down within 1s/);
+});
+
+test('waitForAndroidEmulatorShutdown refuses to signal a process without an AVD lock', () => {
+  const shutdown = vi.fn<() => void>();
+
+  expect(() =>
+    waitForAndroidEmulatorShutdown('stim-app', shutdown, {
+      resolveDirectory: () => '/avds/stim-app.avd',
+      readProcessId: () => null,
+      processAlive: () => false,
+      directoryExists: () => true,
+    }),
+  ).toThrow(/Could not find the emulator process lock/);
+  expect(shutdown).not.toHaveBeenCalled();
+});
+
+test('waitForAndroidEmulatorShutdown verifies the AVD directory remains available', () => {
+  let locked = true;
+
+  expect(() =>
+    waitForAndroidEmulatorShutdown('stim-app', () => {}, {
+      resolveDirectory: () => '/avds/stim-app.avd',
+      readProcessId: () => 123,
+      processAlive: () => {
+        const result = locked;
+        locked = false;
+        return result;
+      },
+      directoryExists: () => false,
+      sleep: () => {},
+    }),
+  ).toThrow(/Could not verify the content directory/);
+});
+
 test('shutdownAndroidEmulator bounds the guest write flush before killing the emulator', () => {
   const calls: Array<{ command: string; timeoutMs: number | undefined }> = [];
+  const now = vi.spyOn(Date, 'now').mockReturnValue(0);
   setExecutor({
     runQuiet: (command: string, options) => {
       calls.push({ command, timeoutMs: options?.timeoutMs });
@@ -459,11 +706,15 @@ test('shutdownAndroidEmulator bounds the guest write flush before killing the em
     },
   });
 
-  shutdownAndroidEmulator('emulator-5554');
+  try {
+    shutdownAndroidEmulator('emulator-5554');
+  } finally {
+    now.mockRestore();
+  }
 
   expect(calls).toEqual([
     { command: 'adb -s emulator-5554 shell sync', timeoutMs: 5000 },
-    { command: 'adb -s emulator-5554 emu kill', timeoutMs: undefined },
+    { command: 'adb -s emulator-5554 emu kill', timeoutMs: 60_000 },
   ]);
 });
 
@@ -575,12 +826,7 @@ test('bootAndroidEmulator spawns the resolved emulator binary', () => {
     if (savedDisplay === undefined) delete process.env.DISPLAY;
     else process.env.DISPLAY = savedDisplay;
   }
-  expect(spawned).toEqual([
-    [
-      join(sdk, 'emulator', 'emulator'),
-      ['-avd', 'stim-app', '-port', '5556', '-no-snapshot-save', '-no-snapshot-load'],
-    ],
-  ]);
+  expect(spawned).toEqual([[join(sdk, 'emulator', 'emulator'), ['-avd', 'stim-app', '-port', '5556']]]);
 });
 
 test('listAvds keeps the bare command when resolution falls back to PATH', () => {

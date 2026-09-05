@@ -107,7 +107,7 @@ must report adoption of the prepared simulator. On Android it requests the
 pinned system image. The control must not inspect that home or use Stim; it
 creates a new benchmark-named device with the same platform configuration.
 Android control uses the same `avdmanager` default profile, 8 GiB data
-partition, system image, and no-snapshot boot flags as Stim.
+partition, system image, and default Quick Boot policy as Stim.
 
 ## Settings readiness proof
 

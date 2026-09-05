@@ -626,7 +626,12 @@ test('the guide documents Android AVD disk-space diagnosis and cleanup', () => {
   expect(renderTopic('errors')).toContain('STIM_NO_DEVICE');
   expect(errors).toMatch(/ENOSPC[^.]*disk space/i);
   expect(cleanup).toMatch(/worktree remove[^.]*deletes[^.]*owned AVD/i);
-  expect(cleanup).toMatch(/neither loads nor saves[^.]*Quick\s+Boot snapshot/i);
+  expect(cleanup).toMatch(/default Quick Boot/i);
+  expect(cleanup).toMatch(/displayless Linux[^.]*snapshots are[^.]*disabled/i);
+  expect(cleanup).toMatch(/system image, or AVD\s+settings change are cold/i);
+  expect(cleanup).toMatch(/stop[^.]*waits[^.]*process[^.]*snapshot save/i);
+  expect(cleanup).toMatch(/default to an 8 GiB data partition[^.]*project settings[^.]*change it/i);
+  expect(cleanup).toMatch(/Quick Boot[^.]*one automatic snapshot/i);
   expect(cleanup).toMatch(/gc[^.]*on-disk size[^.]*orphaned[^.]*stale owned Android AVD/i);
 });
 

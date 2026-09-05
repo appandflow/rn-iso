@@ -539,11 +539,20 @@ test('teardownOwnedAvd shuts down the running emulator and deletes the AVD', () 
     adb: 'List of devices attached\nemulator-5554\tdevice\n',
     avdName: 'stim-app',
   });
+  const resolutions = [{ serial: 'emulator-5554' }, { notRunning: true as const }];
   setExecutor(exec);
-  const r = teardownOwnedAvd('stim-app', { del: true });
+  const r = teardownOwnedAvd('stim-app', {
+    del: true,
+    waitForShutdown: (_avdName, shutdown) => shutdown(60_000),
+    assertStopped: () => {},
+    resolveAvd: () => resolutions.shift()!,
+  });
   expect(r.status).toBe('torn-down');
   expect(exec.calls.some((c) => /emu kill/.test(c))).toBeTruthy();
   expect(exec.calls.some((c) => /delete avd -n/.test(c))).toBeTruthy();
+  expect(exec.calls.findIndex((c) => /emu kill/.test(c))).toBeLessThan(
+    exec.calls.findIndex((c) => /delete avd -n/.test(c)),
+  );
 });
 
 test('teardownOwnedAvd refuses an AVD that is not Stim-owned by name', () => {
@@ -568,9 +577,88 @@ test('teardownOwnedAvd contains a throw instead of propagating it', () => {
       throwOn: 'delete avd',
     }),
   );
-  const r = teardownOwnedAvd('stim-app', { del: true });
+  const resolutions = [{ serial: 'emulator-5554' }, { notRunning: true as const }];
+  const r = teardownOwnedAvd('stim-app', {
+    del: true,
+    waitForShutdown: (_avdName, shutdown) => shutdown(60_000),
+    assertStopped: () => {},
+    resolveAvd: () => resolutions.shift()!,
+  });
   expect(r.status).toBe('failed');
   expect(r.reason).toMatch(/boom/);
+});
+
+test('teardownOwnedAvd does not delete an AVD when emulator shutdown times out', () => {
+  const exec = androidExecutor({
+    avds: ['stim-app'],
+    adb: 'List of devices attached\nemulator-5554\tdevice\n',
+    avdName: 'stim-app',
+  });
+  setExecutor(exec);
+
+  const r = teardownOwnedAvd('stim-app', {
+    del: true,
+    waitForShutdown: (_avdName, shutdown) => {
+      shutdown(60_000);
+      throw new Error('shutdown timed out');
+    },
+  });
+
+  expect(r.status).toBe('failed');
+  expect(r.reason).toMatch(/shutdown timed out/);
+  expect(exec.calls.some((c) => /emu kill/.test(c))).toBeTruthy();
+  expect(exec.calls.some((c) => /delete avd -n/.test(c))).toBeFalsy();
+});
+
+test('teardownOwnedAvd refuses an AVD with a live process that adb cannot resolve', () => {
+  const exec = androidExecutor({ avds: ['stim-app'], adb: 'List of devices attached\n' });
+  setExecutor(exec);
+
+  const r = teardownOwnedAvd('stim-app', {
+    del: true,
+    assertStopped: () => {
+      throw new Error('live emulator process');
+    },
+  });
+
+  expect(r.status).toBe('failed');
+  expect(r.reason).toMatch(/live emulator process/);
+  expect(exec.calls.some((c) => /delete avd -n/.test(c))).toBeFalsy();
+});
+
+test('teardownOwnedAvd refuses deletion when the AVD restarts after shutdown', () => {
+  const exec = androidExecutor({ avds: ['stim-app'], adb: 'List of devices attached\n' });
+  const resolutions = [{ serial: 'emulator-5554' }, { serial: 'emulator-5556' }];
+  setExecutor(exec);
+
+  const r = teardownOwnedAvd('stim-app', {
+    del: true,
+    waitForShutdown: () => {},
+    resolveAvd: () => resolutions.shift()!,
+  });
+
+  expect(r.status).toBe('failed');
+  expect(r.reason).toMatch(/started again before deletion/);
+  expect(exec.calls.some((c) => /delete avd -n/.test(c))).toBeFalsy();
+});
+
+test('teardownOwnedAvd rechecks the process lock immediately before deletion', () => {
+  const exec = androidExecutor({ avds: ['stim-app'], adb: 'List of devices attached\n' });
+  const resolutions = [{ serial: 'emulator-5554' }, { notRunning: true as const }];
+  setExecutor(exec);
+
+  const r = teardownOwnedAvd('stim-app', {
+    del: true,
+    waitForShutdown: () => {},
+    resolveAvd: () => resolutions.shift()!,
+    assertStopped: () => {
+      throw new Error('new live emulator process');
+    },
+  });
+
+  expect(r.status).toBe('failed');
+  expect(r.reason).toMatch(/new live emulator process/);
+  expect(exec.calls.some((c) => /delete avd -n/.test(c))).toBeFalsy();
 });
 
 test('ownership skip outcomes carry a machine-readable kind', () => {

@@ -345,9 +345,7 @@ describe('ensureBooted: android', () => {
       timeoutMs: 5000,
     });
     expect(result).toEqual({ ok: true, serial: 'emulator-5556' });
-    expect(spawned).toEqual([
-      ['emulator', '-avd', 'stim-app', '-port', '5556', '-no-snapshot-save', '-no-snapshot-load'],
-    ]);
+    expect(spawned).toEqual([['emulator', '-avd', 'stim-app', '-port', '5556']]);
   });
 
   test('reuses the serial returned by a fresh owned AVD boot when adb listing briefly misses it', async () => {
@@ -1162,11 +1160,11 @@ describe('ensureOwnedDevice: android', () => {
             const name = / -n "([^"]+)"/.exec(cmd)?.[1];
             assert(name);
             avds.push(name);
+            const root = process.env.ANDROID_AVD_HOME!;
+            const content = join(root, `${name}.avd`);
+            mkdirSync(content, { recursive: true });
+            writeFileSync(join(root, `${name}.ini`), `path=${content}\n`);
             if (writeAvdFiles) {
-              const root = process.env.ANDROID_AVD_HOME!;
-              const content = join(root, `${name}.avd`);
-              mkdirSync(content, { recursive: true });
-              writeFileSync(join(root, `${name}.ini`), `path=${content}\n`);
               writeFileSync(join(content, 'config.ini'), 'hw.cpu.ncore=4\ndisk.dataPartition.size=10G\n');
             }
             return '';
