@@ -97,8 +97,8 @@ emulator or simulator.
 
 worktree remove parks the workspace's simulator for later adoption. A parked
 simulator is Stim-owned: never delete one by hand. gc --delete clears verified
-entries and keeps failures; see guide lifecycle. First launch on a physical
-iPhone can need the one-time taps named by the remedy.
+entries and keeps failures; see guide lifecycle pool. First launch on a
+physical iPhone can need the one-time taps named by the remedy.
 
 stim android --device [serial] and stim ios --device [udid] install on a
 connected physical device. Stim never creates, boots, shuts down, or deletes
@@ -137,23 +137,39 @@ default), simulator service access, and local access to the adb server. When
 those sit outside the harness allowlist, the failure looks like an unwritable
 directory or unavailable device service rather than a broken machine. Decide
 at the start of a session whether to run Stim outside the sandbox or ask the
-user to allow those operations. guide errors lists the exact requirements.
+user to allow those operations. guide errors sandbox lists the exact
+requirements.
 
 LOAD ADVANCED GUIDANCE WHEN NEEDED
 
-  stim guide             # list topics
-  stim guide lifecycle   # full flow, flags, worktrees, builds, and capacity
-  stim guide facts       # JSON payload fields
-  stim guide metro       # supervisor, custom Metro, tunnels, and remote devices
-  stim guide logs        # filters, record shape, and capture limits
-  stim guide errors      # error codes and remedies
-  stim guide cleanup     # destructive behavior and disk cleanup
-  stim guide settings    # configuration files and supported keys
+  stim guide                      # list topics
+  stim guide errors               # index of every refusal code and message
+  stim guide errors <CODE>        # one refusal, e.g. stim guide errors STIM_NO_METRO
+  stim guide errors sandbox       # running under a sandboxing harness
+  stim guide errors unverified    # launch unverified, and the Local Network reason
+  stim guide errors fallbacks     # swap, cache, and install notes on a release cache hit
+  stim guide lifecycle            # the ordered flow, consent rules, and capacity
+  stim guide lifecycle builds     # cache hits, misses, fingerprints, .fingerprintignore
+  stim guide lifecycle options    # every flag, Android variants, --device-type, --system-image
+  stim guide lifecycle devices    # ios --device and android --device on a physical phone
+  stim guide lifecycle release    # Release configurations and ...Release variants
+  stim guide facts                # the --json payloads
+  stim guide facts devmenu        # the Expo dev menu or Tools button over the app
+  stim guide metro                # supervisor, custom Metro, tunnels, and remote devices
+  stim guide logs                 # filters, record shape, and capture limits
+  stim guide cleanup              # what reclaims a device, and what deletes
+  stim guide cleanup collector    # an unproven collector pid; why the app on a phone closed
+  stim guide settings             # configuration files and supported keys
 
-Read the relevant topic before release configurations or Android variants;
-remote devices; custom Metro processes or tunnels; cache misses, bypasses, or
-concurrent builds; capacity limits; cache statistics from stim stats; worktree
-carry-over; fingerprint exclusions; gc; --force; cleanup failures; or
-unfamiliar states and error codes. Ordinary stim stop and an authorized clean
+A refusal prints a CODE such as STIM_NO_METRO. Run stim guide errors <CODE>
+with the code exactly as printed and read only that section; every code in a
+shared header (STIM_BAD_ARG / STIM_NO_PROJECT) resolves to the same section. A
+refusal with no code is quoted by message in stim guide errors. A topic with
+sections called bare prints its section index, so read the narrowest section
+before release configurations or Android variants; remote devices; custom
+Metro processes or tunnels; cache misses, bypasses, or concurrent builds;
+capacity limits; cache statistics from stim stats; worktree carry-over;
+fingerprint exclusions; gc; --force; cleanup failures; or unfamiliar states
+and error codes. Ordinary stim stop and an authorized clean
 stim worktree remove do not need the cleanup guide.`,
 };

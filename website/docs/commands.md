@@ -51,8 +51,8 @@ the simulator service, the adb server, and Stim's own state directory.
 repository root, the per-user file, merging it with whatever is already there
 and touching nothing else. It refuses to change anything under Codex, whose
 sandbox has no per-path allowance to add, and it does nothing when no
-sandboxing harness is present. See `stim guide errors` for the failure
-signatures and the manual settings.
+sandboxing harness is present. See `stim guide errors sandbox` for the
+failure signatures and the manual settings.
 
 ## `start`
 
@@ -132,7 +132,7 @@ a device tool once it is showing, and Stim's `unverified` remedy prints those
 commands when this launch's device log carries iOS's path reason for an
 ungranted app. A prior Don't Allow logs the same reason, and the remedy covers
 that too. Until it is granted, `launched` comes back `unverified`. Run
-`stim guide errors` for the signature and the full recovery.
+`stim guide errors unverified` for the signature and the full recovery.
 
 A `--device` run in a Release configuration builds fresh every time: a cached
 Release app carries its builder's JavaScript, and Stim does not swap JavaScript
@@ -342,12 +342,15 @@ stale locks, and shared cache sizes. It does not change anything without
 ## `guide`
 
 ```text
-stim guide [topic]
+stim guide [topic] [section]
 ```
 
 Prints version-matched reference text. Topics are agent, facts, metro, logs,
 errors, lifecycle, cleanup, and settings. Those topics also cover caches,
-remote devices, and release builds.
+remote devices, and release builds. The errors, lifecycle, facts, and cleanup
+topics have sections: called bare they print a section index, and a named
+section prints on its own. `stim guide errors` lists every refusal code and
+`stim guide errors <CODE>` prints one.
 
 ## Structured output and exit codes
 

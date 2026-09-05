@@ -103,10 +103,7 @@ test('an index row carries the word count of the section body it names', () => {
   assert(index);
   const body = renderSection('errors', 'STIM_BUILD_WAIT_TIMEOUT');
   assert(body);
-  const words = (renderSection('errors', 'STIM_BUILD_WAIT_TIMEOUT') ?? '')
-    .slice(body.indexOf('STIM_BUILD_WAIT_TIMEOUT'))
-    .trim()
-    .split(/\s+/).length;
+  const words = body.slice(body.indexOf('STIM_BUILD_WAIT_TIMEOUT')).trim().split(/\s+/).length;
   expect(index).toMatch(new RegExp(`STIM_BUILD_WAIT_TIMEOUT\\s+${words}w {2}`));
 });
 
@@ -1310,6 +1307,10 @@ test('the agent guide routes to every detailed topic', () => {
   for (const topicName of topicNames().filter((name) => name !== 'agent')) {
     expect(agent).toContain(`guide ${topicName}`);
   }
+  expect(agent).toContain('stim guide errors <CODE>');
+  for (const route of ['guide errors sandbox', 'guide facts devmenu', 'guide cleanup collector']) {
+    expect(agent).toContain(route);
+  }
 });
 
 test('the agent and cleanup guides shut down owned simulators without an occupancy check', () => {
@@ -1358,7 +1359,7 @@ test('the sandbox failures are named in the errors guide, and the agent guide po
 
   expect(renderTopic('errors')).toContain('sandbox');
   expect(agent).toMatch(/sandbox/i);
-  expect(agent).toContain('guide errors');
+  expect(agent).toContain('guide errors sandbox');
 });
 
 test('advanced contracts stay in guide topics instead of the skill', () => {
