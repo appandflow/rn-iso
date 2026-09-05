@@ -450,18 +450,21 @@ test('resolveOwnedAvdSerial reports notRunning when the recorded port is held by
   expect(resolveOwnedAvdSerial('stim-mine')).toEqual({ notRunning: true });
 });
 
-test('shutdownAndroidEmulator flushes guest writes before killing the emulator', () => {
-  const calls: string[] = [];
+test('shutdownAndroidEmulator bounds the guest write flush before killing the emulator', () => {
+  const calls: Array<{ command: string; timeoutMs: number | undefined }> = [];
   setExecutor({
-    runQuiet: (cmd: string) => {
-      calls.push(cmd);
+    runQuiet: (command: string, options) => {
+      calls.push({ command, timeoutMs: options?.timeoutMs });
       return '';
     },
   });
 
   shutdownAndroidEmulator('emulator-5554');
 
-  expect(calls).toEqual(['adb -s emulator-5554 shell sync', 'adb -s emulator-5554 emu kill']);
+  expect(calls).toEqual([
+    { command: 'adb -s emulator-5554 shell sync', timeoutMs: 5000 },
+    { command: 'adb -s emulator-5554 emu kill', timeoutMs: undefined },
+  ]);
 });
 
 test('shutdownAndroidEmulator warns and still kills the emulator when sync fails', () => {

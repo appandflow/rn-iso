@@ -723,7 +723,7 @@ export async function waitForBoot(
 
 export function shutdownAndroidEmulator(serial: string): void {
   const exec = getExecutor();
-  if (exec.runQuiet(`${androidTool('adb')} -s ${serial} shell sync`) === null) {
+  if (exec.runQuiet(`${androidTool('adb')} -s ${serial} shell sync`, { timeoutMs: 5000 }) === null) {
     console.error(`warning: could not flush ${serial} before shutdown; shutting it down anyway`);
   }
   exec.runQuiet(`${androidTool('adb')} -s ${serial} emu kill`);
