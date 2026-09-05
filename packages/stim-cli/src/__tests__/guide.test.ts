@@ -356,3 +356,12 @@ test('warm guidance protects existing entries and tracked changes', () => {
   expect(options).toMatch(/dangling symlinks/);
   expect(options).toMatch(/does not copy tracked changes/);
 });
+
+test('temporary storage guidance names the override and Git visibility boundary', () => {
+  const settings = renderTopic('settings');
+  expect(settings).toContain('STIM_TMPDIR');
+  expect(settings).toContain('tempDir');
+  expect(settings).toMatch(/outside Git working trees/);
+  expect(renderTopic('agent')).toContain('STIM_TMPDIR');
+  expect(renderSection('lifecycle', 'options')).toContain('STIM_TMPDIR');
+});

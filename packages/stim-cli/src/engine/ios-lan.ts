@@ -1,5 +1,5 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { makeTemporaryDirectory } from '../temporary.ts';
+import { rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
@@ -100,7 +100,7 @@ export function copyAppAside(
   appPath: string,
   {
     exec = null,
-    mkdtemp = () => mkdtempSync(join(tmpdir(), 'stim-ios-device-')),
+    mkdtemp = () => makeTemporaryDirectory(appPath, 'stim-ios-device-'),
   }: { exec?: Executor | null; mkdtemp?: () => string } = {},
 ): { tmpDir: string; appPath: string } {
   const e = exec || getExecutor();
@@ -109,7 +109,12 @@ export function copyAppAside(
   try {
     e.runFile('cp', ['-c', '-R', appPath, copy]);
   } catch {
-    e.runFile('cp', ['-R', appPath, copy]);
+    try {
+      e.runFile('cp', ['-R', appPath, copy]);
+    } catch (error) {
+      rmSync(tmpDir, { recursive: true, force: true });
+      throw error;
+    }
   }
   return { tmpDir, appPath: copy };
 }

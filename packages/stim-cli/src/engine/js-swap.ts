@@ -1,6 +1,6 @@
+import { makeTemporaryDirectory } from '../temporary.ts';
 import type { ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, rmSync, readFileSync, readdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
@@ -132,7 +132,7 @@ export async function swapJsBundle({
   logWriter = null,
   exec = null,
   spawnFn = null,
-  mkdtemp = () => mkdtempSync(join(tmpdir(), 'stim-js-swap-')),
+  mkdtemp = () => makeTemporaryDirectory(cachedAppPath, 'stim-js-swap-'),
   exists = existsSync,
   hermesEnabled = null,
   now = Date.now,
@@ -155,12 +155,13 @@ export async function swapJsBundle({
   const e = exec || getExecutor();
   const startedAt = now();
   const elapsed = () => now() - startedAt;
+  let tmp: string | undefined;
   const fail = (step: string, reason: string, lastLines: string[] = []): JsSwapResult => {
     logWriter?.write?.({ src: 'build', level: 'error', msg: `JS swap failed at ${step}: ${reason}`, event: 'js_swap' });
+    if (tmp) rmSync(tmp, { recursive: true, force: true });
     return { failed: true, step, reason, lastLines, durationMs: elapsed() };
   };
 
-  let tmp: string;
   let appCopy: string;
   try {
     tmp = mkdtemp();

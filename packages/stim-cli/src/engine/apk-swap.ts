@@ -1,6 +1,6 @@
+import { makeTemporaryDirectory } from '../temporary.ts';
 import type { ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, rmSync, readFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
@@ -196,7 +196,7 @@ export async function swapApkBundle({
   logWriter = null,
   exec = null,
   spawnFn = null,
-  mkdtemp = () => mkdtempSync(join(tmpdir(), 'stim-apk-swap-')),
+  mkdtemp = () => makeTemporaryDirectory(cachedApkPath, 'stim-apk-swap-'),
   exists = existsSync,
   hermesEnabled = null,
   buildTools = null,
@@ -228,6 +228,7 @@ export async function swapApkBundle({
   const e = exec || getExecutor();
   const startedAt = now();
   const elapsed = () => now() - startedAt;
+  let tmp: string | undefined;
   const fail = (step: string, reason: string, lastLines: string[] = []): ApkSwapResult => {
     logWriter?.write?.({
       src: 'build',
@@ -235,10 +236,10 @@ export async function swapApkBundle({
       msg: `APK swap failed at ${step}: ${reason}`,
       event: 'apk_swap',
     });
+    if (tmp) rmSync(tmp, { recursive: true, force: true });
     return { failed: true, step, reason, lastLines, durationMs: elapsed() };
   };
 
-  let tmp: string;
   let work: string;
   let final: string;
   try {

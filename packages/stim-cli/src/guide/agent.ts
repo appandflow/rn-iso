@@ -20,7 +20,10 @@ Read guide lifecycle options for exclusions and incomplete-copy remedies.
 
 Before native worktree work, run doctor for the platform in scope. It checks
 the main checkout from a linked worktree. Fix relevant findings and inspect the
-upstream gap.
+upstream gap. Doctor also reports cross-volume staging and build-cache copies.
+Large temporary copies use a writable location on the relevant volume outside
+Git working trees. STIM_TMPDIR or machine tempDir overrides that location;
+read guide settings for placement and guide lifecycle options for warm behavior.
 
   stim doctor --platform ios          # or: --platform android
 

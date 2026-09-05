@@ -442,6 +442,7 @@ describe('swapApkBundle', () => {
     const result = await run();
     expect(result.failed).toBe(true);
     expect(result.step).toBe('assets');
+    expect(existsSync(tmp)).toBe(false);
   });
 
   test('a failed bundle command is a return value naming the step, and nothing downstream runs', async () => {

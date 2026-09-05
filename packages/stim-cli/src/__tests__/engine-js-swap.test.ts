@@ -259,6 +259,7 @@ describe('swapJsBundle', () => {
     expect(result.failed).toBe(true);
     expect(result.step).toBe('bundle');
     expect(result.lastLines).toEqual(['Writing bundle output...']);
+    expect(existsSync(tmp)).toBe(false);
     expect(calls.some((c) => c.file === 'codesign')).toBe(false);
   });
 

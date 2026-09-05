@@ -1,8 +1,9 @@
-import { existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from 'fs';
-import { tmpdir } from 'os';
+import { existsSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from 'fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'path';
 import { plural } from './command-output.ts';
 import { getExecutor } from './exec.ts';
+import { makeTemporaryDirectory } from './temporary.ts';
+import { checkStorageLayout } from './doctor-storage.ts';
 import { appProjectProblem, detectIsExpo } from './project.ts';
 import * as expoFingerprint from '@expo/fingerprint';
 import { diffFingerprintSources, fingerprintProject } from './build-cache.ts';
@@ -803,6 +804,7 @@ export function runDoctor(
   return [
     checkAppProject(projectRoot),
     ...checkMainCheckout(projectRoot, { platform }),
+    ...checkStorageLayout(projectRoot, { platform }),
     checkDevClient(pkg, isExpo),
     checkMetroCache(metroConfig),
     platform === 'android' ? null : checkCompilationCache(podfile, xcodeMajor),
@@ -929,7 +931,12 @@ export async function detectFingerprintParity(
     selectedPlatform ??
     (existsSync(join(projectRoot, 'ios')) ? 'ios' : existsSync(join(projectRoot, 'android')) ? 'android' : undefined);
 
-  const base = mkdtempSync(join(tmpdir(), 'stim-parity-'));
+  let base: string;
+  try {
+    base = makeTemporaryDirectory(projectRoot, 'stim-parity-');
+  } catch {
+    return null;
+  }
   const worktree = join(base, 'head');
   const added = exec.runFileQuiet('git', ['-C', projectRoot, 'worktree', 'add', '--detach', worktree, 'HEAD'], {
     timeoutMs: 60000,

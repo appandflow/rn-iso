@@ -6,7 +6,6 @@ import {
   lstatSync,
   linkSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
   readdirSync,
   readlinkSync,
@@ -15,9 +14,9 @@ import {
   symlinkSync,
   utimesSync,
 } from 'fs';
-import { tmpdir } from 'os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { getExecutor } from './exec.ts';
+import { makeTemporaryDirectory } from './temporary.ts';
 
 const CARRY_SKIP_BASENAMES = new Set(['.DerivedData']);
 
@@ -303,7 +302,7 @@ export function cloneIgnoredEntries({
         skipped.push({ file: rel, reason });
         continue;
       }
-      staging = mkdtempSync(join(tmpdir(), '.stim-warm-'));
+      staging = makeTemporaryDirectory(target, '.stim-warm-');
       const destination = join(staging, 'entry');
       try {
         getExecutor().runFile('cp', ['-Rc', from, destination]);

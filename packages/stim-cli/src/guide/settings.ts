@@ -301,6 +301,36 @@ from inside that process that the store is in the config Metro loaded. Only the
 second one means transforms are being shared. A bare project writes
 \`cache_store_added\` directly, because there Stim adds the store itself.
 
+TEMPORARY STORAGE
+Large temporary copies for worktree warm, iOS app preparation, release JS/APK
+swaps, and the doctor fingerprint checkout select a writable directory on the
+relevant filesystem. Warm uses the destination worktree volume; app/APK
+preparation uses the artifact volume. A system temporary directory on that
+volume is preferred, then a writable ancestor of the relevant path. Staging
+is private and outside Git working trees, so ignored secrets cannot enter
+Git status or git add. If no safe location exists, the operation refuses.
+
+Set STIM_TMPDIR or top-level tempDir in $STIM_HOME/config.json (default
+~/.stim/config.json) to override placement. STIM_TMPDIR takes precedence.
+The value must be an absolute directory outside Git working trees; missing
+directories are created privately. An override is used even on another volume.
+Doctor reports cross-volume copy costs and invalid temporary settings; it
+creates no directories for this placement check. Unset the override to restore
+automatic selection. An example machine setting:
+
+  { "tempDir": "/Volumes/SSD/stim-tmp" }
+
+Small tool-response and entitlement files still use the system temporary
+directory. Build-cache storage stages beside its destination independently of
+tempDir. Keeping build output and its cache on different volumes still requires
+a full copy. iOS build output lives under STIM_HOME/workspaces; Android APKs
+live under the project's android/app/build/outputs/apk. Doctor compares these
+locations with the cache, using resolved symlinks and filesystem device IDs.
+It checks the current layout; arbitrary provider-returned paths and future
+mount changes cannot be predicted. Same-volume placement permits cloning when
+the filesystem supports it; it does not prove cloning occurred. On macOS,
+cp -c can silently fall back to copying and exit successfully.
+
 CACHE LOCATIONS ARE MACHINE-LEVEL TOO
 The shared build cache and Metro transform cache default to living under
 ~/.stim. To relocate them (say, to an external disk), set a top-level
