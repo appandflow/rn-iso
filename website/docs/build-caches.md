@@ -4,6 +4,11 @@ sidebar_position: 1
 description: 'How Stim keeps worktree builds warm'
 ---
 
+import StimTabs from '@site/src/components/StimTabs';
+
+Commands use `stim`. If it is not installed globally, replace `stim` with
+`npx stim-cli`.
+
 Stim shares four types of work across projects and git worktrees:
 
 | Layer                    | What it avoids                                            |
@@ -23,8 +28,10 @@ build configuration or variant.
 installs the saved `.app` or `.apk`. A miss runs the native build and stores the
 result. Two matching misses use one build through a single-flight lock.
 
-Release configurations use separate keys. Their embedded JavaScript and assets
-are regenerated for the current workspace before installation.
+Release configurations use separate keys. On a cache hit for an iOS simulator
+or Android target, Stim regenerates the current workspace's JavaScript and
+assets in a copy of the artifact. If that swap fails, it builds fresh. iOS
+physical-device Release runs always build fresh.
 
 ## Keep the main checkout warm
 
@@ -35,11 +42,11 @@ same native fingerprint.
 
 When several native tasks are coming, build the main checkout once:
 
-```bash
-stim start
+<StimTabs
+code={`stim start
 stim ios                  # or: stim android
-stim stop
-```
+stim stop`}
+/>
 
 Later worktrees can reuse that cache entry. `stim worktree create
 --carry-ignored` can also copy installed dependencies, Pods, and native output
@@ -47,11 +54,11 @@ from the source checkout.
 
 ## Inspect and clean caches
 
-```bash
-stim gc
+<StimTabs
+code={`stim gc
 stim gc --delete --older-than 30
-stim gc --delete --cache all
-```
+stim gc --delete --cache all`}
+/>
 
 The first command only reports sizes. Age-based cleanup removes unused entries.
 `--cache all` empties managed caches and makes future builds cold; it reaps

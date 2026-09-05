@@ -620,7 +620,8 @@ test('the guide says a phone loses its running app when the collector ends', () 
 
   expect(cleanup).toMatch(/THE APP'S LIFETIME IS BOUND TO THAT COLLECTOR/);
   expect(cleanup).toMatch(/anything that\s+ends the collector ends the APP ON THE PHONE/);
-  expect(cleanup).toMatch(/leaves no RECORD of the\s+phone -- it never had one -- but it does close the app/);
+  expect(cleanup).toMatch(/phone has no owned-device registry\s+entry/);
+  expect(cleanup).toContain("`stop` closes the app and releases this workspace's leases");
   expect(cleanup).toMatch(/Nothing is uninstalled/);
   expect(lifecycle).toMatch(/THE APP RUNS FOR AS LONG AS THE COLLECTOR DOES/);
   expect(lifecycle).toMatch(/stays INSTALLED/);
@@ -1035,6 +1036,22 @@ test('the agent guide carries the normal workflow and safety rules', () => {
   expect(agent).toMatch(/app error but also says the native process is alive,[\s\S]*app did not crash/);
   expect(agent).toMatch(/FATAL because the app process exited,[\s\S]*Metro cannot restart it/);
   expect(agent).toMatch(/Ordinary stim stop and an authorized clean\s+stim worktree remove do not need/);
+  expect(agent).toContain('It records a temporary lease, not an owned-device registry entry');
+  expect(agent).toMatch(/On a physical\s+iPhone, stop also closes the app by ending its log collector/);
+});
+
+test('physical-device guidance separates collector cleanup from device leases', () => {
+  for (const topic of ['lifecycle', 'cleanup']) {
+    const body = renderTopic(topic);
+    assert(body);
+    expect(body).toMatch(/`device lock` lease survives\s+collector exit until released or expired/);
+    expect(body).toMatch(/`gc --delete` can remove its\s+expired lease file/);
+  }
+  const facts = renderTopic('facts');
+  assert(facts);
+  expect(facts).toMatch(/ID is stored in a temporary\s+lease/);
+  const website = readFileSync(new URL('../../../../website/docs/commands.md', import.meta.url), 'utf-8');
+  expect(website).toContain("`stop` also releases this workspace's device leases");
 });
 
 test('the logs and lifecycle guides distinguish query success from a clean captured timeline', () => {
@@ -1191,6 +1208,7 @@ test('the guide defines reload as a JavaScript-only live-app recovery', () => {
   expect(lifecycle).toMatch(/never builds, installs, boots, or cold-launches/);
   expect(lifecycle).toMatch(/owned local simulator or emulator/);
   expect(lifecycle).toMatch(/stim reload ios[\s\S]*stim reload android/);
+  expect(lifecycle).toMatch(/^  reload\s+\[ios\|android\] --json$/m);
   expect(facts).toContain('stim reload [ios|android] --json');
   expect(facts).toMatch(/platform[\s\S]*deviceId[\s\S]*metroPort[\s\S]*strategy/);
   expect(errors).toContain('STIM_RELOAD_AMBIGUOUS');
@@ -1355,6 +1373,9 @@ test('the guide documents the pool an id-less --device picks from', () => {
   expect(lifecycle).not.toMatch(/refuses with the candidate\s+list/);
   expect(lifecycle).toMatch(/no serial it takes the first device it can lease/);
   expect(lifecycle).toMatch(/with no UDID it takes the\s+first device it can lease/);
+  expect(lifecycle).toMatch(
+    /On a physical iPhone that also closes the app, because its collector owns\s+the devicectl launch session/,
+  );
 });
 
 test('the option surface lists the model and runtime flags on both platforms', () => {

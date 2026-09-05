@@ -111,13 +111,17 @@ entries and keeps failures; see guide lifecycle. First launch on a physical
 iPhone can need the one-time taps named by the remedy.
 
 stim android --device [serial] and stim ios --device [udid] install on a
-connected physical device. Stim never creates, boots, or deletes hardware and
-records nothing about it, so stop and gc leave it alone.
+connected physical device. Stim never creates, boots, shuts down, or deletes
+hardware. It records a temporary lease, not an owned-device registry entry.
 
 A --device run leases that device for the run. stim device lock ios --for 10m
 holds it across runs; stim device unlock gives it back. Never delete another
 workspace's lease file under ~/.stim/device-locks; gc --delete removes expired
 ones.
+
+stop and worktree remove release this workspace's leases. On a physical
+iPhone, stop also closes the app by ending its log collector; it does not
+shut down the phone or uninstall the app.
 
 Treat a refusal as an ownership or state mismatch: read its code and remedy.
 Never reach for --force first.
@@ -187,9 +191,10 @@ line by design (see \`guide logs\`), not this single-payload contract.
 
   platform        "ios"
   udid            the owned simulator this workspace installed onto, or the
-                  phone's UDID on \`--device\` -- reported, never recorded: a
-                  physical device gets no config entry, so \`stop\` and \`gc\`
-                  never see it
+                  phone's UDID on \`--device\`. A physical device gets no
+                  owned-device registry entry; its ID is stored in a temporary
+                  lease. \`stop\` releases workspace leases and \`gc --delete\`
+                  removes expired lease files
   deviceName      its name, or null
   deviceType      the owned simulator's MODEL, as
                   \`xcrun simctl list devicetypes\` names it ("iPad Pro 13-inch
@@ -1520,8 +1525,6 @@ not on any remote"  (worktree remove)
   refusal actually named.
   Use --force only when you genuinely intend to discard work; it deletes
   uncommitted and untracked files permanently.
-  Runtime state is outside the project tree, so Stim's own files never cause
-  Other dirty paths still refuse as described above.
 
 STIM_WORKTREE_BRANCH_EXISTS  (worktree create)
   "Refusing to create <name>: the branch worktree-<name> already exists at
@@ -1961,16 +1964,16 @@ OPTIONAL SIMSLIM PROFILE
   shutdowns and reboots. Removing the setting restores stock services when
   Stim applied the profile. Stim never changes an unowned or remote simulator.
 
-NOTHING ABOVE NEEDS A CHANGE TO THE REPO
+RUNTIME STATE AND BUILD INPUTS
 Runtime state is stored outside the project tree under
 $STIM_HOME/workspaces/<project>--<digest>/ (default ~/.stim/workspaces/).
 The aggregate run counters \`stats\` prints live beside it in
 $STIM_HOME/stats.json, one bucket per project and platform plus a machine-wide
 one; nothing per run is kept there.
 No .gitignore entry is created or required.
-Stim runs on a clean checkout. Runtime state is stored outside the project tree.
-runtime state lives under $STIM_HOME/workspaces/<project>--<digest>, and the performance caches ride on the command
-lines Stim composes rather than on files the project owns:
+Native preparation can change project files: expo prebuild generates native
+sources, and pod install can update Podfile.lock. Review those changes before
+committing. The shared caches need no project-file edits:
 
   ios      xcodebuild carries COMPILATION_CACHE_ENABLE_CACHING, a shared
            COMPILATION_CACHE_CAS_PATH and a clang prefix mapping of this
@@ -1990,13 +1993,10 @@ lines Stim composes rather than on files the project owns:
            \`sharedCacheStores()\` from @stim-cli/metro in its own metro
            config also gets the \`cache.provider\` tier behind that store.
 
-Each says so in one dim line. There is nothing to install, wire or commit, and
-no setup skill to run. \`stim doctor\` is the second opinion when
-something IS blocked or slow: it reports only what Stim cannot handle itself
+Each reports its cache setup. \`stim doctor\` checks missing or stale setup
+when a build is blocked or slow. It reports what Stim cannot handle itself
 (a missing dev client, ccache, a fingerprint no fresh worktree reproduces, a
-provider on a key this SDK ignores) plus the project-side settings that matter
-solely for builds you make OUTSIDE Stim. A clean doctor means there is
-nothing Stim needs from this repo.
+provider on a key this SDK ignores) and settings for builds outside Stim.
 
 THE BUILD CACHE HAS THREE LEVELS
   1. Stim's own, on this machine: a directory under ~/.stim shared by
@@ -2143,6 +2143,7 @@ THE OPTION SURFACE, IN FULL
   start           --json --wait <seconds> --remote
   ios             --json --no-metro-check --no-build-cache --configuration <name> --device-type <name> --runtime <version> --device [udid] --wait <seconds> --no-wait --remote <proxy|eas>
   android         --json --no-metro-check --no-build-cache --variant <name> --system-image <id> --device [serial] --wait <seconds> --no-wait --remote <proxy|eas>
+  reload          [ios|android] --json
   device          lock <ios|android> [id] --for <duration> --wait <seconds> --json;
                   unlock [ios|android] --json
   logs            --source --level --since --grep --tail --follow --errors --json
@@ -2219,8 +2220,8 @@ THE OPTION SURFACE, IN FULL
 
   The build, the fingerprint, the build cache and the Metro port gate are
   unchanged. What is skipped is everything that manages an owned device:
-  no capacity check, no AVD creation, no boot wait, and no device record --
-  so \`stop\` and \`gc\` never touch the phone. The app is pointed at
+  no capacity check, no AVD creation, no boot wait, and no owned-device
+  registry entry. The app is pointed at
   localhost:<port>, which the adb reverse serves, instead of the emulator's
   10.0.2.2. Stim never creates, boots, shuts down, or deletes hardware.
 
@@ -2230,8 +2231,13 @@ THE OPTION SURFACE, IN FULL
   that is unpaired or has Developer Mode off is refused with the fix. It
   cannot be combined with --remote, and it never creates, boots, or deletes
   hardware -- there is no capacity check, no simulator creation, no boot wait,
-  and no device record, so \`stop\` and \`gc\` never see the phone. Like
+  and no owned-device registry entry. Like
   \`android --device\`, it leases the phone for the run (below).
+
+  \`stop\` releases this workspace's leases and stops its log collectors.
+  On a physical iPhone that also closes the app, because its collector owns
+  the devicectl launch session. \`gc --delete\` removes expired lease files;
+  neither command shuts down the phone or uninstalls the app.
 
 THE DEVICE LEASE ON A \`--device\` RUN
   A physical device is shared, so a \`--device\` run takes a lease on it. The
@@ -2385,8 +2391,9 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   not while starting its own, because an upgrade install terminates the running
   app -- which would end that collector's devicectl non-zero and record a
   failure for a normal reinstall. Unplugging the phone ends devicectl, which
-  ends the collector: it removes its own registration and exits, leaving
-  nothing for \`gc\` to find, because a phone is never recorded as a device. Whether it closes with collector_stopped or
+  ends the collector: it removes its own registration and exits. A separately
+  held \`device lock\` lease survives collector exit until released or expired;
+  \`gc --delete\` can remove its expired lease file. Whether it closes with collector_stopped or
   collector_failed follows devicectl's exit code, which no one has watched a
   cable-pull produce yet. See \`guide logs\` for what the device stream can
   and cannot carry, and appandflow/stim#179.
@@ -2394,8 +2401,9 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   THE APP RUNS FOR AS LONG AS THE COLLECTOR DOES. Because the collector is the
   launch, the app is attached to it: \`stop\` (and any other end of that
   collector -- a crash, the host sleeping, the cable coming out) closes the app
-  on the phone. It stays INSTALLED and Stim still records nothing about the
-  device; only the running process goes. See \`guide cleanup\`.
+  on the phone. It stays INSTALLED. Collector exit removes the collector's
+  registration, not a separately held device lease; \`stop\` also releases
+  this workspace's leases. See \`guide cleanup\`.
 
   THERE IS NO INSTALL SKIP ON A PHONE. The simulator path skips the install
   when the device already holds the same bundle byte for byte, which it proves
@@ -2580,13 +2588,14 @@ WHAT ELSE STOP REAPS
   ends the collector ends the APP ON THE PHONE: \`stop\`, \`gc --delete\`,
   \`worktree remove\`, a fresh \`ios --device\` run stopping its predecessor,
   a crash, the host sleeping, or the cable coming out. Measured: SIGTERM to the
-  collector alone terminates the app. \`stop\` therefore leaves no RECORD of the
-  phone -- it never had one -- but it does close the app that was running on it.
+  collector alone terminates the app. The phone has no owned-device registry
+  entry. \`stop\` closes the app and releases this workspace's leases.
   Nothing is uninstalled, and the next \`ios --device\` starts it again.
 
   Unplugging the phone ends devicectl, which ends the collector: it unregisters
-  itself and exits either way, so \`gc\` has nothing to find, because a phone is
-  never recorded as a device.
+  itself and exits either way. A separately held \`device lock\` lease survives
+  collector exit until released or expired; \`gc --delete\` can remove its
+  expired lease file.
   WHICH record it writes on the way out depends on devicectl's exit code, and
   that code is unverified until someone pulls a cable: a zero exit is
   collector_stopped, a non-zero one is collector_failed, because on hardware
