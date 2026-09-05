@@ -10,7 +10,7 @@ let tmpHome: string;
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'stim-gc-output-'));
   process.env.STIM_HOME = tmpHome;
-  setExecutor({ run: () => '', runQuiet: () => null, spawn: () => null });
+  setExecutor({ run: () => '', runQuiet: () => null, runFileQuiet: () => null, spawn: () => null });
 });
 
 afterEach(() => {

@@ -1,4 +1,5 @@
 import { existsSync } from 'fs';
+import { isAbsolute } from 'path';
 import chalk from 'chalk';
 import { clearDevice } from '../../config.ts';
 import { plural } from '../../command-output.ts';
@@ -160,7 +161,7 @@ export function findStaleProjectDevices({
 
   const stale: StaleProjectDevice[] = [];
   for (const [path, proj] of Object.entries(config?.projects || {})) {
-    if (dead.has(path)) continue;
+    if (dead.has(path) || !isAbsolute(path)) continue;
     const touched = lastTouched(path);
     if (!Number.isFinite(touched) || touched >= cutoff) continue;
     const idleDays = Math.floor((now - touched) / DAY_MS);

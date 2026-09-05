@@ -110,6 +110,15 @@ test('the errors topic states that the stale-carry line only prints on a real di
   expect(body).toMatch(/a carry whose lockfile matches is\s+silent/);
 });
 
+test('the errors topic covers a directory that is not a React Native or Expo app', () => {
+  const body = renderTopic('errors');
+  assert(body);
+  expect(body).toMatch(/whose nearest package.json does not\s+parse or depends on neither react-native nor expo/);
+  expect(body).toMatch(/the refusal names that package.json and says which of the two it\s+is/);
+  expect(body).toMatch(/`doctor` reports the same directory as a finding/);
+  expect(body).toMatch(/These errors are caught before the port is reserved/);
+});
+
 test('an unknown topic renders nothing rather than throwing', () => {
   expect(renderTopic('nope')).toBe(null);
 });
@@ -189,6 +198,13 @@ test('the facts topic says Android artifacts use the post-Gradle fingerprint', (
   expect(body).toMatch(/Android also fingerprints after Gradle/);
   expect(body).toMatch(/stored only under that post-build hash/);
   expect(body).toMatch(/fingerprint and cacheKey are null/);
+});
+
+test('the guides document Android target-ABI builds and universal fallbacks', () => {
+  expect(renderTopic('facts')).toMatch(/debug-sim-arm64-v8a/);
+  expect(renderTopic('lifecycle')).toMatch(/-PreactNativeArchitectures=<target ABI>/);
+  expect(renderTopic('lifecycle')).toMatch(/ABI-targeted Android Debug build skips this Expo\s+tier/);
+  expect(renderTopic('agent')).toMatch(/Unknown targets and Release builds stay\s+universal/);
 });
 
 test('the one-line JSON sentence names every command whose --json payload is a single line', () => {
@@ -912,6 +928,31 @@ test('the static skill is only the agent guide router', () => {
   }
 });
 
+test('the skill description names the task phrases an agent sees', () => {
+  const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
+  const description = skill.match(/^description: (.+)$/m)?.[1];
+  assert(description);
+  expect(description).toMatch(/^The React Native \/ Expo CLI for AI agents\./);
+
+  for (const trigger of [
+    'expo run:ios',
+    'expo run:android',
+    'react-native run-ios',
+    'react-native run-android',
+    'expo start',
+    'Metro',
+    'simulator',
+    'emulator',
+    'device',
+    'redbox',
+    'runtime',
+    'logs',
+    'parallel worktrees',
+  ]) {
+    expect(description).toContain(trigger);
+  }
+});
+
 test('every guide topic explains the npx fallback for short stim commands', () => {
   for (const name of topicNames()) {
     const topic = renderTopic(name);
@@ -980,6 +1021,16 @@ test('the logs guide keeps Expo and bare React Native stack context on one human
   expect(logs).toMatch(/Expo error includes its immediately\s+following code frame and Call Stack lines/);
   expect(logs).toMatch(/Bare React Native symbolication is\s+shown as separate context/);
   expect(logs).toMatch(/Context does not change the error count or the raw error records\s+returned by --json/);
+});
+
+test('the agent guide tells the agent to run from the app directory', () => {
+  const agent = renderTopic('agent');
+  assert(agent);
+  expect(agent).toMatch(
+    /Run Stim from the app directory: the one whose package.json depends on\s+react-native or expo/,
+  );
+  expect(agent).toMatch(/start, ios and android refuse with STIM_NO_PROJECT naming that package.json/);
+  expect(agent).toMatch(/doctor reports it as a finding/);
 });
 
 test('the agent guide routes to every detailed topic', () => {

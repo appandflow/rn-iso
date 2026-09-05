@@ -33,6 +33,7 @@ beforeEach(() => {
   setExecutor({
     run: () => '',
     runQuiet: () => null,
+    runFileQuiet: () => null,
     spawn() {
       throw new Error('stats spawns nothing');
     },

@@ -80,21 +80,28 @@ function state() {
 
 async function until<T>(
   predicate: () => T | null | undefined,
-  { timeoutMs = 15000, label = 'condition' } = {},
+  { timeoutMs = 6000, label = 'condition' } = {},
 ): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const value = predicate();
     if (value) return value;
-    if (Date.now() >= deadline) throw new Error(`timed out waiting for ${label}`);
+    if (Date.now() >= deadline) throw new Error(`timed out after ${timeoutMs}ms waiting for ${label}`);
     await new Promise((r) => setTimeout(r, 50));
   }
 }
 
-function exited(child: ChildProcess) {
-  return new Promise<{ code: number | null; signal: string | null }>((resolve) =>
-    child.on('exit', (code, signal) => resolve({ code, signal })),
-  );
+function exited(child: ChildProcess, timeoutMs = 6000) {
+  return new Promise<{ code: number | null; signal: string | null }>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`timed out after ${timeoutMs}ms waiting for the collector (pid ${child.pid}) to exit`)),
+      timeoutMs,
+    );
+    child.on('exit', (code, signal) => {
+      clearTimeout(timer);
+      resolve({ code, signal });
+    });
+  });
 }
 
 describe('parseArgs', () => {
@@ -269,7 +276,7 @@ function iosShimLines() {
   return text.split('\n').filter((l) => l.startsWith('{'));
 }
 
-describe('the ios collector, spawned for real against a fake xcrun', () => {
+describe('the ios collector, spawned for real against a fake xcrun', { timeout: 30_000 }, () => {
   test('registers its own pid, writes records, and clears the registration on SIGTERM', async () => {
     const banner = 'Filtering the log data using "processImagePath ENDSWITH \\"/MyApp.app/MyApp\\""';
     writeShim(
@@ -402,7 +409,7 @@ describe('the ios collector, spawned for real against a fake xcrun', () => {
   });
 });
 
-describe('the ios device collector, spawned for real against a fake devicectl', () => {
+describe('the ios device collector, spawned for real against a fake devicectl', { timeout: 30_000 }, () => {
   const consoleLines = () =>
     readFileSync(fileURLToPath(new URL('./fixtures/ios-device-console.txt', import.meta.url)), 'utf-8')
       .split('\n')
@@ -546,7 +553,7 @@ describe('the ios device collector, spawned for real against a fake devicectl', 
   });
 });
 
-describe('the android collector, spawned for real against a fake adb', () => {
+describe('the android collector, spawned for real against a fake adb', { timeout: 30_000 }, () => {
   test('resolves the app pid, filters logcat on it, and cleans up on SIGTERM', async () => {
     writeShim(
       'adb',
@@ -689,7 +696,7 @@ describe('runCollector seams', () => {
   });
 });
 
-describe('the android collector follows the app across a restart', () => {
+describe('the android collector follows the app across a restart', { timeout: 30_000 }, () => {
   const restartingShim = () =>
     writeShim(
       'adb',

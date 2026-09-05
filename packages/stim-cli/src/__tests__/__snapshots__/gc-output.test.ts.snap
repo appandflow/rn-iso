@@ -34,6 +34,7 @@ exports[`a cache-scoped report preserves its serialized shape without inspecting
 "{
   "skipped": [],
   "deadProjects": [],
+  "invalidProjects": [],
   "orphanedDevices": [],
   "staleDevices": [],
   "staleDeviceRecords": [],

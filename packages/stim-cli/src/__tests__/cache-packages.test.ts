@@ -44,6 +44,53 @@ test('the Expo build cache provider registers itself on this Node, at the right 
   }
 });
 
+test('the standalone Expo build cache provider separates Android ABIs', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-pkg-home-'));
+  const cacheRoot = mkdtempSync(join(tmpdir(), 'stim-pkg-bc-'));
+  const universalApk = join(home, 'universal.apk');
+  const arm64Apk = join(home, 'arm64.apk');
+  process.env.STIM_HOME = home;
+  process.env.STIM_BUILD_CACHE = cacheRoot;
+  writeFileSync(universalApk, 'universal');
+  writeFileSync(arm64Apk, 'arm64');
+  try {
+    const provider = await import('@stim-cli/expo-build-cache');
+    await provider.uploadBuildCache({
+      platform: 'android',
+      fingerprintHash: 'fingerprint',
+      buildPath: universalApk,
+      runOptions: { variant: 'debug' },
+    });
+    await provider.uploadBuildCache({
+      platform: 'android',
+      fingerprintHash: 'fingerprint',
+      buildPath: arm64Apk,
+      runOptions: { variant: 'debug', abi: 'arm64-v8a' },
+    });
+
+    const universal = await provider.resolveBuildCache({
+      platform: 'android',
+      fingerprintHash: 'fingerprint',
+      runOptions: { variant: 'debug' },
+    });
+    const arm64 = await provider.resolveBuildCache({
+      platform: 'android',
+      fingerprintHash: 'fingerprint',
+      runOptions: { variant: 'debug', abi: 'arm64-v8a' },
+    });
+    assert(universal);
+    assert(arm64);
+    expect(universal).not.toBe(arm64);
+    expect(readFileSync(universal, 'utf8')).toBe('universal');
+    expect(readFileSync(arm64, 'utf8')).toBe('arm64');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(cacheRoot, { recursive: true, force: true });
+    delete process.env.STIM_HOME;
+    delete process.env.STIM_BUILD_CACHE;
+  }
+});
+
 test('the Metro cache store registers itself on this Node, at the shard depth', async () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-pkg-home2-'));
   const cacheRoot = join(tmpdir(), `stim-pkg-metro-${process.pid}`);

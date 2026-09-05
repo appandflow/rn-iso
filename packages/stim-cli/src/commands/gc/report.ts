@@ -8,6 +8,7 @@ import type { EasSessionSweep } from './eas-sessions.ts';
 export interface GcReport {
   skipped: GcSkip[];
   deadProjects: string[];
+  invalidProjects: string[];
   parkedSims: ParkedSimReport[];
   orphanedDevices: OrphanedDevice[];
   staleDevices: StaleProjectDevice[];
@@ -52,10 +53,15 @@ function formatParkedSimReport(parkedSims: readonly ParkedSimReport[], now: numb
   return lines;
 }
 
+function projectEntryLines(header: string, paths: string[]): string[] {
+  return paths.length ? [header, ...paths.map((path) => `  ${path}`)] : [];
+}
+
 export function formatGcReport(
   {
     skipped = [],
     deadProjects = [],
+    invalidProjects = [],
     parkedSims = [],
     orphanedDevices = [],
     staleDevices = [],
@@ -81,6 +87,7 @@ export function formatGcReport(
     lines.push(`Cache scope: "${cacheScope}". Devices, project entries and locks were not inspected.`);
   } else if (
     deadProjects.length === 0 &&
+    invalidProjects.length === 0 &&
     parkedSims.length === 0 &&
     orphanedDevices.length === 0 &&
     staleDevices.length === 0 &&
@@ -107,10 +114,13 @@ export function formatGcReport(
     }
   }
 
-  if (deadProjects.length) {
-    lines.push(`Dead project entries (${deadProjects.length}):`);
-    for (const path of deadProjects) lines.push(`  ${path}`);
-  }
+  lines.push(...projectEntryLines(`Dead project entries (${deadProjects.length}):`, deadProjects));
+  lines.push(
+    ...projectEntryLines(
+      `Invalid project entries (${invalidProjects.length}) - the key is not an absolute path:`,
+      invalidProjects,
+    ),
+  );
 
   lines.push(...formatParkedSimReport(parkedSims, now));
 

@@ -11,7 +11,7 @@ import type { MetroResolution } from '../metro.ts';
 import { queryLogs } from '../logs-query.ts';
 import { ensureWorkspaceStorage, supervisorLogFile, workspaceLogsDir } from '../paths.ts';
 import { reserveMetroPort } from '../ports.ts';
-import { detectAndroidPackage, detectBundleId, detectIsExpo, findProjectRoot } from '../project.ts';
+import { appProjectProblem, detectAndroidPackage, detectBundleId, detectIsExpo, findProjectRoot } from '../project.ts';
 import {
   clearManagedMetroTunnel,
   readMetroTunnel,
@@ -311,6 +311,14 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
           code: 'STIM_NO_PROJECT',
           message: 'Not in a React Native project (no package.json found).',
           remedy: 'Run this from the app directory -- the one holding package.json.',
+        });
+      }
+      const projectProblem = appProjectProblem(root);
+      if (projectProblem) {
+        return fail({
+          code: 'STIM_NO_PROJECT',
+          message: projectProblem.message,
+          remedy: projectProblem.remedy,
         });
       }
 
