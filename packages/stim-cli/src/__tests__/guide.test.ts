@@ -257,6 +257,8 @@ test('the errors topic quotes the shared config-lock timeout message', () => {
   expect(src).toContain('`Timed out waiting for the lock at ${lockPath}. `');
   const config = readFileSync(new URL('../config.ts', import.meta.url), 'utf-8');
   expect(config).toContain('withDirLock(lockPath(), fn');
+  const wrapper = readFileSync(new URL('../dir-lock.ts', import.meta.url), 'utf-8');
+  expect(wrapper).toContain("export { withDirLock } from '@stim-cli/core'");
 });
 
 test('the errors topic quotes the carry lines exactly as worktree create writes them', () => {
