@@ -5,7 +5,14 @@ import useIsBrowser from '@docusaurus/useIsBrowser';
 import Link from '@docusaurus/Link';
 import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
-import { benchmarks, defaultRun, displayVariant } from '@site/src/components/benchmarkCatalog';
+import { benchmarks, displayVariant } from '@site/src/components/benchmarkCatalog';
+import {
+  benchmarkDimensions,
+  benchmarkForDimensions,
+  benchmarkModelLabel,
+  defaultRun,
+  type BenchmarkDimensions,
+} from '@site/src/components/benchmarkSelection';
 import BenchmarkTimeline from '@site/src/components/BenchmarkTimeline';
 import {
   benchmarkDisplayTitle,
@@ -90,12 +97,53 @@ export default function BenchmarkDetails(): ReactNode {
   const benchmark = benchmarks.find((candidate) => candidate.stage === selection.stage) ?? benchmarks[0];
   const publishedRuns = useMemo(() => benchmark?.runs.filter((run) => run.valid) ?? [], [benchmark]);
   const activeRun = publishedRuns.find((run) => run.id === selection.runId) ?? defaultRun(benchmark);
+  const dimensions = benchmark ? benchmarkDimensions(benchmark) : null;
+  const modelOptions = useMemo(
+    () =>
+      benchmarks.filter(
+        (candidate, index) =>
+          benchmarks.findIndex((other) => benchmarkDimensions(other).model === benchmarkDimensions(candidate).model) ===
+          index,
+      ),
+    [],
+  );
+  const platformOptions = useMemo(
+    () =>
+      dimensions
+        ? benchmarks
+            .filter((candidate) => benchmarkDimensions(candidate).model === dimensions.model)
+            .map((candidate) => benchmarkDimensions(candidate).platform)
+            .filter((platform, index, values) => values.indexOf(platform) === index)
+        : [],
+    [dimensions?.model],
+  );
+  const suiteOptions = useMemo(
+    () =>
+      dimensions
+        ? benchmarks
+            .filter((candidate) => {
+              const candidateDimensions = benchmarkDimensions(candidate);
+              return (
+                candidateDimensions.model === dimensions.model && candidateDimensions.platform === dimensions.platform
+              );
+            })
+            .map((candidate) => benchmarkDimensions(candidate).suite)
+            .filter((suite, index, values) => values.indexOf(suite) === index)
+        : [],
+    [dimensions?.model, dimensions?.platform],
+  );
   const navigateTo = (nextStage: string, nextRunId: string) => {
     history.push({
       pathname: location.pathname,
       search: benchmarkSelectionSearch({ stage: nextStage, runId: nextRunId }, benchmarks),
       hash: location.hash,
     });
+  };
+  const selectDimensions = (next: Partial<BenchmarkDimensions>) => {
+    if (!dimensions) return;
+    const candidate = benchmarkForDimensions(benchmarks, { ...dimensions, ...next });
+    if (!candidate) return;
+    navigateTo(candidate.stage, defaultRun(candidate, activeRun?.id)?.id ?? '');
   };
   const grouped = useMemo(() => {
     const variants: BenchmarkRun['variant'][] =
@@ -136,22 +184,66 @@ export default function BenchmarkDetails(): ReactNode {
             <Link to="/benchmarks">Benchmark overview</Link>
             <span className={styles.eyebrow}>Detailed audit</span>
             <Heading as="h1">{benchmarkDisplayTitle(benchmark.title)}: Stim vs local toolchain</Heading>
-            <p>Select a model and run to inspect its timing, commands, terminal output, and Settings-screen proof.</p>
+            <p>
+              Select a model, platform, and run to inspect its timing, commands, terminal output, and Settings-screen
+              proof.
+            </p>
           </header>
 
-          <nav className={styles.modelPicker} aria-label="Benchmark model">
-            <span>Model</span>
-            {benchmarks.map((candidate) => (
-              <button
-                key={candidate.stage}
-                type="button"
-                aria-pressed={candidate.stage === benchmark.stage}
-                onClick={() => navigateTo(candidate.stage, defaultRun(candidate)?.id ?? '')}
-              >
-                {benchmarkDisplayTitle(candidate.title)}
-              </button>
-            ))}
-          </nav>
+          <div className={styles.benchmarkPickers}>
+            <nav className={styles.benchmarkPicker} aria-label="Benchmark model">
+              <span>Model</span>
+              <div className={styles.pickerOptions}>
+                {modelOptions.map((candidate) => {
+                  const model = benchmarkDimensions(candidate).model;
+                  return (
+                    <button
+                      key={model}
+                      type="button"
+                      aria-pressed={model === dimensions?.model}
+                      onClick={() => selectDimensions({ model })}
+                    >
+                      {benchmarkModelLabel(model)}
+                    </button>
+                  );
+                })}
+              </div>
+            </nav>
+
+            <nav className={styles.benchmarkPicker} aria-label="Benchmark platform">
+              <span>Platform</span>
+              <div className={styles.pickerOptions}>
+                {platformOptions.map((platform) => (
+                  <button
+                    key={platform}
+                    type="button"
+                    aria-pressed={platform === dimensions?.platform}
+                    onClick={() => selectDimensions({ platform })}
+                  >
+                    {platform === 'ios' ? 'iOS' : 'Android'}
+                  </button>
+                ))}
+              </div>
+            </nav>
+
+            {suiteOptions.length > 1 ? (
+              <nav className={styles.benchmarkPicker} aria-label="Benchmark scenario">
+                <span>Scenario</span>
+                <div className={styles.pickerOptions}>
+                  {suiteOptions.map((suite) => (
+                    <button
+                      key={suite}
+                      type="button"
+                      aria-pressed={suite === dimensions?.suite}
+                      onClick={() => selectDimensions({ suite })}
+                    >
+                      {suite === 'readiness' ? 'App readiness' : 'Launch crash'}
+                    </button>
+                  ))}
+                </div>
+              </nav>
+            ) : null}
+          </div>
 
           <section className={styles.comparison} aria-labelledby="comparison-title">
             <div className={styles.sectionHeading}>
