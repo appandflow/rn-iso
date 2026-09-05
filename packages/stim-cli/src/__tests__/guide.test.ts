@@ -17,11 +17,131 @@ import { ANDROID_AVD_CONFIG_HELP } from '../settings.ts';
 import { CONSOLE_ENV, deviceConsoleArgs } from '../collector/ios-device.ts';
 import { HEARTBEAT_INTERVAL_MS, heartbeatLine } from '../engine/xcode.ts';
 
+function allBodies(): string[] {
+  const bodies: string[] = [];
+  for (const name of topicNames()) {
+    const topic = renderTopic(name);
+    assert(topic);
+    bodies.push(topic);
+    for (const section of sectionNames(name)) {
+      const body = renderSection(name, section);
+      assert(body);
+      bodies.push(body);
+    }
+  }
+  return bodies;
+}
+
+function sectionText(topic: string): string {
+  return sectionNames(topic)
+    .map((name) => renderSection(topic, name) ?? '')
+    .join('\n');
+}
+
 test('every advertised topic renders non-empty content', () => {
   for (const name of topicNames()) {
     const body = renderTopic(name);
     expect(body && body.length > 100).toBeTruthy();
   }
+});
+
+test('every section of every sectioned topic renders its own content', () => {
+  const sectioned = topicNames().filter((name) => sectionNames(name).length > 0);
+  expect(sectioned.length).toBeGreaterThan(0);
+  for (const name of sectioned) {
+    for (const section of sectionNames(name)) {
+      const body = renderSection(name, section);
+      expect(body && body.length > 100).toBeTruthy();
+    }
+  }
+});
+
+test('an alias resolves to the same body as the section it spells', () => {
+  for (const name of topicNames()) {
+    const lookup = sectionLookup(name);
+    for (const section of sectionNames(name)) {
+      for (const alias of lookup[section]?.aliases ?? []) {
+        expect(renderSection(name, alias)).toBe(renderSection(name, section));
+      }
+    }
+  }
+});
+
+test('section and alias names are unique within a topic', () => {
+  for (const name of topicNames()) {
+    const spellings: string[] = [];
+    for (const section of sectionNames(name)) {
+      spellings.push(section);
+      for (const alias of sectionLookup(name)[section]?.aliases ?? []) spellings.push(alias);
+    }
+    expect(new Set(spellings).size).toBe(spellings.length);
+    expect(Object.keys(sectionLookup(name)).toSorted()).toEqual(spellings.toSorted());
+  }
+});
+
+test('a section name that no topic declares renders nothing', () => {
+  expect(renderSection('errors', 'stim_no_metro')).toBe(null);
+  expect(renderSection('errors', 'nope')).toBe(null);
+  expect(renderSection('logs', 'phone')).toBe(null);
+});
+
+test('a sectioned topic prints its preamble and an index of every section', () => {
+  for (const name of topicNames().filter((topic) => sectionNames(topic).length > 0)) {
+    const body = renderTopic(name);
+    assert(body);
+    expect(body).toContain('SECTIONS');
+    for (const section of sectionNames(name)) {
+      expect(body).toContain(section);
+      for (const alias of sectionLookup(name)[section]?.aliases ?? []) expect(body).toContain(alias);
+    }
+    expect(body).toMatch(new RegExp(`Read one with: {2}stim guide ${name} `));
+  }
+});
+
+test('an index row carries the word count of the section body it names', () => {
+  const index = renderSectionIndex('errors');
+  assert(index);
+  const body = renderSection('errors', 'STIM_BUILD_WAIT_TIMEOUT');
+  assert(body);
+  const words = (renderSection('errors', 'STIM_BUILD_WAIT_TIMEOUT') ?? '')
+    .slice(body.indexOf('STIM_BUILD_WAIT_TIMEOUT'))
+    .trim()
+    .split(/\s+/).length;
+  expect(index).toMatch(new RegExp(`STIM_BUILD_WAIT_TIMEOUT\\s+${words}w {2}`));
+});
+
+test('the errors index keeps the group separators and the group preambles', () => {
+  const index = renderTopic('errors');
+  assert(index);
+  for (const separator of [
+    '--- BUILD-PATH CODES (`stim ios` / `stim android`) ---',
+    '--- iOS SIGNING CODES (`ios --device`, and only there) ---',
+    '--- iOS DEVICE DEBUG REACHABILITY CODES (`ios --device` in Debug) ---',
+    '--- DEVICE AND CAPACITY CODES ---',
+    '--- REMOTE-DEVICE CODES (`ios --remote <proxy|eas>` / `android --remote <proxy|eas>`) ---',
+    '--- RELOAD CODES (`stim reload [ios|android]`) ---',
+    '--- DEV-SERVER CODES (`stim start`) ---',
+    '--- COORDINATION CODES (any command that shares a resource) ---',
+    '--- TEARDOWN AND WORKSPACE REFUSALS ---',
+    '--- ENVIRONMENT ---',
+  ]) {
+    expect(index).toContain(separator);
+  }
+  expect(index).toContain('sandbox');
+  expect(index).toContain('Read one with:  stim guide errors <CODE>');
+});
+
+test('a group preamble travels with each section it introduces', () => {
+  for (const code of ['STIM_NO_PROFILE', 'STIM_PROFILE_MISMATCH', 'STIM_NO_SIGNING_IDENTITY', 'STIM_CODESIGN_FAILED']) {
+    expect(renderSection('errors', code)).toContain('A simulator build needs no signature');
+  }
+  for (const code of ['STIM_NO_LAN_ADDRESS', 'STIM_LAN_METRO_UNREACHABLE', 'unverified']) {
+    expect(renderSection('errors', code)).toContain("A phone does not share the host's loopback");
+  }
+  const index = renderTopic('errors');
+  assert(index);
+  expect(index).toContain('A simulator build needs no signature');
+  expect(index).toContain("A phone does not share the host's loopback");
 });
 
 test('the facts topic pins how an owned emulator gets its console port', () => {
@@ -38,7 +158,9 @@ test('shared-build recovery keeps waiters behind replacement builders with one d
   );
   expect(renderTopic('lifecycle')).toMatch(/other waiters keep waiting for that holder/);
   expect(renderTopic('lifecycle')).toMatch(/one ~90-minute deadline, including lock acquisition between waits/);
-  expect(renderTopic('errors')).toMatch(/Replacement builders share that deadline, including time spent acquiring/);
+  expect(renderSection('errors', 'STIM_BUILD_WAIT_TIMEOUT')).toMatch(
+    /Replacement builders share that deadline, including time spent acquiring/,
+  );
 });
 
 test('the lifecycle topic separates an iOS install proof from dev-client preparation', () => {
@@ -48,6 +170,15 @@ test('the lifecycle topic separates an iOS install proof from dev-client prepara
   expect(body).toMatch(/install\s+dev client prepared/);
   expect(body).toMatch(/slow simulator command is never charged\s+to an install that did not run/);
 });
+
+// STIM_HOME matches the code shape but names the environment variable.
+const NOT_A_REFUSAL_CODE = new Set(['STIM_HOME']);
+
+function scrapedCodes(source: string): Set<string> {
+  return new Set(
+    [...source.matchAll(/STIM_[A-Z_]+/g)].map((m) => m[0]).filter((code) => !NOT_A_REFUSAL_CODE.has(code)),
+  );
+}
 
 const SUMMARY_ONLY_LABELS = ['app', 'compilation cache'];
 
@@ -90,7 +221,7 @@ test('the lifecycle topic documents slash-separated worktree names', () => {
 });
 
 test('the errors topic names the two device fallbacks under the label that prints them', () => {
-  const body = renderTopic('errors');
+  const body = renderSection('errors', 'fallbacks');
   assert(body);
   expect(body).toMatch(/both print a `cache` note and\s+build fresh/);
   expect(body).toMatch(/cache\s+a cached Release device app carries its builder's JS/);
@@ -100,7 +231,7 @@ test('the errors topic names the two device fallbacks under the label that print
 });
 
 test('the errors topic quotes the stop refusals in the column stop actually prints', () => {
-  const body = renderTopic('errors');
+  const body = renderSection('errors', 'teardown');
   assert(body);
   expect(body).toMatch(/"metro {7}refusing to kill port <n>/);
   expect(body).toMatch(/"stop {8}refusing to signal supervisor pid <n>/);
@@ -112,7 +243,7 @@ test('the errors topic quotes the stop refusals in the column stop actually prin
 });
 
 test('the errors topic quotes the carry lines exactly as worktree create writes them', () => {
-  const body = renderTopic('errors');
+  const body = renderSection('errors', 'carry');
   assert(body);
   expect(body).toMatch(/"carry {7}carried 2 uncommitted changes from the source/);
   expect(body).toMatch(/"carry {7}could not carry the source's uncommitted changes/);
@@ -121,14 +252,14 @@ test('the errors topic quotes the carry lines exactly as worktree create writes 
 });
 
 test('the errors topic states that the stale-carry line only prints on a real difference', () => {
-  const body = renderTopic('errors');
+  const body = renderSection('errors', 'carry');
   assert(body);
   expect(body).toMatch(/carry\s+carried dependencies may be stale/);
   expect(body).toMatch(/a carry whose lockfile matches is\s+silent/);
 });
 
 test('the errors topic covers a directory that is not a React Native or Expo app', () => {
-  const body = renderTopic('errors');
+  const body = renderSection('errors', 'STIM_BAD_ARG');
   assert(body);
   expect(body).toMatch(/whose nearest package.json does not\s+parse or depends on neither react-native nor expo/);
   expect(body).toMatch(/the refusal names that package.json and says which of the two it\s+is/);
@@ -322,7 +453,7 @@ test('the flags the guide advertises are the flags the commands define', () => {
     for (const flag of flags) {
       const mention = new RegExp(`${flag}(?![\\w-])`);
       expect(mention.test(src)).toBeFalsy();
-      for (const name of topicNames()) expect(mention.test(renderTopic(name) ?? '')).toBeFalsy();
+      for (const body of allBodies()) expect(mention.test(body)).toBeFalsy();
     }
   }
   for (const [file, flags] of Object.entries(advertised)) {
@@ -334,10 +465,8 @@ test('the flags the guide advertises are the flags the commands define', () => {
   }
   const statusSrc = readFileSync(new URL('../commands/status.ts', import.meta.url), 'utf-8');
   expect(!statusSrc.includes("'--all'")).toBeTruthy();
-  for (const name of topicNames()) {
-    const topic = renderTopic(name);
-    assert(topic);
-    expect(!topic.includes('status --all')).toBeTruthy();
+  for (const body of allBodies()) {
+    expect(!body.includes('status --all')).toBeTruthy();
   }
 });
 
@@ -440,15 +569,17 @@ test('the guide keeps Metro intent separate from the explicit device backend', (
   expect(lifecycle).toMatch(/android\s+[^\n]*--remote <proxy\|eas>/);
   expect(settings).toMatch(/ios\.remote[^\n]*"proxy" or "eas"/);
   expect(settings).toMatch(/android\.remote[^\n]*"proxy" or "eas"/);
-  expect(errors).toContain('not a IncludeTreeRoot node kind');
-  expect(errors).toContain('--cache "compilation cache"');
+  const buildFailed = renderSection('errors', 'STIM_BUILD_FAILED');
+  assert(buildFailed);
+  expect(buildFailed).toContain('not a IncludeTreeRoot node kind');
+  expect(buildFailed).toContain('--cache "compilation cache"');
   expect(errors).not.toContain('--delete --all');
   expect(errors).toContain('STIM_REMOTE_PROXY_CONFIG');
   expect(errors).toContain('STIM_REMOTE_EAS_UNAVAILABLE');
 });
 
 test('the guide documents Android AVD disk-space diagnosis and cleanup', () => {
-  const errors = renderTopic('errors');
+  const errors = renderSection('errors', 'STIM_NO_DEVICE');
   const cleanup = renderTopic('cleanup');
   assert(errors);
   assert(cleanup);
@@ -457,6 +588,7 @@ test('the guide documents Android AVD disk-space diagnosis and cleanup', () => {
     expect(topic).toMatch(/~\/\.android\/avd/);
     expect(topic).toMatch(/several GB/);
   }
+  expect(renderTopic('errors')).toContain('STIM_NO_DEVICE');
   expect(errors).toMatch(/ENOSPC[^.]*disk space/i);
   expect(cleanup).toMatch(/worktree remove[^.]*deletes[^.]*owned AVD/i);
   expect(cleanup).toMatch(/neither loads nor saves[^.]*Quick\s+Boot snapshot/i);
@@ -601,15 +733,14 @@ test('the guide distinguishes local stop behavior from EAS session teardown', ()
 
 test('no topic teaches a command this binary does not have', () => {
   const gone = ['stim up', 'stim release', 'stim shutdown', 'build-cache resolve', '--wait-metro', '--serial'];
-  for (const name of topicNames()) {
-    const body = renderTopic(name);
-    assert(body);
+  for (const body of allBodies()) {
     for (const dead of gone) {
       expect(!body.includes(dead)).toBeTruthy();
     }
     expect(body).not.toMatch(/stim config (--repo|<key>|[a-z]+\.[a-z]+)/i);
   }
   expect(renderTopic('errors')).not.toMatch(/Installed Stim skill/);
+  expect(sectionText('errors')).not.toMatch(/Installed Stim skill/);
   expect(renderTopic('settings')).toMatch(/no `stim config` command/);
 });
 
@@ -650,7 +781,7 @@ test('the guide states the physical-iPhone device-log losses, and states them as
 
 test('the guide teaches the device install and launch that #178 phases 3 and 5 wired', () => {
   const lifecycle = renderTopic('lifecycle');
-  const errors = renderTopic('errors');
+  const errors = sectionText('errors');
   assert(lifecycle);
   assert(errors);
 
@@ -664,17 +795,27 @@ test('the guide teaches the device install and launch that #178 phases 3 and 5 w
   expect(lifecycle).toMatch(/device pid means nothing to the host/);
 
   expect(errors).not.toMatch(/ONE EXCEPTION, and it is temporary/);
-  expect(errors).toMatch(/STIM_NO_LAN_ADDRESS[\s\S]*Deliberately NOT "set metro\.publicUrl"/);
-  expect(errors).toMatch(/STIM_LAN_METRO_UNREACHABLE[\s\S]*ios\.lanHost/);
-  expect(errors).toMatch(
+  expect(renderSection('errors', 'STIM_NO_LAN_ADDRESS')).toMatch(
+    /STIM_NO_LAN_ADDRESS[\s\S]*Deliberately NOT "set metro\.publicUrl"/,
+  );
+  expect(renderSection('errors', 'STIM_LAN_METRO_UNREACHABLE')).toMatch(
+    /STIM_LAN_METRO_UNREACHABLE[\s\S]*ios\.lanHost/,
+  );
+  expect(renderSection('errors', 'STIM_LAN_METRO_UNREACHABLE')).toMatch(
     /STIM_LAN_METRO_UNREACHABLE[\s\S]*routes a host connection to its own address over\s+loopback/,
   );
-  expect(errors).toMatch(/FBSOpenApplicationErrorDomain 3/);
-  expect(errors).toMatch(/VPN & Device Management/);
-  expect(errors).toMatch(/devicectl device uninstall app[\s\S]*data went with it/);
-  expect(errors).toMatch(/THE DEVICE FALLBACKS[\s\S]*building fresh instead/);
-  expect(errors).toMatch(/FRESHLY BUILT app is a code/);
-  expect(errors).toMatch(/an uninstall clears it, including the one Stim's own\s+signer-conflict retry performs/);
+  const launchFailed = renderSection('errors', 'STIM_LAUNCH_FAILED');
+  assert(launchFailed);
+  expect(launchFailed).toMatch(/FBSOpenApplicationErrorDomain 3/);
+  expect(launchFailed).toMatch(/VPN & Device Management/);
+  expect(launchFailed).toMatch(/an uninstall clears it, including the one Stim's own\s+signer-conflict retry performs/);
+  expect(renderSection('errors', 'STIM_INSTALL_FAILED')).toMatch(
+    /devicectl device uninstall app[\s\S]*data went with it/,
+  );
+  const fallbacks = renderSection('errors', 'fallbacks');
+  assert(fallbacks);
+  expect(fallbacks).toMatch(/THE DEVICE FALLBACKS[\s\S]*building fresh instead/);
+  expect(fallbacks).toMatch(/FRESHLY BUILT app is a code/);
 });
 
 // devicectl keeps the app attached to the process that launched it, so the
@@ -695,7 +836,7 @@ test('the guide says a phone loses its running app when the collector ends', () 
 });
 
 test('the guide matches the Local Network path reason alone, not any errno-50 block', () => {
-  const errors = renderTopic('errors');
+  const errors = renderSection('errors', 'unverified');
   assert(errors);
 
   expect(errors).toMatch(/LAUNCH UNVERIFIED, LOCAL NETWORK NOT GRANTED/);
@@ -711,7 +852,7 @@ test('the guide matches the Local Network path reason alone, not any errno-50 bl
 });
 
 test('the guide gives the Local Network recovery commands and the taps that have no API', () => {
-  const errors = renderTopic('errors');
+  const errors = renderSection('errors', 'unverified');
   const facts = renderTopic('facts');
   assert(errors);
   assert(facts);
@@ -810,10 +951,11 @@ test('the errors topic documents every code the build commands and the iOS signi
       readFileSync(new URL(`../${f}`, import.meta.url), 'utf-8'),
     ),
   ].join('\n');
-  const codes = new Set([...sources.matchAll(/STIM_[A-Z_]+/g)].map((m) => m[0]));
+  const codes = scrapedCodes(sources);
   expect(codes.size >= 8).toBeTruthy();
   for (const code of codes) {
     expect(body).toContain(code);
+    expect(sectionLookup('errors')[code]).toBeDefined();
   }
 });
 
@@ -821,11 +963,14 @@ test('the errors topic documents every code worktree create can emit, and the ru
   const body = renderTopic('errors');
   assert(body);
   const src = readFileSync(new URL('../commands/worktree.ts', import.meta.url), 'utf-8');
-  const codes = new Set([...src.matchAll(/STIM_[A-Z_]+/g)].map((m) => m[0]));
+  const codes = scrapedCodes(src);
   expect(codes.has('STIM_WORKTREE_BRANCH_EXISTS')).toBeTruthy();
-  for (const code of codes) expect(body.includes(code)).toBeTruthy();
+  for (const code of codes) {
+    expect(body.includes(code)).toBeTruthy();
+    expect(sectionLookup('errors')[code]).toBeDefined();
+  }
 
-  const section = body.slice(body.indexOf('STIM_WORKTREE_BRANCH_EXISTS')).replace(/\s+/g, ' ');
+  const section = (renderSection('errors', 'STIM_WORKTREE_BRANCH_EXISTS') ?? '').replace(/\s+/g, ' ');
   expect(section).toMatch(/refuses whenever it is passed and the branch already exists/i);
   expect(section).toMatch(/INCLUDING the case where the branch happens to sit on the requested base/i);
   expect(section).toMatch(/Stim deletes the branch it just made/i);
@@ -869,13 +1014,13 @@ test('the errors topic documents every code the engine can emit under a command'
   }
   for (const code of codes) {
     expect(body.includes(code)).toBeTruthy();
+    expect(sectionLookup('errors')[code]).toBeDefined();
   }
 });
 
 test('STIM_BUILD_FAILED lists only the Android refusals gradle.ts still raises (#154)', () => {
-  const body = renderTopic('errors');
-  assert(body);
-  const section = body.slice(body.indexOf('STIM_BUILD_FAILED'), body.indexOf('FALLBACK NOTES THAT ARE NOT CODES'));
+  const section = renderSection('errors', 'STIM_BUILD_FAILED');
+  assert(section);
   const gradle = readFileSync(new URL('../engine/gradle.ts', import.meta.url), 'utf-8');
 
   expect(gradle).not.toMatch(/mtime|predates the build/);
@@ -888,9 +1033,7 @@ test('STIM_BUILD_FAILED lists only the Android refusals gradle.ts still raises (
 });
 
 test('the STIM_DEPS_FAILED ladder names the commands and the gate the engine actually uses (#137)', () => {
-  const body = renderTopic('errors');
-  assert(body);
-  const flat = body.slice(body.indexOf('STIM_DEPS_FAILED'), body.indexOf('STIM_BUILD_FAILED')).replace(/\s+/g, ' ');
+  const flat = (renderSection('errors', 'STIM_DEPS_FAILED') ?? '').replace(/\s+/g, ' ');
   const deps = readFileSync(new URL('../engine/deps.ts', import.meta.url), 'utf-8');
   const bundler = readFileSync(new URL('../engine/bundler.ts', import.meta.url), 'utf-8');
 
@@ -913,9 +1056,8 @@ test('the STIM_DEPS_FAILED ladder names the commands and the gate the engine act
 });
 
 test('the remote start remedy covers existing bare and Expo servers', () => {
-  const body = renderTopic('errors');
-  assert(body);
-  const section = body.slice(body.indexOf('STIM_REMOTE_START_REQUIRED'), body.indexOf('STIM_BARE_DEPS'));
+  const section = renderSection('errors', 'STIM_REMOTE_START_REQUIRED');
+  assert(section);
   expect(section).toContain('bare');
   expect(section).toContain('Expo');
 });
@@ -935,9 +1077,7 @@ test('the settings topic lists exactly the keys settings.js honours', () => {
 });
 
 test('the errors topic names a wrong-typed setting as a STIM_BAD_ARG cause', () => {
-  const errors = renderTopic('errors');
-  assert(errors);
-  const section = errors.slice(errors.indexOf('STIM_BAD_ARG')).replace(/\s+/g, ' ');
+  const section = (renderSection('errors', 'STIM_BAD_ARG') ?? '').replace(/\s+/g, ' ');
   expect(section).toMatch(/a known setting with the wrong type/);
   expect(section).toMatch(/Invalid <key> setting <value>\. Expected <shape>\./);
   expect(section).toMatch(/guide settings.{0,4} names the type each key takes/);
@@ -1049,10 +1189,8 @@ test('the skill description names the task phrases an agent sees', () => {
 });
 
 test('every guide topic explains the npx fallback for short stim commands', () => {
-  for (const name of topicNames()) {
-    const topic = renderTopic(name);
-    assert(topic);
-    expect(topic).toMatch(/not installed globally[^.]*npx stim-cli/i);
+  for (const body of allBodies()) {
+    expect(body).toMatch(/not installed globally[^.]*npx stim-cli/i);
   }
   expect(renderIndex('9.9.9')).toContain('stim guide <topic>');
   expect(renderIndex('9.9.9')).toMatch(/not installed globally[^.]*npx stim-cli/i);
@@ -1192,7 +1330,7 @@ test('the guide names every path Stim ignores by default', () => {
 });
 
 test('the sandbox failures are named in the errors guide, and the agent guide points at them', () => {
-  const errors = renderTopic('errors') ?? '';
+  const errors = renderSection('errors', 'sandbox') ?? '';
   const agent = renderTopic('agent') ?? '';
 
   // The three failures an agent actually sees.
@@ -1213,6 +1351,7 @@ test('the sandbox failures are named in the errors guide, and the agent guide po
     expect(agent).not.toContain(key);
   }
 
+  expect(renderTopic('errors')).toContain('sandbox');
   expect(agent).toMatch(/sandbox/i);
   expect(agent).toContain('guide errors');
 });
@@ -1220,19 +1359,19 @@ test('the sandbox failures are named in the errors guide, and the agent guide po
 test('advanced contracts stay in guide topics instead of the skill', () => {
   const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
   const advanced = [
-    ['AGENT_DEVICE_DAEMON_AUTH_TOKEN', 'metro'],
-    ['metro.ngrokUrl', 'settings'],
-    ['waitedForBuild', 'facts'],
-    ['STIM_AT_CAPACITY', 'errors'],
-    ['.fingerprintignore', 'lifecycle'],
-    ['CoreSimulatorBridge', 'facts'],
-    ['~/.android/avd', 'cleanup'],
-    ['android.avdConfigFile', 'settings'],
-    ['productionRelease', 'lifecycle'],
+    ['AGENT_DEVICE_DAEMON_AUTH_TOKEN', 'metro', null],
+    ['metro.ngrokUrl', 'settings', null],
+    ['waitedForBuild', 'facts', null],
+    ['STIM_AT_CAPACITY', 'errors', null],
+    ['.fingerprintignore', 'lifecycle', null],
+    ['CoreSimulatorBridge', 'facts', null],
+    ['~/.android/avd', 'cleanup', null],
+    ['android.avdConfigFile', 'settings', null],
+    ['productionRelease', 'lifecycle', null],
   ] as const;
 
-  for (const [detail, topicName] of advanced) {
-    const topic = renderTopic(topicName);
+  for (const [detail, topicName, section] of advanced) {
+    const topic = section ? renderSection(topicName, section) : renderTopic(topicName);
     assert(topic);
     expect(topic).toContain(detail);
     expect(skill).not.toContain(detail);
@@ -1338,8 +1477,10 @@ test('the guide documents the flavor refusal that lands before the build', () =>
 
   expect(lifecycle).toMatch(/refuses BEFORE gradle runs and names the debug\s+variants/);
   expect(lifecycle).toMatch(/best-effort[\s\S]*variable, a loop, or an applied script/);
-  expect(errors).toMatch(/STIM_BAD_ARG[\s\S]*declares product flavors with\s+no variant selected/);
-  expect(errors).toMatch(/caught before\s+the build instead \(STIM_BAD_ARG\)/);
+  expect(renderSection('errors', 'STIM_BAD_ARG')).toMatch(
+    /STIM_BAD_ARG[\s\S]*declares product flavors with\s+no variant selected/,
+  );
+  expect(renderSection('errors', 'STIM_BUILD_FAILED')).toMatch(/caught before\s+the build instead \(STIM_BAD_ARG\)/);
 });
 
 test('the cleanup guide documents what gc does with device lease files', () => {
@@ -1382,16 +1523,18 @@ test('the guide documents the run-scoped device lease and the two flags that ste
 });
 
 test('the errors topic documents both device-lease codes with their remedies', () => {
-  const body = renderTopic('errors');
-  assert(body);
-  expect(body).toMatch(/STIM_DEVICE_BUSY/);
-  expect(body).toMatch(/names the holder root, the device, and the\s+expiry/);
-  expect(body).toMatch(/lease: \{ platform, id, deviceName, holder, expiresAt \}/);
-  expect(body).toMatch(/wait longer with `--wait <seconds>`, pick another device by\s+id, or `--no-wait`/);
-  expect(body).toMatch(/lease\s+file that does not parse/);
-  expect(body).toMatch(/STIM_DEVICE_LOST/);
-  expect(body).toMatch(/raise before the\s+install found it gone or held under another token/);
-  expect(body).toMatch(/AFTER the install has started this is not a failure/);
+  const busy = renderSection('errors', 'STIM_DEVICE_BUSY');
+  const lost = renderSection('errors', 'STIM_DEVICE_LOST');
+  assert(busy);
+  assert(lost);
+  expect(busy).toMatch(/STIM_DEVICE_BUSY/);
+  expect(busy).toMatch(/names the holder root, the device, and the\s+expiry/);
+  expect(busy).toMatch(/lease: \{ platform, id, deviceName, holder, expiresAt \}/);
+  expect(busy).toMatch(/wait longer with `--wait <seconds>`, pick another device by\s+id, or `--no-wait`/);
+  expect(busy).toMatch(/lease\s+file that does not parse/);
+  expect(lost).toMatch(/STIM_DEVICE_LOST/);
+  expect(lost).toMatch(/raise before the\s+install found it gone or held under another token/);
+  expect(lost).toMatch(/AFTER the install has started this is not a failure/);
 });
 
 test('the guide documents holding a device across runs with lock and unlock', () => {
@@ -1415,7 +1558,7 @@ test('the guide documents holding a device across runs with lock and unlock', ()
 });
 
 test('the busy remedy for this root own lease names the command that releases by holder', () => {
-  const errors = renderTopic('errors');
+  const errors = renderSection('errors', 'STIM_DEVICE_BUSY');
   assert(errors);
   expect(errors).toMatch(/remedy for that last one is `stim device unlock`, which releases by\s+holder/);
 });
@@ -1475,9 +1618,7 @@ test('the settings topic says the flag overrides each device-model key', () => {
 });
 
 test('the errors topic names an uninstalled device name as a STIM_BAD_ARG cause with the printed-names remedy', () => {
-  const errors = renderTopic('errors');
-  assert(errors);
-  const section = errors.slice(errors.indexOf('STIM_BAD_ARG')).replace(/\s+/g, ' ');
+  const section = (renderSection('errors', 'STIM_BAD_ARG') ?? '').replace(/\s+/g, ' ');
   expect(section).toMatch(/`--device-type`, `--runtime` or `--system-image` name that is BLANK or is not installed/);
   expect(section).toMatch(/the installed names are printed in the message/);
   expect(section).toMatch(/the check applies even when this workspace ALREADY owns a device/);

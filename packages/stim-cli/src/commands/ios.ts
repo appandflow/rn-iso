@@ -248,7 +248,7 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
     note(chalk.red(`${code}: ${message}`));
     note(
       chalk.dim(
-        'Check that STIM_HOME is writable and has free space. An EPERM on a directory you can write is a sandbox: allow writes to STIM_HOME, or run Stim with the sandbox disabled (`stim guide errors`).',
+        'Check that STIM_HOME is writable and has free space. An EPERM on a directory you can write is a sandbox: allow writes to STIM_HOME, or run Stim with the sandbox disabled (`stim guide errors sandbox`).',
       ),
     );
     if (json)

@@ -1,7 +1,7 @@
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import TOPICS from '../guide/index.ts';
-import type { GuideSection, GuideTopic } from '../guide/index.ts';
+import type { GuideSection, GuideTopic } from '../guide/types.ts';
 
 export function topicNames(): string[] {
   return Object.keys(TOPICS);
@@ -42,7 +42,10 @@ export function renderSectionIndex(name: string): string | null {
   const width = Math.max(...entries.map(([sectionName]) => sectionName.length));
   const lines = ['SECTIONS'];
   for (const [sectionName, section] of entries) {
-    if (section.separator) lines.push('', section.separator, '');
+    if (section.separator) {
+      lines.push('', section.separator, '');
+      if (section.context) lines.push(section.context, '');
+    }
     lines.push(`  ${sectionName.padEnd(width)}  ${`${wordCount(section.body())}w`.padStart(6)}  ${section.summary}`);
     for (const alias of section.aliases ?? []) lines.push(`    = ${alias}`);
   }
