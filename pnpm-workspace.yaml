@@ -21,6 +21,13 @@ allowBuilds:
   core-js: false
   esbuild: false
 
+# Docusaurus uses image-size only while building repository-owned content, and
+# image-size has no patched release (facebook/docusaurus#12231).
+audit:
+  ignore:
+    - GHSA-5p2g-fcmc-qvqq
+    - GHSA-w3rx-r6r6-pgpr
+
 # website's Docusaurus toolchain pulls these transitively at vulnerable
 # versions; the published packages under packages/ do not depend on them
 # (see issue #267).
