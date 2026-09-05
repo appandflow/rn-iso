@@ -9,6 +9,7 @@ import {
   assert,
   buildLog,
   cleanupTmp,
+  createCleanupTracker,
   createFixture,
   createHarness,
   dumpDiagnostics,
@@ -45,6 +46,7 @@ process.env.STIM_HOME = HOME_DIR;
 const WARM_CACHE = process.env.STIM_E2E_WARM_CACHE === '1';
 
 const h = createHarness({ env: ENV, cliPath: CLI, label: `native-e2e ${VARIANT}` });
+const cleanup = createCleanupTracker({ h, platform: PLATFORM });
 const { cli, cliJson, sh, log, banner, die } = h;
 
 const created = [];
@@ -89,11 +91,13 @@ async function main() {
   handleLaunch(build2, 'wt2');
   log('CACHE PROOF: second worktree installed from cache without compiling.');
 
+  cleanup.recordWorkspace(wt2);
   cli(['stop'], { cwd: wt2 });
+  cleanup.recordWorkspace(wt1);
   cli(['stop'], { cwd: wt1 });
   worktreeRemove(wt2);
   worktreeRemove(wt1);
-  verifyCleanup({ h, platform: PLATFORM, appDir, created });
+  await verifyCleanup({ h, cleanup, appDir, created });
 }
 
 function worktreeCreate(name, appDir) {
@@ -116,6 +120,7 @@ function startAndAssertMode(cwd) {
   }
   const line = r.stdout.trim().split('\n').findLast(Boolean);
   const facts = JSON.parse(line);
+  cleanup.recordWorkspace(cwd);
   assert(
     facts.mode === EXPECTED_MODE,
     `start mode for a ${FRAMEWORK} app must be ${EXPECTED_MODE}, got ${JSON.stringify(facts.mode)} ` +
@@ -127,6 +132,8 @@ function startAndAssertMode(cwd) {
 function buildAndAssert(cwd, { expectCacheHit }) {
   log(`building ${PLATFORM} in ${cwd} (expect cache ${expectCacheHit ? 'HIT' : 'MISS'})...`);
   const facts = cliJson([PLATFORM, '--json'], { cwd, timeout: 40 * 60 * 1000 });
+  cleanup.recordBuild(facts);
+  cleanup.recordWorkspace(cwd);
   log(
     `build facts: cacheHit=${JSON.stringify(facts.cacheHit)} launched=${JSON.stringify(facts.launched)} ` +
       `waitedForBuild=${JSON.stringify(facts.waitedForBuild)} durationMs=${facts.durationMs}`,

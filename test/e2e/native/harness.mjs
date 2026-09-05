@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
+import { setTimeout as sleep } from 'node:timers/promises';
 
 export function createHarness({ env, cliPath, label }) {
   const log = (msg) => process.stderr.write(`[${label}] ${msg}\n`);
@@ -20,10 +21,10 @@ export function createHarness({ env, cliPath, label }) {
       maxBuffer: 64 * 1024 * 1024,
     });
     const stdout = r.stdout || '';
-    const stderr = r.stderr || '';
+    const stderr = r.stderr || r.error?.message || '';
     if (stderr) process.stderr.write(stderr);
     if (r.error && !opts.allowFail) die(`${file} ${argv.join(' ')} could not run: ${r.error.message}`);
-    const code = r.status ?? (r.signal ? 1 : 0);
+    const code = r.status ?? (r.signal || r.error ? 1 : 0);
     if (code !== 0 && !opts.allowFail)
       die(`${file} ${argv.slice(0, 3).join(' ')} exited ${code}:\n${lastLines(stderr, 40)}`);
     return { code, stdout, stderr };
@@ -183,21 +184,98 @@ export function ensureGitignore({ appDir, framework }) {
   }
 }
 
-export function verifyCleanup({ h, platform, appDir, created }) {
+export function createCleanupTracker({ h, platform, processExitTimeoutMs = 5000 }) {
+  const devices = new Set();
+  const processes = new Map();
+
+  function recordBuild(facts) {
+    const id = platform === 'ios' ? facts.udid : facts.avdName;
+    assert(typeof id === 'string' && id.length > 0, `the ${platform} build did not identify its device`);
+    devices.add(id);
+  }
+
+  function recordWorkspace(cwd) {
+    let device;
+    try {
+      const config = JSON.parse(readFileSync(join(h.env.STIM_HOME, 'config.json'), 'utf-8'));
+      device = config.projects?.[resolve(cwd)]?.platforms?.[platform];
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+    if (device?.owned === true) recordBuild({ udid: device.deviceUdid, avdName: device.avdName });
+
+    let state;
+    try {
+      state = JSON.parse(readFileSync(join(workspaceLogsDir(cwd), '..', 'state.json'), 'utf-8'));
+    } catch (error) {
+      if (error.code === 'ENOENT') return;
+      throw error;
+    }
+    const records = [
+      state.supervisor,
+      { pid: state.supervisor?.serverPid, startedAt: state.supervisor?.startedAt },
+      ...Object.values(state.collectors ?? {}),
+    ].filter(Boolean);
+    const live = processSnapshot(h);
+    for (const record of records) {
+      if (!Number.isInteger(record.pid) || record.pid <= 0) continue;
+      const key = JSON.stringify([cwd, record.pid, record.startedAt]);
+      if (!processes.has(key)) processes.set(key, live.get(record.pid));
+    }
+  }
+
+  function remainingDevices() {
+    const ids =
+      platform === 'ios'
+        ? Object.values(JSON.parse(inspect(h, 'xcrun', ['simctl', 'list', 'devices', '--json'])).devices)
+            .flat()
+            .map((device) => device.udid)
+        : inspect(h, 'emulator', ['-list-avds'])
+            .split('\n')
+            .map((name) => name.trim());
+    return ids.filter((id) => devices.has(id));
+  }
+
+  async function verifyProcesses() {
+    const deadline = Date.now() + processExitTimeoutMs;
+    while (true) {
+      const live = new Set(processSnapshot(h).values());
+      const leaked = [...processes.values()].filter((identity) => live.has(identity));
+      if (leaked.length === 0) return;
+      assert(Date.now() < deadline, `a workspace process is still running:\n${leaked.join('\n')}`);
+      await sleep(Math.min(100, deadline - Date.now()));
+    }
+  }
+
+  return { recordBuild, recordWorkspace, remainingDevices, verifyProcesses };
+}
+
+function inspect(h, file, argv) {
+  const result = h.sh(file, argv, { allowFail: true, timeout: 5000 });
+  assert(result.code === 0, `could not inspect ${file}: ${result.stderr}`);
+  return result.stdout;
+}
+
+function processSnapshot(h) {
+  const out = inspect(h, 'ps', ['-ax', '-o', 'pid=,lstart=,command=']);
+  return new Map(
+    out
+      .split('\n')
+      .map((line) => /^\s*(\d+)\s+(.+)$/.exec(line))
+      .filter(Boolean)
+      .map((match) => [Number(match[1]), match[0].trim()]),
+  );
+}
+
+export async function verifyCleanup({ h, cleanup, appDir, created }) {
   h.banner('cleanup checks');
 
-  if (platform === 'ios') {
-    const out = h.sh('xcrun', ['simctl', 'list', 'devices']).stdout;
-    assert(!/stim-/.test(out), 'an stim-* simulator was left behind');
-  } else {
-    const out = h.sh('emulator', ['-list-avds'], { allowFail: true }).stdout;
-    assert(!/stim-/.test(out), 'an stim-* AVD was left behind');
-  }
-  h.log('(1) no stim-* devices remain');
+  const devices = cleanup.remainingDevices();
+  assert(devices.length === 0, `a device from this run was left behind: ${devices.join(', ')}`);
+  h.log('(1) no devices from this run remain');
 
-  const ps = h.sh('ps', ['ax'], { allowFail: true }).stdout;
-  assert(!/stim-cli.*supervisor|supervisor\/run\.js/.test(ps), 'a supervisor process is still running');
-  h.log('(2) no supervisor/collector processes');
+  await cleanup.verifyProcesses();
+  h.log('(2) no workspace supervisor/Metro/collector processes remain');
 
   const status = h.cli(['status'], { allowFail: true }).stdout;
   assert(!created.some((p) => status.includes(p)), 'status still lists a removed workspace');
