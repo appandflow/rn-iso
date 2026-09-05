@@ -400,6 +400,7 @@ describe('swapApkBundle', () => {
     expect(result.ok).toBeUndefined();
     expect(result.failed).toBeUndefined();
     expect(result.assetMismatch).toBe(true);
+    expect(existsSync(tmp)).toBe(false);
     expect(result.assetDiff?.added).toEqual(['drawable-mdpi/brand_new.png']);
     expect(result.reason).toMatch(/added drawable-mdpi\/brand_new\.png/);
     expect(calls.some((c) => c.file === 'zip')).toBe(false);
@@ -411,6 +412,7 @@ describe('swapApkBundle', () => {
     const { run } = harness({ fresh: manifest({ 'drawable-mdpi/logo.png': LOGO }) });
     const result = await run();
     expect(result.assetMismatch).toBe(true);
+    expect(existsSync(tmp)).toBe(false);
     expect(result.assetDiff?.removed).toEqual(['raw/sound.mp3']);
   });
 
@@ -420,6 +422,7 @@ describe('swapApkBundle', () => {
     });
     const result = await run();
     expect(result.assetMismatch).toBe(true);
+    expect(existsSync(tmp)).toBe(false);
     expect(result.assetDiff?.added).toEqual([]);
     expect(result.assetDiff?.removed).toEqual([]);
     expect(result.assetDiff?.changed).toEqual(['drawable-mdpi/logo.png']);
@@ -431,6 +434,7 @@ describe('swapApkBundle', () => {
     const { calls, run } = harness({ stored: null });
     const result = await run();
     expect(result.assetMismatch).toBe(true);
+    expect(existsSync(tmp)).toBe(false);
     expect(result.assetDiff).toBeUndefined();
     expect(result.reason).toMatch(/predates asset tracking/);
     expect(calls.some((c) => c.file === 'zip')).toBe(false);
@@ -442,6 +446,7 @@ describe('swapApkBundle', () => {
     const result = await run();
     expect(result.failed).toBe(true);
     expect(result.step).toBe('assets');
+    expect(existsSync(tmp)).toBe(false);
   });
 
   test('a failed bundle command is a return value naming the step, and nothing downstream runs', async () => {

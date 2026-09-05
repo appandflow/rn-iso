@@ -19,6 +19,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { cloneIgnoredEntries, warmWorktreePaths } from '../worktree.ts';
+import { temporaryRoot } from '../temporary.ts';
 import { Command } from 'commander';
 import { registerWarm } from '../commands/worktree.ts';
 
@@ -576,7 +577,7 @@ test('staging ignored files never exposes their contents to Git status or git ad
   const result = await runWarm(target);
   expect(result.code).toBe(0);
   expect(observations).toEqual([{ status: '', add: '', staged: 'source secret' }]);
-  expect(publication.stagingPaths.map((path) => realpathSync(dirname(path)))).toEqual([realpathSync(tmpdir())]);
+  expect(publication.stagingPaths.map((path) => realpathSync(dirname(path)))).toEqual([temporaryRoot(target)]);
   expect(publication.stagingPaths.every((path) => !existsSync(path))).toBe(true);
   expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('source secret');
 });

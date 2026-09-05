@@ -1,5 +1,5 @@
 import type { ChildProcess } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -13,6 +13,7 @@ import {
   readHermesEnabled,
   swapJsBundle,
 } from '../engine/js-swap.ts';
+import { getExecutor } from '../exec.ts';
 import { makeChildProcess, makeExecutor, makeWriter } from './_factories.ts';
 
 describe('hermescPath', () => {
@@ -259,7 +260,29 @@ describe('swapJsBundle', () => {
     expect(result.failed).toBe(true);
     expect(result.step).toBe('bundle');
     expect(result.lastLines).toEqual(['Writing bundle output...']);
+    expect(existsSync(tmp)).toBe(false);
     expect(calls.some((c) => c.file === 'codesign')).toBe(false);
+  });
+
+  test('failed swaps remove copied read-only app directories and preserve the full-build fallback', async () => {
+    const source = mkdtempSync(join(tmpdir(), 'stim-readonly-app-'));
+    const app = join(source, 'Fixture.app');
+    const resources = join(app, 'Resources');
+    mkdirSync(resources, { recursive: true });
+    writeFileSync(join(resources, 'asset.txt'), 'cached asset');
+    chmodSync(resources, 0o555);
+    try {
+      const { run } = harness({ bundleExit: 1 });
+      const result = await run({ cachedAppPath: app, exec: getExecutor() });
+      expect(result.failed).toBe(true);
+      expect(result.step).toBe('bundle');
+      expect(existsSync(tmp)).toBe(false);
+      expect(statSync(resources).mode & 0o777).toBe(0o555);
+      expect(readFileSync(join(resources, 'asset.txt'), 'utf-8')).toBe('cached asset');
+    } finally {
+      chmodSync(resources, 0o755);
+      rmSync(source, { recursive: true, force: true });
+    }
   });
 
   test('a bundle that exits 0 without writing the file is still a bundle failure', async () => {

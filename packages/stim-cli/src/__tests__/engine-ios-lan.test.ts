@@ -16,10 +16,12 @@ let dir: string;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'stim-ios-lan-'));
+  process.env.STIM_HOME = join(dir, 'home');
 });
 
 afterEach(() => {
   resetExecutor();
+  delete process.env.STIM_HOME;
   rmSync(dir, { recursive: true, force: true });
 });
 

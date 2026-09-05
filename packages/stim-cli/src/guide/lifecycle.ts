@@ -157,7 +157,7 @@ result as proof instead of requiring an unrelated screenshot.`,
     logs        meaning     metro       pods        port        prebuild
     project     ready       remedy      removed     result      services
     setting     settings    setup       state       stats       stop
-    swap        verify      workspace
+    storage     swap        verify      workspace
 
   \`app\` and \`compilation cache\` join them in the stdout block a successful
   run ends with, and nowhere else. A line states a fact; the reason a fact
@@ -582,6 +582,13 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   .worktreeexclude replaces its resolved worktree.exclude setting. Nested
   registered worktrees and .DerivedData are excluded. Warm also skips paths
   overlapping a nested destination worktree or below a symlink ancestor.
+
+  Large copies stage privately outside Git working trees on the destination
+  volume. STIM_TMPDIR or machine tempDir overrides that placement; doctor warns
+  when the source, staging, and destination cross volumes and require full
+  copies. Read guide settings for temporary storage configuration. If no safe
+  writable staging location exists, warm refuses instead of using another
+  volume automatically.
 
   Existing entries, including dangling symlinks, stay untouched. An existing
   ignored directory such as node_modules is skipped WHOLE; missing children are not

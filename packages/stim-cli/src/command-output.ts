@@ -113,6 +113,7 @@ export const OUTPUT_LABELS: readonly string[] = [
   'state',
   'stats',
   'stop',
+  'storage',
   'swap',
   'verify',
   'workspace',

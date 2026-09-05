@@ -6,18 +6,16 @@ import {
   lstatSync,
   linkSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
   readdirSync,
   readlinkSync,
   realpathSync,
-  rmSync,
   symlinkSync,
   utimesSync,
 } from 'fs';
-import { tmpdir } from 'os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { getExecutor } from './exec.ts';
+import { makeTemporaryDirectory, removeTemporaryEntry } from './temporary.ts';
 
 const CARRY_SKIP_BASENAMES = new Set(['.DerivedData']);
 
@@ -262,17 +260,6 @@ function publishMissingEntry(from: string, to: string): boolean {
   return cloned;
 }
 
-function removeStagedEntry(path: string): void {
-  const stat = lstatSync(path, { throwIfNoEntry: false });
-  if (stat?.isDirectory()) {
-    chmodSync(path, stat.mode | 0o700);
-    for (const entry of readdirSync(path, { withFileTypes: true })) {
-      if (entry.isDirectory()) removeStagedEntry(join(path, entry.name));
-    }
-  }
-  rmSync(path, { recursive: true, force: true });
-}
-
 export function cloneIgnoredEntries({
   root,
   target,
@@ -303,12 +290,12 @@ export function cloneIgnoredEntries({
         skipped.push({ file: rel, reason });
         continue;
       }
-      staging = mkdtempSync(join(tmpdir(), '.stim-warm-'));
+      staging = makeTemporaryDirectory(target, '.stim-warm-');
       const destination = join(staging, 'entry');
       try {
         getExecutor().runFile('cp', ['-Rc', from, destination]);
       } catch {
-        removeStagedEntry(destination);
+        removeTemporaryEntry(destination);
         getExecutor().runFile('cp', ['-R', from, destination]);
         cloned = false;
       }
@@ -323,7 +310,7 @@ export function cloneIgnoredEntries({
     } catch (e) {
       failed.push({ file: rel, error: String((e as Error)?.message || e) });
     } finally {
-      if (staging) removeStagedEntry(staging);
+      if (staging) removeTemporaryEntry(staging);
     }
   }
   return { copied, skipped, failed, cloned };

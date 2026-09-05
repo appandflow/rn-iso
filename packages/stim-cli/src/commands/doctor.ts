@@ -58,6 +58,7 @@ export function doctorSuccessLines(platform?: DoctorPlatform): string[] {
 
   lines.push('', 'Shared');
   lines.push(phaseLine('services', 'EAS session'));
+  lines.push(phaseLine('storage', 'temporary staging and build-cache volume placement'));
   lines.push(phaseLine('fingerprint', 'parity when dependencies are absent'));
   lines.push('', 'Handled automatically');
   const suppliedCaches =
