@@ -239,7 +239,7 @@ function publishMissingEntry(from: string, to: string): boolean {
       try {
         linkSync(from, to);
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'EXDEV') throw error;
+        if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw error;
         cloned = false;
       }
     }

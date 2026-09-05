@@ -86,6 +86,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   resetExecutor();
   publication.beforePublish = null;
   publication.beforeLink = null;
@@ -243,15 +244,17 @@ test.skipIf(process.platform !== 'darwin')(
     const source = join(root, '.env');
     utimesSync(source, new Date('2020-01-01'), new Date('2021-01-01'));
     let staged: ReturnType<typeof lstatSync> | undefined;
+    let stagedPath: string | undefined;
     publication.beforeLink = (from) => {
-      expect(from).toBe(join(publication.stagingPaths[0]!, 'entry'));
+      stagedPath = from;
       staged = lstatSync(from);
-      expect(staged.ino).not.toBe(lstatSync(source).ino);
     };
     const result = warm();
     expect(result.failed).toEqual([]);
     const published = lstatSync(join(target, '.env'));
     expect(staged).toBeDefined();
+    expect(stagedPath).toBe(join(publication.stagingPaths[0]!, 'entry'));
+    expect(staged?.ino).not.toBe(lstatSync(source).ino);
     expect(published.ino).toBe(staged?.ino);
     expect(published.atimeMs).toBe(staged?.atimeMs);
     expect(published.mtimeMs).toBe(staged?.mtimeMs);
@@ -260,12 +263,16 @@ test.skipIf(process.platform !== 'darwin')(
   },
 );
 
-test.skipIf(process.platform !== 'darwin')('cross-volume publication copies independently and reports fallback', () => {
+test.each(['EXDEV', 'ENOTSUP', 'EPERM'])('publication copies independently when linking fails with %s', (code) => {
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
   write(root, 'node_modules/pkg/index.js', 'source package');
+  let links = 0;
   publication.beforeLink = () => {
-    throw Object.assign(new Error('cross-volume link'), { code: 'EXDEV' });
+    links++;
+    throw Object.assign(new Error('link unavailable'), { code });
   };
   const result = warm();
+  expect(links).toBe(1);
   expect(result.failed).toEqual([]);
   expect(result.copied).toEqual(['node_modules']);
   expect(result.cloned).toBe(false);
@@ -274,14 +281,15 @@ test.skipIf(process.platform !== 'darwin')('cross-volume publication copies inde
   expect(publication.stagingPaths.every((path) => !existsSync(path))).toBe(true);
 });
 
-test.skipIf(process.platform !== 'darwin')('publication refuses link errors other than cross-volume failures', () => {
+test('publication refuses EEXIST without attempting to copy', () => {
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
   write(root, '.env', 'source config');
   publication.beforeLink = () => {
-    throw Object.assign(new Error('link permission refused'), { code: 'EPERM' });
+    throw Object.assign(new Error('link destination exists'), { code: 'EEXIST' });
   };
   const result = warm();
   expect(result.copied).toEqual([]);
-  expect(result.failed).toEqual([{ file: '.env', error: 'link permission refused' }]);
+  expect(result.failed).toEqual([{ file: '.env', error: 'link destination exists' }]);
   expect(existsSync(join(target, '.env'))).toBe(false);
   expect(publication.stagingPaths.every((path) => !existsSync(path))).toBe(true);
 });
@@ -305,11 +313,23 @@ async function runWarm(cwd: string) {
   }
 }
 
-test.each(['file', 'dangling symlink'])('publication preserves a late %s and earlier published files', (kind) => {
+test.each([
+  ['file', false],
+  ['dangling symlink', false],
+  ['file', true],
+  ['dangling symlink', true],
+])('publication preserves a late %s and earlier files (copy fallback: %s)', (kind, fallback) => {
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
   write(root, 'node_modules/a.js', 'source a');
   write(root, 'node_modules/b.js', 'source b');
+  if (fallback) {
+    publication.beforeLink = () => {
+      throw Object.assign(new Error('link unavailable'), { code: 'ENOTSUP' });
+    };
+  }
   publication.beforePublish = (path) => {
     if (path === join(target, 'node_modules/b.js')) {
+      publication.beforePublish = null;
       if (kind === 'file') writeFileSync(path, 'concurrent b');
       else symlinkSync('missing-b', path);
     }
