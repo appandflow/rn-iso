@@ -15,6 +15,8 @@ import { join } from 'path';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import {
   MAX_EMULATOR_FAILURE_LINES,
+  androidDeviceAbi,
+  androidSystemImageAbi,
   androidToolPath,
   androidPoolNoCandidatesRefusal,
   buildToolsMajor,
@@ -37,10 +39,10 @@ import {
   parseAvdSystemImage,
   deleteAvd,
   resolveOwnedAvdSerial,
+  shutdownAndroidEmulator,
   physicalDeviceModel,
   resolvePhysicalDevice,
   assertOwnedAvdStopped,
-  shutdownAndroidEmulator,
   waitForAndroidEmulatorShutdown,
   waitForBoot,
   withAvdConfigOverrides,
@@ -481,21 +483,35 @@ test('assertOwnedAvdStopped rejects a live process and accepts a stale lock', ()
   ).not.toThrow();
 });
 
-test('shutdownAndroidEmulator bounds the adb console command', () => {
-  const calls: Array<{ command: string; timeoutMs: number | undefined }> = [];
-  setExecutor({
-    run: () => '',
-    runQuiet: (command, options) => {
-      calls.push({ command, timeoutMs: options?.timeoutMs });
-      return '';
-    },
-    spawn: () => null,
-  });
+test.each([
+  { timeoutMs: 12_345, flushMs: 5000, killTimeoutMs: 7345 },
+  { timeoutMs: 250, flushMs: 250, killTimeoutMs: 1 },
+])(
+  'shutdownAndroidEmulator shares a $timeoutMs ms deadline across sync and kill',
+  ({ timeoutMs, flushMs, killTimeoutMs }) => {
+    const calls: Array<{ command: string; timeoutMs: number | undefined }> = [];
+    const now = vi.spyOn(Date, 'now').mockReturnValueOnce(0).mockReturnValue(flushMs);
+    setExecutor({
+      run: () => '',
+      runQuiet: (command, options) => {
+        calls.push({ command, timeoutMs: options?.timeoutMs });
+        return '';
+      },
+      spawn: () => null,
+    });
 
-  shutdownAndroidEmulator('emulator-5554', 12_345);
+    try {
+      shutdownAndroidEmulator('emulator-5554', timeoutMs);
+    } finally {
+      now.mockRestore();
+    }
 
-  expect(calls).toEqual([{ command: 'adb -s emulator-5554 emu kill', timeoutMs: 12_345 }]);
-});
+    expect(calls).toEqual([
+      { command: 'adb -s emulator-5554 shell sync', timeoutMs: Math.min(5000, timeoutMs) },
+      { command: 'adb -s emulator-5554 emu kill', timeoutMs: killTimeoutMs },
+    ]);
+  },
+);
 
 test('waitForAndroidEmulatorShutdown waits for the owned AVD process lock to disappear', () => {
   let locked = true;
@@ -568,6 +584,24 @@ test('waitForAndroidEmulatorShutdown reads Android emulator lock PIDs on Unix an
     expect(observedPid).toBe(412503);
   }
 });
+
+test.each(['darwin', 'win32'] as const)(
+  'assertOwnedAvdStopped refuses a present invalid %s process lock',
+  (platform) => {
+    const avdDirectory = join(tmpHome, 'stim-app.avd');
+    const lockPath = join(avdDirectory, 'hardware-qemu.ini.lock', ...(platform === 'win32' ? ['pid'] : []));
+    mkdirSync(join(lockPath, '..'), { recursive: true });
+    const options = { platform, resolveDirectory: () => avdDirectory };
+
+    for (const content of ['', 'invalid', '123garbage']) {
+      writeFileSync(lockPath, content);
+      expect(() => assertOwnedAvdStopped('stim-app', options)).toThrow(/Could not read the emulator PID/);
+    }
+
+    rmSync(lockPath);
+    expect(() => assertOwnedAvdStopped('stim-app', options)).not.toThrow();
+  },
+);
 
 test('waitForAndroidEmulatorShutdown prefers the active process lock over the legacy fallback', () => {
   const paths: string[] = [];
@@ -660,6 +694,50 @@ test('waitForAndroidEmulatorShutdown verifies the AVD directory remains availabl
       sleep: () => {},
     }),
   ).toThrow(/Could not verify the content directory/);
+});
+
+test('shutdownAndroidEmulator bounds the guest write flush before killing the emulator', () => {
+  const calls: Array<{ command: string; timeoutMs: number | undefined }> = [];
+  const now = vi.spyOn(Date, 'now').mockReturnValue(0);
+  setExecutor({
+    runQuiet: (command: string, options) => {
+      calls.push({ command, timeoutMs: options?.timeoutMs });
+      return '';
+    },
+  });
+
+  try {
+    shutdownAndroidEmulator('emulator-5554');
+  } finally {
+    now.mockRestore();
+  }
+
+  expect(calls).toEqual([
+    { command: 'adb -s emulator-5554 shell sync', timeoutMs: 5000 },
+    { command: 'adb -s emulator-5554 emu kill', timeoutMs: 60_000 },
+  ]);
+});
+
+test('shutdownAndroidEmulator warns and still kills the emulator when sync fails', () => {
+  const calls: string[] = [];
+  const errors: string[] = [];
+  const originalError = console.error;
+  console.error = (message) => errors.push(String(message));
+  setExecutor({
+    runQuiet: (cmd: string) => {
+      calls.push(cmd);
+      return cmd.includes('shell sync') ? null : '';
+    },
+  });
+
+  try {
+    shutdownAndroidEmulator('emulator-5554');
+  } finally {
+    console.error = originalError;
+  }
+
+  expect(calls).toEqual(['adb -s emulator-5554 shell sync', 'adb -s emulator-5554 emu kill']);
+  expect(errors).toEqual(['warning: could not flush emulator-5554 before shutdown; shutting it down anyway']);
 });
 
 test('waitForBoot keeps polling while adb still fails', async () => {
@@ -1082,6 +1160,30 @@ test('physicalDeviceModel returns null when adb cannot answer', () => {
   } as never);
   expect(physicalDeviceModel('RFCR7081Q9L')).toBeNull();
   resetExecutor();
+});
+
+test('androidDeviceAbi reads the device primary ABI', () => {
+  const calls: string[][] = [];
+  setExecutor({
+    runFile: (_file: string, args: string[] = []) => {
+      calls.push(args);
+      return 'arm64-v8a\n';
+    },
+  } as never);
+  expect(androidDeviceAbi('RFCR7081Q9L')).toBe('arm64-v8a');
+  expect(calls).toEqual([['-s', 'RFCR7081Q9L', 'shell', 'getprop', 'ro.product.cpu.abi']]);
+});
+
+test('Android ABI detection falls back when the value is not supported', () => {
+  setExecutor({ runFile: () => 'unknown' } as never);
+  expect(androidDeviceAbi('RFCR7081Q9L')).toBeNull();
+  expect(androidSystemImageAbi('system-images;android-36;google_apis;unknown')).toBeNull();
+  expect(androidSystemImageAbi(null)).toBeNull();
+});
+
+test('androidSystemImageAbi uses the architecture selected for an owned emulator', () => {
+  expect(androidSystemImageAbi('system-images;android-36;google_apis;arm64-v8a')).toBe('arm64-v8a');
+  expect(androidSystemImageAbi('system-images;android-35;google_apis;x86_64')).toBe('x86_64');
 });
 
 test('resolvePhysicalDevice refuses a network-attached emulator that adb reports as physical', () => {

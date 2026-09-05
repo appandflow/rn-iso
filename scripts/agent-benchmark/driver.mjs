@@ -780,8 +780,9 @@ function promptFor(arm, variant, runId, runDir, crash = null, requestedPlatform 
   const agentDevicePrefix = `env AGENT_DEVICE_STATE_DIR=${agentDeviceState} AGENT_DEVICE_SESSION=${runId} agent-device`;
   const targetDescription = platform === 'ios' ? 'simulator UDID' : 'emulator serial';
   const targetFlag = platform === 'ios' ? '--udid' : '--serial';
-  const deviceProof = ` After the app launches, you MUST use the agent-device skill and CLI. Codex does not forward the coordinator's agent-device environment into shell tools, so prefix every agent-device command exactly with \`${agentDevicePrefix}\`; never run a bare \`agent-device\` command. Read the exact run ${targetDescription} from the launch output and start the session with exactly \`${agentDevicePrefix} open com.appandflow.trailhead --foreground --platform ${platform} ${targetFlag} <run ${targetDescription}>\`, replacing only the angle-bracketed value. Immediately start run-scoped video with exactly \`${agentDevicePrefix} record start ${recordingScratch} --scope device --quality high --hide-touches\`. Handle any Expo onboarding shown and navigate to the Settings tab using semantic refs or labels. Then run each of these as its own top-level shell command, without chaining, redirection, a script, or an interactive shell: \`${agentDevicePrefix} wait text ${JSON.stringify(expected)}\`, \`${agentDevicePrefix} screenshot ${screenshotScratch}\`, \`cp ${screenshotScratch} ${screenshot}\`, \`${agentDevicePrefix} record stop\`, \`cp ${recordingScratch} ${recording}\`, and \`${agentDevicePrefix} close\`. Do not stop or restart the agent-device daemon; report a failure if the isolated session refuses to open. The explicit state and session assignments and device identifier prevent cross-run ownership. Do not claim completion before the wait succeeds, the copied screenshot and recording exist, and recording stop reports the saved video.`;
-  const suffix = ` Stay in this turn until the Settings screenshot is saved; do not stop to await a background notification. Do not use subagents. Do not read or write outside the fixture checkout, the run worktree, ${runDir}, ${screenshotScratch}, and ${recordingScratch}. Report the run worktree and screenshot paths, then stop; the coordinator will verify and clean up.`;
+  const deviceProof = ` After the app launches, you MUST use the agent-device skill and CLI. Codex does not forward the coordinator's agent-device environment into shell tools, so every agent-device command below includes the required prefix. Never run a bare \`agent-device\` command. Read the exact run ${targetDescription} from the launch output. Handle any Expo onboarding shown and navigate to the Settings tab using semantic refs or labels between steps 2 and 3 below. Do not stop or restart the agent-device daemon; report a failure if the isolated session refuses to open. The explicit state and session assignments and device identifier prevent cross-run ownership.`;
+  const proofProtocol = `\n\nFINAL PROOF PROTOCOL: The proof directory already exists. For each numbered shell command below, send the displayed line alone as the entire Bash \`command\` string. Do not prepend \`mkdir\`, append \`ls\`, combine it with another command, use redirection, or wrap it in a script or interactive shell. Replace only the angle-bracketed value in step 1.\n\n1. \`${agentDevicePrefix} open com.appandflow.trailhead --foreground --platform ${platform} ${targetFlag} <run ${targetDescription}>\`\n2. \`${agentDevicePrefix} record start ${recordingScratch} --scope device --quality high --hide-touches\`\n3. \`${agentDevicePrefix} wait text ${JSON.stringify(expected)}\`\n4. \`${agentDevicePrefix} screenshot ${screenshotScratch}\`\n5. \`cp ${screenshotScratch} ${screenshot}\`\n6. \`${agentDevicePrefix} record stop\`\n7. \`cp ${recordingScratch} ${recording}\`\n8. \`${agentDevicePrefix} close\`\n\nDo not claim completion before all eight commands succeed in order, the wait finds the expected text, recording stop reports the saved video, and the copied screenshot and recording exist.`;
+  const suffix = ` Stay in this turn until the Settings screenshot is saved; do not stop to await a background notification. Do not use subagents. Do not read or write outside the fixture checkout, the run worktree, ${runDir}, ${screenshotScratch}, and ${recordingScratch}. Report the run worktree and screenshot paths, then stop; the coordinator will verify and clean up.${proofProtocol}`;
   if (variant === launchCrashVariant) {
     const launch =
       arm === 'stim'
@@ -2423,6 +2424,9 @@ function selftestAgentDeviceIsolation() {
     throw new Error('bare default-session command passed the isolation check');
   }
   const prompt = promptFor('stim', 'javascript', runId, state);
+  const androidPrompt = promptFor('control', 'javascript', runId, state, null, 'android');
+  const screenshotScratch = join('/tmp', `${runId}-settings.png`);
+  const screenshot = join(state, 'proof', 'settings.png');
   const recordingScratch = join('/tmp', `${runId}-session.mp4`);
   const recording = join(state, 'proof', 'session.mp4');
   if (!prompt.includes(`record start ${recordingScratch}`) || !prompt.includes(`cp ${recordingScratch} ${recording}`)) {
@@ -2430,6 +2434,31 @@ function selftestAgentDeviceIsolation() {
   }
   if (prompt.includes(`record start ${recording}`)) {
     throw new Error('simulator recording writes directly to durable evidence storage');
+  }
+  const proofCommands = [
+    agentDeviceCommand(meta, 'open com.appandflow.trailhead --foreground --platform ios --udid <run simulator UDID>'),
+    agentDeviceCommand(meta, `record start ${recordingScratch} --scope device --quality high --hide-touches`),
+    agentDeviceCommand(meta, `wait text ${JSON.stringify(settingsProofText('javascript'))}`),
+    agentDeviceCommand(meta, `screenshot ${screenshotScratch}`),
+    `cp ${screenshotScratch} ${screenshot}`,
+    agentDeviceCommand(meta, 'record stop'),
+    `cp ${recordingScratch} ${recording}`,
+    agentDeviceCommand(meta, 'close'),
+  ];
+  if (
+    !prompt.includes('The proof directory already exists') ||
+    !prompt.includes('alone as the entire Bash `command` string') ||
+    proofCommands.some((proofCommand, index) => !prompt.includes(`${index + 1}. \`${proofCommand}\``))
+  ) {
+    throw new Error('proof command boundaries are not explicit and ordered');
+  }
+  if (
+    !androidPrompt.includes(
+      `1. \`${agentDeviceCommand(meta, 'open com.appandflow.trailhead --foreground --platform android --serial <run emulator serial>')}\``,
+    ) ||
+    !androidPrompt.includes('alone as the entire Bash `command` string')
+  ) {
+    throw new Error('Android proof command boundaries are not explicit');
   }
   process.stdout.write('agent-device isolation self-test passed\n');
 }

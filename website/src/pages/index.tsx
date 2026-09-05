@@ -4,20 +4,13 @@ import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import Layout from '@theme/Layout';
 import CodeBlock from '@theme/CodeBlock';
 import Heading from '@theme/Heading';
+import { StimInstallTabs } from '@site/src/components/StimTabs';
 import {
   CacheIllustration,
   CleanupIllustration,
   ParallelIllustration,
   PlatformsIllustration,
 } from '@site/src/components/FeatureIllustrations';
-
-const quickStart = `# install the CLI and its agent skill
-npm install --global stim-cli
-npx skills add appandflow/stim
-
-# then tell your coding agent:
-#   "Build and run the app on the iOS simulator and fix anything that breaks."
-# Stim runs on a clean checkout. There is nothing to commit.`;
 
 const features: Array<{ title: string; body: ReactNode; illustration: ReactNode }> = [
   {
@@ -44,8 +37,9 @@ const features: Array<{ title: string; body: ReactNode; illustration: ReactNode 
     title: 'React Native and Expo, here or remote',
     body: (
       <>
-        Stim works with React Native Community CLI and Expo projects. It builds locally, then launches on an owned local
-        simulator or a configured remote simulator. The agent gets the exact device and launch state.
+        Stim works with React Native Community CLI and Expo projects. It builds locally, then launches on an owned
+        simulator or emulator, connected phone, or configured remote device. The agent gets the exact device and launch
+        state.
       </>
     ),
     illustration: <PlatformsIllustration />,
@@ -74,10 +68,14 @@ export default function Home(): ReactNode {
           <p className="hero__subtitle">{siteConfig.tagline}</p>
           <p className="stimHeroLead">
             Give each coding agent a fast, isolated React Native environment. Stim shares build caches across worktrees,
-            owns each device and port, supports local and remote simulators, and cleans up when the work is done.
+            reserves a port and device for each workspace, and cleans up when the work is done.
           </p>
           <div className="stimQuickStart">
-            <CodeBlock language="bash">{quickStart}</CodeBlock>
+            <StimInstallTabs />
+            <p>Add the agent skill:</p>
+            <CodeBlock language="bash">npx skills add appandflow/stim</CodeBlock>
+            <p>Then ask your agent: &quot;Build and run the app on iOS.&quot;</p>
+            <p>Stim needs no initialization. Runtime state stays outside the project.</p>
           </div>
           <div className="stimHeroActions">
             <Link className="button button--primary button--lg" to="/docs/getting-started">

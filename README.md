@@ -8,7 +8,8 @@ and Metro transforms across worktrees. Agents can work in parallel without
 sharing live resources, then clean up every resource Stim created.
 
 Stim supports React Native Community CLI and Expo projects. Builds run locally.
-Apps can launch on local or configured remote simulators.
+Apps can launch on owned simulators and emulators, connected physical devices,
+or configured remote devices.
 
 ## Install
 
@@ -17,6 +18,12 @@ The npm package is named `stim-cli`. It installs the `stim` command.
 ```bash
 npm install --global stim-cli
 npx skills add appandflow/stim
+```
+
+Run without a global install when needed:
+
+```bash
+npx stim-cli <command>
 ```
 
 Then ask your coding agent to build and run the app. The normal loop is:
@@ -28,6 +35,10 @@ stim ios                  # or: stim android
 stim logs --errors
 stim stop
 ```
+
+`stim reload [ios|android]` is a recovery or explicit restart command. Use it
+after a failed first bundle load or when an error screen remains after a fix,
+not after every JavaScript edit.
 
 Stim needs no project initialization. Runtime state stays under `~/.stim` by
 default.

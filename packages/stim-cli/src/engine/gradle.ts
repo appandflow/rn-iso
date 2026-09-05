@@ -1,6 +1,6 @@
 import type { ChildProcess } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { dirname, join, relative } from 'node:path';
 import chalk from 'chalk';
 import { phaseLine } from '../command-output.ts';
 import { getExecutor } from '../exec.ts';
@@ -8,7 +8,9 @@ import type { NdjsonWriter } from '../ndjson.ts';
 import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts';
 import { androidHome } from '../sim/android.ts';
 import { capDiagnostics, type Diagnostic, extractGradleDiagnostics } from './errors-gradle.ts';
+import { CCACHE_UNAVAILABLE, type CcacheSetup, readCcacheActivity } from './ccache.ts';
 import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat } from './xcode.ts';
+import type { CcacheActivity } from '../types.ts';
 
 export const BUILD_ERROR = 'STIM_BUILD_FAILED';
 
@@ -421,19 +423,29 @@ export type BuildAndroidResult = {
   truncated?: number;
   lastLines: string[];
   durationMs: number;
+  ccache?: CcacheActivity;
 };
 
-export function gradleArgs(task: string, { buildCache = true }: { buildCache?: boolean } = {}): string[] {
-  return buildCache ? [task, '--build-cache'] : [task];
+export function gradleArgs(
+  task: string,
+  { buildCache = true, abi = null }: { buildCache?: boolean; abi?: string | null } = {},
+): string[] {
+  return [task, ...(buildCache ? ['--build-cache'] : []), ...(abi ? [`-PreactNativeArchitectures=${abi}`] : [])];
 }
 
 export async function buildAndroid(
-  { root, logWriter, variant = null }: { root: string; logWriter?: NdjsonWriter | null; variant?: string | null },
+  {
+    root,
+    logWriter,
+    variant = null,
+    abi = null,
+  }: { root: string; logWriter?: NdjsonWriter | null; variant?: string | null; abi?: string | null },
   {
     spawnFn = null,
     now = Date.now,
     env = process.env,
     buildCache = true,
+    ccache = null,
     heartbeatMs = HEARTBEAT_INTERVAL_MS,
     estimateMs = null,
     onHeartbeat = (line: string) => console.error(line),
@@ -443,6 +455,7 @@ export async function buildAndroid(
     now?: () => number;
     env?: NodeJS.ProcessEnv;
     buildCache?: boolean;
+    ccache?: CcacheSetup | null;
     heartbeatMs?: number;
     estimateMs?: number | null;
     onHeartbeat?: (line: string) => void;
@@ -463,7 +476,7 @@ export async function buildAndroid(
 
   const spawn: SpawnFn = spawnFn || ((cmd, args, opts) => getExecutor().spawn(cmd, args, opts));
   const task = assembleTaskFor(variant);
-  const args = gradleArgs(task, { buildCache });
+  const args = gradleArgs(task, { buildCache, abi });
   if (buildCache) {
     onNote(chalk.dim(phaseLine('cache', 'gradle build cache on (--build-cache, shared under the Gradle user home)')));
   }
@@ -488,12 +501,14 @@ export async function buildAndroid(
     logWriter?.write?.({ src: 'build', level: 'debug', msg, raw: true, event: 'gradle' });
   };
 
+  if (ccache) resetStatsLog(ccache.statsLog);
+
   let child: ChildProcess;
   try {
     child = spawn(project.gradlew as string, args, {
       cwd: project.androidDir,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...env, TERM: 'dumb', FORCE_COLOR: '0' },
+      env: { ...env, ...ccache?.env, TERM: 'dumb', FORCE_COLOR: '0' },
     });
   } catch (err) {
     return spawnFailure(err, project, now() - startedAt);
@@ -519,6 +534,7 @@ export async function buildAndroid(
   errReader.flush();
   const durationMs = now() - startedAt;
   const transcript = window.join('\n');
+  const ccacheActivity = ccache ? readCcacheActivity(ccache.statsLog) : CCACHE_UNAVAILABLE;
 
   if (result.error) return { ...spawnFailure(result.error, project, durationMs), lastLines: tail.slice() };
 
@@ -567,7 +583,21 @@ export async function buildAndroid(
   }
   const apkPath = located.apkPath;
 
-  return { ok: true, apkPath, apkNote: located.note ?? null, durationMs, lastLines: tail.slice() };
+  return {
+    ok: true,
+    apkPath,
+    apkNote: located.note ?? null,
+    durationMs,
+    lastLines: tail.slice(),
+    ccache: ccacheActivity,
+  };
+}
+
+function resetStatsLog(statsLog: string): void {
+  try {
+    mkdirSync(dirname(statsLog), { recursive: true });
+    rmSync(statsLog, { force: true });
+  } catch {}
 }
 
 function spawnFailure(err: unknown, project: AndroidProjectResult, durationMs: number) {

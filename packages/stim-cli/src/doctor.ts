@@ -1,8 +1,9 @@
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from 'fs';
 import { tmpdir } from 'os';
-import { dirname, join, relative, resolve } from 'path';
+import { dirname, isAbsolute, join, relative, resolve } from 'path';
+import { plural } from './command-output.ts';
 import { getExecutor } from './exec.ts';
-import { detectIsExpo } from './project.ts';
+import { appProjectProblem, detectIsExpo } from './project.ts';
 import * as expoFingerprint from '@expo/fingerprint';
 import { diffFingerprintSources, fingerprintProject } from './build-cache.ts';
 import { dirtyFingerprintFiles, gitCommonDir, listWorktrees, repoRoot } from './worktree.ts';
@@ -344,9 +345,118 @@ export function checkCcacheConflict(podfileSource: string | null, podfilePropert
   return finding(
     'cost',
     'ccache is enabled, so Stim leaves Xcode compilation caching off',
-    'The ccache launcher script is what disables explicitly built modules, which compilation caching requires -- so enabling both tends to mean neither works. Stim will not add its compilation-cache settings to a build whose project has apple.ccacheEnabled=true, and ccache itself keys on absolute paths, so it misses across worktrees anyway.',
+    "The ccache launcher script is what disables explicitly built modules, which compilation caching requires -- so enabling both tends to mean neither works. Stim will not add its compilation-cache settings to a build whose project has apple.ccacheEnabled=true, and in its default configuration ccache hashes the working directory and every absolute include path, so it misses across worktrees. (Stim relocates ccache itself on Android, where it drives the compile and can set CCACHE_BASEDIR and CCACHE_NOHASHDIR; the Podfile launcher script here is the project's, not Stim's.)",
     'Pick one, and on Xcode 26 the compilation cache is the one that survives a different workspace path -- Stim supplies it on its own builds as soon as ccache is off. Turn it off where the value comes FROM: on Expo that is the expo-build-properties plugin in the app config (ios.ccacheEnabled), because prebuild rewrites ios/Podfile.properties.json from it; on a bare project edit ios/Podfile.properties.json directly. Then re-run pod install (or let `stim ios` do it).',
   );
+}
+
+export function checkCcacheInstalled(onPath: boolean): Finding | null {
+  if (onPath) return null;
+  return finding(
+    'cost',
+    'ccache is not on PATH, so Android C++ recompiles in every worktree',
+    'Stim resolves the launcher with `command -v ccache` -- the same PATH lookup the build itself uses -- and found nothing, so it passes no CMAKE_C_COMPILER_LAUNCHER / CMAKE_CXX_COMPILER_LAUNCHER to Gradle and every AGP CMake task compiles without one. Those tasks are uncacheable by Gradle, so not one C++ object crosses a worktree. Measured on trailhead (arm64, fresh worktree): 49.6s without the launcher against 34.2s with it.',
+    'brew install ccache, then delete android/app/.cxx and node_modules/**/android/.cxx once so CMake reconfigures with the launcher. The shell that runs Stim must have the install location on PATH -- agent shells often lack /opt/homebrew/bin.',
+  );
+}
+
+export interface CxxLauncherState {
+  path: string;
+  launcher: string | null;
+}
+
+export function parseCmakeCacheLauncher(source: unknown): string | null {
+  if (typeof source !== 'string') return null;
+  const match = /^CMAKE_CXX_COMPILER_LAUNCHER(?::[A-Z]+)?=(.*)$/m.exec(source);
+  const value = match?.[1]?.trim();
+  return value ? value : null;
+}
+
+// CMake docs, CMAKE_<LANG>_COMPILER_LAUNCHER: the value is a ;-separated
+// command line whose first word is resolved through PATH unless it is
+// absolute, so only an absolute one is a path this machine must hold.
+function launcherPath(launcher: string | null): string | null {
+  const command = launcher?.split(';')[0]?.trim();
+  return command && isAbsolute(command) ? command : null;
+}
+
+export function checkCxxCompilerLauncher({
+  states,
+  ccacheOnPath,
+  launcherExists = existsSync,
+}: {
+  states: CxxLauncherState[];
+  ccacheOnPath: boolean;
+  launcherExists?: (path: string) => boolean;
+}): Finding | null {
+  const missing = states
+    .map((state) => ({ path: state.path, command: launcherPath(state.launcher) }))
+    .filter(
+      (state): state is { path: string; command: string } => state.command !== null && !launcherExists(state.command),
+    );
+  if (missing.length > 0) {
+    const named = [...new Set(missing.map((state) => state.command))].join(', ');
+    return finding(
+      'cost',
+      'A configured CMake cache names a compiler launcher that is not on this machine',
+      `${plural(missing.length, 'CMakeCache.txt file')} under this project name ${named}, and CMake runs that path for every C++ compile. Until the cache is reconfigured the build fails there rather than falling back: ${missing[0]?.path}.`,
+      'Delete the configured CMake directories once so the next build reconfigures: `rm -rf android/app/.cxx android/app/build` (and node_modules/*/android/.cxx for library modules).',
+    );
+  }
+  if (!ccacheOnPath) return null;
+  if (states.length === 0) return null;
+  if (states.some((state) => state.launcher !== null)) return null;
+  return finding(
+    'cost',
+    'The configured CMake cache predates the ccache launcher, so C++ compiles still bypass it',
+    `CMake seeds CMAKE_CXX_COMPILER_LAUNCHER from the environment on a FRESH configure only, so a .cxx directory written before Stim set the variable keeps compiling without it and the shared cache stays empty. ${plural(states.length, 'CMakeCache.txt file')} here names no launcher: ${states[0]?.path}.`,
+    'Delete the configured CMake directories once: `rm -rf android/app/.cxx android/app/build` (and node_modules/*/android/.cxx for library modules). The next `stim android` reconfigures with the launcher and every later build keeps it.',
+  );
+}
+
+const CXX_SCAN_DEPTH = 4;
+
+function readCxxLauncherStates(projectRoot: string): CxxLauncherState[] {
+  const base = join(projectRoot, 'android', 'app', '.cxx');
+  const states: CxxLauncherState[] = [];
+  const walk = (dir: string, depth: number): void => {
+    let names: string[];
+    try {
+      names = readdirSync(dir);
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      const path = join(dir, name);
+      if (name === 'CMakeCache.txt') {
+        let source: string | null = null;
+        try {
+          source = readFileSync(path, 'utf-8');
+        } catch {
+          continue;
+        }
+        states.push({ path: relative(projectRoot, path), launcher: parseCmakeCacheLauncher(source) });
+        continue;
+      }
+      if (depth >= CXX_SCAN_DEPTH) continue;
+      try {
+        if (!statSync(path).isDirectory()) continue;
+      } catch {
+        continue;
+      }
+      walk(path, depth + 1);
+    }
+  };
+  walk(base, 0);
+  return states;
+}
+
+function ccacheIsOnPath(): boolean {
+  try {
+    return Boolean(getExecutor().runQuiet('command -v ccache', { timeoutMs: 5000 }));
+  } catch {
+    return false;
+  }
 }
 
 export function checkBuildCacheProvider(
@@ -564,6 +674,7 @@ export function runDoctor(
     lookupAgentDevice = null,
     lookupEasCli = null,
     lookupSimSlim = null,
+    lookupCcache = null,
     platform,
   }: {
     readFile?: typeof readFileSync;
@@ -576,6 +687,7 @@ export function runDoctor(
     lookupAgentDevice?: (() => boolean) | null;
     lookupEasCli?: (() => boolean) | null;
     lookupSimSlim?: (() => boolean) | null;
+    lookupCcache?: (() => boolean) | null;
     platform?: DoctorPlatform;
   } = {},
 ): Finding[] {
@@ -689,11 +801,13 @@ export function runDoctor(
     .filter((remoteFinding): remoteFinding is Finding => remoteFinding !== null);
 
   return [
+    checkAppProject(projectRoot),
     ...checkMainCheckout(projectRoot, { platform }),
     checkDevClient(pkg, isExpo),
     checkMetroCache(metroConfig),
     platform === 'android' ? null : checkCompilationCache(podfile, xcodeMajor),
     platform === 'android' ? null : checkCcacheConflict(podfile, podfileProperties),
+    ...(platform === 'ios' ? [] : androidCcacheFindings(projectRoot, platform, lookupCcache)),
     checkBuildCacheProvider(appConfig, sdkMajor, isExpo, dynamicConfig),
     easFinding,
     concurrencyFinding,
@@ -701,6 +815,32 @@ export function runDoctor(
     ...remoteFindings,
     ...settingShapeFindings,
   ].filter((f): f is Finding => Boolean(f));
+}
+
+function androidCcacheFindings(
+  projectRoot: string,
+  platform: DoctorPlatform | undefined,
+  lookupCcache: (() => boolean) | null,
+): (Finding | null)[] {
+  if (platform !== 'android' && !existsSync(join(projectRoot, 'android'))) return [];
+  const onPath = lookupCcache ? lookupCcache() : ccacheIsOnPath();
+  return [
+    checkCcacheInstalled(onPath),
+    checkCxxCompilerLauncher({ states: readCxxLauncherStates(projectRoot), ccacheOnPath: onPath }),
+  ];
+}
+
+function checkAppProject(projectRoot: string): Finding | null {
+  const problem = appProjectProblem(projectRoot);
+  if (!problem) return null;
+  return finding(
+    'cost',
+    problem.kind === 'unreadable'
+      ? 'This package.json does not parse'
+      : 'This directory is not a React Native or Expo app',
+    `${problem.message} \`stim start\`, \`stim ios\` and \`stim android\` refuse here with STIM_NO_PROJECT, so nothing below was measured against an app.`,
+    problem.remedy,
+  );
 }
 
 function agentDeviceIsOnPath(): boolean {
@@ -777,8 +917,9 @@ export async function detectFingerprintParity(
   } = {},
 ): Promise<Finding | null> {
   const exec = getExecutor();
-  const quotedRoot = JSON.stringify(projectRoot);
-  if (exec.runQuiet(`git -C ${quotedRoot} rev-parse --git-dir`, { timeoutMs: 10000 }) == null) return null;
+  if (exec.runFileQuiet('git', ['-C', projectRoot, 'rev-parse', '--git-dir'], { timeoutMs: 10000 }) == null) {
+    return null;
+  }
   // A fresh `git worktree add` of HEAD carries no node_modules, and @expo/fingerprint reads
   // installed packages as sources, so from an installed checkout every comparison reports drift
   // that is only the missing install. The question has an answer only on a cold checkout.
@@ -790,7 +931,7 @@ export async function detectFingerprintParity(
 
   const base = mkdtempSync(join(tmpdir(), 'stim-parity-'));
   const worktree = join(base, 'head');
-  const added = exec.runQuiet(`git -C ${quotedRoot} worktree add --detach ${JSON.stringify(worktree)} HEAD`, {
+  const added = exec.runFileQuiet('git', ['-C', projectRoot, 'worktree', 'add', '--detach', worktree, 'HEAD'], {
     timeoutMs: 60000,
   });
   if (added == null) {
@@ -818,8 +959,8 @@ export async function detectFingerprintParity(
   } catch {
     return null;
   } finally {
-    exec.runQuiet(`git -C ${quotedRoot} worktree remove --force ${JSON.stringify(worktree)}`, { timeoutMs: 30000 });
+    exec.runFileQuiet('git', ['-C', projectRoot, 'worktree', 'remove', '--force', worktree], { timeoutMs: 30000 });
     rmSync(base, { recursive: true, force: true });
-    exec.runQuiet(`git -C ${quotedRoot} worktree prune`, { timeoutMs: 10000 });
+    exec.runFileQuiet('git', ['-C', projectRoot, 'worktree', 'prune'], { timeoutMs: 10000 });
   }
 }

@@ -4,6 +4,9 @@ sidebar_position: 3
 description: 'Local and optional remote requirements'
 ---
 
+Commands use `stim`. If it is not installed globally, replace `stim` with
+`npx stim-cli`.
+
 ## All projects
 
 - Node 20.19.4 or later on Node 20, or Node 22.12.0 or later.
@@ -12,19 +15,23 @@ description: 'Local and optional remote requirements'
 
 ## iOS
 
-- macOS with Xcode and at least one iOS Simulator runtime.
-- CocoaPods when the project uses pods.
+- macOS with Xcode. Local simulator runs also need an installed iOS Simulator
+  runtime.
+- A compatible Ruby and CocoaPods setup when the project uses pods. Install
+  Bundler when the project pins CocoaPods in `Gemfile.lock`.
 - `expo-dev-client` for an Expo Debug build on a reserved Metro port.
 
 ## Android
 
 - macOS or Linux with the Android SDK.
-- At least one installed ARM64 Android system image.
+- For an emulator, an installed Android system image matching the host:
+  `arm64-v8a` on ARM64 or `x86_64` on x64.
 - A working Java and Gradle setup for the project.
 
-Stim does not install Xcode, Android SDK packages, project dependencies, or
-CocoaPods dependencies. Run `stim doctor` to find missing or stale prerequisites
-before native worktree work.
+Install the host tools and JavaScript dependencies before building. Stim runs
+`pod install` when an iOS project's installed Pods are missing or stale. When
+the project pins CocoaPods and Bundler is available, it installs missing bundled
+gems and runs `bundle exec pod install`. Run `stim doctor` to check the setup.
 
 ## Optional remote devices
 

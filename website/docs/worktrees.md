@@ -4,36 +4,37 @@ sidebar_position: 2
 description: 'Parallel worktrees that share expensive build caches'
 ---
 
-Stim places each created worktree in a sibling directory. A nested worktree can
-confuse Metro, TypeScript, and other filesystem scanners even when git ignores
-it.
+import StimTabs from '@site/src/components/StimTabs';
 
-```bash
-stim worktree create feature-x
-cd ../<repo>-worktrees/feature-x
-```
+Commands use `stim`. If it is not installed globally, replace `stim` with
+`npx stim-cli`.
 
-The default base is the current checkout's `HEAD`. Use `--base fresh` for
-`origin/HEAD`, or pass any branch, tag, or commit that git resolves.
+Stim creates worktrees under a sibling `<repo>-worktrees/` directory by default.
+Override it with `worktreeDir` or `--dir`. Nested worktrees can confuse Metro,
+TypeScript, and other filesystem scanners even when git ignores them.
 
-`git worktree add` attaches to a branch named `worktree-<name>` when one
-already exists, and ignores the base. So `--base` with an existing branch is
-refused as `STIM_WORKTREE_BRANCH_EXISTS`, even when that branch currently sits
-on the requested base: the agreement is luck, not the guarantee the flag is
-for. Pick another name, or delete the branch and retry. Without `--base`,
-attaching is still the behaviour, and the create says which branch it attached
-to.
+<StimTabs
+code={`stim worktree create feature-x
+cd <printed-path>`}
+/>
+
+The default base is the current checkout's `HEAD` unless `worktree.baseRef` is
+set. Use `--base fresh` for `origin/HEAD`, or pass any branch, tag, or commit
+that git resolves.
+
+If `worktree-<name>` already exists, Stim attaches to it and reports the branch.
+Passing `--base` in that case refuses with `STIM_WORKTREE_BRANCH_EXISTS`:
+attaching to an existing branch cannot guarantee the requested starting point.
+Pick another name to create a branch from that base.
 
 When `git worktree add` fails after git has created the branch, Stim deletes
-that branch, so a retry branches from the base instead of attaching to a
-leftover. It rolls back only a branch this create made, judged by whether the
-run passed `-b` rather than by re-reading the refs afterwards.
+only the branch created by that attempt so a retry can use the requested base.
 
 ## Carry a warm working state
 
-```bash
-stim worktree create feature-x --carry-ignored
-```
+<StimTabs
+code={`stim worktree create feature-x --carry-ignored`}
+/>
 
 The option copies safe gitignored paths, such as `node_modules`, `ios/Pods`, and
 native build output. APFS clone copies remain space-efficient on one volume.
@@ -64,15 +65,16 @@ state.
 
 ## Remove a worktree
 
-```bash
-stim stop
-stim worktree remove
-```
+<StimTabs
+code={`stim stop
+stim worktree remove`}
+/>
 
 The remove command reclaims the environment, port, build output, and owned
-device before it removes the linked worktree. It keeps branches with unique
-commits. It refuses uncommitted, untracked, or unpushed work unless you pass
-`--force`.
+device before it removes the linked worktree. It parks the iOS simulator when
+parking is enabled and deletes owned Android emulators. It keeps branches with
+unique commits. It refuses uncommitted, untracked, or unpushed work unless you
+pass `--force`.
 
 On the main checkout, `worktree remove` only reclaims the Stim environment. It
 does not remove the source directory.

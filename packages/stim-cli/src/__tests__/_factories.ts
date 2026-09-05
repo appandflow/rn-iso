@@ -128,6 +128,7 @@ export function makeExecutor(overrides: Partial<Executor> = {}): Executor {
     run: () => '',
     runFile: () => '',
     runQuiet: () => null,
+    runFileQuiet: () => null,
     spawn: () => makeChildProcess(),
   };
   return { ...base, ...overrides };

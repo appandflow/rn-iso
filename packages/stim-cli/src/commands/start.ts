@@ -2,7 +2,7 @@ import chalk from 'chalk';
 import type { ChildProcess } from 'node:child_process';
 import { mkdirSync, openSync, readFileSync } from 'node:fs';
 import type { Command } from 'commander';
-import { phaseLine } from '../command-output.ts';
+import { phaseLine, stepTimer } from '../command-output.ts';
 import type { StartError, StartFacts, SupervisorRecord } from '../types.ts';
 import { getProject, upsertProject } from '../config.ts';
 import { getExecutor } from '../exec.ts';
@@ -11,7 +11,7 @@ import type { MetroResolution } from '../metro.ts';
 import { queryLogs } from '../logs-query.ts';
 import { ensureWorkspaceStorage, supervisorLogFile, workspaceLogsDir } from '../paths.ts';
 import { reserveMetroPort } from '../ports.ts';
-import { detectAndroidPackage, detectBundleId, detectIsExpo, findProjectRoot } from '../project.ts';
+import { appProjectProblem, detectAndroidPackage, detectBundleId, detectIsExpo, findProjectRoot } from '../project.ts';
 import {
   clearManagedMetroTunnel,
   readMetroTunnel,
@@ -48,7 +48,6 @@ import {
   type TunnelRecord,
 } from '../engine/tunnel.ts';
 import { gitCommonDir, repoRoot } from '../worktree.ts';
-import { stepTimer } from './ios.ts';
 
 const DEFAULT_WAIT_SECONDS = 60;
 const POLL_MS = 500;
@@ -311,6 +310,14 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
           code: 'STIM_NO_PROJECT',
           message: 'Not in a React Native project (no package.json found).',
           remedy: 'Run this from the app directory -- the one holding package.json.',
+        });
+      }
+      const projectProblem = appProjectProblem(root);
+      if (projectProblem) {
+        return fail({
+          code: 'STIM_NO_PROJECT',
+          message: projectProblem.message,
+          remedy: projectProblem.remedy,
         });
       }
 

@@ -23,6 +23,8 @@ export interface SystemImage {
   pkg: string;
 }
 
+const ANDROID_ABIS = new Set(['armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64']);
+
 interface AdbEmulatorEntry {
   serial: string;
   consolePort: number;
@@ -318,6 +320,19 @@ function adbProp(serial: string, name: string): string | null {
 
 export function physicalDeviceModel(serial: string): string | null {
   return adbProp(serial, 'ro.product.model');
+}
+
+export function androidDeviceAbi(serial: string): string | null {
+  const abi = adbProp(serial, 'ro.product.cpu.abi');
+  return abi && ANDROID_ABIS.has(abi) ? abi : null;
+}
+
+export function androidSystemImageAbi(systemImage: string | null | undefined): string | null {
+  const abi =
+    String(systemImage ?? '')
+      .split(';')
+      .at(-1) ?? '';
+  return ANDROID_ABIS.has(abi) ? abi : null;
 }
 
 function looksLikeEmulator({
@@ -722,7 +737,16 @@ export function shutdownAndroidEmulator(
   serial: string,
   timeoutMs: number = ANDROID_EMULATOR_SHUTDOWN_TIMEOUT_MS,
 ): void {
-  getExecutor().runQuiet(`${androidTool('adb')} -s ${serial} emu kill`, { timeoutMs });
+  const exec = getExecutor();
+  const started = Date.now();
+  if (
+    exec.runQuiet(`${androidTool('adb')} -s ${serial} shell sync`, { timeoutMs: Math.min(5000, timeoutMs) }) === null
+  ) {
+    console.error(`warning: could not flush ${serial} before shutdown; shutting it down anyway`);
+  }
+  exec.runQuiet(`${androidTool('adb')} -s ${serial} emu kill`, {
+    timeoutMs: Math.max(1, timeoutMs - (Date.now() - started)),
+  });
 }
 
 function sleepSync(ms: number): void {
@@ -736,8 +760,11 @@ function avdProcessLockPaths(avdDirectory: string, platform: NodeJS.Platform): s
 
 function readAvdProcessId(path: string): number | null {
   try {
-    const pid = Number.parseInt(readFileSync(path, 'utf8').split('\0')[0] ?? '', 10);
-    return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
+    const pid = Number(readFileSync(path, 'utf8').split('\0')[0]);
+    if (!Number.isSafeInteger(pid) || pid <= 0) {
+      throw new Error(`Could not read the emulator PID from process lock ${path}.`);
+    }
+    return pid;
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === 'ENOENT' || code === 'ENOTDIR') return null;

@@ -16,6 +16,7 @@ import {
   workspaceStateFile,
   sharedMetroCache,
   sharedBuildCache,
+  sharedCcache,
   sharedCompilationCache,
   sharedGradle,
   sharedPods,
@@ -95,6 +96,7 @@ describe('shared paths', () => {
     expect(sharedMetroCache()).toBe(join(tmpHome, 'metro-cache'));
     expect(sharedBuildCache()).toBe(join(tmpHome, 'build-cache'));
     expect(sharedCompilationCache()).toBe(join(tmpHome, 'compilation-cache'));
+    expect(sharedCcache()).toBe(join(tmpHome, 'ccache'));
     expect(sharedGradle()).toBe(join(tmpHome, 'gradle'));
     expect(sharedPods()).toBe(join(tmpHome, 'pods'));
   });
@@ -103,10 +105,12 @@ describe('shared paths', () => {
     sharedMetroCache();
     sharedBuildCache();
     sharedCompilationCache();
+    sharedCcache();
     sharedGradle();
     sharedPods();
     expect(existsSync(join(tmpHome, 'metro-cache'))).toBe(false);
     expect(existsSync(join(tmpHome, 'build-cache'))).toBe(false);
+    expect(existsSync(join(tmpHome, 'ccache'))).toBe(false);
   });
 });
 

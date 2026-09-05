@@ -145,3 +145,15 @@ export function launchErrorReport(records: readonly LaunchErrorRecord[]): { summ
       : `${plural(fromDevice.length, 'error-level record')} in the device log during launch (logs --errors --source device)`;
   return { summary, lines };
 }
+
+export const SLOW_STEP_MS = 2000;
+
+export function stepClock(now: () => number = Date.now): () => number {
+  const t0 = now();
+  return () => now() - t0;
+}
+
+export function stepTimer(now: () => number = Date.now): () => string {
+  const elapsed = stepClock(now);
+  return () => `(${formatDuration(elapsed())})`;
+}
