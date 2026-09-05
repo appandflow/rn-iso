@@ -1,22 +1,29 @@
-export default {
-  summary: 'Every refusal Stim can print, and what to do about it',
-  body: () => `WHAT STIM REFUSES, AND WHY
+import type { GuideTopic } from './types.ts';
+
+const errors: GuideTopic = {
+  summary: 'Every refusal Stim can print: an index of codes, and one section for each',
+  sectionHint: '<CODE>',
+  preamble: () => `WHAT STIM REFUSES, AND WHY
 
 Every refusal from \`ios\` / \`android\` carries a stable CODE. Branch on the
-code, never on the message.
-
---- BUILD-PATH CODES (\`stim ios\` / \`stim android\`) ---
-
-STIM_WORKSPACE_STATE / STIM_WORKSPACE_COLLISION
+code, never on the message.`,
+  sections: {
+    STIM_WORKSPACE_STATE: {
+      summary: '$STIM_HOME/workspaces could not be prepared, or the digest directory belongs to another project',
+      aliases: ['STIM_WORKSPACE_COLLISION'],
+      separator: '--- BUILD-PATH CODES (`stim ios` / `stim android`) ---',
+      body: () => `STIM_WORKSPACE_STATE / STIM_WORKSPACE_COLLISION
   Stim could not prepare this project's global workspace directory under
   $STIM_HOME/workspaces. Check that STIM_HOME is writable and has free
   space. An EPERM on a directory the user CAN write is a sandbox, not a
-  permission bit -- see RUNNING UNDER A SANDBOX below. COLLISION means the
+  permission bit -- see \`stim guide errors sandbox\`. COLLISION means the
   readable-name-plus-digest directory already has a workspace.json for a
   different canonical project path; do not overwrite it until you identify
-  which workspace owns it.
-
-STIM_NO_METRO
+  which workspace owns it.`,
+    },
+    STIM_NO_METRO: {
+      summary: "nothing provably this workspace's dev server holds the reserved port (ios, android, reload)",
+      body: () => `STIM_NO_METRO
   Nothing that could be proven to be THIS workspace's dev server holds the
   reserved port -- or no port is reserved at all. The gate fires in about a
   second, before the device is even booted, rather than after four minutes of
@@ -29,19 +36,28 @@ STIM_NO_METRO
   another repo's Metro. Restart it from inside the project, or free the port
   and run \`stim start\` to get a fresh reservation.
 
-STIM_NO_FINGERPRINT
+  Reload requires the recorded launch's port to be this workspace's live
+  Metro. It refuses a missing, changed, unresponsive, or foreign port.`,
+    },
+    STIM_NO_FINGERPRINT: {
+      summary: '@expo/fingerprint produced no hash, so the shared cache cannot be addressed',
+      body: () => `STIM_NO_FINGERPRINT
   \`@expo/fingerprint\` produced no hash, so the shared build cache cannot be
   addressed. Stim uses its declared @expo/fingerprint dependency directly,
   independently of the target project's package graph. This is a refusal
   rather than a silent full build because an unaddressable cache means every
-  workspace on the commit compiles from scratch, forever.
-
-STIM_PREBUILD_FAILED
+  workspace on the commit compiles from scratch, forever.`,
+    },
+    STIM_PREBUILD_FAILED: {
+      summary: 'expo prebuild could not generate the native directory',
+      body: () => `STIM_PREBUILD_FAILED
   \`expo prebuild\` could not generate the missing native directory. The
   extracted output is above the code; the transcript is in
-  the global workspace logs/build-<platform>.ndjson file.
-
-STIM_DEPS_FAILED
+  the global workspace logs/build-<platform>.ndjson file.`,
+    },
+    STIM_DEPS_FAILED: {
+      summary: 'pod install or gradle sync failed; the bundler ladder and BUNDLE_FROZEN',
+      body: () => `STIM_DEPS_FAILED
   \`pod install\` (iOS) or the gradle dependency sync (Android) failed. On iOS
   this runs only when Podfile.lock and Pods/Manifest.lock disagree, or Pods is
   absent -- which is exactly what a carried worktree produces.
@@ -63,9 +79,11 @@ STIM_DEPS_FAILED
   result. Gems themselves are installed wherever BUNDLE_PATH points -- the
   project's own \`.bundle/config\` (vendor/bundle in the React Native template),
   or the environment. When that lands inside the project, Stim says so in a dim
-  note naming which of the two set it; Gemfile.lock is never edited either way.
-
-STIM_BUILD_FAILED
+  note naming which of the two set it; Gemfile.lock is never edited either way.`,
+    },
+    STIM_BUILD_FAILED: {
+      summary: 'xcodebuild or gradle failed; the two Android APK refusals; a damaged compilation-cache object',
+      body: () => `STIM_BUILD_FAILED
   xcodebuild or gradle failed. The EXTRACTED diagnostics are printed (capped),
   not the transcript. Read the log path on the next line for the rest.
   Two Android refusals share this code without gradle itself failing:
@@ -86,7 +104,20 @@ STIM_BUILD_FAILED
   freshness and the fingerprint owns cache freshness; Stim does not second-guess
   either from the file's mtime.
 
-FALLBACK NOTES THAT ARE NOT CODES (release cache hits)
+"failed to scan dependencies for source ..." on pods you did not touch  (ios)
+  The compilation cache holds a damaged object. Xcode reports it per source
+  file, so it names whichever targets reach the object first -- often pods such
+  as sqlite3, nanopb or libwebp -- and the list changes between runs. The
+  transcript carries the cause:
+    error: CAS-based dependency scan failed: not a IncludeTreeRoot node kind
+  A cache write that a full disk or a killed build cut short leaves such an
+  object, and upgrading the CLI does not clear it. Empty that one cache with
+  \`gc --delete --cache "compilation cache"\`, then build again. The next
+  build is a cold one.`,
+    },
+    fallbacks: {
+      summary: 'release cache-hit notes that are not codes: swap failure, asset gate, uninstall, device fallbacks',
+      body: () => `FALLBACK NOTES THAT ARE NOT CODES (release cache hits)
   On a release cache hit Stim regenerates this workspace's JS bundle into a
   COPY of the cached artifact before installing it -- \`ios --configuration
   Release\` into a copy of the .app, \`android --variant ...Release\` into a
@@ -151,18 +182,23 @@ FALLBACK NOTES THAT ARE NOT CODES (release cache hits)
   hold -- which prints the gate's own reason with \`-- building fresh instead\`.
   The same refusal on a FRESHLY BUILT app is a code (STIM_NO_PROFILE,
   STIM_PROFILE_MISMATCH, STIM_NO_SIGNING_IDENTITY), not a note: building again
-  would produce the same app and refuse again.
-
-STIM_BUILD_WAIT_TIMEOUT
+  would produce the same app and refuse again.`,
+    },
+    STIM_BUILD_WAIT_TIMEOUT: {
+      summary: "waited ~90 minutes for another workspace's build of the same fingerprint",
+      body: () => `STIM_BUILD_WAIT_TIMEOUT
   This run was waiting for ANOTHER workspace's build of the same fingerprint
-  (see \`guide lifecycle\`), and no artifact arrived within ~90 minutes.
+  (see \`guide lifecycle concurrency\`), and no artifact arrived within ~90
+  minutes.
   Replacement builders share that deadline, including time spent acquiring
   the lock between waits. A live builder may be wedged, or successive builders
   may have failed. The message names the current pid and lock directory:
   check the pid, and if it is not really building, remove that directory and
-  run the command again.
-
-STIM_INSTALL_FAILED
+  run the command again.`,
+    },
+    STIM_INSTALL_FAILED: {
+      summary: 'simctl, adb, or devicectl refused the artifact; the one signer-conflict retry',
+      body: () => `STIM_INSTALL_FAILED
   The artifact built or came from cache, but \`simctl install\` / \`adb install\` /
   \`devicectl device install app\` refused it. A signature or architecture
   mismatch, or a full device.
@@ -180,9 +216,11 @@ STIM_INSTALL_FAILED
   installed -- the built APK's applicationId, which on a flavored project is
   the flavor's id and not the gradle namespace -- and gives you the
   \`adb -s <serial> uninstall <applicationId>\` that clears it. Re-running after
-  that is a cache hit: one install, no build.
-
-STIM_LAUNCH_FAILED
+  that is a cache hit: one install, no build.`,
+    },
+    STIM_LAUNCH_FAILED: {
+      summary: 'installed but would not start; the developer-trust tap on a phone',
+      body: () => `STIM_LAUNCH_FAILED
   Installed, but the app would not start. On Android this usually means no
   launchable activity resolved.
   On a PHONE it means the app never appeared in the device's own process list
@@ -194,20 +232,22 @@ STIM_LAUNCH_FAILED
   VPN & Device Management, tap the developer profile under DEVELOPER APP, tap
   Trust, then run the command again. It is a per-developer-certificate tap, not
   a per-build one -- but an uninstall clears it, including the one Stim's own
-  signer-conflict retry performs.
-
-STIM_NO_SCHEME
+  signer-conflict retry performs.`,
+    },
+    STIM_NO_SCHEME: {
+      summary: 'no shared buildable Xcode scheme in ios/',
+      body: () => `STIM_NO_SCHEME
   No buildable Xcode scheme was found in ios/. A scheme has to be shared to be
-  visible to xcodebuild.
-
---- iOS SIGNING CODES (\`ios --device\`, and only there) ---
-
-A simulator build needs no signature, which is why none of these can fire on
+  visible to xcodebuild.`,
+    },
+    STIM_NO_PROFILE: {
+      summary: 'no or undecodable embedded.mobileprovision; build once from Xcode',
+      separator: '--- iOS SIGNING CODES (`ios --device`, and only there) ---',
+      context: `A simulator build needs no signature, which is why none of these can fire on
 the normal path. A device build carries one, and Stim re-seals any bundle it
 modifies with the identity the bundle already names -- so it checks, before
-spending a build or a bundle, that the check can succeed.
-
-STIM_NO_PROFILE
+spending a build or a bundle, that the check can succeed.`,
+      body: () => `STIM_NO_PROFILE
   The built or cached .app has no embedded.mobileprovision, or
   \`security cms -D\` could not decode the one it has. The first means the build
   produced an unsigned app -- almost always a simulator-sliced artifact.
@@ -215,9 +255,15 @@ STIM_NO_PROFILE
   Xcode > Signing & Capabilities, then BUILD ONCE FROM XCODE to install the
   profile. Stim will not do that step: registering a device or minting a
   profile changes your Apple Developer account, so Stim never passes
-  -allowProvisioningUpdates.
-
-STIM_PROFILE_MISMATCH
+  -allowProvisioningUpdates.`,
+    },
+    STIM_PROFILE_MISMATCH: {
+      summary: 'the profile is expired, has no ProvisionedDevices, or does not name this UDID',
+      context: `A simulator build needs no signature, which is why none of these can fire on
+the normal path. A device build carries one, and Stim re-seals any bundle it
+modifies with the identity the bundle already names -- so it checks, before
+spending a build or a bundle, that the check can succeed.`,
+      body: () => `STIM_PROFILE_MISMATCH
   The profile inside the app cannot admit this phone. Three shapes, and the
   message names which one and the profile type it found:
     - it expired, or carries no ExpirationDate at all;
@@ -227,33 +273,45 @@ STIM_PROFILE_MISMATCH
       profile;
     - it is a development or ad hoc profile whose device list does not name
       this UDID. Register the UDID at developer.apple.com, regenerate the
-      profile, and build once from Xcode.
-
-STIM_NO_SIGNING_IDENTITY
+      profile, and build once from Xcode.`,
+    },
+    STIM_NO_SIGNING_IDENTITY: {
+      summary: 'no single keychain identity resolves; ios.signingIdentitySha1 for two certificates',
+      context: `A simulator build needs no signature, which is why none of these can fire on
+the normal path. A device build carries one, and Stim re-seals any bundle it
+modifies with the identity the bundle already names -- so it checks, before
+spending a build or a bundle, that the check can succeed.`,
+      body: () => `STIM_NO_SIGNING_IDENTITY
   No single keychain identity could be resolved to re-seal with. Either
   \`security find-identity -v -p codesigning\` lists nothing, or the identity
   the artifact's own profile names is absent, or two certificates share that
   common name and Stim -- being non-interactive -- will not pick one.
   Open Xcode > Settings > Accounts and download your certificates, or unlock
   the login keychain with \`security unlock-keychain\`. For the two-certificate
-  case, set ios.signingIdentitySha1 to the SHA-1 hash beside the one you want.
-
-STIM_CODESIGN_FAILED
+  case, set ios.signingIdentitySha1 to the SHA-1 hash beside the one you want.`,
+    },
+    STIM_CODESIGN_FAILED: {
+      summary: 'codesign failed on the modified copy; the cache entry is untouched and the run builds fresh',
+      context: `A simulator build needs no signature, which is why none of these can fire on
+the normal path. A device build carries one, and Stim re-seals any bundle it
+modifies with the identity the bundle already names -- so it checks, before
+spending a build or a bundle, that the check can succeed.`,
+      body: () => `STIM_CODESIGN_FAILED
   \`codesign --force --sign\` or \`codesign --verify --strict\` exited non-zero
   on the modified copy. The verbatim codesign stderr is quoted, because it is
   the answer: a locked login keychain reports errSecInternalComponent, an
   ambiguous identity reports that it matched more than one. Unlock the keychain
   and confirm exactly one identity matches the name. The cache entry itself is
   never modified -- the failure is on a temporary copy, and the run builds
-  fresh.
-
---- iOS DEVICE DEBUG REACHABILITY CODES (\`ios --device\` in Debug) ---
-
-A phone does not share the host's loopback and USB carries no reverse forward,
+  fresh.`,
+    },
+    STIM_NO_LAN_ADDRESS: {
+      summary: 'the Mac has no non-internal IPv4 interface; a tunnel cannot help a phone',
+      separator: '--- iOS DEVICE DEBUG REACHABILITY CODES (`ios --device` in Debug) ---',
+      context: `A phone does not share the host's loopback and USB carries no reverse forward,
 so a Debug run on one is wired to a LAN origin instead of localhost. Both codes
-fire BEFORE the build, because a refusal that costs a build is a bad refusal.
-
-STIM_NO_LAN_ADDRESS
+fire BEFORE the build, because a refusal that costs a build is a bad refusal.`,
+      body: () => `STIM_NO_LAN_ADDRESS
   This Mac reports no non-internal IPv4 interface, so there is no address to
   give the phone: it is offline, or on nothing but utun/awdl/bridge. Join a
   Wi-Fi or Ethernet network, or connect this Mac by cable, and run again.
@@ -261,9 +319,14 @@ STIM_NO_LAN_ADDRESS
   URL. The dev-client deep link composes http://<host>:<port> itself, and
   ip.txt is read by RCTBundleURLProvider, which prefixes the scheme. A tunnel
   cannot be expressed to a phone, so --device ignores metro.publicUrl,
-  metro.tunnel and metro.ngrokUrl and says so when one is set.
-
-STIM_LAN_METRO_UNREACHABLE
+  metro.tunnel and metro.ngrokUrl and says so when one is set.`,
+    },
+    STIM_LAN_METRO_UNREACHABLE: {
+      summary: "the LAN origin did not answer as this workspace's Metro; ios.lanHost on a multi-NIC Mac",
+      context: `A phone does not share the host's loopback and USB carries no reverse forward,
+so a Debug run on one is wired to a LAN origin instead of localhost. Both codes
+fire BEFORE the build, because a refusal that costs a build is a bad refusal.`,
+      body: () => `STIM_LAN_METRO_UNREACHABLE
   The chosen LAN origin did not answer as THIS workspace's Metro: no answer, a
   5xx, or a dev server that is not this one -- the message says which.
   \`stim start\` prints the port it reserved. On a Mac with several interfaces
@@ -272,9 +335,13 @@ STIM_LAN_METRO_UNREACHABLE
   What this gate CANNOT prove is that the phone can reach the origin: macOS
   routes a host connection to its own address over loopback, so the gate passes
   through a firewall that will block the phone. That evidence only ever arrives
-  from the phone's own bundle request, which is what \`launched\` reports.
-
-LAUNCH UNVERIFIED, LOCAL NETWORK NOT GRANTED (not a code -- a routed remedy)
+  from the phone's own bundle request, which is what \`launched\` reports.`,
+    },
+    unverified: {
+      summary: 'launched: "unverified" with the Local Network path reason, and the routed recovery',
+      context: `A phone does not share the host's loopback and USB carries no reverse forward,
+so a Debug run on one is wired to a LAN origin instead of localhost.`,
+      body: () => `LAUNCH UNVERIFIED, LOCAL NETWORK NOT GRANTED (not a code -- a routed remedy)
   An app that has not been granted Local Network reaches nothing on the LAN,
   and CFNetwork reports each attempt as NSURLErrorDomain -1009 "The Internet
   connection appears to be offline." with the path reason
@@ -322,7 +389,7 @@ LAUNCH UNVERIFIED, LOCAL NETWORK NOT GRANTED (not a code -- a routed remedy)
   so the Expo dev menu is not over the app, fresh install or not. An app started
   ANOTHER way does not carry those arguments and \`snapshot -i\` can show the
   menu instead: \`agent-device press 'label="Close"'\` dismisses it, then press
-  Reload. See \`guide facts\`, under \`launched\`.
+  Reload. See \`guide facts devmenu\`.
 
   A BARE APP (no expo-dev-client) gets the same first two commands and a
   different third. The prompt fires the same way, because it is fired by any
@@ -359,9 +426,12 @@ LAUNCH UNVERIFIED, LOCAL NETWORK NOT GRANTED (not a code -- a routed remedy)
   THE OTHER ONE-TIME TAP HAS NO API. The developer-trust tap (Settings >
   General > VPN & Device Management) is refused to automation by the same gate
   that refuses the app, agent-device's own runner included, so its remedy is
-  "ask the user" and nothing else. An uninstall clears both.
-
-STIM_NO_DEVICE
+  "ask the user" and nothing else. An uninstall clears both.`,
+    },
+    STIM_NO_DEVICE: {
+      summary: 'no usable phone, or the owned simulator or emulator could not be created or booted',
+      separator: '--- DEVICE AND CAPACITY CODES ---',
+      body: () => `STIM_NO_DEVICE
   With \`--device\`, no physical device answered the selection: none connected,
   a named serial/UDID that is not connected, several connected with none named
   (the refusal lists them), or one that is connected but unusable -- an
@@ -386,7 +456,15 @@ STIM_NO_DEVICE
   boot whose emulator process exited is also reported at once rather than after
   the full cold-boot timeout.
 
-STIM_DEVICE_BUSY
+"this project's sim is X, but --device-type asked for Y"
+  The project already owns a simulator of a different model, and Stim will
+  not silently boot a different one. Reap it (\`worktree remove\`, or
+  \`gc --delete\`) and run \`stim ios\` again to create the requested model.
+  That loses the old sim's app state.`,
+    },
+    STIM_DEVICE_BUSY: {
+      summary: 'another workspace holds the lease on that phone and the wait ran out',
+      body: () => `STIM_DEVICE_BUSY
   Only on a \`--device\` run. Another workspace holds the lease on that phone,
   and the wait ran out: the message names the holder root, the device, and the
   expiry as a clock time and a remaining duration, and \`--json\` adds
@@ -399,18 +477,22 @@ STIM_DEVICE_BUSY
   take that device until it is dealt with), and this workspace's OWN lease with
   no token left in its \`state.json\` (its workspace directory was recreated).
   The remedy for that last one is \`stim device unlock\`, which releases by
-  holder rather than by token.
-
-STIM_DEVICE_LOST
+  holder rather than by token.`,
+    },
+    STIM_DEVICE_LOST: {
+      summary: 'the lease was gone or re-held at the pre-install check; rerun',
+      body: () => `STIM_DEVICE_LOST
   Only on a \`--device\` run. The run held a lease, and the raise before the
   install found it gone or held under another token -- another workspace took
   the device in that window. The message names the new holder and its expiry.
   Run the command again; it waits for that lease under \`--wait <seconds>\`.
   AFTER the install has started this is not a failure: the app is already on
   the phone, so the run prints one warning, continues, and reports
-  \`lease: null\` in \`--json\`.
-
-STIM_AT_CAPACITY
+  \`lease: null\` in \`--json\`.`,
+    },
+    STIM_AT_CAPACITY: {
+      summary: 'concurrency.maxDevices reached; a refusal, not a queue',
+      body: () => `STIM_AT_CAPACITY
   Only when concurrency.maxDevices is set (it is UNSET by default, so this never
   fires unless you opted in). Booting a NEW owned device would exceed the cap:
   the machine already has that many Stim-owned devices booted. It is a refusal, not
@@ -420,9 +502,11 @@ STIM_AT_CAPACITY
   workspace whose OWN device is already booted is never refused -- re-running
   \`ios\` on an environment you already have is idempotent. (The build cap
   behaves differently: a compile WAITS for a free slot rather than refusing.
-  See \`guide lifecycle\`, "opt-in concurrency limits".)
-
-STIM_BUILD_SLOT_TIMEOUT
+  See \`guide lifecycle concurrency\`.)`,
+    },
+    STIM_BUILD_SLOT_TIMEOUT: {
+      summary: 'the maxBuilds wait gave up with every slot held by a live pid',
+      body: () => `STIM_BUILD_SLOT_TIMEOUT
   Only when concurrency.maxBuilds is set. The build cap does not refuse, it
   WAITS -- this code is that wait giving up: ~90 minutes elapsed and every one
   of the N slots was still held by a process that is still alive. A dead
@@ -430,41 +514,52 @@ STIM_BUILD_SLOT_TIMEOUT
   a crash; it is either that many genuinely long compiles, or a slot directory
   whose owner is not really building. Slots live under ~/.stim/build-slots and
   the message names the directory: remove the slot of a builder that is not
-  building, or raise concurrency.maxBuilds (\`guide lifecycle\`, "opt-in
-  concurrency limits").
-
---- REMOTE-DEVICE CODES (\`ios --remote <proxy|eas>\` / \`android --remote <proxy|eas>\`) ---
-
-STIM_NO_REMOTE_SESSION
+  building, or raise concurrency.maxBuilds
+  (\`guide lifecycle concurrency\`).`,
+    },
+    STIM_NO_REMOTE_SESSION: {
+      summary: 'the backend could not use agent-device, or metro.tunnel names an unusable provider',
+      separator: '--- REMOTE-DEVICE CODES (`ios --remote <proxy|eas>` / `android --remote <proxy|eas>`) ---',
+      body: () => `STIM_NO_REMOTE_SESSION
   The selected backend could not use agent-device, or metro.tunnel names a
   provider or mode this workspace cannot use (e.g. "expo" on a bare RN
-  project). The remedy line says which. Nothing was created yet.
-
-STIM_REMOTE_PROXY_CONFIG
+  project). The remedy line says which. Nothing was created yet.`,
+    },
+    STIM_REMOTE_PROXY_CONFIG: {
+      summary: '--remote proxy needs AGENT_DEVICE_DAEMON_BASE_URL and AGENT_DEVICE_DAEMON_AUTH_TOKEN',
+      body: () => `STIM_REMOTE_PROXY_CONFIG
   \`--remote proxy\` requires AGENT_DEVICE_DAEMON_BASE_URL and
   AGENT_DEVICE_DAEMON_AUTH_TOKEN. These variables provide credentials after
-  proxy is selected. They never select the backend.
-
-STIM_REMOTE_EAS_UNAVAILABLE
+  proxy is selected. They never select the backend.`,
+    },
+    STIM_REMOTE_EAS_UNAVAILABLE: {
+      summary: '--remote eas needs eas-cli',
+      body: () => `STIM_REMOTE_EAS_UNAVAILABLE
   \`--remote eas\` requires eas-cli. Proxy environment variables do not change
-  this selection and are not passed to EAS.
-
-STIM_REMOTE_PLATFORM_MISMATCH
+  this selection and are not passed to EAS.`,
+    },
+    STIM_REMOTE_PLATFORM_MISMATCH: {
+      summary: 'the recorded remote session belongs to the other platform; stop, then rerun',
+      body: () => `STIM_REMOTE_PLATFORM_MISMATCH
   This workspace already has a recorded remote session, and it belongs to the
   OTHER platform ("Session <id> belongs to android, not ios"). A workspace
   holds one remote session, and Stim will not end the recorded one to make
   room -- it may be mid-run for whoever started it. Run \`stim stop\` for this
-  workspace, then re-run with the platform you want. Nothing was created here.
-
-STIM_REMOTE_SESSION_STATE
+  workspace, then re-run with the platform you want. Nothing was created here.`,
+    },
+    STIM_REMOTE_SESSION_STATE: {
+      summary: 'the EAS session was created but its state could not be recorded, so Stim stopped it',
+      body: () => `STIM_REMOTE_SESSION_STATE
   The EAS session was created and is healthy, but recording it in this
   workspace's state failed (an unwritable STIM_HOME, a full disk). A session
   nothing references is a session nothing will ever stop, so Stim stopped the
   one it had just created and removed its ownership claim before reporting:
   this code means nothing is running and nothing is still billing. Repair the
-  state storage the message names, then run the remote command again.
-
-STIM_REMOTE_SESSION_CLEANUP
+  state storage the message names, then run the remote command again.`,
+    },
+    STIM_REMOTE_SESSION_CLEANUP: {
+      summary: 'Stim could not prove an EAS session ended; eas simulator:stop --id',
+      body: () => `STIM_REMOTE_SESSION_CLEANUP
   Stim tried to end an EAS session and could not PROVE it ended: \`eas
   simulator:stop\` failed, or its output did not confirm the stop, or the
   session stopped but its claim in the machine ledger could not be removed.
@@ -472,9 +567,11 @@ STIM_REMOTE_SESSION_CLEANUP
   BILLS until its duration cap. The remedy names the exact command --
   \`eas simulator:stop --id <id>\` -- and for a ledger that outlived its
   session, the ledger path to repair. The same code covers a recorded session
-  that could not be verified before replacement: inspect it, then \`stim stop\`.
-
-STIM_REMOTE_METRO_WRONG
+  that could not be verified before replacement: inspect it, then \`stim stop\`.`,
+    },
+    STIM_REMOTE_METRO_WRONG: {
+      summary: "the tunnel reaches a Metro that is not this workspace's",
+      body: () => `STIM_REMOTE_METRO_WRONG
   The gate that proves a tunnel still reaches THIS workspace's Metro failed --
   before a session or a build, whether the tunnel is Expo's own, one Stim
   started (metro.tunnel: cloudflared/ngrok/auto), or a named metro.publicUrl.
@@ -482,80 +579,107 @@ STIM_REMOTE_METRO_WRONG
   holds (a stale one survived a \`stop\`/\`start\` that reserved a different
   port), and it now serves ANOTHER workspace's dev server -- healthy, and
   wrong. Re-run \`stim start\` (it prints the port it reserved) and, for a
-  manual tunnel, rebuild it against that port.
-
-STIM_REMOTE_METRO_UNREACHABLE
+  manual tunnel, rebuild it against that port.`,
+    },
+    STIM_REMOTE_METRO_UNREACHABLE: {
+      summary: 'a remote start could not create its managed tunnel or tell the device where Metro is',
+      body: () => `STIM_REMOTE_METRO_UNREACHABLE
   A remote start could not create its selected managed tunnel, or the device
   could not be told where Metro is. Follows the same remedy as
   STIM_NO_REMOTE_SESSION's tunnel guidance -- set metro.tunnel, or use
-  metro.publicUrl for an existing endpoint.
-
---- RELOAD CODES (\`stim reload [ios|android]\`) ---
-
-STIM_RELOAD_AMBIGUOUS
-  Both owned apps are live. Name ios or android; Stim never guesses.
-
-STIM_RELOAD_RELEASE
+  metro.publicUrl for an existing endpoint.`,
+    },
+    STIM_RELOAD_AMBIGUOUS: {
+      summary: 'both owned apps are live; name the platform',
+      separator: '--- RELOAD CODES (`stim reload [ios|android]`) ---',
+      body: () => `STIM_RELOAD_AMBIGUOUS
+  Both owned apps are live. Name ios or android; Stim never guesses.`,
+    },
+    STIM_RELOAD_RELEASE: {
+      summary: 'the live app has embedded JS; run a Debug build first',
+      body: () => `STIM_RELOAD_RELEASE
   The live app was launched with embedded JavaScript. Run the platform command
-  with a Debug configuration or variant first.
-
-STIM_RELOAD_STOPPED / STIM_RELOAD_UNOWNED / STIM_RELOAD_PROBE_FAILED
+  with a Debug configuration or variant first.`,
+    },
+    STIM_RELOAD_STOPPED: {
+      summary: 'the recorded app is gone, its device is not live and owned, or the process could not be proven',
+      aliases: ['STIM_RELOAD_UNOWNED', 'STIM_RELOAD_PROBE_FAILED'],
+      body: () => `STIM_RELOAD_STOPPED / STIM_RELOAD_UNOWNED / STIM_RELOAD_PROBE_FAILED
   The recorded app is gone, its exact device is not live and owned by this
   workspace, or simctl/adb could not prove the process exists. No launch or
   device lifecycle action is taken; follow the printed platform-command or
-  process-probe remedy.
-
-STIM_RELOAD_FAILED
+  process-probe remedy.`,
+    },
+    STIM_RELOAD_FAILED: {
+      summary: 'the deep link, broadcast, or Metro websocket reload failed; press Reload yourself',
+      body: () => `STIM_RELOAD_FAILED
   The exact deep link, Android reload broadcast, or targeted Metro websocket
   failed. If bare iOS has not connected or Metro cannot identify one iOS peer,
   the remedy tells the agent to continue in its existing automation session on
   this workspace's exact simulator and press the Reload control. Stim does not
-  take over automation sessions.
-
-STIM_NO_METRO
-  Reload requires the recorded launch's port to be this workspace's live
-  Metro. It refuses a missing, changed, unresponsive, or foreign port.
-
---- DEV-SERVER CODES (\`stim start\`) ---
-
-STIM_WORKTREE_REMOVAL_IN_PROGRESS
+  take over automation sessions.`,
+    },
+    STIM_WORKTREE_REMOVAL_IN_PROGRESS: {
+      summary: 'a managed remote start found worktree remove holding the lock; wait, then rerun',
+      separator: '--- DEV-SERVER CODES (`stim start`) ---',
+      body: () => `STIM_WORKTREE_REMOVAL_IN_PROGRESS
   A managed remote start found that \`stim worktree remove\` owns the
   worktree lock. The start did not register the project or create a tunnel.
-  Wait for removal to finish, then run \`stim start --remote\` again.
-
-STIM_REMOTE_START_REQUIRED
+  Wait for removal to finish, then run \`stim start --remote\` again.`,
+    },
+    STIM_REMOTE_START_REQUIRED: {
+      summary: 'a running server cannot gain a remote tunnel; stop, then start --remote, or metro.publicUrl',
+      body: () => `STIM_REMOTE_START_REQUIRED
   A healthy bare or Expo server was started without its required remote
   tunnel. A running server cannot gain that option. For a Stim supervisor,
   run \`stim stop\`, then \`stim start --remote\`. For an external server,
-  configure metro.publicUrl or let Stim supervise the server.
-
-STIM_BARE_DEPS / STIM_BARE_LOAD / STIM_BARE_API  (bare RN)
+  configure metro.publicUrl or let Stim supervise the server.`,
+    },
+    STIM_BARE_DEPS: {
+      summary: "the supervisor cannot host Metro from the project's node_modules; the @stim-cli/metro capture note",
+      aliases: ['STIM_BARE_LOAD', 'STIM_BARE_API'],
+      body: () => `STIM_BARE_DEPS / STIM_BARE_LOAD / STIM_BARE_API  (bare RN)
   The supervisor hosts Metro out of the PROJECT's node_modules, so metro,
   @react-native/dev-middleware and @react-native-community/cli-server-api must
   be installed there and must match the project's React Native. DEPS = not
   resolvable (install them), LOAD = installed but threw while loading,
   API = loaded but is not the API Stim expects (mismatched versions).
 
-STIM_EXPO_BIN  (Expo)
-  node_modules/.bin/expo does not exist. Install the project's dependencies.
-
-STIM_METRO_TIMEOUT
+"@stim-cli/metro is not installed ... so bundler and client logs will not be
+captured"  (in metro.ndjson, bare RN)
+  The dev server is serving; only capture is missing, so \`logs\` would report
+  a quiet timeline for a broken build. Install \`@stim-cli/metro\` as a
+  devDependency of the project.`,
+    },
+    STIM_EXPO_BIN: {
+      summary: 'node_modules/.bin/expo is missing; install dependencies',
+      body: () => `STIM_EXPO_BIN  (Expo)
+  node_modules/.bin/expo does not exist. Install the project's dependencies.`,
+    },
+    STIM_METRO_TIMEOUT: {
+      summary: 'the supervisor is alive but Metro or the tunnel was not ready within the wait; --wait 180',
+      body: () => `STIM_METRO_TIMEOUT
   "The dev server did not answer on port <n> within <s>s."
   The supervisor is alive, but Metro or its requested Expo tunnel is not ready.
   \`start\` has already
   printed the last lines of the global workspace logs/supervisor.log above this -- read
   them. A cold Metro on a large graph can genuinely need more than the default
-  60s: re-run with \`--wait 180\`. Otherwise \`stim stop\`, then \`start\`.
-
-STIM_SUPERVISOR_EXITED
+  60s: re-run with \`--wait 180\`. Otherwise \`stim stop\`, then \`start\`.`,
+    },
+    STIM_SUPERVISOR_EXITED: {
+      summary: 'the dev server failed outright; the quoted supervisor.log tail is the real error',
+      body: () => `STIM_SUPERVISOR_EXITED
   "The supervisor exited (<code|signal>) before the dev server came up"
   The dev server failed outright, and the quoted evidence is the real error:
   the supervisor.log tail if it wrote one, plus this attempt's error records
   from the timeline (an expo child's config error -- a PluginError, a bad app
   config -- lands THERE, not in supervisor.log). \`stim logs --errors\` has
-  the full records. Fix that and run \`start\` again; nothing is left running.
-
-STIM_BAD_ARG / STIM_NO_PROJECT
+  the full records. Fix that and run \`start\` again; nothing is left running.`,
+    },
+    STIM_BAD_ARG: {
+      summary: 'an argument, setting, directory, flavor, or device name refused before anything starts',
+      aliases: ['STIM_NO_PROJECT'],
+      body: () => `STIM_BAD_ARG / STIM_NO_PROJECT
   The command refused before doing anything: an unusable --wait value, a known
   setting with the wrong type ("Invalid <key> setting <value>. Expected <shape>."
   -- \`guide settings\` names the type each key takes), an invalid
@@ -583,17 +707,12 @@ STIM_BAD_ARG / STIM_NO_PROJECT
   device work, so nothing was started. The one listing they need
   (\`simctl list runtimes\`, the SDK's system-images directory) runs only when
   a name was actually given, and a listing that fails is reported as
-  STIM_NO_DEVICE naming the tool, never as a crash.
-
-"@stim-cli/metro is not installed ... so bundler and client logs will not be
-captured"  (in metro.ndjson, bare RN)
-  The dev server is serving; only capture is missing, so \`logs\` would report
-  a quiet timeline for a broken build. Install \`@stim-cli/metro\` as a
-  devDependency of the project.
-
---- COORDINATION CODES (any command that shares a resource) ---
-
-STIM_LOCK_REFUSED
+  STIM_NO_DEVICE naming the tool, never as a crash.`,
+    },
+    STIM_LOCK_REFUSED: {
+      summary: 'a directory lock is held by a removal, which is never waited out',
+      separator: '--- COORDINATION CODES (any command that shares a resource) ---',
+      body: () => `STIM_LOCK_REFUSED
   A directory lock that serialises two commands over the same thing -- this
   workspace's managed tunnel, its managed remote worktree, the machine's EAS
   project ledger -- is held by a REMOVAL, and a removal is never waited out:
@@ -601,20 +720,29 @@ STIM_LOCK_REFUSED
   The message names the lock and the purpose holding it (\`worktree removal\`,
   \`workspace removal\` -- both are \`stim worktree remove\`). Let it finish,
   then run the command again. \`start --remote\` reports this same case as
-  STIM_WORKTREE_REMOVAL_IN_PROGRESS instead.
-
-STIM_LOCK_TIMEOUT
+  STIM_WORKTREE_REMOVAL_IN_PROGRESS instead.`,
+    },
+    STIM_LOCK_TIMEOUT: {
+      summary: 'a lock held by a live command past the wait; the config-lock timeout',
+      body: () => `STIM_LOCK_TIMEOUT
   The same locks, held by an ordinary command that is still running, for
   longer than the wait -- 60s by default, 4 minutes for the remote-session and
   EAS project locks. A lock whose owner died is taken over automatically (pid
   liveness is checked every poll), so this means another Stim command really
   is working on this workspace: wait for it and retry. If nothing is running,
   the message names the lock directory and removing it is safe. This is not
-  the config lock, which reports the message at the end of this topic.
+  the config lock, which reports the message below.
 
---- TEARDOWN AND WORKSPACE REFUSALS ---
-
-"metro       refusing to kill port <n>: ... runs from <dir>, outside
+"Timed out waiting for the Stim config lock at <path>"
+  Every config write is serialised so parallel commands cannot lose each
+  other's records. A lock older than 10s is taken over automatically, so this
+  means a command really is holding it. If none is running, remove that
+  directory.`,
+    },
+    teardown: {
+      summary: 'stop refusing to kill a port or signal a supervisor, and a failed device teardown',
+      separator: '--- TEARDOWN AND WORKSPACE REFUSALS ---',
+      body: () => `"metro       refusing to kill port <n>: ... runs from <dir>, outside
 <project>"  (stop)
   Stim will not kill a process it cannot attribute to you.
   \`stim stop --force\` kills it without proving whose it is -- ask the user
@@ -633,13 +761,14 @@ STIM_LOCK_TIMEOUT
   reserved. Re-run \`stop\`, or signal it yourself: kill -9 -<n> (note the
   minus -- it is a process group).
 
-"this project's sim is X, but --device-type asked for Y"
-  The project already owns a simulator of a different model, and Stim will
-  not silently boot a different one. Reap it (\`worktree remove\`, or
-  \`gc --delete\`) and run \`stim ios\` again to create the requested model.
-  That loses the old sim's app state.
-
-"Refusing to remove <path>: uncommitted changes / untracked files / commits
+"Could not tear down the <platform> device: ..."
+  The delete failed, so the ASSIGNMENT was kept and the command exited 1. That
+  is deliberate: dropping the record would leave a device on the machine that
+  nothing references and nothing will ever reap. Fix the cause and re-run.`,
+    },
+    remove: {
+      summary: 'worktree remove refused a dirty tree: what it restores itself and what --force discards',
+      body: () => `"Refusing to remove <path>: uncommitted changes / untracked files / commits
 not on any remote"  (worktree remove)
   A native build rewrites tracked files, and Stim now RESTORES the one class
   it can prove is not work: when the only dirt left is \`pod install\` churn
@@ -658,9 +787,11 @@ not on any remote"  (worktree remove)
   produces the same refusal, with the same treatment: restore the paths the
   refusal actually named.
   Use --force only when you genuinely intend to discard work; it deletes
-  uncommitted and untracked files permanently.
-
-STIM_WORKTREE_BRANCH_EXISTS  (worktree create)
+  uncommitted and untracked files permanently.`,
+    },
+    STIM_WORKTREE_BRANCH_EXISTS: {
+      summary: '--base with an existing worktree-<name> branch; which branches create keeps or rolls back',
+      body: () => `STIM_WORKTREE_BRANCH_EXISTS  (worktree create)
   "Refusing to create <name>: the branch worktree-<name> already exists at
   <sha>, but --base <ref> resolves to <sha>" -- or, when the two agree,
   "which is where --base <ref> resolves right now".
@@ -682,20 +813,11 @@ STIM_WORKTREE_BRANCH_EXISTS  (worktree create)
   KEPT: git answers "a branch named ... already exists", and that answer is
   proof this create did not make it. A branch that no longer matches the base
   sha captured before the add, or that is checked out anywhere, is KEPT too.
-  Every keep names \`git branch -D\`.
-
-"failed to scan dependencies for source ..." on pods you did not touch  (ios)
-  The compilation cache holds a damaged object. Xcode reports it per source
-  file, so it names whichever targets reach the object first -- often pods such
-  as sqlite3, nanopb or libwebp -- and the list changes between runs. The
-  transcript carries the cause:
-    error: CAS-based dependency scan failed: not a IncludeTreeRoot node kind
-  A cache write that a full disk or a killed build cut short leaves such an
-  object, and upgrading the CLI does not clear it. Empty that one cache with
-  \`gc --delete --cache "compilation cache"\`, then build again. The next
-  build is a cold one.
-
-"carry       carried <dir>/Pods does not match the <dir>/Podfile.lock on
+  Every keep names \`git branch -D\`.`,
+    },
+    carry: {
+      summary: 'every carry line worktree create prints, and what each means',
+      body: () => `"carry       carried <dir>/Pods does not match the <dir>/Podfile.lock on
 disk here"  (worktree create)
   \`ios/Pods\` is gitignored, so --carry-ignored clones it; \`ios/Podfile.lock\`
   is tracked. The check compares the cloned
@@ -742,16 +864,12 @@ uncommitted here too; commit deliberately"  (worktree create --carry-ignored)
   The worktree's --base diverges from the source HEAD, so that patch does not
   apply and NOTHING was changed here. Until those changes are reconciled, this
   worktree fingerprints differently from the source and misses the cache
-  entries the source fills.
-
-"Could not tear down the <platform> device: ..."
-  The delete failed, so the ASSIGNMENT was kept and the command exited 1. That
-  is deliberate: dropping the record would leave a device on the machine that
-  nothing references and nothing will ever reap. Fix the cause and re-run.
-
---- ENVIRONMENT ---
-
-"npm error code E401 / E404" while \`npx\` resolves the stim-cli package
+  entries the source fills.`,
+    },
+    environment: {
+      summary: 'npx registry E401/E404, the Node floor, no free Metro port, the reservation race',
+      separator: '--- ENVIRONMENT ---',
+      body: () => `"npm error code E401 / E404" while \`npx\` resolves the stim-cli package
   The repo probably pins a private registry in \`.npmrc\`, so \`npx\` looked for
   the package there instead of on npm. Use the public registry for this command:
 
@@ -771,9 +889,11 @@ uncommitted here too; commit deliberately"  (worktree create --carry-ignored)
 
 "Could not reserve a Metro port after 5 attempts"
   Several commands raced for the same ports and each one lost. Nothing is
-  wrong; retry.
-
-RUNNING UNDER A SANDBOX
+  wrong; retry.`,
+    },
+    sandbox: {
+      summary: 'running under a sandboxing harness: EPERM under STIM_HOME, CoreSimulatorService, adb',
+      body: () => `RUNNING UNDER A SANDBOX
 
   An agent harness that sandboxes shell commands typically permits writes
   inside the project and blocks the rest. Three things Stim needs sit outside
@@ -817,18 +937,18 @@ RUNNING UNDER A SANDBOX
   workspace-write still refuses STIM_HOME.
 
   A git credential helper is often blocked too. It prints \`failed to store\`
-  on a fetch that otherwise succeeded, and is safe to ignore.
-
-STIM_CONFIG_CORRUPT  ("Stim config at <path> is not valid JSON")
+  on a fetch that otherwise succeeded, and is safe to ignore.`,
+    },
+    STIM_CONFIG_CORRUPT: {
+      summary: '~/.stim/config.json is not valid JSON and Stim never resets it',
+      body: () => `STIM_CONFIG_CORRUPT  ("Stim config at <path> is not valid JSON")
   Any command can raise it: every command reads ~/.stim/config.json first.
   The file holding every owned-device record will not parse, and Stim never
   resets it for you -- a silent reset would orphan every simulator it names.
   Repair the file, or move it aside (\`mv <path> <path>.broken\`) and accept
-  that the devices it recorded become orphans you delete by hand.
-
-"Timed out waiting for the Stim config lock at <path>"
-  Every config write is serialised so parallel commands cannot lose each
-  other's records. A lock older than 10s is taken over automatically, so this
-  means a command really is holding it. If none is running, remove that
-  directory.`,
+  that the devices it recorded become orphans you delete by hand.`,
+    },
+  },
 };
+
+export default errors;

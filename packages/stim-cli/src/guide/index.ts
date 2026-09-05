@@ -7,10 +7,7 @@ import lifecycle from './lifecycle.ts';
 import cleanup from './cleanup.ts';
 import settings from './settings.ts';
 
-interface GuideTopic {
-  summary: string;
-  body: () => string;
-}
+import type { GuideTopic } from './types.ts';
 
 const TOPICS: Record<string, GuideTopic> = {
   agent,

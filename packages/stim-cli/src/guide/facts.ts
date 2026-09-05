@@ -1,15 +1,19 @@
-export default {
+import type { GuideTopic } from './types.ts';
+
+const facts: GuideTopic = {
   summary:
     'The --json payloads: `start`, `ios`, `android`, `reload`, `stop`, `status`, `doctor`, `device lock`/`unlock`, and the error contract',
-  body: () => `FACTS CONTRACT
+  preamble: () => `FACTS CONTRACT
 
 \`start\`, \`ios\`, \`android\`, \`reload\`, \`stop\`, \`status\`, \`stats\`, \`doctor\`,
 and \`device lock\`/\`device unlock\` each print exactly ONE line of JSON on
 stdout for \`--json\`. Every other line goes to stderr, so it is always safe
 to pipe. \`logs --json\` is the one exception: it is NDJSON, one record per
-line by design (see \`guide logs\`), not this single-payload contract.
-
-  stim start --json
+line by design (see \`guide logs\`), not this single-payload contract.`,
+  sections: {
+    payloads: {
+      summary: 'every field of the start, ios, android and reload payloads, the error contract, the device rules',
+      body: () => `  stim start --json
 
   port            the Metro port RESERVED for this workspace
   supervisorPid   the detached supervisor's pid, or NULL when a dev server was
@@ -82,8 +86,9 @@ line by design (see \`guide logs\`), not this single-payload contract.
                   statistics. This field is separate from cacheHit
   waitedForBuild  { pid, ms } when ANOTHER workspace was already compiling this
                   exact fingerprint and this run waited for its artifact instead
-                  of compiling a second copy (see \`guide lifecycle\`, "one
-                  compile per fingerprint"); null when nothing was waited for.
+                  of compiling a second copy
+                  (see \`guide lifecycle concurrency\`); null when nothing was
+                  waited for.
                   cacheHit is "local" either way -- the artifact did come from
                   the local cache -- so this is what separates "it was already
                   there" (free) from "it was there twelve minutes later" (still
@@ -92,7 +97,8 @@ line by design (see \`guide logs\`), not this single-payload contract.
   bundleId        the iOS bundle id that was launched
   installSkipped  true when the artifact was ALREADY on the device byte for
                   byte, so nothing was installed and the run went straight to
-                  launch (see \`guide lifecycle\`). false means an install ran.
+                  launch (see \`guide lifecycle builds\`). false means an
+                  install ran.
                   Always false on \`--device\`: proving a phone already holds
                   the bundle would cost more than installing it
   launched        true, "bundling", or "unverified". THE THREE ARE DIFFERENT
@@ -124,96 +130,7 @@ line by design (see \`guide logs\`), not this single-payload contract.
                                  finishing
                     "unverified" nothing was observed at all: usually a
                                  dev-client server picker awaiting a tap
-                  EVERY DEV-CLIENT DEEP LINK CARRIES disableOnboarding=1
-                  INSIDE ITS PROJECT URL
-                  (\`...?url=http%3A%2F%2Fhost%3Aport%2F%3FdisableOnboarding%3D1&disableFab=1\`),
-                  and expo-dev-launcher finishes its own dev-menu ONBOARDING
-                  when it reads it. That is all the flag does: it sets
-                  EXDevMenuIsOnboardingFinished. ON iOS it has to sit on the
-                  PROJECT url -- the value of the \`url\` parameter -- because
-                  that is the URL the launcher hands to the check; on the
-                  outer deep link it does nothing there. Android reads it on
-                  either.
-                  ON A SIMULATOR, before a local dev-client openurl, Stim
-                  preapproves CoreSimulatorBridge for exactly the installed
-                  bundle id and discovered scheme on its owned simulator. That
-                  suppresses iOS's first-launch confirmation;
-                  unrelated schemes remain unapproved. It also writes
-                  EXDevMenuShowsAtLaunch=false and
-                  EXDevMenuShowFloatingActionButton=false, which the flag does
-                  NOT cover, and those together are what keep the menu and its
-                  button off a simulator entirely, so device automation opens
-                  on the app. The
-                  unverified warning therefore leads with the picker, then
-                  prints the openurl
-                  retry. ON LOCAL ANDROID the same deep link also carries the
-                  \`EXDevMenuDisableAutoLaunch\` boolean intent extra, which
-                  the launcher reads to set EXDevMenuShowsAtLaunch=false and
-                  EXDevMenuIsOnboardingFinished=true. It stops the menu
-                  opening automatically, but does NOT set expo-dev-menu's
-                  showFab preference, so its floating Tools button can remain.
-                  Remote Android opens only the URL, so that intent-extra
-                  suppression does not apply there.
-                  Every Stim deep link also carries an outer \`disableFab=1\`
-                  query parameter. Versions with expo/expo#49651 use that as a
-                  session-only override; earlier versions ignore it. Stim does
-                  not rewrite expo-dev-menu's private SharedPreferences XML:
-                  that internal file is not a supported API, and changing it
-                  would persist over the user's own Tools-button setting. The
-                  list leads with the supported launch command (\`am start -a
-                  android.intent.action.VIEW -d '<devClientUrl>'
-                  --ez EXDevMenuDisableAutoLaunch true\`).
-                  ON A PHONE NONE OF THAT PREAPPROVAL APPLIES. The
-                  preapproval and that write both go
-                  through \`simctl spawn defaults write\`, and devicectl has
-                  no defaults command; the one file route,
-                  \`devicectl device copy to --domain-type appDataContainer\`
-                  onto Library/Preferences/<bundleId>.plist with the app
-                  terminated, copies successfully and then loses the seeded
-                  keys, because cfprefsd serves its cached domain and rewrites
-                  the file. THE FLAG ALONE DOES NOT COVER A PHONE:
-                  EXDevMenuShowsAtLaunch defaults to TRUE on iOS
-                  (DevMenuPreferences.setup), and DevMenuManager arms its
-                  auto-launch observer when \`showsAtLaunch ||
-                  shouldShowOnboarding()\`, so finishing onboarding clears
-                  only the second half. THE LAUNCH ARGUMENTS COVER THE REST.
-                  The device launch ends in
-                  \`<bundleId> -- -EXDevMenuShowsAtLaunch 0
-                  -EXDevMenuShowFloatingActionButton 0\`: devicectl passes
-                  everything after \`--\` to the app, and NSUserDefaults reads
-                  the argument domain AHEAD of the persisted one, so the menu
-                  and its floating button are off for that launch and nothing
-                  is written to the phone. So a fresh install comes up on the
-                  app, not on the menu, and with no floating button.
-                  THE FAB IS REAL ON A PHONE, and a screenshot is the only
-                  way to see it: about four seconds after launch a blue gear
-                  labelled Tools appears top-right over the app, the label
-                  fades after roughly ten seconds, and the gear stays as a
-                  translucent grey circle for the life of the app. It carries
-                  no accessibility label after the fade, so
-                  \`agent-device snapshot -i\` stops listing it. Measured
-                  with the argument on: the corner is clean at 4s and at 12s.
-                  Stim's own launch is the only one that
-                  carries these: an app started ANOTHER way -- a home-screen
-                  tap, a relaunch without the arguments -- still gets the
-                  stored value, and on a fresh install that is the menu
-                  (runtime version, Close, Reload, Go home) and the button.
-                  \`agent-device press 'label="Close"'\` dismisses it -- or
-                  \`snapshot -i\` and the ref. The onboarding key the flag
-                  writes and the Local Network grant both survive an
-                  UPGRADE install. Android's intent extra prevents the menu's
-                  automatic launch; versions with expo/expo#49651 also honor
-                  the session-only FAB flag in Stim's deep link.
-                  The phone's unverified remedy is also ROUTED, not a fixed
-                  list. When this launch's device records carry the Local
-                  Network path reason, the remedy leads with that evidence and
-                  with \`agent-device alert get\`, \`alert accept\`, then
-                  \`snapshot -i\` and \`press 'label="Reload"'\` -- the grant
-                  alone does not reload the dev client. Otherwise the network
-                  list stays. Routing changes no record's level, so nothing new
-                  reaches \`logs --errors\`. The OTHER first-launch tap,
-                  developer trust, has no API at all and is always the user's.
-                  \`guide errors\` has the signature and the full commands.
+                  See \`guide facts devmenu\` for the dev menu and its button.
   metroPort       the port the app was wired to; NULL on a non-Debug
                   configuration, whose JS is embedded and which is launched
                   with no dev server at all. There, \`launched\` is verified
@@ -302,7 +219,124 @@ line by design (see \`guide logs\`), not this single-payload contract.
   strategy        "deep-link" for Expo/dev-client, "android-broadcast" for
                   bare Android, or "metro-websocket" for an identifiable bare iOS peer
 
-  stim stats --json
+ON FAILURE
+  \`start\`, \`ios\` and \`android\` all print the error contract instead,
+  still one line on stdout, and exit 1:
+
+    { "code": "STIM_NO_METRO", "message": "...", "remedy": "..." }
+
+  Branch on \`code\`, never on the message text. \`guide errors\` enumerates
+  every code.
+
+RULES
+  - Never hardcode or guess a udid/serial/port. Read them from the payload.
+  - Pass them EXPLICITLY to every device tool you drive yourself
+    (agent-device, xcrun simctl, adb -s, idb).
+  - Never assume "booted" is your simulator. Other agents have theirs booted
+    too.
+  - Every device Stim creates or boots is one Stim created, named
+    stim-<label> (<model> <runtime>) on iOS. The exceptions are
+    \`android --device\` and
+    \`ios --device\`, which use a connected physical device Stim never
+    creates, boots, or deletes.`,
+    },
+    devmenu: {
+      summary: 'why the Expo dev menu or Tools button is or is not over the app, per platform and device kind',
+      body: () => `  EVERY DEV-CLIENT DEEP LINK CARRIES disableOnboarding=1
+  INSIDE ITS PROJECT URL
+  (\`...?url=http%3A%2F%2Fhost%3Aport%2F%3FdisableOnboarding%3D1&disableFab=1\`),
+  and expo-dev-launcher finishes its own dev-menu ONBOARDING
+  when it reads it. That is all the flag does: it sets
+  EXDevMenuIsOnboardingFinished. ON iOS it has to sit on the
+  PROJECT url -- the value of the \`url\` parameter -- because
+  that is the URL the launcher hands to the check; on the
+  outer deep link it does nothing there. Android reads it on
+  either.
+  ON A SIMULATOR, before a local dev-client openurl, Stim
+  preapproves CoreSimulatorBridge for exactly the installed
+  bundle id and discovered scheme on its owned simulator. That
+  suppresses iOS's first-launch confirmation;
+  unrelated schemes remain unapproved. It also writes
+  EXDevMenuShowsAtLaunch=false and
+  EXDevMenuShowFloatingActionButton=false, which the flag does
+  NOT cover, and those together are what keep the menu and its
+  button off a simulator entirely, so device automation opens
+  on the app. The
+  unverified warning therefore leads with the picker, then
+  prints the openurl
+  retry. ON LOCAL ANDROID the same deep link also carries the
+  \`EXDevMenuDisableAutoLaunch\` boolean intent extra, which
+  the launcher reads to set EXDevMenuShowsAtLaunch=false and
+  EXDevMenuIsOnboardingFinished=true. It stops the menu
+  opening automatically, but does NOT set expo-dev-menu's
+  showFab preference, so its floating Tools button can remain.
+  Remote Android opens only the URL, so that intent-extra
+  suppression does not apply there.
+  Every Stim deep link also carries an outer \`disableFab=1\`
+  query parameter. Versions with expo/expo#49651 use that as a
+  session-only override; earlier versions ignore it. Stim does
+  not rewrite expo-dev-menu's private SharedPreferences XML:
+  that internal file is not a supported API, and changing it
+  would persist over the user's own Tools-button setting. The
+  list leads with the supported launch command (\`am start -a
+  android.intent.action.VIEW -d '<devClientUrl>'
+  --ez EXDevMenuDisableAutoLaunch true\`).
+  ON A PHONE NONE OF THAT PREAPPROVAL APPLIES. The
+  preapproval and that write both go
+  through \`simctl spawn defaults write\`, and devicectl has
+  no defaults command; the one file route,
+  \`devicectl device copy to --domain-type appDataContainer\`
+  onto Library/Preferences/<bundleId>.plist with the app
+  terminated, copies successfully and then loses the seeded
+  keys, because cfprefsd serves its cached domain and rewrites
+  the file. THE FLAG ALONE DOES NOT COVER A PHONE:
+  EXDevMenuShowsAtLaunch defaults to TRUE on iOS
+  (DevMenuPreferences.setup), and DevMenuManager arms its
+  auto-launch observer when \`showsAtLaunch ||
+  shouldShowOnboarding()\`, so finishing onboarding clears
+  only the second half. THE LAUNCH ARGUMENTS COVER THE REST.
+  The device launch ends in
+  \`<bundleId> -- -EXDevMenuShowsAtLaunch 0
+  -EXDevMenuShowFloatingActionButton 0\`: devicectl passes
+  everything after \`--\` to the app, and NSUserDefaults reads
+  the argument domain AHEAD of the persisted one, so the menu
+  and its floating button are off for that launch and nothing
+  is written to the phone. So a fresh install comes up on the
+  app, not on the menu, and with no floating button.
+  THE FAB IS REAL ON A PHONE, and a screenshot is the only
+  way to see it: about four seconds after launch a blue gear
+  labelled Tools appears top-right over the app, the label
+  fades after roughly ten seconds, and the gear stays as a
+  translucent grey circle for the life of the app. It carries
+  no accessibility label after the fade, so
+  \`agent-device snapshot -i\` stops listing it. Measured
+  with the argument on: the corner is clean at 4s and at 12s.
+  Stim's own launch is the only one that
+  carries these: an app started ANOTHER way -- a home-screen
+  tap, a relaunch without the arguments -- still gets the
+  stored value, and on a fresh install that is the menu
+  (runtime version, Close, Reload, Go home) and the button.
+  \`agent-device press 'label="Close"'\` dismisses it -- or
+  \`snapshot -i\` and the ref. The onboarding key the flag
+  writes and the Local Network grant both survive an
+  UPGRADE install. Android's intent extra prevents the menu's
+  automatic launch; versions with expo/expo#49651 also honor
+  the session-only FAB flag in Stim's deep link.
+  The phone's unverified remedy is also ROUTED, not a fixed
+  list. When this launch's device records carry the Local
+  Network path reason, the remedy leads with that evidence and
+  with \`agent-device alert get\`, \`alert accept\`, then
+  \`snapshot -i\` and \`press 'label="Reload"'\` -- the grant
+  alone does not reload the dev client. Otherwise the network
+  list stays. Routing changes no record's level, so nothing new
+  reaches \`logs --errors\`. The OTHER first-launch tap,
+  developer trust, has no API at all and is always the user's.
+  \`guide errors unverified\` has the signature and the
+  full commands.`,
+    },
+    stats: {
+      summary: 'the stats payload, what counts as a run, hit, miss and failed, timeSavedMs, the heartbeat estimate',
+      body: () => `  stim stats --json
 
   { "version": 1,
     "project": { "key": "<path>", "ios": <bucket|null>,
@@ -332,7 +366,7 @@ HOW A RUN IS COUNTED (\`stats\`)
   wait, and with no cold run recorded for this project and platform there is
   nothing to compare against, so it credits nothing either. The saved figure
   is therefore an ESTIMATE and is printed as one. Nothing per run is stored;
-  the file is $STIM_HOME/stats.json (see \`guide lifecycle\`).
+  the file is $STIM_HOME/stats.json (see \`guide lifecycle builds\`).
 
   A run also keeps the duration of its own two long phases in that bucket:
   the build phase of a miss that compiled (lastColdBuildMs) and the last
@@ -350,26 +384,9 @@ HOW A RUN IS COUNTED (\`stats\`)
   a hang. A project with no record yet gets \`(1m00s)\`, the elapsed alone,
   and a warm run has no long phase to size. That read takes no lock and
   ignores what it cannot read, so nothing about statistics can change a
-  run's outcome.
-
-ON FAILURE
-  \`start\`, \`ios\` and \`android\` all print the error contract instead,
-  still one line on stdout, and exit 1:
-
-    { "code": "STIM_NO_METRO", "message": "...", "remedy": "..." }
-
-  Branch on \`code\`, never on the message text. \`guide errors\` enumerates
-  every code.
-
-RULES
-  - Never hardcode or guess a udid/serial/port. Read them from the payload.
-  - Pass them EXPLICITLY to every device tool you drive yourself
-    (agent-device, xcrun simctl, adb -s, idb).
-  - Never assume "booted" is your simulator. Other agents have theirs booted
-    too.
-  - Every device Stim creates or boots is one Stim created, named
-    stim-<label> (<model> <runtime>) on iOS. The exceptions are
-    \`android --device\` and
-    \`ios --device\`, which use a connected physical device Stim never
-    creates, boots, or deletes.`,
+  run's outcome.`,
+    },
+  },
 };
+
+export default facts;

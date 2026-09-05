@@ -610,7 +610,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     const code = (error as Error & { code?: string })?.code || 'STIM_WORKSPACE_STATE';
     const message = `Could not prepare this workspace's Stim state: ${(error as Error)?.message || error}`;
     const remedy =
-      'Check that STIM_HOME is writable and has free space. An EPERM on a directory you can write is a sandbox: allow writes to STIM_HOME, or run Stim with the sandbox disabled (`stim guide errors`).';
+      'Check that STIM_HOME is writable and has free space. An EPERM on a directory you can write is a sandbox: allow writes to STIM_HOME, or run Stim with the sandbox disabled (`stim guide errors sandbox`).';
     out(phaseLine('error', chalk.red(`${code}: ${message}`)));
     out(phaseLine('remedy', remedy));
     if (json) emit(JSON.stringify({ code, message, remedy }));

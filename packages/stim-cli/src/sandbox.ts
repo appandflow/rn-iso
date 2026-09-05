@@ -239,7 +239,7 @@ export function sandboxFinding(
       level: 'cost',
       title,
       detail: `${symptoms} Codex has one sandbox setting and no per-path allowance, so there is nothing to add.`,
-      fix: 'Run Stim with the sandbox off, or start Codex with `codex -s danger-full-access`, which turns the whole sandbox off rather than allowing these three. See `stim guide errors`.',
+      fix: 'Run Stim with the sandbox off, or start Codex with `codex -s danger-full-access`, which turns the whole sandbox off rather than allowing these three. See `stim guide errors sandbox`.',
     };
   }
 
@@ -257,6 +257,6 @@ export function sandboxFinding(
     level: 'cost',
     title,
     detail: `${symptoms} Missing: ${missing.join(', ')}.`,
-    fix: `Run \`stim doctor --fix\` to add them to ${paths[0]}, or add them by hand. See \`stim guide errors\`.`,
+    fix: `Run \`stim doctor --fix\` to add them to ${paths[0]}, or add them by hand. See \`stim guide errors sandbox\`.`,
   };
 }

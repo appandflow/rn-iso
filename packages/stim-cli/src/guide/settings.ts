@@ -137,7 +137,7 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         (\`release\`, \`productionRelease\`) is a release
                         build: embedded JS, no Metro, cache keyed on the
                         variant, and an APK re-pack on cache hits. See
-                        \`guide lifecycle\`.
+                        \`guide lifecycle release\`.
   android.keystore      the keystore a RE-PACKED release APK is signed with,
                         absolute or relative to the project root. Unset means
                         android/app/debug.keystore, which every RN and Expo
@@ -237,7 +237,8 @@ or via the environment, which overrides the file:
   STIM_MAX_BUILDS=2 STIM_MAX_DEVICES=3 stim ios
 
 Unset, 0, or any non-positive value means NO enforcement -- the default, where
-Stim limits nothing. See \`guide lifecycle\` for what each cap does.
+Stim limits nothing. See \`guide lifecycle concurrency\` for what each cap
+does.
 
 THE SIMULATOR POOL BOUND IS MACHINE-LEVEL TOO
 \`pool.iosParkedMax\` caps how many parked simulators \`worktree remove\` may
