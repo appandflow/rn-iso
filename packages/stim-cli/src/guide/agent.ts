@@ -35,27 +35,38 @@ upstream gap.
   stim ios                             # or: stim android
   stim logs --errors
 
-  # JavaScript and TypeScript edits use Fast Refresh. If an error screen stays
-  # after the edit, reload the running app without rebuilding it.
-  stim reload                            # add ios or android when both are live
-  stim logs --since 30s --level error
-
   stim stop
   stim worktree remove
 
 RULES DURING THE LOOP
 
+- Run Stim from the app directory: the one whose package.json depends on
+  react-native or expo. Anywhere else -- a monorepo root, a tools package --
+  start, ios and android refuse with STIM_NO_PROJECT naming that package.json,
+  and doctor reports it as a finding.
 - Run start before a debug ios or android build. If it returns STIM_NO_METRO,
   run stim start and retry.
 - Run ios or android again after a native input changes. A JavaScript-only
   change does not need one.
+- If fingerprinting fails after native inputs change during the run, Stim
+  installs the build without caching it. A null fingerprint or cacheKey is
+  unavailable cache information, not an install failure.
+- Android Debug builds target the owned emulator system-image ABI or the
+  physical device's primary ABI. Unknown targets and Release builds stay
+  universal.
+- Reload is not part of the normal workflow. Use stim reload on an owned local
+  simulator or emulator after a failed first bundle load, when an error screen
+  remains after the fix, or when you explicitly need an app restart. On a
+  physical device, follow the printed agent-device UI automation remedy.
 - If launch reports an app error but also says the native process is alive,
-  the app did not crash. Fix JavaScript or TypeScript and use Fast Refresh; if
-  the error screen remains, use stim reload. Do not run ios or android again.
-  If launch says FATAL because the app process exited,
+  the app did not crash. Fix JavaScript or TypeScript and use Fast Refresh. If
+  the error screen remains, follow the printed reload remedy instead of
+  running ios or android again. If launch says FATAL because the app process exited,
   fix the crash and run the platform command again; Metro cannot restart it.
 - A cold native build can outlive a shell timeout. Run the same command again:
-  the second call joins the active build or returns its result.
+  the second call joins the active build or returns its result. If a builder
+  fails, one waiter takes over and the others keep waiting within the same
+  90-minute limit. Follow the remedy if STIM_BUILD_WAIT_TIMEOUT is returned.
 - ios and android install the app, launch it, and check readiness. Trust the
   exact device, app, Metro, and launch facts in the final summary. Use the full
   reported device ID. Never assume a simulator named booted belongs to this

@@ -155,12 +155,12 @@ FALLBACK NOTES THAT ARE NOT CODES (release cache hits)
 
 STIM_BUILD_WAIT_TIMEOUT
   This run was waiting for ANOTHER workspace's build of the same fingerprint
-  (see \`guide lifecycle\`), and after ~90 minutes that process was still alive
-  and had still produced nothing. A wait is normally bounded by the builder
-  being alive at all -- a crash or a kill frees it within a second -- so this
-  means a genuinely wedged xcodebuild/gradle, not a slow one. The message names
-  the pid and the lock directory: check the pid, and if it is not really
-  building, remove that directory and run the command again.
+  (see \`guide lifecycle\`), and no artifact arrived within ~90 minutes.
+  Replacement builders share that deadline, including time spent acquiring
+  the lock between waits. A live builder may be wedged, or successive builders
+  may have failed. The message names the current pid and lock directory:
+  check the pid, and if it is not really building, remove that directory and
+  run the command again.
 
 STIM_INSTALL_FAILED
   The artifact built or came from cache, but \`simctl install\` / \`adb install\` /
@@ -563,8 +563,11 @@ STIM_BAD_ARG / STIM_NO_PROJECT
   android.avdConfig key or fragment, a malformed ios.signingIdentity,
   ios.signingIdentitySha1 or ios.lanHost value, \`--device\` with an empty
   serial or UDID, \`--device\` together with \`--remote\`, a working directory
-  with no package.json above it, an android/app/build.gradle that
-  declares product flavors with
+  with no package.json above it, or one whose nearest package.json does not
+  parse or depends on neither react-native nor expo, so the directory is not
+  an app (the refusal names that package.json and says which of the two it
+  is; \`doctor\` reports the same directory as a finding), an
+  android/app/build.gradle that declares product flavors with
   no variant selected (the refusal names the debug variants), or a
   \`--device-type\`, \`--runtime\` or \`--system-image\` name that is BLANK or
   is not installed on this machine. For the unknown-name case the installed

@@ -52,9 +52,10 @@ line by design (see \`guide logs\`), not this single-payload contract.
                   beside it. Android also fingerprints after Gradle because
                   Gradle plugins can rewrite native inputs while they build;
                   its artifact is stored only under that post-build hash. A
-                  stable second fingerprint prints no shift line. If that
-                  fingerprint cannot be computed, the build is installed but
-                  not cached, and fingerprint and cacheKey are null
+                  stable second fingerprint prints no shift line. If the iOS
+                  fingerprint after prebuild or pod install, or the Android
+                  fingerprint after Gradle, cannot be computed, the build is
+                  installed but not cached, and fingerprint and cacheKey are null
   configuration   the Xcode configuration that was built ("Release" from
                   --configuration or the ios.configuration setting); null for
                   the default Debug
@@ -247,8 +248,9 @@ line by design (see \`guide logs\`), not this single-payload contract.
   fingerprint / cacheKey / cacheHit / cacheSkipped / waitedForBuild /
   appPath / installSkipped / launched
                   as above -- cacheKey keys on the VARIANT here
-                  (<fingerprint>-productionrelease-sim) the way the iOS one
-                  keys on the configuration
+                  (<fingerprint>-productionrelease-sim). A Debug artifact for
+                  a proven target ABI also ends in that ABI
+                  (<fingerprint>-debug-sim-arm64-v8a)
   variant         the gradle variant that was built ("productionDebug" from
                   --variant or the android.variant setting); null for the
                   default assembleDebug. A variant whose name ENDS IN Release

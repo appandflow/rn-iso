@@ -79,6 +79,9 @@ function mockExec({
     runQuiet() {
       throw new Error('device-remote must use runFile, not the shell');
     },
+    runFileQuiet() {
+      throw new Error('device-remote must use runFile, not runFileQuiet');
+    },
     spawn() {
       throw new Error('device-remote does not spawn');
     },

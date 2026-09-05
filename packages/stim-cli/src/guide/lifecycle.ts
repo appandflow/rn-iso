@@ -32,10 +32,6 @@ export default {
   stim logs --errors
 
   # 5. Edit the JS. Fast Refresh applies it; no Stim command is involved.
-  #    If a startup or error overlay stays, reload without rebuilding. The
-  #    platform is optional unless both owned apps are live. Then ask again.
-  stim reload          # or: stim reload ios / stim reload android
-  stim logs --since 30s --level error
 
   # 6. Pausing: supervisor halted, collectors reaped, owned device SHUT DOWN
   #    (never deleted), port freed. Coming back costs a boot, not a create.
@@ -52,7 +48,10 @@ and produces an app that cannot load a bundle.
 
 Repeat step 3 whenever a NATIVE input changes. A JS-only edit needs nothing --
 that is what Fast Refresh over the running dev server is for. \`stim reload\` is
-the explicit recovery path when Fast Refresh cannot clear the current screen.
+not part of the normal workflow. It is the explicit recovery path after a
+failed first bundle load, when Fast Refresh cannot clear the current screen,
+or when you explicitly need an app restart. Use \`stim reload ios\` or
+\`stim reload android\` to select a platform when both owned apps are live.
 It never builds, installs, boots, or cold-launches. It acts only on a live app
 on this workspace's owned local simulator or emulator, and refuses release
 builds, stopped or unowned devices, a missing or foreign Metro, and an
@@ -281,7 +280,9 @@ committing. The shared caches need no project-file edits:
            Podfile post_install block. Xcode 26+ only, and skipped entirely
            when the project configured ccache (the two defeat each other).
   android  gradlew carries --build-cache, so task outputs cross worktrees with
-           no org.gradle.caching=true in gradle.properties.
+           no org.gradle.caching=true in gradle.properties. Debug builds also
+           carry -PreactNativeArchitectures=<target ABI> when Stim can prove
+           the emulator or physical-device ABI; otherwise they stay universal.
   start    the dev server gets a shared Metro FileStore APPENDED to whatever
            the project configured -- in-process on a bare project, and through
            Expo's config override on SDK 54+. Expo SDK 53 and older use their
@@ -312,7 +313,9 @@ THE BUILD CACHE HAS THREE LEVELS
      remote cannot stall the loop, and a hit is copied into level one on the
      way past so the next workspace on this machine gets it for free. After a
      build, the result is stored locally AND handed to both providers, which
-     run independently.
+     run independently. An ABI-targeted Android Debug build skips this Expo
+     tier because its run-options contract cannot distinguish ABIs; levels one
+     and two remain ABI-keyed and active.
 
   Stim never configures a provider and never suggests changing one: a
   project without one is a perfectly ordinary local-only project (doctor does
@@ -343,6 +346,10 @@ THE BUILD CACHE HAS THREE LEVELS
   post-prebuild one, so re-resolving under the moved key installs it instead
   of compiling beside it. No second line means nothing was found there and the
   run compiles.
+
+  If the iOS fingerprint after prebuild or pod install is unavailable, Stim
+  installs the build but skips local storage and remote uploads. fingerprint
+  and cacheKey are null in the result and lastBuild; the old key is not reused.
 
 WHAT MAKES THE CACHE ACTUALLY HIT: .FINGERPRINTIGNORE
   Every entry is keyed on what the tree hashes, so two workspaces share an
@@ -387,9 +394,10 @@ ONE COMPILE PER FINGERPRINT, ACROSS EVERY WORKSPACE
 
   Nothing can deadlock on it. The lock is held by a PID, so a builder that
   crashes, is killed, or whose build simply fails frees it: the waiters see a
-  released lock with no artifact, and one of them takes over and builds. A
-  builder that is alive but wedged is the only case a wait can outlive, and
-  that ends after ~90 minutes with STIM_BUILD_WAIT_TIMEOUT naming the lock.
+  released lock with no artifact, and one of them takes over and builds. The
+  other waiters keep waiting for that holder. All replacement builders share
+  one ~90-minute deadline, including lock acquisition between waits; reaching
+  it returns STIM_BUILD_WAIT_TIMEOUT naming the current holder and lock.
 
   --no-build-cache looks nothing up -- not the local cache, not either
   provider -- and takes no lock and never waits, because it asked for a compile

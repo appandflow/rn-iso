@@ -11,6 +11,7 @@ import { sharedBuildCache } from './paths.ts';
 
 export interface BuildRunOptions {
   variant?: string;
+  abi?: string;
   configuration?: string;
   buildConfiguration?: string;
   isSimulator?: boolean;
