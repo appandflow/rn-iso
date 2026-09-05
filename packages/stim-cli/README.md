@@ -37,7 +37,9 @@ when it prints errors; an empty result does not prove launch or log capture
 succeeded.
 
 Use `stim doctor --platform ios` or `stim doctor --platform android` when only
-one native platform is in scope; shared project checks still run.
+one native platform is in scope; shared project checks still run. Doctor also
+prints the running CLI version and the `stim` installation resolved from PATH,
+and flags a resolved installation that is older than another available one.
 
 Stim builds or restores the app, installs it, launches it, and checks launch
 readiness. Plain output streams progress and reports the complete result. Use
