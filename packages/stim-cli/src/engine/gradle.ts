@@ -423,12 +423,20 @@ export type BuildAndroidResult = {
   durationMs: number;
 };
 
-export function gradleArgs(task: string, { buildCache = true }: { buildCache?: boolean } = {}): string[] {
-  return buildCache ? [task, '--build-cache'] : [task];
+export function gradleArgs(
+  task: string,
+  { buildCache = true, abi = null }: { buildCache?: boolean; abi?: string | null } = {},
+): string[] {
+  return [task, ...(buildCache ? ['--build-cache'] : []), ...(abi ? [`-PreactNativeArchitectures=${abi}`] : [])];
 }
 
 export async function buildAndroid(
-  { root, logWriter, variant = null }: { root: string; logWriter?: NdjsonWriter | null; variant?: string | null },
+  {
+    root,
+    logWriter,
+    variant = null,
+    abi = null,
+  }: { root: string; logWriter?: NdjsonWriter | null; variant?: string | null; abi?: string | null },
   {
     spawnFn = null,
     now = Date.now,
@@ -463,7 +471,7 @@ export async function buildAndroid(
 
   const spawn: SpawnFn = spawnFn || ((cmd, args, opts) => getExecutor().spawn(cmd, args, opts));
   const task = assembleTaskFor(variant);
-  const args = gradleArgs(task, { buildCache });
+  const args = gradleArgs(task, { buildCache, abi });
   if (buildCache) {
     onNote(chalk.dim(phaseLine('cache', 'gradle build cache on (--build-cache, shared under the Gradle user home)')));
   }

@@ -349,6 +349,14 @@ describe('gradleArgs', () => {
   test('a caller can turn it off, and then the argv is exactly the task', () => {
     expect(gradleArgs('assembleDebug', { buildCache: false })).toEqual(['assembleDebug']);
   });
+
+  test('limits React Native native compilation to a proven target ABI', () => {
+    expect(gradleArgs('assembleDebug', { abi: 'arm64-v8a' })).toEqual([
+      'assembleDebug',
+      '--build-cache',
+      '-PreactNativeArchitectures=arm64-v8a',
+    ]);
+  });
 });
 
 describe('buildAndroid', () => {

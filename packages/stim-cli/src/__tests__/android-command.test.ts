@@ -139,6 +139,7 @@ interface BuildArgs {
   root?: string;
   logWriter?: unknown;
   variant?: string | null;
+  abi?: string | null;
 }
 interface InstallArgs {
   apkPath?: string | null;
@@ -252,6 +253,7 @@ function harness(overrides = {}) {
   const stdout: string[] = [];
   const options = {
     root,
+    deviceAbi: () => null,
     ensureDevice: async (args: unknown = {}) => {
       calls.ensureDevice.push(args);
       return { avdName: 'stim-app-412', consolePort: 5584, owned: true };
@@ -1055,6 +1057,59 @@ describe('a cache miss', () => {
     expect(labelled(h.stderr, 'build')[1]).toMatch(/^  build {7}ok \(2m41s\)$/);
     assert(result.facts);
     expect(result.facts.cacheHit).toBe(false);
+  });
+
+  test('builds only the ABI selected for an owned emulator and scopes the cache key', async () => {
+    const abiKey = `${FINGERPRINT}-debug-sim-arm64-v8a`;
+    const h = harness({
+      deviceAbi: never('the owned emulator ABI query'),
+      ensureDevice: async () => ({
+        avdName: 'stim-app-412',
+        consolePort: 5584,
+        owned: true,
+        systemImage: 'system-images;android-36;google_apis;arm64-v8a',
+      }),
+      loadProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
+    });
+
+    expect((await h.run()).ok).toBe(true);
+    expect(h.calls.build[0]?.abi).toBe('arm64-v8a');
+    expect(h.calls.resolveCached[0]).toEqual(['android', abiKey]);
+    expect(h.calls.storeCached[0]?.slice(0, 2)).toEqual(['android', abiKey]);
+    expect(h.calls.resolveRemoteBuild[0]?.runOptions).toEqual({ abi: 'arm64-v8a' });
+    expect(h.calls.uploadRemoteBuild[0]?.runOptions).toEqual({ abi: 'arm64-v8a' });
+  });
+
+  test('keeps a universal Debug build when the owned emulator ABI is unknown', async () => {
+    const h = harness({
+      ensureDevice: async () => ({
+        avdName: 'stim-app-412',
+        consolePort: 5584,
+        owned: true,
+        systemImage: null,
+      }),
+    });
+
+    expect((await h.run()).ok).toBe(true);
+    expect(h.calls.build[0]?.abi).toBeNull();
+    expect(h.calls.resolveCached[0]).toEqual(['android', CACHE_KEY]);
+  });
+
+  test('keeps Release builds universal even when the target ABI is known', async () => {
+    const releaseKey = `${FINGERPRINT}-release-sim`;
+    const h = harness({
+      variant: 'release',
+      ensureDevice: async () => ({
+        avdName: 'stim-app-412',
+        consolePort: 5584,
+        owned: true,
+        systemImage: 'system-images;android-36;google_apis;arm64-v8a',
+      }),
+    });
+
+    expect((await h.run()).ok).toBe(true);
+    expect(h.calls.build[0]?.abi).toBeNull();
+    expect(h.calls.resolveCached[0]).toEqual(['android', releaseKey]);
   });
 
   test('a cache that cannot be written is a warning, not a failed run', async () => {
@@ -3907,6 +3962,14 @@ describe('--device (a physical Android device)', () => {
     expect(result.ok).toBe(true);
     expect(h.calls.install[0]?.serial).toBe('RFCR7081Q9L');
     expect(h.calls.launch[0]?.serial).toBe('RFCR7081Q9L');
+  });
+
+  test('a physical Debug run builds for the device primary ABI', async () => {
+    const h = physicalHarness({ deviceAbi: () => 'arm64-v8a' });
+
+    expect((await h.run()).ok).toBe(true);
+    expect(h.calls.build[0]?.abi).toBe('arm64-v8a');
+    expect(h.calls.resolveCached[0]).toEqual(['android', `${FINGERPRINT}-debug-sim-arm64-v8a`]);
   });
 
   test('a physical run launches against localhost, not the emulator loopback', async () => {
