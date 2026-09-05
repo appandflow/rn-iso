@@ -24,6 +24,15 @@ test('the facts topic pins how an owned emulator gets its console port', () => {
   expect(body).toMatch(/A boot that fails releases the port again and\s+keeps the AVD recorded for `gc`/);
 });
 
+test('shared-build recovery keeps waiters behind replacement builders with one deadline', () => {
+  expect(renderTopic('agent')).toMatch(
+    /one waiter takes over and the others keep waiting within the same\s+90-minute limit/,
+  );
+  expect(renderTopic('lifecycle')).toMatch(/other waiters keep waiting for that holder/);
+  expect(renderTopic('lifecycle')).toMatch(/one ~90-minute deadline, including lock acquisition between waits/);
+  expect(renderTopic('errors')).toMatch(/Replacement builders share that deadline, including time spent acquiring/);
+});
+
 test('the lifecycle topic separates an iOS install proof from dev-client preparation', () => {
   const body = renderTopic('lifecycle');
   assert(body);

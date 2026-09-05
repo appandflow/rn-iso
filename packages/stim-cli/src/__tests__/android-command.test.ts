@@ -2025,18 +2025,75 @@ describe('single-flight builds', () => {
     expect(h.stderr.join('\n')).toMatch(/without an artifact/);
   });
 
-  test('losing the takeover race builds anyway rather than queueing again', async () => {
+  test('losing the takeover race waits for the new holder and installs its artifact', async () => {
+    let acquires = 0;
+    let waits = 0;
+    const waited = join(home, 'build-cache', 'android', CACHE_KEY, 'app-debug.apk');
+    const h = harness({
+      acquireLock: () => heldBy(++acquires === 1 ? 41233 : 51234),
+      waitForBuild: async () =>
+        ++waits === 1
+          ? { builderFailed: 'the builder (pid 41233) is gone', waitedMs: 10 }
+          : { hit: waited, waitedMs: 2000 },
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(acquires).toBe(2);
+    expect(waits).toBe(2);
+    expect(h.calls.build).toHaveLength(0);
+    expect(h.calls.storeCached).toHaveLength(0);
+    expect(h.calls.releaseLock).toHaveLength(0);
+    expect(h.calls.install[0]?.apkPath).toBe(waited);
+    expect(result.facts?.waitedForBuild).toEqual({ pid: 51234, ms: 2000 });
+    expect(h.stdout).toHaveLength(1);
+    expect(h.stderr.join('\n')).not.toMatch(/RETRY:|building here/);
+  });
+
+  test('a failed replacement builder allows another takeover only after acquiring the lock', async () => {
+    let acquires = 0;
     let waits = 0;
     const h = harness({
-      acquireLock: () => heldBy(),
+      acquireLock: () =>
+        ++acquires < 3
+          ? heldBy(acquires === 1 ? 41233 : 51234)
+          : { acquired: true, path: '/lock', lock: { pid: process.pid } },
       waitForBuild: async () => {
         waits++;
-        return { builderFailed: 'the builder (pid 41233) is gone', waitedMs: 10 };
+        return { builderFailed: 'the build lock was released without an artifact', waitedMs: 10 };
       },
     });
     expect((await h.run()).ok).toBe(true);
-    expect(waits).toBe(1);
-    expect(h.calls.releaseLock.length).toBe(0);
+    expect(acquires).toBe(3);
+    expect(waits).toBe(2);
+    expect(h.calls.build).toHaveLength(1);
+    expect(h.calls.releaseLock).toHaveLength(1);
+    expect(h.stderr.join('\n')).toMatch(/RETRY:.*pid 51234/);
+  });
+
+  test('replacement builders share one wait deadline including lock acquisition time', async () => {
+    let clock = 0;
+    let acquires = 0;
+    const ceilings: (number | undefined)[] = [];
+    const h = harness({
+      now: () => clock,
+      acquireLock: () => {
+        if (++acquires === 3) clock += 60000;
+        return heldBy(41233 + acquires);
+      },
+      waitForBuild: async ({ ceilingMs }: { ceilingMs?: number }) => {
+        ceilings.push(ceilingMs);
+        clock += ceilings.length === 1 ? 60 * 60000 : 29 * 60000;
+        return { builderFailed: 'the builder is gone', waitedMs: 0 };
+      },
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(acquires).toBe(3);
+    expect(ceilings).toEqual([90 * 60000, 30 * 60000]);
+    expect(h.calls.build).toHaveLength(0);
+    expect(h.calls.releaseLock).toHaveLength(0);
+    expect(result.error?.code).toBe('STIM_BUILD_WAIT_TIMEOUT');
+    expect(h.stderr.join('\n')).toMatch(/41236/);
   });
 
   test('a FAILED build releases the lock', async () => {

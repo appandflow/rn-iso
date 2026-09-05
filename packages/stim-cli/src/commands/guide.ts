@@ -74,7 +74,9 @@ RULES DURING THE LOOP
   running ios or android again. If launch says FATAL because the app process exited,
   fix the crash and run the platform command again; Metro cannot restart it.
 - A cold native build can outlive a shell timeout. Run the same command again:
-  the second call joins the active build or returns its result.
+  the second call joins the active build or returns its result. If a builder
+  fails, one waiter takes over and the others keep waiting within the same
+  90-minute limit. Follow the remedy if STIM_BUILD_WAIT_TIMEOUT is returned.
 - ios and android install the app, launch it, and check readiness. Trust the
   exact device, app, Metro, and launch facts in the final summary. Use the full
   reported device ID. Never assume a simulator named booted belongs to this
@@ -1009,12 +1011,12 @@ FALLBACK NOTES THAT ARE NOT CODES (release cache hits)
 
 STIM_BUILD_WAIT_TIMEOUT
   This run was waiting for ANOTHER workspace's build of the same fingerprint
-  (see \`guide lifecycle\`), and after ~90 minutes that process was still alive
-  and had still produced nothing. A wait is normally bounded by the builder
-  being alive at all -- a crash or a kill frees it within a second -- so this
-  means a genuinely wedged xcodebuild/gradle, not a slow one. The message names
-  the pid and the lock directory: check the pid, and if it is not really
-  building, remove that directory and run the command again.
+  (see \`guide lifecycle\`), and no artifact arrived within ~90 minutes.
+  Replacement builders share that deadline, including time spent acquiring
+  the lock between waits. A live builder may be wedged, or successive builders
+  may have failed. The message names the current pid and lock directory:
+  check the pid, and if it is not really building, remove that directory and
+  run the command again.
 
 STIM_INSTALL_FAILED
   The artifact built or came from cache, but \`simctl install\` / \`adb install\` /
@@ -2087,9 +2089,10 @@ ONE COMPILE PER FINGERPRINT, ACROSS EVERY WORKSPACE
 
   Nothing can deadlock on it. The lock is held by a PID, so a builder that
   crashes, is killed, or whose build simply fails frees it: the waiters see a
-  released lock with no artifact, and one of them takes over and builds. A
-  builder that is alive but wedged is the only case a wait can outlive, and
-  that ends after ~90 minutes with STIM_BUILD_WAIT_TIMEOUT naming the lock.
+  released lock with no artifact, and one of them takes over and builds. The
+  other waiters keep waiting for that holder. All replacement builders share
+  one ~90-minute deadline, including lock acquisition between waits; reaching
+  it returns STIM_BUILD_WAIT_TIMEOUT naming the current holder and lock.
 
   --no-build-cache looks nothing up -- not the local cache, not either
   provider -- and takes no lock and never waits, because it asked for a compile

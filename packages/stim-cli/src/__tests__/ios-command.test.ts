@@ -1652,23 +1652,86 @@ describe('single-flight builds', () => {
     expect(stderr).toMatch(/without an artifact/);
   });
 
-  test('losing the takeover race builds anyway rather than queueing again', async () => {
+  test('losing the takeover race waits for the new holder and installs its artifact', async () => {
     reserve();
+    let acquires = 0;
     let waits = 0;
-    const { exitCode, calls } = await run(
+    const waited = '/cache/ios/key/Fixture.app';
+    const { exitCode, calls, logs, stderr } = await run(
+      { json: true },
+      {
+        acquireBuildLock: () => heldBy(++acquires === 1 ? 41233 : 51234),
+        waitForBuild: async () =>
+          ++waits === 1
+            ? { builderFailed: 'the builder (pid 41233) is gone', waitedMs: 10 }
+            : { hit: waited, waitedMs: 2000 },
+      },
+    );
+    expect(exitCode).toBe(null);
+    expect(acquires).toBe(2);
+    expect(waits).toBe(2);
+    expect(calls.order).not.toContain('buildIos');
+    expect(calls.order).not.toContain('storeBuild');
+    expect(calls.order).not.toContain('releaseBuildLock');
+    expect(calls.args.installIosApp.appPath).toBe(waited);
+    expect(parseFirst(logs).waitedForBuild).toEqual({ pid: 51234, ms: 2000 });
+    expect(logs).toHaveLength(1);
+    expect(stderr).not.toMatch(/RETRY:|building here/);
+  });
+
+  test('a failed replacement builder allows another takeover only after acquiring the lock', async () => {
+    reserve();
+    let acquires = 0;
+    let waits = 0;
+    const { exitCode, calls, stderr } = await run(
       {},
       {
-        acquireBuildLock: () => heldBy(),
+        acquireBuildLock: () =>
+          ++acquires < 3
+            ? heldBy(acquires === 1 ? 41233 : 51234)
+            : { acquired: true, path: '/lock', lock: { pid: process.pid } },
         waitForBuild: async () => {
           waits++;
-          return { builderFailed: 'the builder (pid 41233) is gone', waitedMs: 10 };
+          return { builderFailed: 'the build lock was released without an artifact', waitedMs: 10 };
         },
       },
     );
     expect(exitCode).toBe(null);
-    expect(waits).toBe(1);
-    expect(calls.order.includes('buildIos')).toBeTruthy();
-    expect(!calls.order.includes('releaseBuildLock')).toBeTruthy();
+    expect(acquires).toBe(3);
+    expect(waits).toBe(2);
+    expect(calls.order.filter((call) => call === 'buildIos')).toHaveLength(1);
+    expect(calls.order.filter((call) => call === 'releaseBuildLock')).toHaveLength(1);
+    expect(stderr).toMatch(/RETRY:.*pid 51234/);
+  });
+
+  test('replacement builders share one wait deadline including lock acquisition time', async () => {
+    reserve();
+    let clock = 0;
+    let acquires = 0;
+    const ceilings: (number | undefined)[] = [];
+    const { exitCode, calls, logs, errs } = await run(
+      { json: true },
+      {
+        now: () => clock,
+        acquireBuildLock: () => {
+          if (++acquires === 3) clock += 60000;
+          return heldBy(41233 + acquires);
+        },
+        waitForBuild: async ({ ceilingMs }) => {
+          ceilings.push(ceilingMs);
+          clock += ceilings.length === 1 ? 60 * 60000 : 29 * 60000;
+          return { builderFailed: 'the builder is gone', waitedMs: 0 };
+        },
+      },
+    );
+    expect(exitCode).toBe(1);
+    expect(acquires).toBe(3);
+    expect(ceilings).toEqual([90 * 60000, 30 * 60000]);
+    expect(calls.order).not.toContain('buildIos');
+    expect(calls.order).not.toContain('releaseBuildLock');
+    expect(parseFirst(logs).code).toBe('STIM_BUILD_WAIT_TIMEOUT');
+    expect(errs.join('\n')).toMatch(/41236/);
+    expect(logs).toHaveLength(1);
   });
 
   test('a FAILED build releases the lock', async () => {

@@ -59,6 +59,7 @@ import {
   acquireBuildLock,
   releaseBuildLock,
   takeoverLine,
+  WAIT_CEILING_MS,
   waitForBuild,
   type BuildLockHandle,
   type WaitForBuildResult,
@@ -2603,7 +2604,10 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
   }
 
   async function waitForSharedBuild(): Promise<boolean> {
-    if (!appPath && useBuildCache) {
+    if (!useBuildCache) return true;
+    const waitStarted = d.now();
+    let failedHolder: BuildLockHandle['held'];
+    while (!appPath) {
       let attempt: BuildLockHandle | null = null;
       try {
         attempt = d.acquireBuildLock({ platform: PLATFORM, key: cacheKey, root, logFile });
@@ -2617,7 +2621,9 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
 
       if (attempt?.acquired) {
         buildLock = attempt;
-        if (attempt.tookOver) note(chalk.yellow(phaseLine('build', takeoverLine(attempt.tookOver))));
+        const previous = attempt.tookOver ?? failedHolder;
+        if (previous) note(chalk.yellow(phaseLine('build', takeoverLine(previous))));
+        break;
       } else if (attempt?.held) {
         const held = attempt.held;
         const who = held.projectRoot || 'another workspace';
@@ -2629,7 +2635,19 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
 
         let waited: WaitForBuildResult | null = null;
         try {
-          waited = await d.waitForBuild({ platform: PLATFORM, key: cacheKey, out: note });
+          const ceilingMs = WAIT_CEILING_MS - (d.now() - waitStarted);
+          if (ceilingMs <= 0) {
+            throw Object.assign(
+              new Error(
+                `Waited ${formatDuration(d.now() - waitStarted)} for shared builds without an artifact; ${who} (pid ${held.pid}) holds ${attempt.path}.`,
+              ),
+              {
+                code: 'STIM_BUILD_WAIT_TIMEOUT',
+                lockPath: attempt.path,
+              },
+            );
+          }
+          waited = await d.waitForBuild({ platform: PLATFORM, key: cacheKey, out: note, ceilingMs });
         } catch (e) {
           const err = e as Error & { code?: string; lockPath?: string };
           if (err?.code !== 'STIM_BUILD_WAIT_TIMEOUT') throw e;
@@ -2650,15 +2668,16 @@ export async function runIos(opts: IosCommandOptions = {}, overrides: Partial<Io
         } else {
           note(
             chalk.yellow(
-              phaseLine('build', `${who}'s build ended without an artifact (${waited?.builderFailed}); building here`),
+              phaseLine(
+                'build',
+                `${who}'s build ended without an artifact (${waited?.builderFailed}); retrying the build lock`,
+              ),
             ),
           );
-          try {
-            const takeover = d.acquireBuildLock({ platform: PLATFORM, key: cacheKey, root, logFile });
-            if (takeover?.acquired) buildLock = takeover;
-          } catch {}
-          note(chalk.yellow(phaseLine('build', takeoverLine(held))));
+          failedHolder = held;
         }
+      } else {
+        break;
       }
     }
     return true;
