@@ -13,6 +13,7 @@ import {
   upsertProject,
   removeProject,
   setDevice,
+  setSupervisor,
   releaseAndroidConsolePort,
   clearDevice,
   allMetroPorts,
@@ -203,6 +204,24 @@ test('upsertProject preserves existing fields when called again', () => {
   assert(proj);
   expect(proj.bundleId).toBe('com.b');
   expect(proj.metroPort).toBe(8082);
+});
+
+test('upsertProject refuses a project key that is not an absolute path', () => {
+  expect(() => upsertProject('.claude/stim-worktrees/nestrel', { label: 'nestrel' })).toThrow(/not an absolute path/);
+  expect(loadConfig()?.projects?.['.claude/stim-worktrees/nestrel']).toBe(undefined);
+});
+
+test('setDevice refuses a project key that is not an absolute path', () => {
+  saveConfig(makeConfig({ projects: { 'rel/proj': { metroPort: null, platforms: {} } } }));
+  expect(() => setDevice('rel/proj', 'ios', { deviceUdid: 'ABC' })).toThrow(/not an absolute path/);
+  expect(loadConfig()?.projects?.['rel/proj']?.platforms?.ios).toBe(undefined);
+});
+
+test('setSupervisor refuses a project key that is not an absolute path', () => {
+  expect(() => setSupervisor('rel/proj', { pid: 1, port: 8081, startedAt: '2026-01-01T00:00:00.000Z' })).toThrow(
+    /not an absolute path/,
+  );
+  expect(loadConfig()?.projects?.['rel/proj']).toBe(undefined);
 });
 
 test('setDevice and clearDevice mutate platforms', () => {

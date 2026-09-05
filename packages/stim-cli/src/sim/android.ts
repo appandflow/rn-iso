@@ -22,6 +22,8 @@ export interface SystemImage {
   pkg: string;
 }
 
+const ANDROID_ABIS = new Set(['armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64']);
+
 interface AdbEmulatorEntry {
   serial: string;
   consolePort: number;
@@ -317,6 +319,19 @@ function adbProp(serial: string, name: string): string | null {
 
 export function physicalDeviceModel(serial: string): string | null {
   return adbProp(serial, 'ro.product.model');
+}
+
+export function androidDeviceAbi(serial: string): string | null {
+  const abi = adbProp(serial, 'ro.product.cpu.abi');
+  return abi && ANDROID_ABIS.has(abi) ? abi : null;
+}
+
+export function androidSystemImageAbi(systemImage: string | null | undefined): string | null {
+  const abi =
+    String(systemImage ?? '')
+      .split(';')
+      .at(-1) ?? '';
+  return ANDROID_ABIS.has(abi) ? abi : null;
 }
 
 function looksLikeEmulator({

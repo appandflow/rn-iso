@@ -97,7 +97,25 @@ describe('listBuildSlots', () => {
   });
 });
 
-describe('live: 2 slots, 3 processes', () => {
+describe('waitForFile', () => {
+  test('resolves once the file appears', async () => {
+    const path = join(tmpHome, 'late');
+    const timer = setTimeout(() => writeFileSync(path, ''), 30);
+    try {
+      await waitForFile(path);
+    } finally {
+      clearTimeout(timer);
+    }
+    expect(existsSync(path)).toBe(true);
+  });
+
+  test('gives up with a message naming the file it waited for', async () => {
+    const path = join(tmpHome, 'never');
+    await expect(waitForFile(path, 50)).rejects.toThrow(`timed out after 50ms waiting for ${path}`);
+  });
+});
+
+describe('live: 2 slots, 3 processes', { timeout: 30_000 }, () => {
   test('the third process waits for a slot and gets one on release', async () => {
     const script = join(tmpHome, 'holder.mjs');
     const slotsUrl = new URL('../engine/build-slots.ts', import.meta.url).href;
@@ -125,26 +143,18 @@ describe('live: 2 slots, 3 processes', () => {
           err ? reject(err) : resolve(),
         );
       });
-    const waitFor = async (file: string, timeoutMs = 8000) => {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        if (existsSync(join(dir, file))) return true;
-        await new Promise((r) => setTimeout(r, 20));
-      }
-      return false;
-    };
 
     const a = spawn('A');
     const b = spawn('B');
-    expect(await waitFor('acquired-A')).toBeTruthy();
-    expect(await waitFor('acquired-B')).toBeTruthy();
+    await waitForFile(join(dir, 'acquired-A'));
+    await waitForFile(join(dir, 'acquired-B'));
 
     const c = spawn('C');
     await new Promise((r) => setTimeout(r, 400));
     expect(existsSync(join(dir, 'acquired-C'))).toBe(false);
 
     writeFileSync(join(dir, 'release-A'), '1');
-    expect(await waitFor('acquired-C')).toBeTruthy();
+    await waitForFile(join(dir, 'acquired-C'));
     const releasedA = Number(readFileSync(join(dir, 'released-A'), 'utf-8'));
     const acquiredC = Number(readFileSync(join(dir, 'acquired-C'), 'utf-8'));
     expect(acquiredC >= releasedA).toBeTruthy();
@@ -154,6 +164,15 @@ describe('live: 2 slots, 3 processes', () => {
     await Promise.all([a, b, c]);
   });
 });
+
+async function waitForFile(path: string, timeoutMs = 8000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (existsSync(path)) return;
+    if (Date.now() >= deadline) throw new Error(`timed out after ${timeoutMs}ms waiting for ${path}`);
+    await new Promise((r) => setTimeout(r, 20));
+  }
+}
 
 function mkslot(i: number) {
   mkdirSync(buildSlotPath(i), { recursive: true });

@@ -22,3 +22,14 @@ test('setExecutor replaces the active executor', () => {
   expect(getExecutor().runQuiet('anything')).toBe('mocked-quiet');
   resetExecutor();
 });
+
+test('runFileQuiet returns trimmed stdout and null on failure', () => {
+  resetExecutor();
+  expect(getExecutor().runFileQuiet('echo', ['hello'])).toBe('hello');
+  expect(getExecutor().runFileQuiet('false')).toBe(null);
+});
+
+test('runFileQuiet passes arguments without a shell, so metacharacters stay literal', () => {
+  resetExecutor();
+  expect(getExecutor().runFileQuiet('echo', ['$HOME `id` "x"'])).toBe('$HOME `id` "x"');
+});

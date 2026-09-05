@@ -104,7 +104,10 @@ beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
   process.env.STIM_HOME = tmpHome;
   root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ws-')));
-  writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'fixture' }));
+  writeFileSync(
+    join(root, 'package.json'),
+    JSON.stringify({ name: 'fixture', dependencies: { 'react-native': '0.81.0' } }),
+  );
 });
 
 afterEach(() => {
@@ -376,6 +379,38 @@ function buildRecords() {
   const file = buildLogFile(root);
   return existsSync(file) ? parseNdjsonText(readFileSync(file, 'utf-8')) : [];
 }
+
+describe('the project gate', () => {
+  test('a directory that depends on neither react-native nor expo is refused before any workspace state', async () => {
+    reserve();
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'monorepo', devDependencies: { vitest: '5' } }));
+    const { exitCode, logs, errs, calls } = await run({ json: true });
+    expect(exitCode).toBe(1);
+    const payload = parseFirst(logs);
+    expect(payload.code).toBe('STIM_NO_PROJECT');
+    expect(payload.message).toContain(join(root, 'package.json'));
+    expect(payload.message).toMatch(/neither react-native nor expo/);
+    expect(payload.remedy).toBeTruthy();
+    expect(calls.order).toEqual([]);
+    expect(errs.join('\n')).toContain(phaseLine('error', payload.message as string));
+    expect(errs.join('\n')).toContain(phaseLine('failed', 'STIM_NO_PROJECT'));
+  });
+
+  test('a package.json that does not parse is refused as unreadable, not as a missing app dependency', async () => {
+    reserve();
+    writeFileSync(join(root, 'package.json'), '{ "name": "app", "dependencies": { "react-native": "0.81.0"');
+    const { exitCode, logs, errs, calls } = await run({ json: true });
+    expect(exitCode).toBe(1);
+    const payload = parseFirst(logs);
+    expect(payload.code).toBe('STIM_NO_PROJECT');
+    expect(payload.message).toContain(join(root, 'package.json'));
+    expect(payload.message).toMatch(/is not valid JSON/);
+    expect(payload.message).not.toMatch(/neither react-native nor expo/);
+    expect(payload.remedy).toMatch(/Fix the JSON/);
+    expect(calls.order).toEqual([]);
+    expect(errs.join('\n')).toContain(phaseLine('failed', 'STIM_NO_PROJECT'));
+  });
+});
 
 describe('the Metro gate', () => {
   test('fires before the device, boot, and fingerprint: a dead port costs a second, not a build', async () => {
@@ -1617,23 +1652,86 @@ describe('single-flight builds', () => {
     expect(stderr).toMatch(/without an artifact/);
   });
 
-  test('losing the takeover race builds anyway rather than queueing again', async () => {
+  test('losing the takeover race waits for the new holder and installs its artifact', async () => {
     reserve();
+    let acquires = 0;
     let waits = 0;
-    const { exitCode, calls } = await run(
+    const waited = '/cache/ios/key/Fixture.app';
+    const { exitCode, calls, logs, stderr } = await run(
+      { json: true },
+      {
+        acquireBuildLock: () => heldBy(++acquires === 1 ? 41233 : 51234),
+        waitForBuild: async () =>
+          ++waits === 1
+            ? { builderFailed: 'the builder (pid 41233) is gone', waitedMs: 10 }
+            : { hit: waited, waitedMs: 2000 },
+      },
+    );
+    expect(exitCode).toBe(null);
+    expect(acquires).toBe(2);
+    expect(waits).toBe(2);
+    expect(calls.order).not.toContain('buildIos');
+    expect(calls.order).not.toContain('storeBuild');
+    expect(calls.order).not.toContain('releaseBuildLock');
+    expect(calls.args.installIosApp.appPath).toBe(waited);
+    expect(parseFirst(logs).waitedForBuild).toEqual({ pid: 51234, ms: 2000 });
+    expect(logs).toHaveLength(1);
+    expect(stderr).not.toMatch(/RETRY:|building here/);
+  });
+
+  test('a failed replacement builder allows another takeover only after acquiring the lock', async () => {
+    reserve();
+    let acquires = 0;
+    let waits = 0;
+    const { exitCode, calls, stderr } = await run(
       {},
       {
-        acquireBuildLock: () => heldBy(),
+        acquireBuildLock: () =>
+          ++acquires < 3
+            ? heldBy(acquires === 1 ? 41233 : 51234)
+            : { acquired: true, path: '/lock', lock: { pid: process.pid } },
         waitForBuild: async () => {
           waits++;
-          return { builderFailed: 'the builder (pid 41233) is gone', waitedMs: 10 };
+          return { builderFailed: 'the build lock was released without an artifact', waitedMs: 10 };
         },
       },
     );
     expect(exitCode).toBe(null);
-    expect(waits).toBe(1);
-    expect(calls.order.includes('buildIos')).toBeTruthy();
-    expect(!calls.order.includes('releaseBuildLock')).toBeTruthy();
+    expect(acquires).toBe(3);
+    expect(waits).toBe(2);
+    expect(calls.order.filter((call) => call === 'buildIos')).toHaveLength(1);
+    expect(calls.order.filter((call) => call === 'releaseBuildLock')).toHaveLength(1);
+    expect(stderr).toMatch(/RETRY:.*pid 51234/);
+  });
+
+  test('replacement builders share one wait deadline including lock acquisition time', async () => {
+    reserve();
+    let clock = 0;
+    let acquires = 0;
+    const ceilings: (number | undefined)[] = [];
+    const { exitCode, calls, logs, errs } = await run(
+      { json: true },
+      {
+        now: () => clock,
+        acquireBuildLock: () => {
+          if (++acquires === 3) clock += 60000;
+          return heldBy(41233 + acquires);
+        },
+        waitForBuild: async ({ ceilingMs }) => {
+          ceilings.push(ceilingMs);
+          clock += ceilings.length === 1 ? 60 * 60000 : 29 * 60000;
+          return { builderFailed: 'the builder is gone', waitedMs: 0 };
+        },
+      },
+    );
+    expect(exitCode).toBe(1);
+    expect(acquires).toBe(3);
+    expect(ceilings).toEqual([90 * 60000, 30 * 60000]);
+    expect(calls.order).not.toContain('buildIos');
+    expect(calls.order).not.toContain('releaseBuildLock');
+    expect(parseFirst(logs).code).toBe('STIM_BUILD_WAIT_TIMEOUT');
+    expect(errs.join('\n')).toMatch(/41236/);
+    expect(logs).toHaveLength(1);
   });
 
   test('a FAILED build releases the lock', async () => {
@@ -2009,7 +2107,7 @@ describe('Contract 6: the dev-client scheme', () => {
       join(root, 'package.json'),
       JSON.stringify({
         name: 'fixture',
-        dependencies: { 'expo-dev-client': '5.0.0' },
+        dependencies: { expo: '52.0.0', 'expo-dev-client': '5.0.0' },
       }),
     );
     const { calls } = await run({}, { devClientScheme });
@@ -3175,6 +3273,63 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
     return async () => ({ hash: call++ === 0 ? COLD : WARM, sources: [{ type: 'dir', filePath: 'ios' }] });
   }
 
+  test.each([
+    ['prebuild', 'throws'],
+    ['prebuild', 'returns no hash'],
+    ['pod install', 'throws'],
+    ['pod install', 'returns no hash'],
+  ])('does not cache when the fingerprint after %s %s', async (mutation, failure) => {
+    reserve();
+    let fingerprintCalls = 0;
+    const configuredUploads: unknown[] = [];
+    const { logs, calls, exitCode, stderr, appPath } = await run(
+      { json: true },
+      {
+        detectIsExpo: () => true,
+        needsPrebuild: () => mutation === 'prebuild',
+        readPodState: () =>
+          mutation === 'pod install'
+            ? { hasPodfile: true, lockText: 'A', manifestText: 'B' }
+            : { hasPodfile: false, lockText: null, manifestText: null },
+        fingerprintProject: async () => {
+          if (fingerprintCalls++ === 0) return { hash: COLD, sources: [] };
+          if (failure === 'throws') throw new Error('unable to read updated native inputs');
+          return { hash: '', sources: [] };
+        },
+        resolveCacheProviderConfig: () => ({ provider: './cache.cjs', options: {}, baseDir: root }),
+        loadCacheProvider: async () => ({
+          name: './cache.cjs',
+          provider: { builds: { resolve: () => null, store: (input: unknown) => configuredUploads.push(input) } },
+        }),
+        loadProjectProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
+      },
+    );
+
+    expect(fingerprintCalls).toBe(2);
+    expect(exitCode).toBeNull();
+    expect(calls.args.installIosApp.appPath).toBe(appPath);
+    expect(calls.order.includes('releaseBuildLock')).toBe(true);
+    expect(calls.order.includes('storeBuild')).toBe(false);
+    expect(configuredUploads).toEqual([]);
+    expect(calls.order.includes('uploadRemote')).toBe(false);
+    expect(calls.order.filter((call) => call === 'resolveBuild')).toHaveLength(1);
+    const facts = parseFirst(logs);
+    expect(facts.fingerprint).toBeNull();
+    expect(facts.cacheKey).toBeNull();
+    const state = readWorkspaceState(root) as WorkspaceState;
+    expect(state.lastBuild?.fingerprint).toBeNull();
+    expect(state.lastBuild?.cacheKey).toBeNull();
+    expect(state.launches?.ios).toEqual({
+      appId: 'com.example.app',
+      deviceId: UDID,
+      metroPort: 8082,
+      release: false,
+      deepLinkUrl: null,
+      launchedAt: expect.any(String),
+    });
+    expect(stderr).toContain(`unavailable after ${mutation}; the build will be installed but not cached`);
+  });
+
   test('the store key is the key the NEXT run looks up across a prebuild boundary', async () => {
     reserve();
     const lookedUp: string[] = [];
@@ -3972,6 +4127,30 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     expect(text).not.toMatch(/opened on the dev-client URL/);
   });
 
+  test('a first-bundle failure on a live phone uses the existing automation session', async () => {
+    reserve();
+    const { errs, exitCode } = await run(
+      { device: true },
+      {
+        ...connected(),
+        verifyLaunch: async () => ({
+          fatal: true,
+          processAlive: true,
+          errors: [{ src: 'metro', msg: 'Unable to resolve module ./missing' }],
+        }),
+      },
+    );
+    const text = errs.join('\n');
+    expect(exitCode).toBe(1);
+    expect(text).toContain(`existing agent-device automation session for com.example.app on ${PHONE}`);
+    expect(text).toContain('exact arguments and environment that identify that session');
+    expect(text).toContain('Run `agent-device snapshot -i` in that session');
+    expect(text).not.toContain(`agent-device snapshot -i --platform ios --udid ${PHONE}`);
+    expect(text).toMatch(/If Reload is visible on the error screen, press it by exact ref or label/);
+    expect(text).toMatch(/Otherwise open the React Native dev menu through that session/);
+    expect(text).not.toContain('agent-device metro reload');
+  });
+
   test('the collector is the launch: it carries --physical and the run reads the device pid', async () => {
     reserve();
     const { calls } = await run({ device: true }, connected());
@@ -4046,6 +4225,26 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     expect(existsSync(join(root, 'build', 'Fixture.app', 'ip.txt'))).toBe(false);
     const installed = calls.args.installIosDeviceApp as { appPath: string };
     expect(existsSync(installed.appPath)).toBe(false);
+  });
+
+  test('an unavailable fingerprint after pods still seals and installs the device app', async () => {
+    reserve();
+    let fingerprintCalls = 0;
+    const { calls, exitCode, logs } = await run(
+      { device: true, json: true },
+      {
+        ...connected(),
+        readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'B' }),
+        fingerprintProject: async () => (fingerprintCalls++ === 0 ? { hash: FINGERPRINT, sources: [] } : null),
+      },
+    );
+    expect(exitCode).toBeNull();
+    expect(calls.order.includes('storeBuild')).toBe(false);
+    expect(calls.order.includes('sealAppForDevice')).toBe(true);
+    expect(calls.order.includes('installIosDeviceApp')).toBe(true);
+    expect(calls.order.indexOf('sealAppForDevice')).toBeLessThan(calls.order.indexOf('installIosDeviceApp'));
+    expect(parseFirst(logs).fingerprint).toBeNull();
+    expect(parseFirst(logs).launched).toBe(true);
   });
 
   test('a malformed ios.lanHost refuses the run before the phone is looked for', async () => {
