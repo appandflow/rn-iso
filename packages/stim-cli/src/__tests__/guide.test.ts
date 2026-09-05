@@ -12,7 +12,6 @@ import {
   sectionLookup,
   sectionNames,
 } from '../commands/guide.ts';
-import { carriedChangesLine, carryConflictWarning } from '../commands/worktree.ts';
 import { ANDROID_AVD_CONFIG_HELP } from '../settings.ts';
 import { CONSOLE_ENV, deviceConsoleArgs } from '../collector/ios-device.ts';
 import { HEARTBEAT_INTERVAL_MS, heartbeatLine } from '../engine/xcode.ts';
@@ -218,21 +217,21 @@ test('the lifecycle topic grids every label the output vocabulary allows, and no
 test('the lifecycle topic shows the lifecycle commands in the same label column', () => {
   const body = renderSection('lifecycle', 'progress');
   assert(body);
-  expect(body).toMatch(/branch\s+worktree-e2e-1 from HEAD \(9d0ebc4\)/);
-  expect(body).toMatch(/carry\s+node_modules \(APFS clone\); no Pods; no native build output/);
-  expect(body).toMatch(/ready\s+\/w\/worktree-e2e-1/);
+  expect(body).toMatch(/carry\s+copied node_modules from \/w\/main/);
+  expect(body).toMatch(/carry\s+complete: 1 ignored entries copied, 0 kept, 0 failed/);
+  expect(body).toMatch(/branch\s+kept app\/412/);
   expect(body).toMatch(/metro\s+starting on port 8083 \(expo-child, supervisor pid 13724\)/);
   expect(body).toMatch(/stop\s+collector ios pid 45268/);
   expect(body).toMatch(/port\s+released 8084/);
 });
 
-test('the lifecycle topic documents slash-separated worktree names', () => {
+test('the lifecycle topic creates with Git and warms before starting the app', () => {
   const body = renderTopic('lifecycle');
   assert(body);
-  expect(body).toMatch(/worktree create app\/412/);
-  expect(body).toMatch(/worktree-app\/412/);
-  expect(body).toMatch(/flat \+ separated directory directly under worktreeDir/);
-  expect(body).toMatch(/device labels include a stable hash/);
+  expect(body).toMatch(/git worktree add -b app\/412 \.\.\/app-412 HEAD/);
+  expect(body).toMatch(/cd \.\.\/app-412\s+stim worktree warm/);
+  expect(body).toMatch(/linked worktree with Git, unless a harness already did/);
+  expect(body).toMatch(/unwarmed worktrees with no Stim registry entry/);
 });
 
 test('the errors topic names the two device fallbacks under the label that prints them', () => {
@@ -277,20 +276,21 @@ test('the errors topic quotes the shared config-lock timeout message', () => {
   expect(wrapper).toContain("export { withDirLock } from '@stim-cli/core'");
 });
 
-test('the errors topic quotes the carry lines exactly as worktree create writes them', () => {
+test('the errors topic explains incomplete warm copies without promising dependency readiness', () => {
   const body = renderSection('errors', 'carry');
   assert(body);
-  expect(body).toMatch(/"carry {7}carried 2 uncommitted changes from the source/);
-  expect(body).toMatch(/"carry {7}could not carry the source's uncommitted changes/);
-  expect(carriedChangesLine(['a', 'b'])).toMatch(/^carried 2 uncommitted changes from the source/);
-  expect(carryConflictWarning(['a'])).toMatch(/^could not carry the source's uncommitted changes/);
+  expect(body).toMatch(/"carry {7}incomplete:/);
+  expect(body).toMatch(/command exits 1/);
+  expect(body).toMatch(/files already published remain/);
+  expect(body).toMatch(/existing directories are skipped\s+whole/);
+  expect(body).toMatch(/does not install dependencies or prove the app is ready/);
 });
 
 test('the errors topic states that the stale-carry line only prints on a real difference', () => {
   const body = renderSection('errors', 'carry');
   assert(body);
   expect(body).toMatch(/carry\s+carried dependencies may be stale/);
-  expect(body).toMatch(/a carry whose lockfile matches is\s+silent/);
+  expect(body).toMatch(/a carry whose lockfile matches is\s+silent/i);
 });
 
 test('the errors topic covers a directory that is not a React Native or Expo app', () => {
@@ -477,7 +477,7 @@ test('the flags the guide advertises are the flags the commands define', () => {
     'stop.ts': ['--json', '--force'],
     'logs.ts': ['--errors', '--follow', '--since', '--grep', '--tail'],
     'gc.ts': ['--delete', '--older-than', '--cache'],
-    'worktree.ts': ['--carry-ignored', '--base', '--dir', '--label', '--force'],
+    'worktree.ts': ['--force'],
     'doctor.ts': ['--json', '--fix', '--platform'],
   };
   expect(/doctor\s+--json --fix --platform <ios\|android>/.test(lifecycle)).toBeTruthy();
@@ -999,37 +999,14 @@ test('the errors topic documents every code the build commands and the iOS signi
   }
 });
 
-test('the errors topic documents every code worktree create can emit, and the rules behind it', () => {
-  const body = renderTopic('errors');
-  assert(body);
-  const src = readFileSync(new URL('../commands/worktree.ts', import.meta.url), 'utf-8');
-  const codes = scrapedCodes(src);
-  expect(codes.has('STIM_WORKTREE_BRANCH_EXISTS')).toBeTruthy();
-  for (const code of codes) {
-    expect(body.includes(code)).toBeTruthy();
-    expect(sectionLookup('errors')[code]).toBeDefined();
-  }
-
-  const section = (renderSection('errors', 'STIM_WORKTREE_BRANCH_EXISTS') ?? '').replace(/\s+/g, ' ');
-  expect(section).toMatch(/refuses whenever it is passed and the branch already exists/i);
-  expect(section).toMatch(/INCLUDING the case where the branch happens to sit on the requested base/i);
-  expect(section).toMatch(/Stim deletes the branch it just made/i);
-  expect(section).toMatch(/only a branch that create made/i);
-  expect(section).toMatch(/decides that from whether THIS run passed -b/);
-  expect(section).toMatch(/a branch named \.\.\. already exists.{0,80}did not make it/i);
-  expect(section).toMatch(/base sha captured before the add/i);
-  expect(src).not.toMatch(/--base does not apply/);
-
-  const settings = renderTopic('settings');
-  assert(settings);
-  const website = readFileSync(new URL('../../../../website/docs/settings.md', import.meta.url), 'utf-8');
-  for (const guidance of [settings, website]) {
-    const flat = guidance.replace(/\s+/g, ' ');
-    const entry = flat.slice(flat.lastIndexOf('worktree.baseRef'));
-    expect(entry).toMatch(/only the .{0,2}--base.{0,2} (FLAG|flag) triggers/i);
-    expect(entry).toMatch(/STIM_WORKTREE_BRANCH_EXISTS/);
-    expect(entry).toMatch(/still attaches/i);
-  }
+test('current guides expose warm and remove while leaving worktree creation to Git', () => {
+  const body = allBodies().join('\n');
+  expect(body).toContain('git worktree add');
+  expect(body).toContain('stim worktree warm');
+  expect(body).toContain('stim worktree remove');
+  expect(body).not.toMatch(/worktree create|--carry-ignored|STIM_WORKTREE_BRANCH_EXISTS/);
+  expect(body).not.toMatch(/worktreeDir|worktree\.baseRef|worktree\.include|\.worktreeinclude/);
+  expect(sectionLookup('errors')['STIM_WORKTREE_BRANCH_EXISTS']).toBeUndefined();
 });
 
 test('the errors topic documents every code the engine can emit under a command', () => {
@@ -1138,15 +1115,17 @@ test('the setting type rule is stated once and is consistent across user guidanc
   }
 });
 
-test('the worktreeDir resolution rule is consistent across user guidance', () => {
+test('warm exclusion settings consistently belong to the main checkout', () => {
   const guide = renderTopic('settings');
   assert(guide);
   const website = readFileSync(new URL('../../../../website/docs/settings.md', import.meta.url), 'utf-8');
   for (const body of [guide, website]) {
     const flat = body.replace(/\s+/g, ' ');
-    expect(flat).toMatch(/worktreeDir.*relative.*resolves against.{0,40}repository root/i);
+    expect(flat).toMatch(/main checkout/);
+    expect(flat).toMatch(/nonempty .{0,2}\.worktreeexclude.{0,2} in main replaces/i);
+    expect(flat).toContain('worktree.exclude');
+    expect(flat).not.toMatch(/worktreeDir|worktree\.baseRef|worktree\.include/);
   }
-  expect(guide.replace(/\s+/g, ' ')).toMatch(/worktreeDir.*--dir.*current directory/i);
 });
 
 test('the safe Android AVD override contract is consistent across user guidance', () => {
@@ -1276,7 +1255,9 @@ test('the agent guide carries the normal workflow and safety rules', () => {
   const normalWorkflow = agent.match(/NORMAL WORKFLOW([\s\S]*?)RULES DURING THE LOOP/)?.[1];
   assert(normalWorkflow);
   expect(agent).toContain('stim doctor --platform ios');
-  expect(agent).toContain('stim worktree create <name> --carry-ignored');
+  expect(normalWorkflow).toMatch(
+    /git worktree add -b <branch> <worktree-path> HEAD[\s\S]*cd <worktree-path>[\s\S]*stim worktree warm[\s\S]*stim start/,
+  );
   expect(agent).toMatch(/ios and android install the app, launch it, and check readiness/);
   expect(agent).toMatch(/give the user one compact result: exact device,[\s\S]*total duration/);
   expect(agent).toMatch(/whether stim logs\s+--errors passed/);
@@ -1780,13 +1761,32 @@ test('warm guidance covers current linked worktrees, main-source exclusions, and
   expect(agent).toMatch(/\.env and local\s+configuration/);
   expect(options).toMatch(/worktree warm.*takes no arguments or flags/);
   expect(options).toMatch(/main\s+checkout/);
-  expect(options).toMatch(/existing\s+directory such as node_modules is skipped WHOLE/i);
+  expect(options).toMatch(/existing\s+ignored directory such as node_modules is skipped WHOLE/i);
   expect(options).toMatch(/dangling symlinks/);
   expect(options).toMatch(/does not copy tracked changes/);
   expect(options).toMatch(/stdout stays empty/);
   expect(options).toMatch(/copy failure exits 1/);
-  expect(settings).toMatch(/source\s+checkout \(main for warm\)/);
-  expect(settings).toMatch(/nonempty .worktreeexclude\s+in that source replaces this setting/);
+  expect(settings).toMatch(/come from the main checkout/);
+  expect(settings).toMatch(/nonempty\s+.worktreeexclude in main replaces this setting/);
   expect(errors).toMatch(/incomplete:.*ignored entries copied/);
   expect(errors).toMatch(/partially|already published/);
+});
+
+test('current worktree docs cover removal without warming or Stim registration', () => {
+  const guidance = [
+    renderTopic('agent'),
+    renderSection('lifecycle', 'progress'),
+    renderSection('cleanup', 'gc'),
+    readFileSync(new URL('../../../../website/docs/worktrees.md', import.meta.url), 'utf-8'),
+    readFileSync(new URL('../../../../website/docs/commands.md', import.meta.url), 'utf-8'),
+  ];
+  for (const body of guidance) {
+    assert(body);
+    const flat = body.replace(/\s+/g, ' ');
+    expect(flat).toMatch(/any linked worktree.*warmed or not/i);
+    expect(flat).toMatch(/registry entry/);
+    expect(flat).toMatch(/Git-created branches (are kept|stay)/);
+    expect(flat).toMatch(/existing Stim ownership record/);
+    expect(flat).toMatch(/no unique commits/);
+  }
 });

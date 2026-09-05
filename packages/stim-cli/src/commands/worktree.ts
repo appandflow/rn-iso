@@ -1,7 +1,7 @@
-import { existsSync, readdirSync, realpathSync } from 'fs';
+import { existsSync, realpathSync } from 'fs';
 import { basename, dirname, resolve } from 'path';
 import chalk from 'chalk';
-import { type Command, InvalidArgumentError } from 'commander';
+import type { Command } from 'commander';
 import { phaseLine, plural, releasedLeaseFact, shortUdid } from '../command-output.ts';
 import { resolveSettings, SETTING_SHAPE_REMEDY, settingShapeErrors, unknownSettingKeys } from '../settings.ts';
 import { getProject, isPathPrefix, loadConfig, removeProject, upsertProject } from '../config.ts';
@@ -13,114 +13,29 @@ import type { ParkedDevice } from '../teardown.ts';
 import { withManagedRemoteWorktreeRemovalLock, withManagedTunnelRemovalLock } from '../engine/tunnel.ts';
 import { readMetroTunnel, readRemoteSession } from '../supervisor/state.ts';
 import {
-  addWorktree,
   branchExists,
-  carryOverFiles,
-  carryUncommittedChanges,
   depsOutOfSync,
   deleteBranch,
-  defaultWorktreeLabel,
   cloneIgnoredEntries,
-  defaultWorktreeDir,
   dirtyPaths,
   gitCommonDir,
   hasRemote,
   hasUncommittedWork,
   isMainWorkingTree,
-  isValidWorktreeName,
   isPodInstallChurn,
-  listCarryableIgnoredEntries,
-  listTrackedPaths,
   listWorktrees,
   podsOutOfSync,
   readWorktreeExclude,
-  readWorktreeInclude,
   removeWorktree,
-  repoRoot,
-  resolveBaseRef,
   resolveFullRef,
-  resolveRef,
   restoreFile,
   unpushedCommits,
-  worktreePath,
   warmWorktreePaths,
 } from '../worktree.ts';
 import type { WorktreeEntry } from '../worktree.ts';
 
 interface WorktreeSettings {
-  worktreeDir?: string;
-  worktree?: {
-    baseRef?: string;
-    include?: string[];
-    exclude?: string[];
-  };
-}
-
-export interface WarmCarryCategories {
-  dependencies: boolean;
-  pods: boolean;
-  nativeOutput: boolean;
-}
-
-export function warmCarryCategories(entries: string[], root?: string): WarmCarryCategories {
-  const categories = {
-    dependencies: root ? false : entries.some((rel) => rel === 'node_modules' || rel.endsWith('/node_modules')),
-    pods: entries.some((rel) => rel === 'Pods' || rel.endsWith('/Pods')),
-    nativeOutput: entries.some(
-      (rel) =>
-        /(?:^|\/)ios\/build(?:\/|$)/.test(rel) || /(?:^|\/)android\/(?:.*\/)?(?:build|\.gradle)(?:\/|$)/.test(rel),
-    ),
-  };
-  if (!root || (categories.dependencies && categories.pods && categories.nativeOutput)) return categories;
-
-  const inspect = (rel: string): void => {
-    if (categories.dependencies && categories.pods && categories.nativeOutput) return;
-    if (rel === 'node_modules' || rel.endsWith('/node_modules')) {
-      if (existsSync(resolve(root, dirname(rel), 'package.json'))) categories.dependencies = true;
-      return;
-    }
-    if (rel === 'Pods' || rel.endsWith('/Pods')) {
-      categories.pods = true;
-      return;
-    }
-    if (/(?:^|\/)ios\/build(?:\/|$)/.test(rel) || /(?:^|\/)android\/(?:.*\/)?(?:build|\.gradle)(?:\/|$)/.test(rel)) {
-      categories.nativeOutput = true;
-      return;
-    }
-    try {
-      for (const entry of readdirSync(resolve(root, rel), { withFileTypes: true })) {
-        if (entry.isDirectory()) inspect(rel ? `${rel}/${entry.name}` : entry.name);
-      }
-    } catch {
-      // A copied entry can disappear while the summary is generated.
-    }
-  };
-  for (const rel of entries) inspect(rel);
-  return categories;
-}
-
-function warmCategoryNames(categories: WarmCarryCategories): string[] {
-  const names: string[] = [];
-  if (categories.dependencies) names.push('dependencies');
-  if (categories.pods) names.push('CocoaPods');
-  if (categories.nativeOutput) names.push('native build output');
-  return names;
-}
-
-export function warmCarrySummary(entries: string[], root: string | undefined, cloned: boolean): string {
-  const categories = warmCarryCategories(entries, root);
-  const carried: string[] = [];
-  const absent: string[] = [];
-  for (const [name, present] of [
-    ['node_modules', categories.dependencies],
-    ['Pods', categories.pods],
-    ['native build output', categories.nativeOutput],
-  ] as const) {
-    (present ? carried : absent).push(name);
-  }
-  const mode = cloned ? 'APFS clone' : 'byte copy';
-  const parts = carried.length ? [`${carried.join(', ')} (${mode})`] : [];
-  return [...parts, ...absent.map((name) => `no ${name}`)].join('; ');
+  worktree?: { exclude?: string[] };
 }
 
 export function dependencyInstallCommand(target: string, dir = '.'): string {
@@ -132,278 +47,6 @@ export function dependencyInstallCommand(target: string, dir = '.'): string {
     command = 'bun install';
   else if (existsSync(resolve(installRoot, 'package-lock.json'))) command = 'npm ci';
   return `cd '${installRoot.replaceAll("'", "'\\''")}' && ${command}`;
-}
-
-function dependencyInstallCommands(target: string): string[] {
-  const lockfiles = new Set(['package-lock.json', 'yarn.lock', 'pnpm-lock.yaml', 'bun.lock', 'bun.lockb']);
-  const dirs = new Set(
-    (listTrackedPaths(target) || [])
-      .filter((path) => lockfiles.has(path.split('/').at(-1) || ''))
-      .map((path) => path.split('/').slice(0, -1).join('/') || '.'),
-  );
-  if (!dirs.size) dirs.add('.');
-  return [...dirs].map((dir) => dependencyInstallCommand(target, dir));
-}
-
-const BRANCH_EXISTS_CODE = 'STIM_WORKTREE_BRANCH_EXISTS';
-
-const GIT_BRANCH_ALREADY_EXISTS = /a branch named .* already exists/i;
-
-function gitFailureText(error: unknown): string {
-  return `${(error as Error)?.message || String(error)}\n${String((error as { stderr?: unknown })?.stderr ?? '')}`;
-}
-
-function rollBackCreatedBranch({
-  root,
-  branch,
-  baseRef,
-  baseSha,
-  error,
-}: {
-  root: string;
-  branch: string;
-  baseRef: string;
-  baseSha: string | null;
-  error: unknown;
-}): void {
-  const keep = (reason: string) => {
-    console.error(chalk.yellow(`Kept the branch ${branch}: ${reason}`));
-    console.error(chalk.dim(`  Delete it before retrying: git -C ${root} branch -D -- ${branch}`));
-  };
-  if (GIT_BRANCH_ALREADY_EXISTS.test(gitFailureText(error))) {
-    keep('git refused to create it because it already existed, so this create did not make it');
-    return;
-  }
-  const stranded = resolveFullRef(root, `refs/heads/${branch}`);
-  if (!stranded) return;
-  if (!baseSha || stranded !== baseSha) {
-    keep(`it points at ${stranded}, not at the ${baseRef} this create asked for, so Stim cannot prove it made it`);
-    return;
-  }
-  const checkedOutAt = listWorktrees(root).find((candidate) => candidate.branch === branch)?.path;
-  if (checkedOutAt) {
-    keep(`it is checked out at ${checkedOutAt}`);
-    return;
-  }
-  try {
-    deleteBranch(root, branch, stranded);
-    console.error(chalk.dim(`Deleted ${branch}, which git created before the failure, so a retry starts clean.`));
-  } catch (deleteError) {
-    keep(String((deleteError as Error)?.message || deleteError));
-  }
-}
-
-export function registerCreate(worktree: Command): void {
-  worktree
-    .command('create <name>')
-    .description('Create a git worktree with its environment set up. Prints the worktree path on stdout.')
-    .option(
-      '--base <ref>',
-      'base ref: "head" (current HEAD, default), "fresh" (origin/HEAD), or any ref this repo resolves (branch, tag, sha)',
-    )
-    .option(
-      '--dir <path>',
-      'directory to create the worktree under, resolved against the current directory; overrides the worktreeDir setting for this run',
-      (v: string) => {
-        if (!v.trim()) throw new InvalidArgumentError('must name a directory, e.g. --dir .worktrees');
-        return v;
-      },
-    )
-    .option('--label <label>', 'Stim shortcut for the worktree (defaults to the worktree name)')
-    .option(
-      '--carry-ignored',
-      "clone the source's working state: every safe gitignored path (node_modules, Pods, build output) except nested Git worktrees and paths in .worktreeexclude, plus its uncommitted tracked changes (applied when they fit this base)",
-    )
-    .action(async (name, opts) => {
-      if (!isValidWorktreeName(name)) {
-        console.error(
-          chalk.red(
-            `Invalid worktree name: "${name}". Use slash-separated names made from letters, numbers, dots, dashes, and underscores.`,
-          ),
-        );
-        process.exitCode = 1;
-        return;
-      }
-
-      const root = repoRoot(process.cwd());
-      if (!root) {
-        console.error(chalk.red('Not a git repository.'));
-        process.exitCode = 1;
-        return;
-      }
-      const common = gitCommonDir(process.cwd());
-      const settings = resolveSettings({ gitCommonDir: common, repoRoot: root }) as WorktreeSettings;
-      const shapeErrors = settingShapeErrors(settings);
-      if (shapeErrors.length) {
-        for (const message of shapeErrors) console.error(chalk.red(message));
-        console.error(chalk.dim(SETTING_SHAPE_REMEDY));
-        process.exitCode = 1;
-        return;
-      }
-      for (const key of unknownSettingKeys(settings)) {
-        console.error(chalk.yellow(`Warning: setting "${key}" is not read by Stim and will be ignored.`));
-      }
-
-      const base = opts.base || settings?.worktree?.baseRef || 'head';
-
-      const dir = canonicalExistingPath(
-        opts.dir || (settings.worktreeDir ? resolve(root, settings.worktreeDir) : defaultWorktreeDir(root)),
-      );
-      const target = worktreePath({ worktreeDir: dir, name });
-
-      if (existsSync(target)) {
-        console.error(chalk.dim(`Worktree already exists at ${target}`));
-        console.log(target);
-        return;
-      }
-
-      const baseRef = base === 'fresh' || base === 'head' ? resolveBaseRef(root, base) : base;
-      const baseSha = resolveRef(root, baseRef);
-      if (!baseSha) {
-        console.error(
-          chalk.red(`Invalid --base: "${base}". This repo cannot resolve ${JSON.stringify(baseRef)} to a commit.`),
-        );
-        console.error(
-          chalk.dim('  Use "fresh" (origin/HEAD), "head", or any branch, tag or sha `git rev-parse` accepts.'),
-        );
-        process.exitCode = 1;
-        return;
-      }
-
-      const branch = `worktree-${name}`;
-      const reusedBranch = branchExists(root, branch);
-      const branchSha = reusedBranch ? resolveRef(root, `refs/heads/${branch}`) : null;
-
-      if (opts.base && reusedBranch) {
-        const diverged = branchSha !== baseSha;
-        console.error(
-          chalk.red(
-            `${BRANCH_EXISTS_CODE}: Refusing to create ${name}: the branch ${branch} already exists at ${branchSha || 'an unresolvable commit'}, ` +
-              (diverged
-                ? `but --base ${base} resolves to ${baseSha}.`
-                : `which is where --base ${base} resolves right now.`),
-          ),
-        );
-        console.error(
-          chalk.dim(
-            diverged
-              ? '  `git worktree add` attaches to an existing branch and ignores the base, so this worktree would NOT be based on what you asked for.'
-              : '  `git worktree add` attaches to an existing branch and ignores the base, so the two agreeing here is a coincidence, not the guarantee --base exists to give.',
-          ),
-        );
-        console.error(chalk.dim('  Either create it under a different name:'));
-        console.error(chalk.dim(`    stim worktree create <other-name> --base ${base}`));
-        console.error(
-          chalk.dim(
-            '  or delete the existing branch (Stim keeps branches it did not create and branches with unique commits) and retry:',
-          ),
-        );
-        console.error(chalk.dim(`    git -C ${root} branch -D ${branch}`));
-        process.exitCode = 1;
-        return;
-      }
-
-      const createBranch = !reusedBranch;
-      const baseFullSha = createBranch ? resolveFullRef(root, baseRef) : null;
-      try {
-        addWorktree({ path: target, branch, baseRef, createBranch });
-      } catch (e) {
-        console.error(String((e as Error)?.message || e));
-        if (createBranch) rollBackCreatedBranch({ root, branch, baseRef, baseSha: baseFullSha, error: e });
-        process.exitCode = 1;
-        return;
-      }
-
-      console.error(
-        chalk.dim(
-          phaseLine(
-            'branch',
-            reusedBranch
-              ? `attached to the existing ${branch}${branchSha ? ` (${branchSha})` : ''}; its tip is the base, ${baseRef} was not applied`
-              : `${branch} from ${baseRef} (${baseSha})`,
-          ),
-        ),
-      );
-      if (!reusedBranch && base === 'fresh') {
-        console.error(
-          chalk.dim(
-            phaseLine(
-              '',
-              `${baseRef} is a local ref, current as of the last \`git fetch\`. If you need the very latest, ` +
-                `run \`git -C ${root} fetch\` first.`,
-            ),
-          ),
-        );
-      }
-
-      const included = readWorktreeInclude(root);
-      const patterns = included && included.length ? included : settings?.worktree?.include || [];
-      const { copied, failed } = carryOverFiles({ root, target, patterns });
-      if (copied.length) console.error(chalk.dim(phaseLine('carry', plural(copied.length, 'configured file'))));
-      for (const f of failed) {
-        console.error(chalk.yellow(phaseLine('carry', `could not carry ${f.file}: ${f.error}`)));
-      }
-
-      let carriedDeps = false;
-      let warmSource: string[] = [];
-      if (opts.carryIgnored) {
-        const excluded = readWorktreeExclude(root);
-        const skip = excluded && excluded.length ? excluded : settings?.worktree?.exclude || [];
-        const res = cloneIgnoredEntries({ root, target, patterns: skip });
-        carriedDeps = warmCarryCategories(res.copied, target).dependencies;
-        if (res.copied.length) {
-          console.error(chalk.dim(phaseLine('carry', warmCarrySummary(res.copied, target, res.cloned))));
-        }
-        for (const f of res.failed) {
-          console.error(chalk.yellow(phaseLine('carry', `could not clone ${f.file}: ${f.error}`)));
-        }
-        const changes = carryUncommittedChanges({ root, target });
-        if (changes?.applied) {
-          console.error(chalk.dim(phaseLine('carry', carriedChangesLine(changes.files))));
-        } else if (changes?.conflicted) {
-          console.error(chalk.yellow(phaseLine('carry', carryConflictWarning(changes.files))));
-        }
-        reportCarriedStateHealth(root, target, res.copied);
-      } else {
-        const excluded = readWorktreeExclude(root);
-        const skip = excluded && excluded.length ? excluded : settings?.worktree?.exclude || [];
-        warmSource = warmCategoryNames(warmCarryCategories(listCarryableIgnoredEntries(root, skip), root));
-      }
-
-      const mainRoot = listWorktrees(root).find((candidate) => isMainWorkingTree(candidate.path))?.path || root;
-      upsertProject(target, {
-        label: opts.label || defaultWorktreeLabel(name),
-        worktreeRoot: true,
-        worktreeBranch: branch,
-        worktreeBranchOwned: !reusedBranch,
-        worktreeMainRoot: mainRoot,
-      });
-
-      if (!carriedDeps) {
-        const remedies = dependencyInstallCommands(target);
-        console.error(
-          chalk.yellow(
-            phaseLine(
-              'carry',
-              `no dependencies carried. Run ${remedies.map((command) => `\`${command}\``).join(' and ')} before building.`,
-            ),
-          ),
-        );
-      }
-      if (warmSource.length) {
-        console.error(
-          chalk.yellow(
-            phaseLine(
-              'carry',
-              `warm source not carried: ${warmSource.join(', ')}. For the next worktree, use: stim worktree create <name> --carry-ignored`,
-            ),
-          ),
-        );
-      }
-      console.error(chalk.dim(phaseLine('ready', target)));
-
-      console.log(target);
-    });
 }
 
 function reportCarriedStateHealth(root: string, target: string, copied: string[]): void {
@@ -456,7 +99,7 @@ export function registerWarm(worktree: Command): void {
         }
         const excluded = readWorktreeExclude(root);
         const patterns = excluded?.length ? excluded : settings.worktree?.exclude || [];
-        const result = cloneIgnoredEntries({ root, target, patterns, preserveExisting: true });
+        const result = cloneIgnoredEntries({ root, target, patterns });
         for (const entry of result.skipped) {
           console.error(chalk.dim(phaseLine('carry', `kept ${entry.file} (${entry.reason})`)));
         }
@@ -484,17 +127,6 @@ export function registerWarm(worktree: Command): void {
 function carriedFileList(files: string[]): string {
   const shown = files.slice(0, 3).join(', ');
   return files.length > 3 ? `${shown}, +${files.length - 3}` : shown;
-}
-
-export function carriedChangesLine(files: string[]): string {
-  return `carried ${plural(files.length, 'uncommitted change')} from the source (${carriedFileList(files)}) -- uncommitted here too; commit deliberately`;
-}
-
-export function carryConflictWarning(files: string[]): string {
-  return (
-    `could not carry the source's uncommitted changes (${carriedFileList(files)}): this worktree's base diverges from the source HEAD, so the patch does not apply and nothing was changed here. ` +
-    "The carried artifacts were installed for the source's uncommitted state, so fingerprints and cache keys in this worktree will differ from the source's until those changes are reconciled."
-  );
 }
 
 export function porcelainPath(line: string): string | null {
@@ -1100,8 +732,7 @@ export function registerRemove(worktree: Command): void {
 }
 
 export default function worktreeCommand(program: Command): void {
-  const worktree = program.command('worktree').description('Create, warm, and remove isolated worktrees');
-  registerCreate(worktree);
+  const worktree = program.command('worktree').description('Warm and remove Git worktrees');
   registerWarm(worktree);
   registerRemove(worktree);
 }

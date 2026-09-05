@@ -34,9 +34,8 @@ import {
 import { setProjectSetting, setRepoSetting, upsertProject } from '../config.ts';
 
 type SettingsView = {
-  packageManager?: string;
   caches?: string[];
-  worktree?: { install?: string[]; baseRef?: string };
+  worktree?: { exclude?: string[] };
   ios?: { deviceType?: string; runtime?: string };
   [k: string]: unknown;
 };
@@ -54,16 +53,16 @@ afterEach(() => {
 });
 
 test('earlier layers win over later ones', () => {
-  const merged = mergeSettingsLayers([{ packageManager: 'bun' }, { packageManager: 'pnpm', worktreeDir: '/b' }]);
-  expect(merged).toEqual({ packageManager: 'bun', worktreeDir: '/b' });
+  const merged = mergeSettingsLayers([{ caches: ['/a'] }, { caches: ['/b'], ios: { runtime: '26.2' } }]);
+  expect(merged).toEqual({ caches: ['/a'], ios: { runtime: '26.2' } });
 });
 
 test('merges nested objects key by key rather than replacing them', () => {
   const merged = mergeSettingsLayers([
-    { worktree: { baseRef: 'head' } },
-    { worktree: { baseRef: 'fresh', install: ['pnpm install'] } },
+    { ios: { deviceType: 'iPhone 17 Pro' } },
+    { ios: { deviceType: 'iPhone 17', runtime: '26.2' } },
   ]);
-  expect(merged).toEqual({ worktree: { baseRef: 'head', install: ['pnpm install'] } });
+  expect(merged).toEqual({ ios: { deviceType: 'iPhone 17 Pro', runtime: '26.2' } });
 });
 
 test('merges android.avdConfig keys across settings layers with earlier values winning', () => {
@@ -82,16 +81,16 @@ test('ignores null and undefined layers', () => {
 
 test('an array value is replaced wholesale, not concatenated', () => {
   const merged = mergeSettingsLayers([
-    { worktree: { install: ['a'] } },
-    { worktree: { install: ['b', 'c'] } },
+    { worktree: { exclude: ['a'] } },
+    { worktree: { exclude: ['b', 'c'] } },
   ]) as SettingsView;
   assert(merged.worktree);
-  expect(merged.worktree.install).toEqual(['a']);
+  expect(merged.worktree.exclude).toEqual(['a']);
 });
 
 test('readCommittedSettings reads .stim.json', () => {
-  writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ packageManager: 'yarn' }));
-  expect(readCommittedSettings(tmpHome)).toEqual({ packageManager: 'yarn' });
+  writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ ios: { deviceType: 'iPhone 17' } }));
+  expect(readCommittedSettings(tmpHome)).toEqual({ ios: { deviceType: 'iPhone 17' } });
 });
 
 test('readCommittedSettings returns empty for missing or malformed files', () => {
@@ -103,20 +102,20 @@ test('readCommittedSettings returns empty for missing or malformed files', () =>
 test('resolveSettings orders project over repo over committed', () => {
   writeFileSync(
     join(tmpHome, '.stim.json'),
-    JSON.stringify({ packageManager: 'yarn', worktree: { baseRef: 'fresh' } }),
+    JSON.stringify({ ios: { deviceType: 'iPhone 17' }, worktree: { exclude: ['.env'] } }),
   );
-  setRepoSetting('/repo/.git', 'packageManager', 'pnpm');
+  setRepoSetting('/repo/.git', 'ios.deviceType', 'iPhone 17 Pro');
   upsertProject('/proj', {});
-  setProjectSetting('/proj', 'packageManager', 'bun');
+  setProjectSetting('/proj', 'ios.deviceType', 'iPhone 17 Pro Max');
 
   const merged = resolveSettings({
     projectPath: '/proj',
     gitCommonDir: '/repo/.git',
     repoRoot: tmpHome,
   }) as SettingsView;
-  expect(merged.packageManager).toBe('bun');
+  expect(merged.ios?.deviceType).toBe('iPhone 17 Pro Max');
   assert(merged.worktree);
-  expect(merged.worktree.baseRef).toBe('fresh');
+  expect(merged.worktree.exclude).toEqual(['.env']);
 });
 
 test('unknownSettingKeys reports keys Stim no longer reads', () => {
@@ -140,8 +139,7 @@ test('unknownSettingKeys accepts every key that is still honoured', () => {
         avdConfig: { 'hw.ramSize': 3072, 'hw.keyboard': true },
         variant: 'productionDebug',
       },
-      worktree: { baseRef: 'fresh', include: ['.env'] },
-      worktreeDir: '/tmp/wt',
+      worktree: { exclude: ['.env'] },
     }),
   ).toEqual([]);
 });
@@ -302,8 +300,10 @@ test('unknownSettingKeys reports a nested unknown without flagging its parent', 
 });
 
 test('unknownSettingKeys treats a known scalar key with an object value as known, leaving refusal to the shape check', () => {
-  expect(unknownSettingKeys({ worktreeDir: {} })).toEqual([]);
-  expect(settingShapeErrors({ worktreeDir: {} })).toEqual(['Invalid worktreeDir setting {}. Expected a string path.']);
+  expect(unknownSettingKeys({ android: { keystore: {} } })).toEqual([]);
+  expect(settingShapeErrors({ android: { keystore: {} } })).toEqual([
+    'Invalid android.keystore setting {}. Expected a string path.',
+  ]);
 
   expect(unknownSettingKeys({ ios: { lanHost: {} } })).toEqual([]);
   expect(settingShapeErrors({ ios: { lanHost: {} } })).toEqual(['Invalid ios.lanHost setting {}. Expected a string.']);
@@ -350,9 +350,6 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
   'metro.tunnel': { valid: 'ngrok', invalid: {}, expected: 'a string' },
   'metro.ngrokUrl': { valid: 'https://a.ngrok.app', invalid: {}, expected: 'a string' },
   'metro.publicUrl': { valid: 'https://metro.example', invalid: false, expected: 'a string' },
-  worktreeDir: { valid: '.stim-worktrees', invalid: {}, expected: 'a string path' },
-  'worktree.baseRef': { valid: 'head', invalid: {}, expected: 'a string' },
-  'worktree.include': { valid: ['.env'], invalid: {}, expected: 'an array of strings' },
   'worktree.exclude': { valid: ['node_modules'], invalid: ['ok', 7], expected: 'an array of strings' },
   'cache.provider': { valid: './cache.cjs', invalid: {}, expected: 'a string' },
   'cache.options': { valid: { bucket: 'a' }, invalid: 'nope', expected: 'an object' },
@@ -384,9 +381,9 @@ test('settingShapeErrors reports one line per bad key and ignores absent keys', 
   expect(settingShapeErrors({})).toEqual([]);
   expect(settingShapeErrors(null)).toEqual([]);
   expect(settingShapeErrors('nope')).toEqual([]);
-  expect(settingShapeErrors({ ios: { configuration: {} }, worktreeDir: 5, packageManager: 'pnpm' })).toEqual([
+  expect(settingShapeErrors({ ios: { configuration: {} }, android: { keystore: 5 }, packageManager: 'pnpm' })).toEqual([
     'Invalid ios.configuration setting {}. Expected a string.',
-    'Invalid worktreeDir setting 5. Expected a string path.',
+    'Invalid android.keystore setting 5. Expected a string path.',
   ]);
 });
 
@@ -494,7 +491,7 @@ describe('ngrokUrlSetting', () => {
 });
 
 test('resolveCacheProviderConfig reports no provider when nothing configures one', () => {
-  writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ worktree: { baseRef: 'fresh' } }));
+  writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ worktree: { exclude: ['.env'] } }));
   upsertProject('/proj', {});
 
   expect(
@@ -637,9 +634,10 @@ test('ios.lanHost takes a bare address and refuses everything that would break s
   }
 });
 
-test('worktreeDir refuses a non-string value and accepts a valid path', () => {
-  expect(settingShapeErrors({ worktreeDir: 5 })).toEqual(['Invalid worktreeDir setting 5. Expected a string path.']);
-  expect(settingShapeErrors({ worktreeDir: '.stim-worktrees' })).toEqual([]);
+test('creation-only settings are unknown and do not block the remaining commands', () => {
+  const settings = { worktreeDir: '/wt', worktree: { baseRef: 'head', include: ['.env'] } };
+  expect(unknownSettingKeys(settings)).toEqual(['worktreeDir', 'worktree.baseRef', 'worktree.include']);
+  expect(settingShapeErrors(settings)).toEqual([]);
 });
 
 test('the three iOS device settings are known keys', () => {

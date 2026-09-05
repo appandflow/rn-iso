@@ -39,16 +39,6 @@ succeeded.
 Use `stim doctor --platform ios` or `stim doctor --platform android` when only
 one native platform is in scope; shared project checks still run.
 
-Create a warm isolated worktree with:
-
-```bash
-stim worktree create feature/settings --carry-ignored
-```
-
-Slash-separated names keep the matching Git branch hierarchy while the
-worktree itself remains one directory under the configured worktree root. Its
-default device label includes a stable hash so a flat name cannot collide.
-
 Stim builds or restores the app, installs it, launches it, and checks launch
 readiness. Plain output streams progress and reports the complete result. Use
 `--json` when a script needs structured data.
@@ -59,12 +49,23 @@ an error screen remains after a fix, or when you explicitly need an app
 restart. It is not part of the normal workflow and does not build, install,
 boot, or launch an app. The platform is optional when only one app is live.
 
-If a harness already created a linked worktree, run `stim worktree warm`
-inside it to copy missing ignored state from the main checkout, including
-eligible `.env` and local configuration files. Existing entries are preserved;
-existing directories such as `node_modules` are skipped whole. See the
+For an isolated branch, create the worktree with Git, then warm it:
+
+```bash
+git worktree add -b feature/settings ../feature-settings HEAD
+cd ../feature-settings
+stim worktree warm
+```
+
+If a harness already created the linked worktree, run only `stim worktree warm`
+there. Warm copies missing ignored state from main, including eligible `.env`
+and local configuration files. Existing entries are preserved; existing
+ignored directories such as `node_modules` are skipped whole.
+
+After the work is preserved, `stim worktree remove` removes any linked
+worktree, warmed or not. Git-created branches stay. See the
 [worktree guide](https://appandflow.github.io/stim/docs/worktrees) for exclusions
-and copy-failure remedies.
+and cleanup rules.
 
 ## Reference
 

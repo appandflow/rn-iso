@@ -28,8 +28,9 @@ It drives the real CLI and the real cache library end to end under a throwaway
 `STIM_HOME` and a throwaway temp repo, so it never touches the machine's real
 caches, registry, or checkouts. What it proves:
 
-1. `stim worktree create` makes two real git worktrees at one commit and keeps
-   its stdout-is-only-the-path contract.
+1. Git creates real linked worktrees at one commit. `stim worktree warm`
+   copies missing ignored state from main, preserves existing entries and the
+   branch, and keeps stdout empty.
 2. Two worktrees of one commit **fingerprint identically when scoped to a
    platform** (the cross-worktree cache premise) -- and diverge under `ios/`
    when a worktree-local path leaks in, which is exactly why the hash is scoped.
@@ -38,8 +39,9 @@ caches, registry, or checkouts. What it proves:
    and the hit becomes a miss.
 4. Two real node processes racing the single-flight build lock: **exactly one
    builds**, the other waits and resolves the artifact the first one stored.
-5. `stim worktree remove` refuses a dirty tree, then removes a clean one
-   leaving no dirs, no config entries, and a clean `git worktree list`.
+5. `stim worktree remove` refuses a dirty tree, then removes a clean linked
+   worktree, warmed or not, without requiring a Stim registry entry. It leaves
+   no workspace directories or config entries and retains Git-created branches.
 
 The one non-real piece is the leaf hash function: the real CLI has a direct `@expo/fingerprint` dependency, while this fast suite injects a deterministic platform-scoping stub (`test/e2e/fixtures/fingerprint-stub.mjs`) through the `load` seam. Everything else -- `buildCacheKey`, `storeBuild`, `resolveBuild`, `acquireBuildLock`, the worktree CLI -- is the real library.
 
@@ -133,7 +135,7 @@ refuses to take one as evidence of another:
 | `xcode-cas`         | Xcode 26 compilation caching                                                            | the five build settings read verbatim off the `build_start` record in `build-ios.ndjson`, CAS directory growth across the cold compile, and near-zero growth when a never-compiled workspace compiles the same sources                                                                                                                                                                |
 | `gradle-cache`      | the Gradle build cache                                                                  | `--build-cache` read off the `build_start` record in `build-android.ndjson` (added in #78 so this need not race `ps`), growth of `<gradle user home>/caches/build-cache-1`, and `FROM-CACHE` tasks in a second worktree forced to run gradle with `stim android --no-build-cache`                                                                                                     |
 | `fingerprint-cache` | the entry is complete and under the right key                                           | the entry holds the artifact AND `fingerprint-sources.json` (and, for an Android release entry, `assets-manifest.json`); a second run in the SAME tree must HIT what the first stored, which is what proves the entry landed under the POST-mutation key that prebuild and `pod install` shift it to                                                                                  |
-| `pods-reuse`        | carried Pods skip `pod install`                                                         | the racing worktrees are cloned from wt1 with `--carry-ignored`, so they carry its `ios/` and its installed Pods; the one that takes the BUILD path must print no `pods` phase line at all                                                                                                                                                                                            |
+| `pods-reuse`        | carried Pods skip `pod install`                                                         | the racing worktrees warm ignored state from main, whose installed Pods match their tracked Podfile.lock; the one that takes the BUILD path must print no `pods` phase line at all                                                                                                                                                                                                    |
 | `single-flight`     | two workspaces racing one uncached fingerprint compile once                             | both racers point at an EMPTY build-cache root (so the fingerprint is identical to the one already stored and misses only because that root is empty, which keeps the check about the lock and nothing else) while the build lock stays shared through `STIM_HOME`; exactly one compiles, the other reports `waited ... -> installed from cache` with `waitedForBuild` in its payload |
 | `gc-view`           | `gc` can see every cache                                                                | a bare `gc` must list each live cache directory with a size under "Shared build caches (N) - alive, not garbage"                                                                                                                                                                                                                                                                      |
 

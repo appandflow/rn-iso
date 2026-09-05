@@ -13,10 +13,10 @@ logs.
 The normal flow is:
 
 ```text
-worktree create -> start -> ios|android -> logs --errors -> stop -> worktree remove
+git worktree add -> cd -> worktree warm -> start -> ios|android -> logs --errors -> stop -> worktree remove
 ```
 
-The command surface is `doctor`, `worktree create|warm|remove`, `start`, `stop`,
+The command surface is `doctor`, `worktree warm|remove`, `start`, `stop`,
 `ios`, `android`, `reload`, `device lock|unlock`, `logs`, `status`, `stats`, `gc`, and
 `guide`. Do not add commands or flags without an explicit product decision.
 Projects can wrap Stim when they need custom behavior.
@@ -228,8 +228,8 @@ symlinked worktree must resolve to the same config key as its target.
 
 ### 7. Preserve stdout contracts
 
-`worktree create` prints only the created absolute path to stdout. JSON commands
-print exactly one parseable payload. Send status, warnings, and progress to
+`worktree warm` and `worktree remove` keep stdout empty. JSON commands print
+exactly one parseable payload. Send status, warnings, and progress to
 stderr.
 
 ### 8. Fail closed during cleanup

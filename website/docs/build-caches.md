@@ -50,9 +50,8 @@ stim stop`}
 
 Later worktrees can reuse that cache entry. In an existing linked worktree,
 `stim worktree warm` copies missing ignored state from main without replacing
-existing entries. See [worktree isolation](./worktrees.md) for its full scope. `stim worktree create
---carry-ignored` can also copy installed dependencies, Pods, and native output
-from the source checkout.
+existing entries. This includes installed dependencies, Pods, and native
+output. See [worktree isolation](./worktrees.md) for its full scope.
 
 ## Inspect and clean caches
 

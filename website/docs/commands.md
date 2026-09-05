@@ -291,29 +291,6 @@ prints (`build       still compiling (1m00s of ~3m10s)`). The saved figure is
 an estimate: each cache hit is credited this project's mean cold run at that
 moment, minus its own duration, floored at zero.
 
-## `worktree create`
-
-```text
-stim worktree create <name> [--base <head|fresh|ref>] [--dir <path>]
-                            [--label <label>] [--carry-ignored]
-```
-
-Creates a git worktree and prints its absolute path.
-
-Slash-separated names keep their branch hierarchy but use a flat directory
-under the worktree root: `feature/settings` becomes `feature+settings`.
-
-- `--base head` uses the current checkout's `HEAD`, the default when
-  `worktree.baseRef` is unset.
-- `--base fresh` uses `origin/HEAD`.
-- `--base <ref>` accepts any branch, tag, or commit that git resolves.
-- `--dir <path>` creates the worktree under that directory instead of the
-  `worktreeDir` setting or the default `<repo>-worktrees/` sibling. A relative
-  path resolves against the current directory, while a relative `worktreeDir`
-  setting resolves against the repository root.
-- `--label` sets the short Stim name used by the environment and device.
-- `--carry-ignored` copies safe ignored files and compatible uncommitted changes.
-
 ## `worktree warm`
 
 ```text
@@ -329,7 +306,7 @@ The branch, tracked files, and existing destination entries stay untouched.
 Existing directories, including `node_modules`, are skipped whole. Eligible
 ignored `.env` and local configuration files are included. The main checkout's
 nonempty `.worktreeexclude` replaces its resolved `worktree.exclude` setting.
-See [worktree isolation](./worktrees.md) for the shared exclusions.
+See [worktree isolation](./worktrees.md) for exclusions.
 
 stdout stays empty. stderr reports copied, kept, and failed entries. Failures
 exit 1; inspect failed paths before retrying, since partially published
@@ -343,8 +320,11 @@ stim worktree remove [target] [--force]
 ```
 
 Reclaims the target environment, build output, port, and owned device. It then
-removes a linked worktree when safe. On the main checkout it only reclaims the
-environment. `--force` permits removal with uncommitted or unpushed work.
+removes any linked worktree when safe, warmed or not, without requiring a
+Stim registry entry. Git-created branches stay. An existing Stim ownership
+record permits deleting a branch only when it has no unique commits. On the
+main checkout it only reclaims the environment. `--force` permits removal with
+uncommitted, untracked, or unpushed work.
 
 ## `gc`
 

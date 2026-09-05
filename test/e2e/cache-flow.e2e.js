@@ -42,7 +42,7 @@ after(() => {
   delete process.env.STIM_HOME;
 });
 
-test('worktree create prints only the worktree path, and makes a real worktree', () => {
+test('cache workflows accept Git-created worktrees without Stim registration', () => {
   ctx.wt1 = createWorktree('e2e-wt1');
   ctx.wt2 = createWorktree('e2e-wt2');
 
@@ -54,8 +54,8 @@ test('worktree create prints only the worktree path, and makes a real worktree',
   assert.notEqual(ctx.wt1, ctx.wt2);
 
   const projects = loadConfig()?.projects || {};
-  assert.ok(projects[ctx.wt1]?.worktreeRoot, 'wt1 registered as a worktree root');
-  assert.ok(projects[ctx.wt2]?.worktreeRoot, 'wt2 registered as a worktree root');
+  assert.equal(projects[ctx.wt1], undefined);
+  assert.equal(projects[ctx.wt2], undefined);
 });
 
 test('two worktrees of one commit fingerprint identically when scoped', async () => {
@@ -198,7 +198,7 @@ test('the loser of a race waits and resolves the artifact the winner stores', as
   assert.equal(existsSync(buildLockPath('ios', key)), false, 'the lock was released');
 });
 
-test('worktree remove refuses a dirty tree, then removes a clean one leaving nothing behind', () => {
+test('worktree remove refuses a dirty tree, then removes a clean one and retains its Git-created branch', () => {
   assert.throws(
     () => removeWorktree(ctx.wt1),
     /Refusing to remove|uncommitted/i,
@@ -222,23 +222,16 @@ test('worktree remove refuses a dirty tree, then removes a clean one leaving not
   assert.ok(!Object.keys(projects).some((p) => p.includes('-worktrees')), 'no stray worktree entries remain');
 
   const list = execFileSync('git', ['-C', ctx.repo, 'worktree', 'list'], { encoding: 'utf-8' });
-  assert.ok(!list.includes('-worktrees'), `only the main checkout remains:\n${list}`);
+  assert.ok(!list.includes(ctx.wt1) && !list.includes(ctx.wt2), `only the main checkout remains:\n${list}`);
   for (const name of ['e2e-wt1', 'e2e-wt2']) {
     const branch = spawnSync('git', ['-C', ctx.repo, 'show-ref', '--verify', '--quiet', `refs/heads/worktree-${name}`]);
-    assert.notEqual(branch.status, 0, `worktree-${name} branch is gone`);
+    assert.equal(branch.status, 0, `Git-created worktree-${name} branch is retained`);
   }
 });
 
 function createWorktree(name) {
-  const out = execFileSync(process.execPath, [CLI, 'worktree', 'create', name, '--base', 'head'], {
-    cwd: ctx.repo,
-    env: { ...process.env, STIM_HOME: ctx.home },
-    encoding: 'utf-8',
-  });
-  const lines = out.trim().split('\n').filter(Boolean);
-  assert.equal(lines.length, 1, `stdout carries exactly one line (the path), got:\n${out}`);
-  const path = lines[0];
-  assert.ok(path.startsWith('/') || /^[A-Za-z]:\\/.test(path), `stdout is an absolute path: ${path}`);
+  const path = join(ctx.tmp, name);
+  execFileSync('git', ['-C', ctx.repo, 'worktree', 'add', '-b', `worktree-${name}`, path, 'HEAD']);
   return realpathSync(path);
 }
 

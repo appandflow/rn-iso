@@ -789,91 +789,34 @@ not on any remote"  (worktree remove)
   Use --force only when you genuinely intend to discard work; it deletes
   uncommitted and untracked files permanently.`,
     },
-    STIM_WORKTREE_BRANCH_EXISTS: {
-      summary: '--base with an existing worktree-<name> branch; which branches create keeps or rolls back',
-      body: () => `STIM_WORKTREE_BRANCH_EXISTS  (worktree create)
-  "Refusing to create <name>: the branch worktree-<name> already exists at
-  <sha>, but --base <ref> resolves to <sha>" -- or, when the two agree,
-  "which is where --base <ref> resolves right now".
-  \`git worktree add\` attaches to an existing branch and ignores the base, so
-  the worktree would not be based on what you asked for. --base IS THE
-  REFUSAL'S TRIGGER: it is a correctness flag, so Stim refuses whenever it is
-  passed and the branch already exists, INCLUDING the case where the branch
-  happens to sit on the requested base -- that agreement is luck, not the
-  guarantee asked for. Stim keeps branches it did not create and branches with
-  unique commits. Either pick another name, or \`git branch -D
-  worktree-<name>\` and retry. Without --base, attaching is still the
-  behaviour: nothing was promised about the tip.
-  A leftover branch is no longer the usual cause. When \`git worktree add -b\`
-  fails AFTER git created the branch (a locked .git/config, a read-only
-  parent), Stim deletes the branch it just made, so the retry branches from
-  --base instead of attaching. It rolls back only a branch that create made,
-  and it decides that from whether THIS run passed -b, not from re-reading the
-  refs afterwards. So a branch that appears between the check and the add is
-  KEPT: git answers "a branch named ... already exists", and that answer is
-  proof this create did not make it. A branch that no longer matches the base
-  sha captured before the add, or that is checked out anywhere, is KEPT too.
-  Every keep names \`git branch -D\`.`,
-    },
     carry: {
-      summary: 'worktree create and warm copy results, lockfile mismatches, and remedies',
+      summary: 'worktree warm copy results, lockfile mismatches, and remedies',
       body: () => `"carry       incomplete: ... ignored entries copied, ... kept, ... failed"
 (worktree warm)
   At least one entry could not be copied. The command exits 1 and names each
   failure. Existing entries stay untouched; any files already published remain.
   Inspect failed paths before retrying, because existing directories are skipped
   whole. "complete" means the eligible copy finished, not that dependencies
-  are installed or match this branch. Lockfile mismatch remedies below also
-  apply to warm. It writes progress and results to stderr, with empty stdout.
+  are installed or match this branch. Progress and results go to stderr,
+  with empty stdout.
 
-"carry       carried <dir>/Pods does not match the <dir>/Podfile.lock on
-disk here"  (worktree create)
-  \`ios/Pods\` is gitignored, so --carry-ignored clones it; \`ios/Podfile.lock\`
-  is tracked. The check compares the cloned
-  \`Pods/Manifest.lock\` with the \`Podfile.lock\` that is on disk in the new
-  worktree AFTER the uncommitted changes are carried -- the same file
-  \`pod install\` and \`xcodebuild\` read -- so an uncommitted lockfile the
-  clone was installed against does not trigger it. \`stim ios\` detects a real
-  mismatch and runs \`pod install\` for you; the note is there so a build you
-  run yourself does not fail in its LAST phase with
-    error: The sandbox is not in sync with the Podfile.lock
-  A patch that does not apply reports itself first ("Could not carry the
-  source's uncommitted changes"); the branch lockfile then stands, and this
-  note is about that lockfile.
+"carry       carried <dir>/Pods does not match the <dir>/Podfile.lock on disk here"
+  Warm copied ignored Pods from main, but their Manifest.lock differs from
+  the tracked Podfile.lock in this worktree. Warm does not change tracked
+  files. Run the printed pod-install command before building directly.
+  \`stim ios\` detects a mismatch and runs \`pod install\` for you.
 
-"carry       warm source not carried: ... For the next worktree, use: stim
-worktree create <name> --carry-ignored"  (worktree create)
-  A plain create found installed dependencies, CocoaPods, or native build output
-  in the source. The new worktree stays clean. Use the printed command for the
-  next worktree to clone that warm state.
-
-"carry       node_modules (APFS clone); no Pods; no native build output"
-  One line names every useful warm category, carried or not, and the copy mode
-  APFS gave the carried ones: a copy-on-write clone, or a full byte copy when
-  the clone was unavailable.
-
-"carry       no dependencies carried. Run ... before building."
-  There was no node_modules to clone, or --carry-ignored was not passed. Run
-  the printed package-manager command in the new worktree.
+"carry       carried <dir>/Pods but there is no <dir>/Podfile.lock"
+  Warm copied Pods but the destination has no Podfile.lock. Follow the printed
+  pod-install command before building.
 
 "carry       carried dependencies may be stale: they do not match ..."
-  The lockfile that came with the cloned node_modules is not the lockfile this
-  BRANCH has. Nothing else prints this: a carry whose lockfile matches is
-  silent, so the line always means a real difference. Run the printed command.
+  Main's lockfile differs from this branch's lockfile. Run the printed
+  package-manager command before building. A carry whose lockfile matches is
+  silent; the warning means a real difference.
 
-"carry       carried 2 uncommitted changes from the source (...) --
-uncommitted here too; commit deliberately"  (worktree create --carry-ignored)
-  The source tree had uncommitted tracked changes, and the cloned artifacts
-  were installed against that working tree -- so the same changes were applied
-  to the new worktree as a patch, still uncommitted. Whether they belong in a
-  commit is your call; the tool never commits for you.
-
-"carry       could not carry the source's uncommitted changes (...)"
-(worktree create --carry-ignored)
-  The worktree's --base diverges from the source HEAD, so that patch does not
-  apply and NOTHING was changed here. Until those changes are reconciled, this
-  worktree fingerprints differently from the source and misses the cache
-  entries the source fills.`,
+  If main has no dependencies to copy, use this project's package manager to
+  install them. Warm does not install dependencies or prove the app is ready.`,
     },
     environment: {
       summary: 'npx registry E401/E404, the Node floor, no free Metro port, the reservation race',

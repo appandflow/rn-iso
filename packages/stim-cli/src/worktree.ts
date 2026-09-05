@@ -11,14 +11,11 @@ import {
   readlinkSync,
   realpathSync,
   rmSync,
-  statSync,
   symlinkSync,
   utimesSync,
-  writeFileSync,
 } from 'fs';
 import { tmpdir } from 'os';
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
-import { createHash } from 'node:crypto';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { getExecutor } from './exec.ts';
 
 const CARRY_SKIP_BASENAMES = new Set(['.DerivedData']);
@@ -27,20 +24,6 @@ export function isCarrySkipped(rel: string): boolean {
   return String(rel)
     .split('/')
     .some((seg) => CARRY_SKIP_BASENAMES.has(seg));
-}
-
-function pruneCarriedArtifacts(dest: string): void {
-  const args = [dest, '-type', 'd', '('];
-  let first = true;
-  for (const name of CARRY_SKIP_BASENAMES) {
-    if (!first) args.push('-o');
-    args.push('-name', name);
-    first = false;
-  }
-  args.push(')', '-prune', '-exec', 'rm', '-rf', '{}', '+');
-  try {
-    getExecutor().runFile('find', args);
-  } catch {}
 }
 
 export function gitCommonDir(cwd: string): string | null {
@@ -98,26 +81,6 @@ export function warmWorktreePaths(cwd: string): { root: string; target: string; 
   return { root, target, common: realpathSync(targetCommon) };
 }
 
-export function defaultWorktreeDir(root: string): string {
-  return join(dirname(root), `${basename(root)}-worktrees`);
-}
-
-export function isValidWorktreeName(name: string): boolean {
-  if (!/^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/.test(name)) return false;
-  if (name.includes('..') || name.endsWith('.')) return false;
-  return name.split('/').every((segment) => !segment.startsWith('.') && !segment.endsWith('.lock'));
-}
-
-export function worktreePath({ worktreeDir, name }: { worktreeDir: string; name: string }): string {
-  return join(worktreeDir, name.replaceAll('/', '+'));
-}
-
-export function defaultWorktreeLabel(name: string): string {
-  if (!name.includes('/')) return name;
-  const digest = createHash('sha256').update(name).digest('hex').slice(0, 8);
-  return `${digest}-${name.replaceAll('/', '-')}`;
-}
-
 export function matchesInclude(path: string, patterns: string[] | null | undefined): boolean {
   for (const pattern of patterns || []) {
     const rooted = pattern.startsWith('/');
@@ -135,10 +98,6 @@ export function matchesInclude(path: string, patterns: string[] | null | undefin
   return false;
 }
 
-export function readWorktreeInclude(root: string): string[] | null {
-  return readPatternFile(join(root, '.worktreeinclude'));
-}
-
 export function readWorktreeExclude(root: string): string[] | null {
   return readPatternFile(join(root, '.worktreeexclude'));
 }
@@ -149,26 +108,6 @@ function readPatternFile(p: string): string[] | null {
     .split('\n')
     .map((l) => l.trim())
     .filter((l) => l && !l.startsWith('#'));
-}
-
-export function listGitignoredFiles(root: string): string[] {
-  const out = getExecutor().runFileQuiet('git', [
-    '-C',
-    root,
-    'ls-files',
-    '--others',
-    '--ignored',
-    '--exclude-standard',
-    '--directory',
-    '--',
-    '.',
-    ':(exclude,glob)**/node_modules/**',
-  ]);
-  if (!out) return [];
-  return out
-    .split('\n')
-    .filter(Boolean)
-    .filter((f) => !f.endsWith('/'));
 }
 
 function canonicalPath(path: string): string {
@@ -232,12 +171,6 @@ function trackedGuard(dir: string): TrackedGuard {
   };
 }
 
-function refuseReason(guard: TrackedGuard, rel: string, destPath: string): 'tracked' | 'unverified' | null {
-  if (guard.covers(rel)) return 'tracked';
-  if (!guard.known && existsSync(destPath)) return 'unverified';
-  return null;
-}
-
 interface SkippedEntry {
   file: string;
   reason: string;
@@ -252,44 +185,7 @@ interface CarryResult {
   failed: FailedEntry[];
 }
 
-export function carryOverFiles({
-  root,
-  target,
-  patterns,
-}: {
-  root: string;
-  target: string;
-  patterns: string[] | null | undefined;
-}): CarryResult {
-  if (!patterns || patterns.length === 0) return { copied: [], skipped: [], failed: [] };
-  const copied: string[] = [];
-  const skipped: SkippedEntry[] = [];
-  const failed: FailedEntry[] = [];
-  const guard = trackedGuard(target);
-  const nested = nestedWorktreePaths(root);
-  for (const rel of listGitignoredFiles(root)) {
-    if (isCarrySkipped(rel)) continue;
-    if (overlapsNestedWorktree(rel, nested)) continue;
-    if (!matchesInclude(rel, patterns)) continue;
-    const from = join(root, rel);
-    const to = join(target, rel);
-    const reason = refuseReason(guard, rel, to);
-    if (reason) {
-      skipped.push({ file: rel, reason });
-      continue;
-    }
-    try {
-      mkdirSync(dirname(to), { recursive: true });
-      copyFileSync(from, to);
-      copied.push(rel);
-    } catch (e) {
-      failed.push({ file: rel, error: String((e as Error)?.message || e) });
-    }
-  }
-  return { copied, skipped, failed };
-}
-
-export function listGitignoredEntries(root: string, strict = false): string[] {
+export function listGitignoredEntries(root: string): string[] {
   const args = [
     '-C',
     root,
@@ -299,23 +195,19 @@ export function listGitignoredEntries(root: string, strict = false): string[] {
     '--exclude-standard',
     '--directory',
     '--no-empty-directory',
-    ...(strict ? ['-z'] : []),
+    '-z',
   ];
-  const out = strict ? getExecutor().runFile('git', args) : getExecutor().runFileQuiet('git', args);
+  const out = getExecutor().runFile('git', args);
   if (!out) return [];
   return out
-    .split(strict ? '\0' : '\n')
+    .split('\0')
     .filter(Boolean)
     .map((e) => (e.endsWith('/') ? e.slice(0, -1) : e));
 }
 
-export function listCarryableIgnoredEntries(
-  root: string,
-  patterns: string[] | null | undefined,
-  strict = false,
-): string[] {
+export function listCarryableIgnoredEntries(root: string, patterns: string[] | null | undefined): string[] {
   const nested = nestedWorktreePaths(root);
-  return listGitignoredEntries(root, strict).filter(
+  return listGitignoredEntries(root).filter(
     (rel) => !isCarrySkipped(rel) && !overlapsNestedWorktree(rel, nested) && !matchesInclude(rel, patterns),
   );
 }
@@ -369,57 +261,48 @@ export function cloneIgnoredEntries({
   root,
   target,
   patterns,
-  preserveExisting = false,
 }: {
   root: string;
   target: string;
   patterns: string[] | null | undefined;
-  preserveExisting?: boolean;
 }): CloneResult {
   const copied: string[] = [];
   const skipped: SkippedEntry[] = [];
   const failed: FailedEntry[] = [];
   let cloned = true;
   const guard = trackedGuard(target);
-  if (preserveExisting && !guard.known) throw new Error("Could not list the destination's tracked files.");
-  const nested = preserveExisting ? nestedWorktreePaths(target) : [];
-  for (const rel of listCarryableIgnoredEntries(root, patterns, preserveExisting)) {
+  if (!guard.known) throw new Error("Could not list the destination's tracked files.");
+  const nested = nestedWorktreePaths(target);
+  for (const rel of listCarryableIgnoredEntries(root, patterns)) {
     const from = join(root, rel);
     const to = join(target, rel);
-    let isDir = false;
-    try {
-      isDir = statSync(from).isDirectory();
-    } catch {}
     let staging: string | undefined;
     try {
-      const reason =
-        refuseReason(guard, rel, to) ||
-        (preserveExisting &&
-          (overlapsNestedWorktree(rel, nested) ? 'nested worktree' : missingDestinationReason(target, rel)));
+      const reason = guard.covers(rel)
+        ? 'tracked'
+        : overlapsNestedWorktree(rel, nested)
+          ? 'nested worktree'
+          : missingDestinationReason(target, rel);
       if (reason) {
         skipped.push({ file: rel, reason });
         continue;
       }
-      if (preserveExisting) staging = mkdtempSync(join(tmpdir(), '.stim-warm-'));
-      const destination = staging ? join(staging, 'entry') : to;
-      mkdirSync(dirname(destination), { recursive: true });
+      staging = mkdtempSync(join(tmpdir(), '.stim-warm-'));
+      const destination = join(staging, 'entry');
       try {
         getExecutor().runFile('cp', ['-Rc', from, destination]);
       } catch {
-        if (staging) removeStagedEntry(destination);
+        removeStagedEntry(destination);
         getExecutor().runFile('cp', ['-R', from, destination]);
         cloned = false;
       }
-      if (isDir && !staging) pruneCarriedArtifacts(destination);
-      if (staging) {
-        const changed = missingDestinationReason(target, rel);
-        if (changed) {
-          skipped.push({ file: rel, reason: changed });
-          continue;
-        }
-        mkdirSync(dirname(to), { recursive: true });
-        publishMissingEntry(destination, to);
+      const changed = missingDestinationReason(target, rel);
+      if (changed) {
+        skipped.push({ file: rel, reason: changed });
+        continue;
       }
+      mkdirSync(dirname(to), { recursive: true });
+      publishMissingEntry(destination, to);
       copied.push(rel);
     } catch (e) {
       failed.push({ file: rel, error: String((e as Error)?.message || e) });
@@ -502,41 +385,6 @@ export function dirtyFingerprintFiles(root: string): string[] {
     .filter((path) => path !== '');
 }
 
-export interface CarriedChanges {
-  files: string[];
-  applied: boolean;
-  conflicted: boolean;
-}
-
-export function carryUncommittedChanges({ root, target }: { root: string; target: string }): CarriedChanges | null {
-  const exec = getExecutor();
-  const patch = exec.runFileQuiet('git', ['-C', root, 'diff', 'HEAD', '--binary']);
-  if (patch === null || patch.trim() === '') return null;
-  const files = (exec.runFileQuiet('git', ['-C', root, 'diff', 'HEAD', '--name-only']) || '')
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line !== '');
-
-  const staging = mkdtempSync(join(tmpdir(), 'stim-carry-'));
-  const patchFile = join(staging, 'uncommitted.patch');
-  try {
-    writeFileSync(patchFile, patch + (/^GIT binary patch$/m.test(patch) ? '\n\n' : '\n'));
-    try {
-      exec.runFile('git', ['-C', target, 'apply', '--check', patchFile]);
-    } catch {
-      return { files, applied: false, conflicted: true };
-    }
-    try {
-      exec.runFile('git', ['-C', target, 'apply', patchFile]);
-    } catch {
-      return { files, applied: false, conflicted: true };
-    }
-    return { files, applied: true, conflicted: false };
-  } finally {
-    rmSync(staging, { recursive: true, force: true });
-  }
-}
-
 export function hasUncommittedWork(dir: string): boolean | null {
   const out = getExecutor().runFileQuiet('git', ['-C', dir, 'status', '--porcelain']);
   if (out === null) return null;
@@ -575,6 +423,9 @@ export function unpushedCommits(dir: string): string[] | null {
   const own = branch === null ? '' : branch.trim();
   const protection =
     own && SAFE_BRANCH_NAME.test(own) ? ['--remotes', `--exclude=${own}`, '--branches'] : ['--remotes'];
+  if (!own && exec.runFileQuiet('git', ['-C', dir, 'rev-parse', '--abbrev-ref', 'HEAD']) === 'HEAD') {
+    protection.push('--branches');
+  }
   const out = exec.runFileQuiet('git', ['-C', dir, 'log', '--oneline', 'HEAD', '--not', ...protection]);
   if (out === null) return null;
   return out
@@ -600,24 +451,6 @@ export function branchExists(cwd: string, branch: string): boolean {
   return Boolean(out);
 }
 
-export function resolveRef(cwd: string, ref: string): string | null {
-  try {
-    const out = getExecutor().runFile('git', [
-      '-C',
-      cwd,
-      'rev-parse',
-      '--verify',
-      '--quiet',
-      '--short',
-      '--end-of-options',
-      `${ref}^{commit}`,
-    ]);
-    return out && out.trim() ? out.trim() : null;
-  } catch {
-    return null;
-  }
-}
-
 export function resolveFullRef(cwd: string, ref: string): string | null {
   try {
     const out = getExecutor().runFile('git', [
@@ -633,49 +466,6 @@ export function resolveFullRef(cwd: string, ref: string): string | null {
   } catch {
     return null;
   }
-}
-
-function assertSafeWorktreePath(path: string): void {
-  if (typeof path !== 'string' || path.startsWith('-')) {
-    throw new Error(
-      `Refusing worktree path ${JSON.stringify(path)}: a path beginning with "-" would be parsed as a git option.`,
-    );
-  }
-  if (/[`$"\\]/.test(path)) {
-    throw new Error(
-      `Refusing worktree path ${JSON.stringify(path)}: it contains shell metacharacters that have no place in a path.`,
-    );
-  }
-}
-
-function assertSafeBaseRef(baseRef: string): void {
-  if (typeof baseRef !== 'string' || baseRef.startsWith('-')) {
-    throw new Error(
-      `Refusing base ref ${JSON.stringify(baseRef)}: a ref beginning with "-" would be parsed as a git option.`,
-    );
-  }
-}
-
-export function addWorktree({
-  path,
-  branch,
-  baseRef,
-  createBranch,
-}: {
-  path: string;
-  branch: string;
-  baseRef: string;
-  createBranch: boolean;
-}): string {
-  assertSafeWorktreePath(path);
-  mkdirSync(dirname(path), { recursive: true });
-  if (!createBranch) {
-    getExecutor().runFile('git', ['worktree', 'add', '--', path, branch], { env: { LC_ALL: 'C' } });
-    return path;
-  }
-  assertSafeBaseRef(baseRef);
-  getExecutor().runFile('git', ['worktree', 'add', '-b', branch, '--', path, baseRef], { env: { LC_ALL: 'C' } });
-  return path;
 }
 
 export function removeWorktree(path: string, { force = false }: { force?: boolean } = {}): void {
@@ -713,12 +503,4 @@ function parseWorktrees(out: string): WorktreeEntry[] {
 export function listWorktrees(cwd: string): WorktreeEntry[] {
   const out = getExecutor().runFileQuiet('git', ['-C', cwd, 'worktree', 'list', '--porcelain']);
   return out ? parseWorktrees(out) : [];
-}
-
-export function resolveBaseRef(cwd: string, baseRef: string): string {
-  if (baseRef === 'head') return 'HEAD';
-  const head = getExecutor().runFileQuiet('git', ['-C', cwd, 'rev-parse', '--abbrev-ref', 'origin/HEAD']);
-  if (head) return head.trim();
-  console.error('warning: origin/HEAD not found; falling back to HEAD as the base ref.');
-  return 'HEAD';
 }

@@ -43,12 +43,23 @@ not after every JavaScript edit.
 Stim needs no project initialization. Runtime state stays under `~/.stim` by
 default.
 
-If a harness already created a linked worktree, run `stim worktree warm`
-inside it to copy missing ignored state from the main checkout, including
-eligible `.env` and local configuration files. Existing entries are preserved;
-existing directories such as `node_modules` are skipped whole. See the
+For an isolated branch, create the worktree with Git, then warm it:
+
+```bash
+git worktree add -b feature/settings ../feature-settings HEAD
+cd ../feature-settings
+stim worktree warm
+```
+
+If a harness already created the linked worktree, run only `stim worktree warm`
+there. Warm copies missing ignored state from main, including eligible `.env`
+and local configuration files. Existing entries are preserved; existing
+ignored directories such as `node_modules` are skipped whole.
+
+After the work is preserved, `stim worktree remove` removes any linked
+worktree, warmed or not. Git-created branches stay. See the
 [worktree guide](https://appandflow.github.io/stim/docs/worktrees) for exclusions
-and copy-failure remedies.
+and cleanup rules.
 
 ## Documentation
 

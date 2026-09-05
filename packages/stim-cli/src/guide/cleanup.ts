@@ -29,7 +29,15 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
     gc: {
       summary:
         'what gc and worktree remove delete, keep and refuse: orphans, stale records, locks, leases, EAS sessions',
-      body: () => `ON THE MAIN CHECKOUT
+      body: () => `LINKED WORKTREES
+  \`stim worktree remove\` works with any linked worktree, warmed or not.
+  Git registration identifies the worktree; a Stim registry entry is not
+  required. The command reclaims any owned resources it finds, checks for
+  uncommitted and unpushed work, and removes the linked checkout. Git-created
+  branches stay. A branch with an existing Stim ownership record is deleted
+  only when it has no unique commits.
+
+ON THE MAIN CHECKOUT
   git cannot remove the main working tree, and deleting the source tree is not
   what anyone meant -- so there, and only there, \`worktree remove\` reclaims
   the ENVIRONMENT and nothing else: the owned devices are deleted, the Metro

@@ -5,18 +5,14 @@ const lifecycle: GuideTopic = {
     'The full worktree -> start -> ios/android -> logs -> teardown flow, with sections for builds, devices and flags',
   preamble: () => `ENVIRONMENT LIFECYCLE
 
-  # 1. Isolated worktree (skip if you are already in one).
-  #    It branches from the current HEAD. Use --base fresh for origin/HEAD.
-  #    It does NOT install dependencies -- that is yours.
-  cd "$(stim worktree create app/412 --carry-ignored)"
+  # 1. Create a linked worktree with Git, unless a harness already did.
+  #    Choose the branch, path, and base ref with Git.
+  git worktree add -b app/412 ../app-412 HEAD
+  cd ../app-412
+  stim worktree warm
 
-  # Slash-separated names create branches such as worktree-app/412 while the
-  # checkout remains one flat + separated directory directly under worktreeDir.
-  # Default device labels include a stable hash so flat names cannot collide.
-
-  # Already in a linked worktree created by a harness? Instead of step 1:
-  #   stim worktree warm
-  # It copies missing ignored paths from the main checkout.
+  # Warm copies missing ignored state from main; it does not install dependencies.
+  # In a monorepo, enter the app directory before starting the dev server.
 
   # 2. The dev server, under a detached supervisor. Blocks until it is
   #    verifiably THIS project's, then hands your shell back.
@@ -44,8 +40,8 @@ const lifecycle: GuideTopic = {
   #    (never deleted), port freed. Coming back costs a boot, not a create.
   stim stop
 
-  # 7. Done with the branch: the environment dies whole. A branch created by
-  #    Stim is also deleted when it has no unique commits.
+  # 7. Remove this linked worktree and its environment. This also works for
+  #    unwarmed worktrees with no Stim registry entry. Git-created branches stay.
   stim worktree remove
 
 Steps 2 and 3 are ordered, not interchangeable: \`ios\` and \`android\` never
@@ -155,12 +151,11 @@ TWO REPORTS, TWO QUESTIONS
   project with no record to estimate from yet. \`guide facts stats\` says where
   the number comes from.
 
-  The lifecycle commands use the same column. \`worktree create\` keeps the
-  created path alone on stdout and reports itself on stderr:
+  The lifecycle commands use the same column. \`worktree warm\` reports
+  copied and kept entries on stderr, with empty stdout:
 
-    branch      worktree-e2e-1 from HEAD (9d0ebc4)
-    carry       node_modules (APFS clone); no Pods; no native build output
-    ready       /w/worktree-e2e-1
+    carry       copied node_modules from /w/main
+    carry       complete: 1 ignored entries copied, 0 kept, 0 failed
 
   \`start\` names the port, the supervisor mode and its pid on one line
   (\`metro       starting on port 8083 (expo-child, supervisor pid 13724)\`),
@@ -174,18 +169,19 @@ TWO REPORTS, TWO QUESTIONS
   \`worktree remove\` reports itself the same way: the branch decision, the
   owned device, any released device lease, and this workspace's own state
   directory, each on its own line. Nothing prints on stdout; even the removed
-  path is on stderr. \`worktree create\` prints its path on stdout because a
-  caller needs it to \`cd\` into; a removed path has no such use:
+  path is on stderr:
 
-    branch      deleted worktree-e2e-1
+    branch      kept app/412 (Stim did not create it)
     device      parked stim-parked (iPhone 17 26.5) 9c1f (9C1F..)
     lease       released the ios lease on 00008101-000A10913C89001E (it ran until 14:32:10)
     workspace   removed /w/.stim/workspaces/3f9c2a
-    removed     /w/worktree-e2e-1
+    removed     /w/app-412
 
-  A branch \`worktree remove\` did not create, or one with unique commits, is
-  kept and named instead: \`branch      kept worktree-e2e-1 (it has 2 unique
-  commits)\`. On the main checkout, \`worktree remove\` reclaims only the
+  Removal works with any linked worktree, whether warmed or not, and does not
+  require a Stim registry entry. Git-created branches are kept. An existing
+  Stim ownership record permits deleting a branch only when it has no unique
+  commits; otherwise the command reports why it kept it. On the main checkout,
+  \`worktree remove\` reclaims only the
   environment -- the same \`device\`, \`lease\` and \`workspace\` lines, ending
   with a sentence instead of a \`removed\` line, because the checkout itself
   is never touched: \`Reclaimed the environment; the working tree stays (it
@@ -523,7 +519,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   doctor          --json --fix --platform <ios|android>
                                   (--platform keeps shared checks and filters native findings)
   gc              --delete --older-than <days> --cache <name|all>
-  worktree create <name> --carry-ignored --base <ref> --dir <path> --label <label>; warm; remove [path] --force
+  worktree warm; remove [path] --force
 
   That is the whole surface today, and it is deliberately small. It can grow
   when a flag is genuinely the best answer -- but project-specific knowledge
@@ -532,19 +528,19 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
 
   \`stim worktree warm\` takes no arguments or flags. Run it anywhere inside
   the current linked worktree to copy missing ignored entries from its main
-  checkout, regardless of either branch's HEAD or worktree.baseRef. Both roots
-  must be registered worktrees of the same Git repository; the main checkout
+  checkout, regardless of either branch's HEAD. Both roots must be registered
+  worktrees of the same Git repository; the main checkout
   must be available. Running it in the main checkout refuses.
 
-  The ignored scope matches create --carry-ignored from that source: installed
-  dependencies, Pods, native output, and any other eligible ignored paths,
-  including .env and local configuration. The source's nonempty
+  Warm copies installed dependencies, Pods, native output, and other ignored
+  paths eligible under the main checkout's Git ignore rules, including .env
+  and local configuration. The source's nonempty
   .worktreeexclude replaces its resolved worktree.exclude setting. Nested
   registered worktrees and .DerivedData are excluded. Warm also skips paths
   overlapping a nested destination worktree or below a symlink ancestor.
 
   Existing entries, including dangling symlinks, stay untouched. An existing
-  directory such as node_modules is skipped WHOLE; missing children are not
+  ignored directory such as node_modules is skipped WHOLE; missing children are not
   filled in. Warm does not copy tracked changes, switch branches, install
   dependencies, or build. stdout stays empty; stderr reports copied, kept,
   and failed entry counts. A copy failure exits 1 and reports incomplete;

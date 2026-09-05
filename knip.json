@@ -5,6 +5,5 @@
     "packages/stim-cli/shim/**",
     "scripts/agent-benchmark/stamp.mjs",
     "scripts/agent-benchmark/watch-app.mjs"
-  ],
-  "ignoreBinaries": ["pod"]
+  ]
 }
