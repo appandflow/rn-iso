@@ -1288,6 +1288,10 @@ test('the agent guide carries the normal workflow and safety rules', () => {
   expect(agent).toContain('stim reload');
   expect(normalWorkflow).not.toContain('stim reload');
   expect(normalWorkflow).not.toContain('agent-device metro reload');
+  expect(normalWorkflow.match(/stim logs --errors/g)).toHaveLength(2);
+  expect(normalWorkflow.lastIndexOf('stim logs --errors')).toBeLessThan(normalWorkflow.lastIndexOf('stim stop'));
+  expect(agent).toContain('stim guide lifecycle verification');
+  expect(renderSection('lifecycle', 'verification')).toBeTruthy();
   expect(agent).toMatch(/app error but also says the native process is alive,[\s\S]*app did not crash/);
   expect(agent).toMatch(/FATAL because the app process exited,[\s\S]*Metro cannot restart it/);
   expect(agent).toMatch(/Ordinary stim stop and an authorized clean\s+stim worktree remove do not need/);
@@ -1320,7 +1324,7 @@ test('the logs and lifecycle guides distinguish query success from a clean captu
   expect(logs).toContain('a workspace with no log directory also returns an empty result');
   const lifecycle = renderTopic('lifecycle');
   assert(lifecycle);
-  expect(lifecycle).toContain('Check captured errors: require exit 0 AND no matching errors');
+  expect(lifecycle).toContain('require exit 0 AND no matching errors');
   expect(lifecycle).toContain('Exit 0 alone means the query succeeded, even when it printed errors');
 });
 
