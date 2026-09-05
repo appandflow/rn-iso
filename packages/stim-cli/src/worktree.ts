@@ -215,12 +215,21 @@ interface TrackedGuard {
 function trackedGuard(dir: string): TrackedGuard {
   const paths = listTrackedPaths(dir);
   if (paths === null) return { known: false, covers: () => false };
-  const set = new Set<string>();
+  const entries = new Set(paths);
+  const covered = new Set(paths);
   for (const p of paths) {
-    set.add(p);
-    for (let i = p.indexOf('/'); i !== -1; i = p.indexOf('/', i + 1)) set.add(p.slice(0, i));
+    for (let i = p.indexOf('/'); i !== -1; i = p.indexOf('/', i + 1)) covered.add(p.slice(0, i));
   }
-  return { known: true, covers: (rel) => set.has(rel) };
+  return {
+    known: true,
+    covers: (rel) => {
+      if (covered.has(rel)) return true;
+      for (let i = rel.indexOf('/'); i !== -1; i = rel.indexOf('/', i + 1)) {
+        if (entries.has(rel.slice(0, i))) return true;
+      }
+      return false;
+    },
+  };
 }
 
 function refuseReason(guard: TrackedGuard, rel: string, destPath: string): 'tracked' | 'unverified' | null {

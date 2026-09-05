@@ -474,3 +474,36 @@ test('staging ignored files never exposes their contents to Git status or git ad
   expect(publication.stagingPaths.every((path) => !existsSync(path))).toBe(true);
   expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('source secret');
 });
+
+test('warm preserves a deleted tracked file when main has ignored descendants at that path', () => {
+  write(root, 'local/README', 'main readme');
+  git(root, 'add', '-f', 'local/README');
+  git(root, 'commit', '-qm', 'track main local readme');
+  write(root, 'local/data.cache', 'main cache');
+  write(target, 'local', 'linked tracked file');
+  git(target, 'add', '-f', 'local');
+  git(target, 'commit', '-qm', 'track local file');
+  rmSync(join(target, 'local'));
+  const result = warm();
+  expect(result.copied).toEqual([]);
+  expect(result.skipped).toEqual([{ file: 'local/data.cache', reason: 'tracked' }]);
+  expect(result.failed).toEqual([]);
+  expect(existsSync(join(target, 'local'))).toBe(false);
+  expect(git(target, 'diff', '--name-status')).toBe('D\tlocal');
+});
+
+test('warm permits ignored siblings under a directory containing tracked files', () => {
+  write(root, 'local/README', 'main readme');
+  git(root, 'add', '-f', 'local/README');
+  git(root, 'commit', '-qm', 'track main local readme');
+  write(root, 'local/data.cache', 'main cache');
+  write(target, 'local/README', 'linked readme');
+  git(target, 'add', '-f', 'local/README');
+  git(target, 'commit', '-qm', 'track linked local readme');
+  const result = warm();
+  expect(result.copied).toEqual(['local/data.cache']);
+  expect(result.skipped).toEqual([]);
+  expect(result.failed).toEqual([]);
+  expect(readFileSync(join(target, 'local/data.cache'), 'utf-8')).toBe('main cache');
+  expect(readFileSync(join(target, 'local/README'), 'utf-8')).toBe('linked readme');
+});
