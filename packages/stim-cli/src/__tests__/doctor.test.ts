@@ -397,6 +397,35 @@ describe('checkCxxCompilerLauncher', () => {
     ).toBe(null);
   });
 
+  test('a launcher CMake resolves through PATH is not read as a filesystem path', () => {
+    for (const ccacheOnPath of [true, false]) {
+      expect(
+        checkCxxCompilerLauncher({
+          states: [{ path: 'android/app/.cxx/Debug/a1/arm64-v8a', launcher: 'ccache' }],
+          ccacheOnPath,
+          launcherExists: onDisk,
+        }),
+      ).toBe(null);
+      expect(
+        checkCxxCompilerLauncher({
+          states: [{ path: 'android/app/.cxx/Debug/a1/arm64-v8a', launcher: 'ccache;--some-flag' }],
+          ccacheOnPath,
+          launcherExists: onDisk,
+        }),
+      ).toBe(null);
+    }
+  });
+
+  test('a launcher list whose absolute command is gone is still a cost', () => {
+    const f = checkCxxCompilerLauncher({
+      states: [{ path: 'android/app/.cxx/Debug/a1/arm64-v8a', launcher: '/usr/local/bin/ccache;--some-flag' }],
+      ccacheOnPath: true,
+      launcherExists: onDisk,
+    });
+    assert(f);
+    expect(f.detail).toMatch(/\/usr\/local\/bin\/ccache/);
+  });
+
   test('a .cxx already routed through an installed launcher, or none at all, is clean', () => {
     expect(
       checkCxxCompilerLauncher({

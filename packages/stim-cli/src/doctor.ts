@@ -1,6 +1,6 @@
 import { existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from 'fs';
 import { tmpdir } from 'os';
-import { dirname, join, relative, resolve } from 'path';
+import { dirname, isAbsolute, join, relative, resolve } from 'path';
 import { plural } from './command-output.ts';
 import { getExecutor } from './exec.ts';
 import { appProjectProblem, detectIsExpo } from './project.ts';
@@ -372,6 +372,14 @@ export function parseCmakeCacheLauncher(source: unknown): string | null {
   return value ? value : null;
 }
 
+// CMake docs, CMAKE_<LANG>_COMPILER_LAUNCHER: the value is a ;-separated
+// command line whose first word is resolved through PATH unless it is
+// absolute, so only an absolute one is a path this machine must hold.
+function launcherPath(launcher: string | null): string | null {
+  const command = launcher?.split(';')[0]?.trim();
+  return command && isAbsolute(command) ? command : null;
+}
+
 export function checkCxxCompilerLauncher({
   states,
   ccacheOnPath,
@@ -381,9 +389,13 @@ export function checkCxxCompilerLauncher({
   ccacheOnPath: boolean;
   launcherExists?: (path: string) => boolean;
 }): Finding | null {
-  const missing = states.filter((state) => state.launcher !== null && !launcherExists(state.launcher));
+  const missing = states
+    .map((state) => ({ path: state.path, command: launcherPath(state.launcher) }))
+    .filter(
+      (state): state is { path: string; command: string } => state.command !== null && !launcherExists(state.command),
+    );
   if (missing.length > 0) {
-    const named = [...new Set(missing.map((state) => state.launcher as string))].join(', ');
+    const named = [...new Set(missing.map((state) => state.command))].join(', ');
     return finding(
       'cost',
       'A configured CMake cache names a compiler launcher that is not on this machine',
