@@ -17,19 +17,19 @@ WHAT RECLAIMS AN OWNED DEVICE
 
 Those are the only two commands that delete. \`stim stop\` shuts a device
 DOWN and leaves it assigned, which is what makes returning to a branch cost a
-boot rather than a create, a provision and a reinstall.`,
-  sections: {
-    gc: {
-      summary:
-        'what gc and worktree remove delete, keep and refuse: orphans, stale records, locks, leases, EAS sessions',
-      body: () => `Neither touches $STIM_HOME/stats.json: \`gc\` never reports or trims the run
+boot rather than a create, a provision and a reinstall.
+
+Neither touches $STIM_HOME/stats.json: \`gc\` never reports or trims the run
 counters \`stats\` prints, and there is no reset flag. Delete that one file to
 start the counters over. A file this version cannot read -- unparseable, or
 written by a newer Stim -- costs one dim line on stderr and is otherwise left
 alone; only the next \`ios\` or \`android\` run moves an unparseable one aside
-to stats.json.corrupt-<unix ms> and starts a new one.
-
-ON THE MAIN CHECKOUT
+to stats.json.corrupt-<unix ms> and starts a new one.`,
+  sections: {
+    gc: {
+      summary:
+        'what gc and worktree remove delete, keep and refuse: orphans, stale records, locks, leases, EAS sessions',
+      body: () => `ON THE MAIN CHECKOUT
   git cannot remove the main working tree, and deleting the source tree is not
   what anyone meant -- so there, and only there, \`worktree remove\` reclaims
   the ENVIRONMENT and nothing else: the owned devices are deleted, the Metro

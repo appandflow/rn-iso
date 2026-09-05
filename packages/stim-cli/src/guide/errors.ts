@@ -340,8 +340,7 @@ fire BEFORE the build, because a refusal that costs a build is a bad refusal.`,
     unverified: {
       summary: 'launched: "unverified" with the Local Network path reason, and the routed recovery',
       context: `A phone does not share the host's loopback and USB carries no reverse forward,
-so a Debug run on one is wired to a LAN origin instead of localhost. Both codes
-fire BEFORE the build, because a refusal that costs a build is a bad refusal.`,
+so a Debug run on one is wired to a LAN origin instead of localhost.`,
       body: () => `LAUNCH UNVERIFIED, LOCAL NETWORK NOT GRANTED (not a code -- a routed remedy)
   An app that has not been granted Local Network reaches nothing on the LAN,
   and CFNetwork reports each attempt as NSURLErrorDomain -1009 "The Internet

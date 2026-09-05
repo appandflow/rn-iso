@@ -56,6 +56,17 @@ test('every section of every sectioned topic renders its own content', () => {
   }
 });
 
+test('the dev-menu section reads at the left margin, not in the payload table column', () => {
+  const facts = renderSection('facts', 'devmenu');
+  assert(facts);
+  expect(facts).toMatch(/^ {2}EVERY DEV-CLIENT DEEP LINK CARRIES disableOnboarding=1$/m);
+  const indents = facts
+    .split('\n')
+    .filter((line) => line.trim().length > 0)
+    .map((line) => line.length - line.trimStart().length);
+  expect(Math.max(...indents)).toBeLessThanOrEqual(2);
+});
+
 test('an alias resolves to the same body as the section it spells', () => {
   for (const name of topicNames()) {
     const lookup = sectionLookup(name);
@@ -135,10 +146,15 @@ test('a group preamble travels with each section it introduces', () => {
   for (const code of ['STIM_NO_LAN_ADDRESS', 'STIM_LAN_METRO_UNREACHABLE', 'unverified']) {
     expect(renderSection('errors', code)).toContain("A phone does not share the host's loopback");
   }
+  for (const code of ['STIM_NO_LAN_ADDRESS', 'STIM_LAN_METRO_UNREACHABLE']) {
+    expect(renderSection('errors', code)).toMatch(/Both codes\s+fire BEFORE the build/);
+  }
+  expect(renderSection('errors', 'unverified')).not.toMatch(/Both codes\s+fire BEFORE the build/);
   const index = renderTopic('errors');
   assert(index);
   expect(index).toContain('A simulator build needs no signature');
   expect(index).toContain("A phone does not share the host's loopback");
+  expect(index).toMatch(/Both codes\s+fire BEFORE the build/);
 });
 
 test('the facts topic pins how an owned emulator gets its console port', () => {
@@ -899,7 +915,7 @@ test('the guide scopes each platform dev-menu suppression mechanism accurately',
   expect(facts).toMatch(
     /ON LOCAL ANDROID the same deep link also carries the\s+`EXDevMenuDisableAutoLaunch` boolean intent extra/,
   );
-  expect(facts).toContain("-d '<devClientUrl>'\n                  --ez EXDevMenuDisableAutoLaunch true");
+  expect(facts).toContain("-d '<devClientUrl>'\n  --ez EXDevMenuDisableAutoLaunch true");
   expect(facts).toMatch(/set EXDevMenuShowsAtLaunch=false and\s+EXDevMenuIsOnboardingFinished=true/);
   expect(facts).toMatch(/does NOT set expo-dev-menu's\s+showFab preference/);
   expect(facts).toMatch(/Remote Android opens only the URL, so that intent-extra\s+suppression does not apply there/);
@@ -1687,7 +1703,7 @@ test('the guide states the rule that turns runs into the numbers `stats` prints'
 
 test('the guide routes the two report questions to the two commands', () => {
   const lifecycle = renderTopic('lifecycle');
-  const cleanup = renderSection('cleanup', 'gc');
+  const cleanup = renderTopic('cleanup');
   assert(lifecycle);
   assert(cleanup);
 
@@ -1695,10 +1711,12 @@ test('the guide routes the two report questions to the two commands', () => {
   expect(lifecycle).toMatch(/"How much the\s+cache saved" is `stim stats`/);
   expect(renderSection('lifecycle', 'options')).toMatch(/stats\s+--json/);
   expect(renderSection('lifecycle', 'builds')).toMatch(/\$STIM_HOME\/stats\.json/);
+  expect(cleanup).toMatch(/Neither touches \$STIM_HOME\/stats\.json/);
   expect(cleanup).toMatch(/gc` never reports or trims the run\s+counters/i);
   expect(cleanup).toMatch(/no reset flag[\s\S]*Delete that one file/i);
   expect(cleanup).toMatch(/cannot read[\s\S]*one dim line on stderr/i);
   expect(cleanup).toMatch(/stats\.json\.corrupt-<unix ms>/);
+  expect(renderSection('cleanup', 'gc')).toMatch(/^ON THE MAIN CHECKOUT$/m);
 });
 
 test('the agent guide routes cache-saving questions without teaching the payload', () => {
