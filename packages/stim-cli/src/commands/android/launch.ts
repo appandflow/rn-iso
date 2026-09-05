@@ -74,16 +74,6 @@ interface VerifyAndroidRunArgs {
   phase: (label: unknown, text: string) => void;
 }
 
-function physicalAndroidReloadRemedy(androidPackage: string, serial: string): string {
-  return (
-    `continue in your existing agent-device automation session for ${androidPackage} on ${serial}. ` +
-    'Keep the exact arguments and environment that identify that session on every command. ' +
-    'Run `agent-device snapshot -i` in that session. ' +
-    'If Reload is visible on the error screen, press it by exact ref or label. ' +
-    'Otherwise open the React Native dev menu through that session, inspect again, and press Reload.'
-  );
-}
-
 async function verifyAndroidRun({
   release,
   remoteRelease,
@@ -159,7 +149,7 @@ async function verifyAndroidRun({
       );
     } else if (verification.processAlive === true && metroPort !== null) {
       const reloadRemedy = physical
-        ? physicalAndroidReloadRemedy(androidPackage, serial)
+        ? `run \`agent-device metro reload --metro-port ${metroPort}\`.`
         : 'run `stim reload android`.';
       phase(
         'remedy',
@@ -183,7 +173,7 @@ async function verifyAndroidRun({
     for (const line of report.lines) phase('launch', chalk.yellow(line));
     if (report.lines.length > 0 && verification.processAlive === true && metroPort !== null) {
       const reloadRemedy = physical
-        ? physicalAndroidReloadRemedy(androidPackage, serial)
+        ? `run \`agent-device metro reload --metro-port ${metroPort}\`.`
         : 'run `stim reload android`.';
       phase(
         'remedy',

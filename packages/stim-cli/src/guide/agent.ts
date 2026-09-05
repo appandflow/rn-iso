@@ -56,8 +56,10 @@ RULES DURING THE LOOP
   universal.
 - Reload is not part of the normal workflow. Use stim reload on an owned local
   simulator or emulator after a failed first bundle load, when an error screen
-  remains after the fix, or when you explicitly need an app restart. On a
-  physical device, follow the printed agent-device UI automation remedy.
+  remains after the fix, or when you explicitly need an app restart. For a
+  physical device that reached Metro, use agent-device metro reload with the
+  reported port. The detected iOS Local Network first-load remedy uses UI
+  automation instead because that app never established a Metro connection.
 - If launch reports an app error but also says the native process is alive,
   the app did not crash. Fix JavaScript or TypeScript and use Fast Refresh. If
   the error screen remains, follow the printed reload remedy instead of

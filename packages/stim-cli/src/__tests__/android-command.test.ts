@@ -4090,7 +4090,7 @@ describe('--device (a physical Android device)', () => {
     expect(h.calls.resolveCached[0]).toEqual(['android', `${FINGERPRINT}-release-sim`]);
   });
 
-  test('a live physical-device error uses the existing automation session instead of a Metro reload', async () => {
+  test('a live physical-device error recommends Metro reload', async () => {
     const h = physicalHarness({
       verifyLaunched: async () => ({
         verified: true,
@@ -4100,13 +4100,8 @@ describe('--device (a physical Android device)', () => {
     });
     await h.run();
     const text = h.stderr.join('\n');
-    expect(text).toContain('existing agent-device automation session for com.example.app on RFCR7081Q9L');
-    expect(text).toContain('exact arguments and environment that identify that session');
-    expect(text).toContain('Run `agent-device snapshot -i` in that session');
-    expect(text).not.toContain('agent-device snapshot -i --platform android --serial RFCR7081Q9L');
-    expect(text).toMatch(/If Reload is visible on the error screen, press it by exact ref or label/);
-    expect(text).toMatch(/Otherwise open the React Native dev menu through that session/);
-    expect(text).not.toContain('agent-device metro reload');
+    expect(text).toContain('agent-device metro reload --metro-port 8082');
+    expect(text).not.toContain('agent-device snapshot');
   });
 
   test('a physical run launches against localhost, not the emulator loopback', async () => {

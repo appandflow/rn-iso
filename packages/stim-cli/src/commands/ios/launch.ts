@@ -65,16 +65,6 @@ interface VerifyIosRunArgs {
   metroOrigin: string | null;
 }
 
-function physicalIosReloadRemedy(bundleId: string, udid: string): string {
-  return (
-    `continue in your existing agent-device automation session for ${bundleId} on ${udid}. ` +
-    'Keep the exact arguments and environment that identify that session on every command. ' +
-    'Run `agent-device snapshot -i` in that session. ' +
-    'If Reload is visible on the error screen, press it by exact ref or label. ' +
-    'Otherwise open the React Native dev menu through that session, inspect again, and press Reload.'
-  );
-}
-
 async function verifyIosRun({
   d,
   release,
@@ -165,9 +155,8 @@ async function verifyIosRun({
         ),
       );
     } else if (verification.processAlive === true && metroPort !== null) {
-      const reloadRemedy = physical
-        ? physicalIosReloadRemedy(bundleId, udid)
-        : remoteDevice
+      const reloadRemedy =
+        physical || remoteDevice
           ? `run \`agent-device metro reload --metro-port ${metroPort}\`.`
           : 'run `stim reload ios`.';
       note(
@@ -191,9 +180,8 @@ async function verifyIosRun({
     );
     const hasAppErrors = reportLaunchErrors(verification.errors ?? [], note);
     if (hasAppErrors && verification.processAlive === true && metroPort !== null) {
-      const reloadRemedy = physical
-        ? physicalIosReloadRemedy(bundleId, udid)
-        : remoteDevice
+      const reloadRemedy =
+        physical || remoteDevice
           ? `run \`agent-device metro reload --metro-port ${metroPort}\`.`
           : 'run `stim reload ios`.';
       note(
