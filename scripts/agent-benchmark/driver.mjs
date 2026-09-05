@@ -25,6 +25,8 @@ import {
   launchCrashRepair,
   launchCrashToken,
 } from '../launch-crash-benchmark.mjs';
+import { selectBenchmarkCacheKey } from './cache-key.mjs';
+import { matchesGoldenPreparation } from './golden-state.mjs';
 import {
   androidApplicationLabelFromBadging,
   matchesExpectedAndroidEmulator,
@@ -202,8 +204,9 @@ function verifyGoldenCache(platform, platformGolden = goldenFor(platform)) {
     cwd: main,
     timeout: 2 * 60 * 1000,
   });
-  const cacheKey = `${fingerprint}-debug-sim`;
-  const cacheDir = join(platformGolden, 'stim-home', 'build-cache', platform, cacheKey);
+  const cacheRoot = join(platformGolden, 'stim-home', 'build-cache', platform);
+  const cacheKey = selectBenchmarkCacheKey(platform, fingerprint, existsSync(cacheRoot) ? readdirSync(cacheRoot) : []);
+  const cacheDir = join(cacheRoot, cacheKey);
   const extension = platform === 'ios' ? '.app' : '.apk';
   const artifact = existsSync(cacheDir) ? readdirSync(cacheDir).find((name) => name.endsWith(extension)) : null;
   if (!artifact) {
@@ -638,9 +641,33 @@ function prepareAndroid() {
   const controlTmp = join(platformGolden, 'control-tmp');
   if (existsSync(seedHome)) throw new Error('partial Android seed golden exists; inspect it before retrying');
   mkdirSync(platformGolden, { recursive: true });
-  mkdirSync(seedHome, { recursive: true });
-  writeFileSync(join(seedHome, 'config.json'), `${JSON.stringify({ version: 2, projects: {}, repos: {} }, null, 2)}\n`);
-  const seedEnv = { ...cleanRubyEnvironment(process.env), STIM_HOME: seedHome };
+  const preparingHome = existsSync(finalHome) ? finalHome : seedHome;
+  const preparation = {
+    fixtureCommit: git('rev-parse', 'HEAD'),
+    stimVersion: pins.STIM_VERSION,
+    stimIntegrity: pins.STIM_INTEGRITY,
+    stimCliSha256: sha256(stimCli),
+    agentDeviceVersion: pins.AGENT_DEVICE_VERSION,
+    agentDeviceSha256: pins.AGENT_DEVICE_SHA256,
+  };
+  const preparationPath = join(preparingHome, 'benchmark-preparation.json');
+  if (!existsSync(finalHome)) {
+    mkdirSync(seedHome, { recursive: true });
+    writeFileSync(
+      join(seedHome, 'config.json'),
+      `${JSON.stringify({ version: 2, projects: {}, repos: {} }, null, 2)}\n`,
+    );
+    writeFileSync(preparationPath, `${JSON.stringify(preparation, null, 2)}\n`);
+  } else {
+    let retainedPreparation = null;
+    try {
+      retainedPreparation = JSON.parse(readFileSync(preparationPath, 'utf8'));
+    } catch {}
+    if (!matchesGoldenPreparation(retainedPreparation, preparation)) {
+      throw new Error(`retained Android golden provenance does not match current pins: ${finalHome}`);
+    }
+  }
+  const seedEnv = { ...cleanRubyEnvironment(process.env), STIM_HOME: preparingHome };
   let preparedDevice = null;
   const worktree = join(worktreeParent, 'bench-golden-android-seed');
   run('git', ['worktree', 'add', '--detach', worktree, 'HEAD'], {
@@ -686,9 +713,9 @@ function prepareAndroid() {
       stdio: 'inherit',
     });
   } catch (error) {
-    throw new Error(`Android golden preparation failed; retained ${seedHome}`, { cause: error });
+    throw new Error(`Android golden preparation failed; retained ${preparingHome}`, { cause: error });
   }
-  renameSync(seedHome, finalHome);
+  if (preparingHome === seedHome) renameSync(seedHome, finalHome);
   mkdirSync(controlTmp, { recursive: true });
   const exportPath = join(platformGolden, 'control-export');
   run('npx', ['expo', 'export', '--platform', 'android', '--dev', '--output-dir', exportPath], {
