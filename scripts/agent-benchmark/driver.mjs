@@ -33,6 +33,13 @@ import {
   matchesExpectedIosSimulator,
 } from './watch-app-selection.mjs';
 import { completedCleanupRecord, durableRunRecord } from './run-record.mjs';
+import {
+  benchmarkSetupInvalidReasons,
+  benchmarkTarget,
+  benchmarkTiming,
+  parseBenchmarkTargets,
+  stimShellProvenanceInvalidReasons,
+} from './run-guards.mjs';
 
 const launchCrashVariant = 'launch-crash';
 const scriptRoot = dirname(fileURLToPath(import.meta.url));
@@ -64,6 +71,57 @@ const pins = Object.fromEntries(
       return [line.slice(0, at), line.slice(at + 1)];
     }),
 );
+
+function benchmarkTargets() {
+  const path = join(root, 'targets.json');
+  if (!existsSync(path)) throw new Error(`benchmark targets missing: ${path}`);
+  return parseBenchmarkTargets(readFileSync(path, 'utf8'));
+}
+
+function shellQuote(value) {
+  return `'${String(value).replaceAll("'", "'\\''")}'`;
+}
+
+function isolatedShellEnvironment(environment, directory) {
+  const shellHome = join(directory, 'shell-home');
+  mkdirSync(shellHome, { recursive: true });
+  const startup = `export PATH=${shellQuote(environment.PATH)}\n`;
+  writeFileSync(join(shellHome, '.zshenv'), startup);
+  writeFileSync(join(shellHome, '.zprofile'), startup);
+  return { ...environment, ZDOTDIR: shellHome };
+}
+
+function expectedStimShellProvenance() {
+  return {
+    resolvedPath: join(stimBin, 'stim'),
+    version: pins.STIM_VERSION,
+    executableSha256: sha256(join(stimBin, 'stim')),
+    cliSha256: sha256(stimCli),
+  };
+}
+
+function stimShellProvenance(environment) {
+  return {
+    resolvedPath: run('/bin/zsh', ['-lc', 'command -v stim'], { cwd: main, env: environment }),
+    version: run('/bin/zsh', ['-lc', 'stim --version'], { cwd: main, env: environment }),
+    executableSha256: sha256(join(stimBin, 'stim')),
+    cliSha256: sha256(stimCli),
+  };
+}
+
+function verifyRunnerShell(arm, environment) {
+  if (arm === 'control') {
+    const resolved = run('/bin/zsh', ['-lc', 'command -v stim || true'], { cwd: main, env: environment });
+    if (resolved) throw new Error(`control login shell resolved Stim: ${resolved}`);
+    return null;
+  }
+  const expected = expectedStimShellProvenance();
+  const actual = stimShellProvenance(environment);
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(`timed shell Stim provenance mismatch: ${JSON.stringify({ expected, actual })}`);
+  }
+  return actual;
+}
 
 function checkedPlatform(value = 'ios') {
   if (!['ios', 'android'].includes(value)) throw new Error(`unsupported benchmark platform: ${value}`);
@@ -460,9 +518,21 @@ function preflight(requestedPlatform = 'ios') {
   ensureDirs();
   prepareAllowedBin();
   const actual = versionChecks();
+  const targets = benchmarkTargets();
   if (!readFileSync(join(stimBin, 'stim'), 'utf8').includes(stimCli)) {
     throw new Error('Stim shim does not target the pinned CLI checkout');
   }
+  const shellProbeHome = join(state, 'shell-probe');
+  const shellProbeEnvironment = isolatedShellEnvironment(
+    {
+      ...cleanRubyEnvironment(process.env),
+      STIM_HOME: join(shellProbeHome, 'stim-home'),
+      BENCH_STIM_HOME: join(shellProbeHome, 'stim-home'),
+      PATH: `${stimBin}:${allowedBin}:/usr/bin:/bin:/usr/sbin:/sbin`,
+    },
+    shellProbeHome,
+  );
+  const shellProvenance = verifyRunnerShell('stim', shellProbeEnvironment);
   const booted = platform === 'android' ? androidEmulatorTransports() : bootedSimulators().map((device) => device.udid);
   if (booted.length) {
     throw new Error(`booted ${platform} devices require operator cleanup: ${JSON.stringify(booted)}`);
@@ -499,8 +569,13 @@ function preflight(requestedPlatform = 'ios') {
     load,
     thermal,
     platform,
+    timingTargets: {
+      machine: targets.machine,
+      keys: Object.keys(targets.targets).toSorted(),
+    },
     goldenCache,
     parkedSimulator,
+    shellProvenance,
     stimExecutableSha256: sha256(join(stimBin, 'stim')),
     stimCliSha256: sha256(stimCli),
   };
@@ -1016,13 +1091,31 @@ async function runnerSmoke(arm) {
   process.stdout.write(`${JSON.stringify({ arm, result, usage }, null, 2)}\n`);
 }
 
-function spawnStamped(command, args, output, options, input, timeoutMs = null) {
-  const child = spawn(command, args, options);
+function killProcessTree(child, processGroupId, signal) {
+  try {
+    if (process.platform !== 'win32' && processGroupId) process.kill(-processGroupId, signal);
+    else if (child.exitCode == null && child.signalCode == null) child.kill(signal);
+  } catch (error) {
+    if (error?.code !== 'ESRCH') throw error;
+  }
+}
+
+function terminateProcessTree(child, processGroupId, graceMs) {
+  killProcessTree(child, processGroupId, 'SIGTERM');
+  const timer = setTimeout(() => killProcessTree(child, processGroupId, 'SIGKILL'), graceMs);
+  timer.unref();
+  return timer;
+}
+
+function spawnStamped(command, args, output, options, input, timeoutMs = null, killGraceMs = 5000) {
+  const child = spawn(command, args, { ...options, detached: process.platform !== 'win32' });
+  const processGroupId = process.platform === 'win32' ? null : child.pid;
   let timedOut = false;
+  let forceKill = null;
   const timeout = timeoutMs
     ? setTimeout(() => {
         timedOut = true;
-        child.kill('SIGTERM');
+        forceKill = terminateProcessTree(child, processGroupId, killGraceMs);
       }, timeoutMs)
     : null;
   const stampOut = spawn('node', [join(scriptRoot, 'stamp.mjs'), 'stdout'], {
@@ -1043,6 +1136,10 @@ function spawnStamped(command, args, output, options, input, timeoutMs = null) {
   return new Promise((resolvePromise) => {
     child.on('close', (code, signal) => {
       if (timeout) clearTimeout(timeout);
+      if (forceKill) {
+        clearTimeout(forceKill);
+        killProcessTree(child, processGroupId, 'SIGKILL');
+      }
       stampOut.stdin.end();
       stampErr.stdin.end();
       return Promise.all([stampOutClosed, stampErrClosed]).then(() => {
@@ -1077,6 +1174,7 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
     throw new Error('the launch-crash benchmark currently supports iOS only');
   }
   const preflightReport = preflight(platform);
+  const timingTarget = benchmarkTarget(benchmarkTargets(), { platform, variant, arm });
   preflightReport.loadGate = await waitForLoadGate();
   if (!preflightReport.loadGate.passed) {
     throw new Error('one-minute load average did not pass two consecutive samples within 10 minutes');
@@ -1130,13 +1228,14 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
     cwd: root,
     timeout: 5 * 60 * 1000,
   });
-  const env = {
+  const baseEnv = {
     ...cleanRubyEnvironment(process.env),
     CODEX_HOME: codexHome,
     STIM_HOME: join(runDir, 'stim-home'),
     TMPDIR: runTmp,
     PATH: `${arm === 'stim' ? `${stimBin}:` : ''}${allowedBin}:/usr/bin:/bin:/usr/sbin:/sbin`,
   };
+  const env = isolatedShellEnvironment(baseEnv, runDir);
   if (arm === 'stim' && platform === 'ios') env.STIM_POOL_IOS_PARKED_MAX = '1';
   env.BENCH_STIM_HOME = env.STIM_HOME;
   mkdirSync(env.STIM_HOME, { recursive: true });
@@ -1149,6 +1248,7 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
   const crash = variant === launchCrashVariant ? prepareLaunchCrashFixture(arm, runId, env) : null;
   const prompt = promptFor(arm, variant, runId, runDir, crash, platform);
   writeFileSync(join(runDir, 'prompt.txt'), `${prompt}\n`);
+  const shellProvenance = verifyRunnerShell(arm, env);
   const profile = verifyRunnerProfile(codexHome, env, arm, runDir);
   const claudeGuidance = runnerKind === 'claude' ? writeClaudeGuidance(codexHome, arm, runDir) : null;
   const agentDevice = prepareAgentDeviceRun(runId, platform, expectedParkedSimulator?.udid ?? null);
@@ -1166,7 +1266,10 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
     worktreeParent,
     deviceTargetingRequired: true,
     dispatchAt,
+    timingTarget,
     preflight: preflightReport,
+    expectedStimShellProvenance: arm === 'stim' ? expectedStimShellProvenance() : null,
+    stimShellProvenance: shellProvenance,
     profile: { ...profile, claudeGuidance },
     expectedBuildCache,
     expectedParkedSimulator,
@@ -1195,7 +1298,7 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
       expectedControlSimulator.systemImage ?? '',
       `Trailhead ${runId}`,
     ],
-    { cwd: main, env, stdio: ['ignore', 'pipe', 'pipe'] },
+    { cwd: main, env, stdio: ['ignore', 'pipe', 'pipe'], detached: process.platform !== 'win32' },
   );
   const watcherClosed = new Promise((resolvePromise) => {
     watcher.on('close', (code, signal) => resolvePromise({ code, signal }));
@@ -1247,10 +1350,15 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
     join(runDir, 'events.jsonl'),
     { cwd: runnerCwd, env, stdio: ['pipe', 'pipe', 'pipe'] },
     prompt,
-    25 * 60 * 1000,
+    timingTarget.runTimeoutSeconds * 1000,
   );
   const runnerResult = await runner;
+  const watcherForceKill = runnerResult.timedOut ? terminateProcessTree(watcher, watcher.pid, 5000) : null;
   const watcherResult = await watcherClosed;
+  if (watcherForceKill) {
+    clearTimeout(watcherForceKill);
+    killProcessTree(watcher, watcher.pid, 'SIGKILL');
+  }
   meta.runnerResult = runnerResult;
   meta.watcherResult = watcherResult;
   meta.finishedAt = new Date().toISOString();
@@ -1965,6 +2073,12 @@ function collect(runDir) {
   const eventsPath = join(runDir, 'events.jsonl');
   const commandAudit = commandEvidence(meta, eventsPath, runDir);
   const screen = screenEvidence(meta, appAlive, commandAudit.commands, runDir);
+  const timing = benchmarkTiming(
+    meta.timingTarget,
+    commandAudit.commands,
+    screen.dispatchToScreenReadySeconds,
+    meta.runnerResult?.timedOut,
+  );
   const recording = recordingEvidence(meta, commandAudit.commands, runDir, screen);
   const worktreeRecord = worktreeEvidence(runDir, meta, eventsPath);
   const worktree = worktreeRecord?.path ?? null;
@@ -1999,7 +2113,6 @@ function collect(runDir) {
   const invalidReasons = [
     ...(appAlive.error ? [appAlive.error] : []),
     ...(meta.runnerResult?.code === 0 ? [] : [`runner-exit-${meta.runnerResult?.code}`]),
-    ...(meta.runnerResult?.timedOut ? ['benchmark-timeout-25m'] : []),
     ...(runnerMetrics?.isError ? [`runner-${runnerMetrics.terminalReason ?? 'error'}`] : []),
     ...(runnerMetrics?.subagentsSpawned ? ['runner-used-subagents'] : []),
     ...(proof.valid ? [] : [proof.reason ?? 'proof-failed']),
@@ -2015,6 +2128,9 @@ function collect(runDir) {
       : []),
     ...deviceMismatchReasons(meta, appAlive.simulator),
     ...commandAudit.invalidReasons,
+    ...benchmarkSetupInvalidReasons(meta, commandAudit.commands),
+    ...stimShellProvenanceInvalidReasons(meta),
+    ...timing.invalidReasons,
     ...(git('status', '--short') === '' ? [] : ['main-checkout-dirty']),
   ];
   const nextRunRecord = {
@@ -2033,6 +2149,8 @@ function collect(runDir) {
     dispatchToAppAliveSeconds: appAlive.dispatchToAppAliveSeconds ?? null,
     dispatchToProofSeconds: appAlive.dispatchToProofSeconds ?? null,
     dispatchToScreenReadySeconds: screen.dispatchToScreenReadySeconds ?? null,
+    timing,
+    stimShellProvenance: meta.stimShellProvenance ?? null,
     dispatchToDiagnosisSeconds: diagnosis?.dispatchToDiagnosisSeconds ?? null,
     diagnosisCommandCount: diagnosis?.commandCount ?? null,
     diagnosisUsage,
@@ -2566,6 +2684,48 @@ function selftestAndroid() {
   process.stdout.write('Android self-test passed\n');
 }
 
+async function selftestRunnerTimeout() {
+  const runDir = join(state, `runner-timeout-selftest-${process.pid}`);
+  rmSync(runDir, { recursive: true, force: true });
+  mkdirSync(runDir, { recursive: true });
+  const startedAt = Date.now();
+  const eventsPath = join(runDir, 'events.jsonl');
+  const childScript = "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)";
+  const parentScript = `const { spawn } = require('node:child_process'); const child = spawn(process.execPath, ['-e', ${JSON.stringify(childScript)}], { stdio: 'ignore' }); process.stdout.write(String(child.pid) + '\\n'); setInterval(() => {}, 1000)`;
+  const result = await spawnStamped(
+    process.execPath,
+    ['-e', parentScript],
+    eventsPath,
+    { cwd: root, env: process.env, stdio: ['pipe', 'pipe', 'pipe'] },
+    '',
+    250,
+    50,
+  );
+  const elapsedMs = Date.now() - startedAt;
+  const childPid = Number(
+    readFileSync(eventsPath, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+      .find((line) => line.stream === 'stdout')?.line,
+  );
+  let childAlive = Number.isInteger(childPid);
+  for (let attempt = 0; childAlive && attempt < 50; attempt += 1) {
+    try {
+      process.kill(childPid, 0);
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));
+    } catch (error) {
+      if (error?.code !== 'ESRCH') throw error;
+      childAlive = false;
+    }
+  }
+  rmSync(runDir, { recursive: true, force: true });
+  if (!result.timedOut || childAlive || elapsedMs > 2000) {
+    throw new Error(`runner timeout was not enforced: ${JSON.stringify({ result, elapsedMs, childPid })}`);
+  }
+  process.stdout.write('runner timeout self-test passed\n');
+}
+
 const [command, ...args] = process.argv.slice(2);
 ensureDirs();
 if (command === 'preflight') {
@@ -2593,8 +2753,10 @@ if (command === 'preflight') {
   selftestLaunchCrash();
 } else if (command === 'selftest-android') {
   selftestAndroid();
+} else if (command === 'selftest-runner-timeout') {
+  await selftestRunnerTimeout();
 } else {
   throw new Error(
-    'usage: bench.mjs preflight [ios|android] | prepare [ios|android] | smoke <stim|control> | runner-smoke <stim|control> | dispatch <model> <stim|control> <javascript|native|launch-crash> [stage] [ios|android] | collect <run-dir> | cleanup <run-dir> | report <stage> | selftest-device-targeting | selftest-agent-device-isolation | selftest-launch-crash | selftest-android',
+    'usage: bench.mjs preflight [ios|android] | prepare [ios|android] | smoke <stim|control> | runner-smoke <stim|control> | dispatch <model> <stim|control> <javascript|native|launch-crash> [stage] [ios|android] | collect <run-dir> | cleanup <run-dir> | report <stage> | selftest-device-targeting | selftest-agent-device-isolation | selftest-launch-crash | selftest-android | selftest-runner-timeout',
   );
 }
