@@ -304,6 +304,12 @@ test('the agent guide routes to every detailed topic', () => {
   }
 });
 
+test('the agent guide protects other workspaces device lease files', () => {
+  const agent = renderTopic('agent');
+  expect(agent).toMatch(/Never delete another\s+workspace's lease file/);
+  expect(agent).toMatch(/gc --delete removes expired\s+ones/);
+});
+
 test('the agent and cleanup guides shut down owned simulators without an occupancy check', () => {
   const agent = renderTopic('agent');
   const cleanup = renderSection('cleanup', 'gc');
