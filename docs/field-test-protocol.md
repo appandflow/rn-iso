@@ -63,6 +63,13 @@ or commit in a user's main checkout. Otherwise the fixture manufactures a
 transition that few users see, and the result reads as a product bug. Test the
 cold/warm split deliberately only when it is the behavior under test.
 
+For warm-cache parity, use a disposable main checkout that has completed a
+normal native build for the tested platform and configuration, and record that
+build and its clean tracked baseline before warming linked worktrees.
+Dependency installation and native setup alone can leave first-build generated
+inputs unsettled. Prepare under a separate `STIM_HOME`; do not reuse it as the
+suite's `--home`, whose dedicated caches must start empty.
+
 ## Safety rules (non-negotiable)
 
 - NEVER modify the target repo's main checkout. Worktrees only.
