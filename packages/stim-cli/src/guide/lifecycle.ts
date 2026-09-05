@@ -29,12 +29,18 @@ const lifecycle: GuideTopic = {
     install     from cache (3s)
     launch      com.example.app (1s)
 
-  # 4. Check captured errors: require exit 0 AND no matching errors.
+  # 4. Reproduce the affected behavior and inspect the baseline errors.
+  #    For a clean check, require exit 0 AND no matching errors.
   #    Human mode prints "No matching log records" on stderr for zero matches.
   #    Exit 0 alone means the query succeeded, even when it printed errors.
   stim logs --errors
 
   # 5. Edit the JS. Fast Refresh applies it; no Stim command is involved.
+  #    For UI work, wait for the expected UI and repeat the affected interaction
+  #    on the reported device, using the existing automation session if any.
+  stim logs --errors
+  #    Retain proof: a screenshot, recording, or relevant runtime output.
+  #    See: stim guide lifecycle verification
 
   # 6. Pausing: supervisor halted, collectors reaped, owned device SHUT DOWN
   #    (never deleted), port freed. Coming back costs a boot, not a create.
@@ -68,6 +74,11 @@ Metro cannot identify one iOS peer, the command tells the agent to press Reload
 through its existing automation session on the exact simulator. Stim does not
 take over that stateful session.
 
+A successful reload confirms that the request was sent. It does not wait for
+new JavaScript or observe the resulting UI. Verify the expected screen or
+interaction on the reported device and inspect \`stim logs --errors\` before
+claiming recovery; exit 0 alone does not prove it.
+
 DESTRUCTIVE COMMANDS -- ask the user first
   gc --delete             deletes orphaned stim-* devices, tens of GB
   gc --delete --cache all empties the shared build caches every project uses
@@ -95,8 +106,41 @@ TWO REPORTS, TWO QUESTIONS
   the machine, with a hit rate and an estimate of the time saved (see
   \`guide facts stats\`).`,
   sections: {
+    verification: {
+      summary: 'reproduce the affected behavior, verify the change on the reported device, and retain proof',
+      body: () => `VERIFY THE CHANGE
+
+For a UI change or bug fix, decide what observable result would prove the task
+is complete. A successful build, a live process, or an empty log query does
+not prove that result.
+
+1. On the device reported by ios or android, reproduce the affected behavior
+   before editing and capture the baseline with stim logs --errors. If the
+   issue does not reproduce, record what you tried instead of claiming it did.
+2. Make the change. JavaScript and TypeScript normally use Fast Refresh;
+   native input changes need another ios or android run. Follow the printed
+   recovery remedy if an error screen remains or the native process exited.
+3. Use the full reported device ID with your UI automation tool. Continue in
+   the existing session for that device when one exists. Wait for the expected
+   content or control before inspecting the screen; launch evidence alone
+   does not prove that the first screen has rendered. Bound the wait and report
+   verification as incomplete if the expected state never appears.
+4. Repeat the affected interaction and check its expected outcome, then run
+   stim logs --errors. Read the records, not just the exit code. Earlier client
+   errors can remain after Fast Refresh; compare their timestamps with the
+   reproduction and check whether they recur. Do not relaunch just to clear
+   the log window. An empty query does not prove log capture succeeded.
+5. Retain a screenshot for a visible result or a short recording for an
+   interaction. Report what you exercised, what you observed, any unresolved
+   errors, and the proof location before stopping the app or removing the
+   worktree. If device access or another prerequisite prevents verification,
+   name the missing check.
+
+For a change without a UI effect, use the relevant runtime output or test
+result as proof instead of requiring an unrelated screenshot.`,
+    },
     progress: {
-      summary: 'phase lines, the label set, heartbeats and their ~ estimate, what create, start, stop and remove print',
+      summary: 'phase lines, the label set, heartbeats and their ~ estimate, what warm, start, stop and remove print',
       body: () => `PROGRESS ON A LONG RUN
   The whole summary is stderr; stdout carries only the \`--json\` payload. Every
   progress line has the same shape -- two spaces, a label padded to eleven

@@ -1,33 +1,18 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'path';
-import {
-  buildCacheRoot,
-  metroCacheRoot,
-  workspaceId as coreWorkspaceId,
-  workspaceName as coreWorkspaceName,
-  workspaceSlug as coreWorkspaceSlug,
-  workspaceStateDir,
-} from '@stim-cli/core';
+import { workspaceName, workspaceStateDir as workspaceDir } from '@stim-cli/core';
 import { getConfigDir } from './config.ts';
 import { withDirLock } from './dir-lock.ts';
 
+export {
+  buildCacheRoot as sharedBuildCache,
+  metroCacheRoot as sharedMetroCache,
+  workspaceId,
+  workspaceSlug,
+} from '@stim-cli/core';
+export { workspaceName, workspaceDir };
+
 const WORKSPACE_METADATA_FILE_NAME = 'workspace.json';
-
-export function workspaceSlug(projectRoot: string): string {
-  return coreWorkspaceSlug(projectRoot);
-}
-
-export function workspaceId(projectRoot: string): string {
-  return coreWorkspaceId(projectRoot);
-}
-
-export function workspaceName(projectRoot: string): string {
-  return coreWorkspaceName(projectRoot);
-}
-
-export function workspaceDir(projectRoot: string): string {
-  return workspaceStateDir(projectRoot);
-}
 
 export function workspaceMetadataFile(projectRoot: string): string {
   return join(workspaceDir(projectRoot), WORKSPACE_METADATA_FILE_NAME);
@@ -103,14 +88,6 @@ export function supervisorLogFile(projectRoot: string): string {
 
 export function emulatorLogFile(projectRoot: string): string {
   return join(workspaceLogsDir(projectRoot), 'emulator.log');
-}
-
-export function sharedMetroCache(name?: string | null): string {
-  return metroCacheRoot(name);
-}
-
-export function sharedBuildCache(): string {
-  return buildCacheRoot();
 }
 
 export function sharedCompilationCache(): string {

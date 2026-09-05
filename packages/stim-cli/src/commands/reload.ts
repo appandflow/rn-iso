@@ -350,7 +350,7 @@ export function registerReload(program: Command, deps: Partial<ReloadDeps> = {})
   program
     .command('reload [platform]')
     .description(
-      "Reload JavaScript in this workspace's live app without building, installing, or cold-launching it. Specify ios or android when both are live.",
+      "Request a JavaScript reload in this workspace's live app without observing completion. Specify ios or android when both are live.",
     )
     .option('--json', 'Emit the reload facts as one JSON line')
     .action(async (value: string | undefined, opts: ReloadOptions) => {
@@ -395,7 +395,7 @@ export function registerReload(program: Command, deps: Partial<ReloadDeps> = {})
       } else {
         const facts = result.facts;
         console.log(
-          `Reloaded ${facts.appId} on ${facts.deviceName} (${facts.deviceId}) via ${facts.strategy}; ${facts.platform} Metro port ${facts.metroPort}.`,
+          `Reload requested for ${facts.appId} on ${facts.deviceName} (${facts.deviceId}) via ${facts.strategy}; ${facts.platform} Metro port ${facts.metroPort}. Completion is not observed; verify the expected UI and run stim logs --errors.`,
         );
       }
     });

@@ -11,7 +11,7 @@ import { isPidAlive } from '../../metro.ts';
 import { sleep } from '../native-runtime.ts';
 import { getExecutor } from '../../exec.ts';
 
-export function collectorLogFile(root: string): string {
+function collectorLogFile(root: string): string {
   return join(workspaceLogsDir(root), `collector-${PLATFORM}.log`);
 }
 

@@ -29,7 +29,7 @@ export function schemesFromInfoPlist(plist: unknown): string[] {
   return out;
 }
 
-export function readBundleSchemes(
+function readBundleSchemes(
   appPath: unknown,
   { exec = null }: { exec?: import('../exec.ts').Executor | null } = {},
 ): string[] {
