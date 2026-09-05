@@ -211,8 +211,13 @@ line by design (see \`guide logs\`), not this single-payload contract.`,
 
   stim reload [ios|android] --json
 
+  Exit 0 and this payload confirm that the reload request was sent. They do
+  not prove that new JavaScript loaded or that the screen recovered. The
+  command does not observe completion. Verify the expected UI on deviceId
+  and inspect stim logs --errors before claiming recovery.
+
   platform        "ios" | "android"
-  deviceId        the exact owned simulator UDID or emulator serial reloaded
+  deviceId        the exact owned simulator UDID or emulator serial targeted
   deviceName      the owned simulator or AVD name
   appId           the live bundle id or Android package
   metroPort       the workspace's verified Metro port

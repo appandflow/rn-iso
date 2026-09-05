@@ -208,10 +208,31 @@ test('reload --json prints exactly one parseable facts line', async () => {
   }
 
   expect(lines).toHaveLength(1);
-  expect(JSON.parse(lines[0]!)).toMatchObject({
+  expect(JSON.parse(lines[0]!)).toEqual({
     platform: 'android',
     deviceId: 'emulator-5554',
+    deviceName: 'stim-android',
+    appId: 'com.example.android',
     metroPort: 8082,
     strategy: 'android-broadcast',
   });
+});
+
+test('reload plain output reports a request and retains the target facts', async () => {
+  const program = new Command();
+  registerReload(program, reloadDeps());
+  const lines: string[] = [];
+  const originalLog = console.log;
+  console.log = (line) => lines.push(String(line));
+  try {
+    await program.parseAsync(['node', 'stim', 'reload', 'android']);
+  } finally {
+    console.log = originalLog;
+  }
+
+  expect(lines).toHaveLength(1);
+  expect(lines[0]).toMatch(/^Reload requested for com\.example\.android /);
+  expect(lines[0]).toContain('emulator-5554');
+  expect(lines[0]).toContain('8082');
+  expect(lines[0]).toContain('stim logs --errors');
 });

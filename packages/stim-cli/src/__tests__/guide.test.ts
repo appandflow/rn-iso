@@ -346,3 +346,7 @@ test('the package exposes only the stim binary', () => {
   const packageJson = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf-8'));
   expect(packageJson.bin).toEqual({ stim: 'dist/cli.mjs' });
 });
+
+test('the reload payload guide distinguishes dispatch from observed completion', () => {
+  expect(renderSection('facts', 'payloads')).toMatch(/reload request was sent[\s\S]*does not observe completion/);
+});
