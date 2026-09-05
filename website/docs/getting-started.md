@@ -47,7 +47,7 @@ The agent normally runs:
 code={`stim doctor           # inspect the main checkout and warm-state gaps
 stim start            # start this workspace's dev server
 stim ios              # build or restore, install, launch, and verify
-stim logs --errors    # no matching records means the launch is healthy
+stim logs --errors    # check for errors in the captured logs
 stim stop             # release the live environment`}
 />
 

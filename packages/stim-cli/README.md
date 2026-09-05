@@ -31,6 +31,11 @@ stim logs --errors
 stim stop
 ```
 
+For `stim logs --errors`, a clean check requires exit code 0 and no matching
+errors in the captured logs. Exit code 0 alone means the query succeeded, even
+when it prints errors; an empty result does not prove launch or log capture
+succeeded.
+
 Use `stim doctor --platform ios` or `stim doctor --platform android` when only
 one native platform is in scope; shared project checks still run.
 

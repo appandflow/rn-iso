@@ -35,8 +35,12 @@ The merged timeline includes Metro, client, device, and build records. Logs live
 in the global workspace directory under `$STIM_HOME/workspaces`, not in the
 project checkout.
 
-No matching records is a successful result with exit code 0. JSON mode writes
-NDJSON and writes zero bytes for zero matches.
+Exit code 0 means the query succeeded, including when it prints errors. A clean
+`stim logs --errors` check requires exit code 0 and no matching errors in the
+captured logs. Human mode prints `No matching log records` on stderr for zero
+matches; JSON mode writes NDJSON and writes zero bytes for zero matches. An
+empty result does not prove launch or log capture succeeded: a workspace with
+no log directory also returns an empty result.
 
 `stim stop` ends the supervisor and log collectors. It also frees the reserved
 port and shuts down the owned local device.
