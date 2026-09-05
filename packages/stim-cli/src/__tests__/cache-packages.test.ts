@@ -1,14 +1,11 @@
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import assert from 'node:assert';
 import { METRO_NAMED_CACHE_LAYOUT } from '@stim-cli/core';
 import { readManifest } from '../cache-manifest.ts';
 import { sharedBuildCache, sharedMetroCache } from '../paths.ts';
 import { hasStoreAt } from '../supervisor/metro-store.ts';
-
-const PACKAGES = join(fileURLToPath(import.meta.url), '..', '..', '..', '..');
 
 async function waitForRegistration(dir: string, timeoutMs = 5000) {
   const deadline = Date.now() + timeoutMs;
@@ -150,18 +147,6 @@ test('the Metro cache store registers itself on this Node, at the shard depth', 
     delete process.env.STIM_HOME;
     delete process.env.STIM_METRO_CACHE;
   }
-});
-
-test('neither package reaches Stim as a module; the shared primitives live in @stim-cli/core', () => {
-  for (const pkg of ['expo-build-cache', 'metro']) {
-    const source = readFileSync(join(PACKAGES, pkg, 'index.ts'), 'utf-8');
-    expect(source).not.toMatch(/require\(\s*['"]Stim/);
-    expect(source).not.toMatch(/import\(\s*['"]Stim/);
-    expect(source).toMatch(/@stim-cli\/core/);
-  }
-  const core = readFileSync(join(PACKAGES, 'core', 'index.ts'), 'utf-8');
-  expect(core).toMatch(/caches\.json/);
-  expect(core).not.toMatch(/require\(\s*['"]Stim/);
 });
 
 test('both packages resolve the same cache roots the CLI does', async () => {

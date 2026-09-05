@@ -66,14 +66,6 @@ interface RemoteDeviceRecord {
   platform?: string | null;
   sessionId?: string;
 }
-function readRemoteDeviceState(root: string): RemoteDeviceRecord | null {
-  return readRemoteSession(root);
-}
-
-function dropStateKeys(root: string, keys: string[]): void {
-  clearWorkspaceStateKeys(root, keys);
-}
-
 export function clearSupervisorState(root: string): void {
   try {
     rmSync(supervisorPidFile(root), { force: true });
@@ -423,7 +415,7 @@ export async function runStop({
     if (outcomes.device.ios?.status === 'failed' || outcomes.device.android?.status === 'failed') ok = false;
   }
 
-  const remote = remoteDevice === undefined ? readRemoteDeviceState(root) : remoteDevice;
+  const remote = remoteDevice === undefined ? readRemoteSession(root) : remoteDevice;
   const sessionId = typeof remote?.sessionId === 'string' ? remote.sessionId : null;
   if (sessionId) {
     const result = teardownRemoteSession(root, sessionId);
@@ -498,7 +490,7 @@ export async function runStop({
     }
     clearState(root);
     await clearRegistration(root);
-    if (tunnel?.kind === 'expo') dropStateKeys(root, ['metroTunnel']);
+    if (tunnel?.kind === 'expo') clearWorkspaceStateKeys(root, ['metroTunnel']);
   }
 
   return { ok, outcomes, summary: summarize(root, outcomes, ok) };
