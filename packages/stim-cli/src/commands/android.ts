@@ -12,7 +12,7 @@ import {
 } from '@stim-cli/cache';
 import type { FingerprintSource } from '@expo/fingerprint';
 import { formatDuration, phaseLine, shortHash, SLOW_STEP_MS, stepClock, stepTimer } from '../command-output.ts';
-import type { RemoteDeviceBackend, WaitedForBuild } from '../types.ts';
+import type { CcacheActivity, RemoteDeviceBackend, WaitedForBuild } from '../types.ts';
 import {
   appProjectProblem,
   findProjectRoot,
@@ -119,6 +119,7 @@ import { detectProviders } from '../engine/metro-reach.ts';
 import { selectFromPool } from '../engine/device-pool.ts';
 import { needsPrebuild, runPrebuild } from '../engine/prebuild.ts';
 import { buildAndroid, productFlavorRefusal, readProductFlavors } from '../engine/gradle.ts';
+import { CCACHE_NOT_RUN, CCACHE_UNAVAILABLE, resolveCcache } from '../engine/ccache.ts';
 import { swapApkBundle, resolveKeystore } from '../engine/apk-swap.ts';
 import { captureAssetManifest } from '../engine/asset-manifest.ts';
 import {
@@ -338,6 +339,7 @@ interface RunAndroidOptions {
   needsPrebuildFor?: typeof needsPrebuild;
   prebuild?: typeof runPrebuild;
   build?: typeof buildAndroid;
+  ccacheFor?: typeof resolveCcache;
   install?: typeof installAndroidApp;
   launch?: typeof launchAndroidApp;
   launchRelease?: typeof launchAndroidReleaseApp;
@@ -416,6 +418,7 @@ function resolveRunAndroidOptions(
     needsPrebuildFor = needsPrebuild,
     prebuild = runPrebuild,
     build = buildAndroid,
+    ccacheFor = resolveCcache,
     install = installAndroidApp,
     launch = launchAndroidApp,
     launchRelease = launchAndroidReleaseApp,
@@ -493,6 +496,7 @@ function resolveRunAndroidOptions(
     needsPrebuildFor,
     prebuild,
     build,
+    ccacheFor,
     install,
     launch,
     launchRelease,
@@ -572,6 +576,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     needsPrebuildFor,
     prebuild,
     build,
+    ccacheFor,
     install,
     launch,
     launchRelease,
@@ -1039,6 +1044,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   let storeKey = '';
   let storeSources: FingerprintSource[] = [];
   let apkPath: string | null = null;
+  let ccacheActivity: CcacheActivity = CCACHE_NOT_RUN;
 
   async function resolveInitialFingerprint(): Promise<boolean> {
     const fingerprintTimer = stepTimer(now);
@@ -1373,8 +1379,9 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
             phase('build', `compiling ${variant || 'debug'} with Gradle`);
             const built: BuildAndroidResultLike = await build(
               { root, logWriter: writer, variant, abi: buildAbi },
-              { estimateMs: estimates().coldBuildMs },
+              { estimateMs: estimates().coldBuildMs, ccache: ccacheFor({ root, onNote: out }) },
             );
+            ccacheActivity = built.ccache ?? CCACHE_UNAVAILABLE;
             if (built.failed) {
               const diagnostics = built.diagnostics || [];
               for (const diag of diagnostics) {
@@ -1548,6 +1555,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         swapDir,
         record,
         waitedForBuild,
+        ccache: ccacheActivity,
         uploadPending,
         providerUpload,
         providerName,

@@ -280,6 +280,15 @@ line by design (see \`guide logs\`), not this single-payload contract.
   devClientUrl    the expo-dev-client deep link that was opened, or null for
                   a plain launcher start. This is the command that puts the
                   app back on THIS workspace's bundle
+  ccache          the Android C++ compilation cache, the counterpart of the
+                  iOS compilationCache field:
+                    { status: "reported", hits, misses, hitRatePercent }
+                  status is "not-run" when the artifact cache supplied the
+                  APK. status is "unavailable" when no C++ compile went
+                  through ccache -- ccache absent from PATH, a project that
+                  sets its own CMake compiler launcher, or a Gradle run whose
+                  native work was all up to date. None of the three is an
+                  error, and this field is separate from cacheHit
   logs            the workspace log directory
   durationMs      wall time for the whole run
 

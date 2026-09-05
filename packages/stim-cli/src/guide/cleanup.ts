@@ -205,6 +205,13 @@ SHARED BUILD CACHES
     stim gc --delete --older-than 30   # trim entries nothing has used
     stim gc --delete --cache all       # empty them whole, index-backed ones
                                          # (the Xcode CAS) included
+  $STIM_HOME/ccache (default ~/.stim/ccache) holds the Android C++ objects
+  \`stim android\` compiles through ccache. ccache keeps it under CCACHE_MAXSIZE
+  on its own, so \`gc\` reports its size and leaves it alone; --older-than
+  skips it, and \`--cache all\` empties it whole like the Xcode CAS. That
+  bound is Stim's: it sets CCACHE_MAXSIZE on the Gradle run, which wins over
+  a max_size written into the cache directory's own ccache.conf.
+
   The Gradle build cache under GRADLE_USER_HOME (default ~/.gradle) is
   report-only because every Gradle build shares it. Stim reports its size
   but never prunes or empties it, including with --older-than or --cache all.

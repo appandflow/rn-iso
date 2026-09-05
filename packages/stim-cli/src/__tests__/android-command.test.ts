@@ -342,8 +342,15 @@ function harness(overrides = {}) {
     build: async (args: BuildArgs = {}) => {
       calls.order.push('build');
       calls.build.push(args);
-      return { ok: true, apkPath: fakeApk(), durationMs: 161000, lastLines: [] };
+      return {
+        ok: true,
+        apkPath: fakeApk(),
+        durationMs: 161000,
+        lastLines: [],
+        ccache: { status: 'reported' as const, hits: 176, misses: 204, hitRatePercent: 46.3 },
+      };
     },
+    ccacheFor: () => null,
     install: (args: InstallArgs = {}) => {
       calls.install.push(args);
       return { ok: true, apkPath: args.apkPath ?? '' };
@@ -1030,6 +1037,7 @@ describe('a cache hit', () => {
       bundleId: 'com.example.app',
       installSkipped: false,
       launched: true,
+      ccache: { status: 'not-run', hits: null, misses: null, hitRatePercent: null },
       debugHttpHost: '10.0.2.2:8082',
       debugHttpHostNote: null,
       devClientUrl: null,
@@ -1057,6 +1065,34 @@ describe('a cache miss', () => {
     expect(labelled(h.stderr, 'build')[1]).toMatch(/^  build {7}ok \(2m41s\)$/);
     assert(result.facts);
     expect(result.facts.cacheHit).toBe(false);
+  });
+
+  test('hands the resolved ccache environment to Gradle and reports its counts', async () => {
+    const setup = {
+      dir: join(home, 'ccache'),
+      statsLog: join(home, 'ccache-stats.log'),
+      env: { CMAKE_CXX_COMPILER_LAUNCHER: '/opt/homebrew/bin/ccache' },
+    };
+    const options: Record<string, unknown>[] = [];
+    const h = harness({
+      ccacheFor: () => setup,
+      build: async (_args: BuildArgs = {}, opts: Record<string, unknown> = {}) => {
+        options.push(opts);
+        return {
+          ok: true,
+          apkPath: fakeApk(),
+          durationMs: 161000,
+          lastLines: [],
+          ccache: { status: 'reported' as const, hits: 176, misses: 204, hitRatePercent: 46.3 },
+        };
+      },
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(options[0]?.ccache).toBe(setup);
+    assert(result.facts);
+    expect(result.facts.ccache).toEqual({ status: 'reported', hits: 176, misses: 204, hitRatePercent: 46.3 });
+    expect(h.stdout.join('\n')).toMatch(/^ {2}compilation cache 176 hits \/ 204 misses \(46\.3%\)$/m);
   });
 
   test('builds only the ABI selected for an owned emulator and scopes the cache key', async () => {
@@ -2461,6 +2497,7 @@ describe('the pure parts', () => {
       bundleId: null,
       installSkipped: false,
       launched: false,
+      ccache: { status: 'unavailable', hits: null, misses: null, hitRatePercent: null },
       debugHttpHost: null,
       debugHttpHostNote: null,
       devClientUrl: null,

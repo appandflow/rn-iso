@@ -181,6 +181,7 @@ test('the facts topic documents the fields each --json payload actually carries'
       'launched',
       'durationMs',
       'systemImage',
+      'ccache',
     ],
   };
   for (const [command, names] of Object.entries(fields)) {
@@ -513,6 +514,41 @@ test('the cleanup guide documents that the shared Gradle build cache is report-o
 
   expect(cleanup).toMatch(/Gradle build cache[\s\S]*report-only/i);
   expect(cleanup).toMatch(/never[^.]*prunes[^.]*empties/i);
+});
+
+test('the cleanup guide lists the shared ccache directory and who bounds it', () => {
+  const cleanup = renderTopic('cleanup');
+  assert(cleanup);
+
+  expect(cleanup).toMatch(/\$STIM_HOME\/ccache \(default ~\/\.stim\/ccache\)/);
+  expect(cleanup).toMatch(/ccache keeps it under CCACHE_MAXSIZE\s+on its own/);
+  expect(cleanup).toMatch(/--older-than\s+skips it/);
+  expect(cleanup).toMatch(/it sets CCACHE_MAXSIZE on the Gradle run, which wins over\s+a max_size/);
+});
+
+test('the lifecycle guide states what Stim sets for Android C++ and what it costs', () => {
+  const lifecycle = renderTopic('lifecycle');
+  assert(lifecycle);
+
+  expect(lifecycle).toMatch(/CMAKE_C_COMPILER_LAUNCHER \/ CMAKE_CXX_COMPILER_LAUNCHER/);
+  expect(lifecycle).toMatch(/CCACHE_DIR, CCACHE_BASEDIR, CCACHE_NOHASHDIR, CCACHE_SLOPPINESS/);
+  expect(lifecycle).toMatch(/Nothing is set when ccache is\s+absent/);
+  expect(lifecycle).toMatch(/\$STIM_HOME\/ccache \(default ~\/\.stim\/ccache\)/);
+  expect(lifecycle).toMatch(/DWARF comp_dir/);
+  expect(lifecycle).toMatch(/worklets and\s+expo-modules-core precompile a header without\s+-fno-pch-timestamp/);
+  expect(lifecycle).toMatch(/reanimated passes\s+-Xclang -fno-pch-timestamp and hits across worktrees/);
+  expect(lifecycle).toMatch(/No stale \.pch is ever served/);
+  expect(lifecycle).toMatch(/\.cxx\/\*\*\/CMakeCache\.txt on the first configure/);
+  expect(lifecycle).toMatch(/keeps compiling without them until it is deleted once/);
+});
+
+test('the settings guide names the ccache variables among the fixed invocations', () => {
+  const settings = renderTopic('settings');
+  assert(settings);
+
+  expect(settings).toMatch(
+    /carries the ccache launcher and CCACHE_BASEDIR \/\s+CCACHE_NOHASHDIR when ccache is on PATH/,
+  );
 });
 
 test('the settings guide defines Metro overrides as parent roots and preserves legacy files', () => {

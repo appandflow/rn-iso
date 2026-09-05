@@ -42,7 +42,7 @@ import {
   noDeviceDiagnostic,
   displayPath,
 } from './support.ts';
-import type { WaitedForBuild } from '../../types.ts';
+import type { CcacheActivity, WaitedForBuild } from '../../types.ts';
 import { verifyCollectorOwnership } from '../../collector/ownership.ts';
 import { isPidAlive } from '../../metro.ts';
 import type { OwnedDeviceRecord } from '../../engine/device.ts';
@@ -248,6 +248,7 @@ interface FinishAndroidRunArgs {
   swapDir: string | null;
   record: AndroidRecord;
   waitedForBuild: WaitedForBuild | null;
+  ccache: CcacheActivity;
   uploadPending: Promise<RemoteUploadLike> | null;
   providerUpload: Promise<ProviderCallResult<void>> | null;
   providerName: string | null;
@@ -305,6 +306,7 @@ export async function finishAndroidRun({
   swapDir,
   record,
   waitedForBuild,
+  ccache,
   uploadPending,
   providerUpload,
   providerName,
@@ -569,6 +571,7 @@ export async function finishAndroidRun({
     providerName,
     launchState,
     launched,
+    ccache,
     durationMs: now() - started,
     writer,
     emit,

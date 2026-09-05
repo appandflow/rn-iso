@@ -1,7 +1,16 @@
 import assert from 'node:assert';
 import type { ChildProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { NdjsonRecord, NdjsonWriter } from '../ndjson.ts';
@@ -707,6 +716,79 @@ describe('buildAndroid', () => {
     const settled = beats.length;
     await new Promise((r) => setTimeout(r, 40));
     expect(beats.length).toBe(settled);
+  });
+
+  test('the ccache environment reaches the Gradle child, and its stats log is read back', async () => {
+    makeAndroidProject();
+    const statsLog = join(root, 'logs', 'ccache-stats.log');
+    mkdirSync(join(root, 'logs'), { recursive: true });
+    writeFileSync(statsLog, 'stale run\ncache_miss\n');
+    const notes: string[] = [];
+    const envs: NodeJS.ProcessEnv[] = [];
+    const result = await buildAndroid(
+      { root, logWriter: recordingWriter() },
+      {
+        ccache: {
+          dir: join(root, 'ccache'),
+          statsLog,
+          env: { CMAKE_CXX_COMPILER_LAUNCHER: '/opt/homebrew/bin/ccache', CCACHE_DIR: join(root, 'ccache') },
+        },
+        spawnFn: (_cmd, _args, opts) => {
+          envs.push(opts.env as NodeJS.ProcessEnv);
+          expect(existsSync(statsLog)).toBe(false);
+          return fakeChild({
+            lines: ['BUILD SUCCESSFUL in 3s'],
+            onExit: () => {
+              writeFileSync(statsLog, ['# a.cpp', 'direct_cache_hit', '# b.cpp', 'cache_miss'].join('\n'));
+              writeApk();
+            },
+          });
+        },
+        onNote: (line) => notes.push(line),
+      },
+    );
+    expect((result as BuildAndroidResultLike).ok).toBe(true);
+    const spawnEnv = envs[0];
+    assert(spawnEnv);
+    expect(spawnEnv.CMAKE_CXX_COMPILER_LAUNCHER).toBe('/opt/homebrew/bin/ccache');
+    expect(spawnEnv.CCACHE_DIR).toBe(join(root, 'ccache'));
+    expect(spawnEnv.TERM).toBe('dumb');
+    expect(result.ccache).toEqual({ status: 'reported', hits: 1, misses: 1, hitRatePercent: 50 });
+    expect(notes.filter((line) => line.includes('ccache'))).toEqual([]);
+  });
+
+  test('without ccache the Gradle argv and environment are unchanged and no statistics are claimed', async () => {
+    makeAndroidProject();
+    const calls: { args: string[]; env: NodeJS.ProcessEnv }[] = [];
+    const result = await buildAndroid(
+      { root, logWriter: recordingWriter() },
+      {
+        spawnFn: (_cmd, args, opts) => {
+          calls.push({ args, env: opts.env as NodeJS.ProcessEnv });
+          return fakeChild({ lines: ['BUILD SUCCESSFUL in 1s'], onExit: () => writeApk() });
+        },
+      },
+    );
+    expect((result as BuildAndroidResultLike).ok).toBe(true);
+    const call = calls[0];
+    assert(call);
+    expect(call.args).toEqual(['assembleDebug', '--build-cache']);
+    expect(call.env.CMAKE_CXX_COMPILER_LAUNCHER).toBe(undefined);
+    expect(call.env.CCACHE_DIR).toBe(undefined);
+    expect(result.ccache).toEqual({ status: 'unavailable', hits: null, misses: null, hitRatePercent: null });
+  });
+
+  test('a build that compiled no C++ reports unavailable rather than a zero hit rate', async () => {
+    makeAndroidProject();
+    const statsLog = join(root, 'logs', 'ccache-stats.log');
+    const result = await buildAndroid(
+      { root, logWriter: recordingWriter() },
+      {
+        ccache: { dir: join(root, 'ccache'), statsLog, env: { CCACHE_DIR: join(root, 'ccache') } },
+        spawnFn: () => fakeChild({ lines: ['BUILD SUCCESSFUL in 1s'], onExit: () => writeApk() }),
+      },
+    );
+    expect(result.ccache).toEqual({ status: 'unavailable', hits: null, misses: null, hitRatePercent: null });
   });
 
   test('android/local.properties satisfies the SDK check on its own', async () => {

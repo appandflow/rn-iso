@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import type { AndroidFacts, WaitedForBuild } from '../../types.ts';
+import type { AndroidFacts, CcacheActivity, WaitedForBuild } from '../../types.ts';
 import { LAUNCH_BUNDLING, LAUNCH_UNVERIFIED } from '../../engine/app-install.ts';
 import {
   cacheLevel,
@@ -8,6 +8,7 @@ import {
   isEasAuthFailureText,
   type LoadProjectProviderResult,
 } from '../../engine/remote-cache.ts';
+import { CCACHE_UNAVAILABLE, ccacheActivityLine } from '../../engine/ccache.ts';
 import { PLATFORM } from './support.ts';
 import { formatDuration, phaseLine } from '../../command-output.ts';
 import type { RemoteUploadLike, LaunchResultLike, AndroidRecord, AndroidWriter } from './types.ts';
@@ -30,6 +31,7 @@ export function androidFacts({
   bundleId,
   installSkipped = false,
   launched,
+  ccache = CCACHE_UNAVAILABLE,
   logs,
   debugHttpHost = null,
   debugHttpHostNote = null,
@@ -52,6 +54,7 @@ export function androidFacts({
   bundleId?: string | null;
   installSkipped?: boolean;
   launched?: boolean | string;
+  ccache?: CcacheActivity;
   logs?: string | null;
   debugHttpHost?: string | null;
   debugHttpHostNote?: string | null;
@@ -76,6 +79,7 @@ export function androidFacts({
     bundleId: bundleId ?? null,
     installSkipped: Boolean(installSkipped),
     launched: launched === LAUNCH_UNVERIFIED || launched === LAUNCH_BUNDLING ? launched : Boolean(launched),
+    ccache,
     debugHttpHost: debugHttpHost ?? null,
     debugHttpHostNote: debugHttpHostNote ?? null,
     devClientUrl: devClientUrl ?? null,
@@ -174,6 +178,7 @@ export interface ReportAndroidResultArgs {
   providerName: string | null;
   launchState: boolean | string;
   launched: LaunchResultLike;
+  ccache: CcacheActivity;
   durationMs: number;
   writer: AndroidWriter;
   emit: (line: string) => void;
@@ -198,6 +203,7 @@ export function reportAndroidResult({
   providerName,
   launchState,
   launched,
+  ccache,
   durationMs,
   writer,
   emit,
@@ -224,6 +230,7 @@ export function reportAndroidResult({
     bundleId: androidPackage,
     installSkipped,
     launched: launchState,
+    ccache,
     logs: logsDir,
     durationMs,
     lease,
@@ -259,6 +266,7 @@ export function reportAndroidResult({
         phaseLine('app', androidPackage),
         phaseLine('metro', metroResult),
         phaseLine('cache', cacheResult),
+        phaseLine('compilation cache', ccacheActivityLine(ccache)),
         phaseLine('logs', logsDir || 'unavailable (remote device)'),
       ].join('\n'),
     );

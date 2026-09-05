@@ -283,6 +283,13 @@ committing. The shared caches need no project-file edits:
            no org.gradle.caching=true in gradle.properties. Debug builds also
            carry -PreactNativeArchitectures=<target ABI> when Stim can prove
            the emulator or physical-device ABI; otherwise they stay universal.
+  ccache   the same gradlew run carries an absolute
+           CMAKE_C_COMPILER_LAUNCHER / CMAKE_CXX_COMPILER_LAUNCHER plus
+           CCACHE_DIR, CCACHE_BASEDIR, CCACHE_NOHASHDIR, CCACHE_SLOPPINESS
+           and CCACHE_MAXSIZE whenever a ccache binary is on PATH, so the C++
+           objects cross worktrees as well. Nothing is set when ccache is
+           absent, or when the project passes a CMake compiler launcher of
+           its own.
   start    the dev server gets a shared Metro FileStore APPENDED to whatever
            the project configured -- in-process on a bare project, and through
            Expo's config override on SDK 54+. Expo SDK 53 and older use their
@@ -294,8 +301,38 @@ committing. The shared caches need no project-file edits:
 
 Each reports its cache setup. \`stim doctor\` checks missing or stale setup
 when a build is blocked or slow. It reports what Stim cannot handle itself
-(a missing dev client, ccache, a fingerprint no fresh worktree reproduces, a
-provider on a key this SDK ignores) and settings for builds outside Stim.
+(a missing dev client, ccache absent from PATH or a .cxx that predates the
+launcher, a fingerprint no fresh worktree reproduces, a provider on a key this
+SDK ignores) and settings for builds outside Stim.
+
+WHY ANDROID NEEDS CCACHE, AND WHAT IT COSTS
+Every AGP CMake task is uncacheable by Gradle, so --build-cache serves not one
+C++ compile. Without a launcher a fresh worktree recompiles every translation
+unit, which on a React Native app with native modules is most of a first build.
+The shared objects live at $STIM_HOME/ccache (default ~/.stim/ccache), which is
+registered for \`gc\` and prunes itself at CCACHE_MAXSIZE.
+
+CCACHE_BASEDIR rewrites paths under the workspace root relative to the compile
+directory and CCACHE_NOHASHDIR keeps the working directory out of the hash;
+together they are what lets an object built in one worktree match in another.
+The trade-off is the same class as the iOS CAS one: an object reused from
+worktree A carries A's directory as its DWARF comp_dir, so a debugger stepping
+into reused C++ resolves sources against that path.
+
+Precompiled headers are where the misses are, and the cause is mtime, not
+paths. worklets and expo-modules-core precompile a header without
+-fno-pch-timestamp, so ccache re-checks the mtime of the PCH inputs
+(\`Precompiled header includes ..., which has a new mtime\`), rebuilds the
+header, and every translation unit that includes it misses too -- 5 to 11
+seconds per module, paid again after anything that rewrites those mtimes,
+a fresh npm ci included. No stale .pch is ever served. reanimated passes
+-Xclang -fno-pch-timestamp and hits across worktrees like everything else.
+
+The launcher persists in the project. AGP writes it into each
+.cxx/**/CMakeCache.txt on the first configure, so a plain \`./gradlew\` in that
+checkout also compiles through ccache -- and a .cxx configured BEFORE the
+variables existed keeps compiling without them until it is deleted once.
+\`stim doctor\` reports both.
 
 THE BUILD CACHE HAS THREE LEVELS
   1. Stim's own, on this machine: a directory under ~/.stim shared by
