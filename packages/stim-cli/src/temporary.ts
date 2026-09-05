@@ -1,4 +1,15 @@
-import { accessSync, constants, lstatSync, mkdirSync, mkdtempSync, realpathSync, statSync } from 'node:fs';
+import {
+  accessSync,
+  chmodSync,
+  constants,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  statSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { getConfigDir, loadConfig } from './config.ts';
@@ -78,4 +89,15 @@ export function makeTemporaryDirectory(near: string, prefix: string): string {
   const root = temporaryRoot(near);
   mkdirSync(root, { recursive: true, mode: 0o700 });
   return mkdtempSync(join(root, prefix));
+}
+
+export function removeTemporaryEntry(path: string): void {
+  const stat = lstatSync(path, { throwIfNoEntry: false });
+  if (stat?.isDirectory()) {
+    chmodSync(path, stat.mode | 0o700);
+    for (const entry of readdirSync(path, { withFileTypes: true })) {
+      if (entry.isDirectory()) removeTemporaryEntry(join(path, entry.name));
+    }
+  }
+  rmSync(path, { recursive: true, force: true });
 }

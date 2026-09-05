@@ -1,6 +1,6 @@
-import { makeTemporaryDirectory } from '../temporary.ts';
+import { makeTemporaryDirectory, removeTemporaryEntry } from '../temporary.ts';
 import type { ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, rmSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
@@ -158,7 +158,7 @@ export async function swapJsBundle({
   let tmp: string | undefined;
   const fail = (step: string, reason: string, lastLines: string[] = []): JsSwapResult => {
     logWriter?.write?.({ src: 'build', level: 'error', msg: `JS swap failed at ${step}: ${reason}`, event: 'js_swap' });
-    if (tmp) rmSync(tmp, { recursive: true, force: true });
+    if (tmp) removeTemporaryEntry(tmp);
     return { failed: true, step, reason, lastLines, durationMs: elapsed() };
   };
 

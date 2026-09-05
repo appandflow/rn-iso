@@ -1,5 +1,5 @@
-import { makeTemporaryDirectory } from '../temporary.ts';
-import { rmSync, writeFileSync } from 'node:fs';
+import { makeTemporaryDirectory, removeTemporaryEntry } from '../temporary.ts';
+import { writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
@@ -112,7 +112,7 @@ export function copyAppAside(
     try {
       e.runFile('cp', ['-R', appPath, copy]);
     } catch (error) {
-      rmSync(tmpDir, { recursive: true, force: true });
+      removeTemporaryEntry(tmpDir);
       throw error;
     }
   }
