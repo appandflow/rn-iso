@@ -731,10 +731,10 @@ captured"  (in metro.ndjson, bare RN)
   EAS project locks. A lock whose owner died is taken over automatically (pid
   liveness is checked every poll), so this means another Stim command really
   is working on this workspace: wait for it and retry. If nothing is running,
-  the message names the lock directory and removing it is safe. This is not
-  the config lock, which reports the message below.
+  the message names the lock directory and removing it is safe. The same code
+  also covers the config-lock timeout below.
 
-"Timed out waiting for the Stim config lock at <path>"
+"Timed out waiting for the lock at <path>."
   Every config write is serialised so parallel commands cannot lose each
   other's records. A lock older than 10s is taken over automatically, so this
   means a command really is holding it. If none is running, remove that
@@ -762,10 +762,10 @@ captured"  (in metro.ndjson, bare RN)
   reserved. Re-run \`stop\`, or signal it yourself: kill -9 -<n> (note the
   minus -- it is a process group).
 
-"Could not tear down the <platform> device: ..."
-  The delete failed, so the ASSIGNMENT was kept and the command exited 1. That
-  is deliberate: dropping the record would leave a device on the machine that
-  nothing references and nothing will ever reap. Fix the cause and re-run.`,
+"teardown failed: <reason>"
+  Stim could not release the owned device and keeps its record for a retry.
+  \`worktree remove\` refuses to remove the worktree while the device is still
+  tracked. Fix the reported cause and re-run.`,
     },
     remove: {
       summary: 'worktree remove refused a dirty tree: what it restores itself and what --force discards',
