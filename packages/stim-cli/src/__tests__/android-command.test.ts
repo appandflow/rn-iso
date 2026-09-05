@@ -1062,6 +1062,7 @@ describe('a cache miss', () => {
   test('builds only the ABI selected for an owned emulator and scopes the cache key', async () => {
     const abiKey = `${FINGERPRINT}-debug-sim-arm64-v8a`;
     const h = harness({
+      json: true,
       deviceAbi: never('the owned emulator ABI query'),
       ensureDevice: async () => ({
         avdName: 'stim-app-412',
@@ -1069,15 +1070,17 @@ describe('a cache miss', () => {
         owned: true,
         systemImage: 'system-images;android-36;google_apis;arm64-v8a',
       }),
-      loadProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
+      loadProvider: never('the Expo build cache provider'),
     });
 
-    expect((await h.run()).ok).toBe(true);
+    const result = await h.run();
+    expect(result.ok).toBe(true);
     expect(h.calls.build[0]?.abi).toBe('arm64-v8a');
     expect(h.calls.resolveCached[0]).toEqual(['android', abiKey]);
     expect(h.calls.storeCached[0]?.slice(0, 2)).toEqual(['android', abiKey]);
-    expect(h.calls.resolveRemoteBuild[0]?.runOptions).toEqual({ abi: 'arm64-v8a' });
-    expect(h.calls.uploadRemoteBuild[0]?.runOptions).toEqual({ abi: 'arm64-v8a' });
+    expect(result.facts?.cacheKey).toBe(abiKey);
+    expect(JSON.parse(h.stdout[0] ?? '{}').cacheKey).toBe(abiKey);
+    expect(readState().lastBuild.cacheKey).toBe(abiKey);
   });
 
   test('keeps a universal Debug build when the owned emulator ABI is unknown', async () => {
@@ -3870,6 +3873,38 @@ describe('the project cache provider', () => {
     expect(labelled(h.stderr, 'cache').some((line) => line.includes('uploaded (./cache.cjs)'))).toBe(true);
   });
 
+  test('an ABI-targeted build uses the key-based provider and skips the Expo provider', async () => {
+    const abiKey = `${FINGERPRINT}-debug-sim-arm64-v8a`;
+    const providerCalls: unknown[] = [];
+    const h = harness(
+      providerOptions(
+        {
+          resolve: (input: unknown) => {
+            providerCalls.push(input);
+            return null;
+          },
+          store: (input: unknown) => {
+            providerCalls.push(input);
+          },
+        },
+        {
+          ensureDevice: async () => ({
+            avdName: 'stim-app-412',
+            consolePort: 5584,
+            owned: true,
+            systemImage: 'system-images;android-36;google_apis;arm64-v8a',
+          }),
+          loadProvider: never('the Expo build cache provider'),
+        },
+      ),
+    );
+
+    expect((await h.run()).ok).toBe(true);
+    expect(providerCalls).toHaveLength(2);
+    expect(providerCalls[0]).toMatchObject({ platform: 'android', key: abiKey });
+    expect(providerCalls[1]).toMatchObject({ platform: 'android', key: abiKey });
+  });
+
   test('an unusable provider reports once and the build still succeeds', async () => {
     const h = harness({
       resolveCacheProvider: () => providerConfig(),
@@ -3965,11 +4000,37 @@ describe('--device (a physical Android device)', () => {
   });
 
   test('a physical Debug run builds for the device primary ABI', async () => {
-    const h = physicalHarness({ deviceAbi: () => 'arm64-v8a' });
+    const serials: string[] = [];
+    const h = physicalHarness({
+      deviceAbi: (serial: string) => {
+        serials.push(serial);
+        return 'arm64-v8a';
+      },
+    });
 
     expect((await h.run()).ok).toBe(true);
+    expect(serials).toEqual(['RFCR7081Q9L']);
     expect(h.calls.build[0]?.abi).toBe('arm64-v8a');
     expect(h.calls.resolveCached[0]).toEqual(['android', `${FINGERPRINT}-debug-sim-arm64-v8a`]);
+  });
+
+  test('a physical Debug run stays universal when the device ABI is unknown', async () => {
+    const h = physicalHarness({ deviceAbi: () => null });
+
+    expect((await h.run()).ok).toBe(true);
+    expect(h.calls.build[0]?.abi).toBeNull();
+    expect(h.calls.resolveCached[0]).toEqual(['android', CACHE_KEY]);
+  });
+
+  test('a physical Release run stays universal without querying the device ABI', async () => {
+    const h = physicalHarness({
+      variant: 'release',
+      deviceAbi: never('the device ABI'),
+    });
+
+    expect((await h.run()).ok).toBe(true);
+    expect(h.calls.build[0]?.abi).toBeNull();
+    expect(h.calls.resolveCached[0]).toEqual(['android', `${FINGERPRINT}-release-sim`]);
   });
 
   test('a physical run launches against localhost, not the emulator loopback', async () => {

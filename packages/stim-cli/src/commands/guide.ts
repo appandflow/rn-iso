@@ -2004,7 +2004,9 @@ THE BUILD CACHE HAS THREE LEVELS
      remote cannot stall the loop, and a hit is copied into level one on the
      way past so the next workspace on this machine gets it for free. After a
      build, the result is stored locally AND handed to both providers, which
-     run independently.
+     run independently. An ABI-targeted Android Debug build skips this Expo
+     tier because its run-options contract cannot distinguish ABIs; levels one
+     and two remain ABI-keyed and active.
 
   Stim never configures a provider and never suggests changing one: a
   project without one is a perfectly ordinary local-only project (doctor does

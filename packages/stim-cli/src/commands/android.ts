@@ -2359,6 +2359,9 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     let uploadPending: Promise<RemoteUploadLike> | null = null;
 
     async function resolveRemoteArtifact(): Promise<void> {
+      // Expo buildCacheProvider run options cannot key Android ABIs, so targeted APKs are unsafe in this tier.
+      if (buildAbi) return;
+
       if (!apkPath) {
         const loaded: LoadProjectProviderResult = await loadProvider(root, { isExpo });
         if (loaded?.unavailable) {
