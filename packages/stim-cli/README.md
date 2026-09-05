@@ -53,11 +53,14 @@ Stim builds or restores the app, installs it, launches it, and checks launch
 readiness. Plain output streams progress and reports the complete result. Use
 `--json` when a script needs structured data.
 
-`stim reload [ios|android]` reloads JavaScript in the live app on this
+`stim reload [ios|android]` requests a JavaScript reload in the live app on this
 workspace's owned local device. Use it after a failed first bundle load, when
 an error screen remains after a fix, or when you explicitly need an app
 restart. It is not part of the normal workflow and does not build, install,
 boot, or launch an app. The platform is optional when only one app is live.
+Success confirms that the request was sent; Stim does not observe completion.
+Verify the expected UI on the reported device and inspect `stim logs --errors`
+before claiming recovery.
 
 If a harness already created a linked worktree, run `stim worktree warm`
 inside it to copy missing ignored state from the main checkout, including

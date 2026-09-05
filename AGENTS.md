@@ -44,6 +44,31 @@ pnpm test
 Use only the checks that apply while iterating. Run all defined checks before a
 commit. Run `pnpm run test:e2e` when a change affects an end-to-end workflow.
 
+## Tests and abstractions
+
+Before adding a test, name the concrete failure it catches. Assert observable
+results at the narrowest useful boundary: parser output, state transitions,
+ownership decisions, emitted payloads, or real command behavior. Check existing
+coverage first; extend a relevant case instead of repeating it in another suite.
+
+Do not add tests that only check a constant, a pass-through call, import spelling,
+or implementation source text. A mock returning the expected result does not
+prove the operation works. Use mocks for external boundaries and assert the
+behavior Stim adds. Keep regression tests for real failure modes even when the
+implementation is short.
+
+Guide tests protect rendering, routing, safety instructions, and agreement with
+code-defined contracts such as error codes and settings. Keep assertions to the
+contract being protected. Do not copy explanatory paragraphs, website prose, or
+examples into regex assertions; documentation edits do not need matching tests
+unless they change one of those contracts. Narrow source scans for documented
+identifiers are allowed; they do not replace tests of the behavior behind them.
+
+Use a direct call or re-export when a wrapper only forwards the same arguments
+and result. Keep helpers that own policy, coordinate effects, or remove meaningful
+duplication. Do not extract a helper or export an internal function solely to
+give it a unit test.
+
 ## Issue and pull request workflow
 
 When you find a bug or improvement, search the open GitHub issues first. If no

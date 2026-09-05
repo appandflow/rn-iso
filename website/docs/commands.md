@@ -176,7 +176,7 @@ A variant that ends in `Release` embeds its JavaScript bundle and skips Metro.
 stim reload [ios|android] [--json]
 ```
 
-Reloads JavaScript in the live app on this workspace's owned local simulator
+Requests a JavaScript reload in the live app on this workspace's owned local simulator
 or emulator. It never builds, installs, boots, or cold-launches. Omit the
 platform when exactly one owned app is live; name it when both iOS and Android
 are live.
@@ -191,6 +191,9 @@ over that stateful session.
 The command refuses release builds, stopped or unowned devices, a missing or
 foreign Metro server, and ambiguous selection. `--json` prints one object with
 `platform`, `deviceId`, `deviceName`, `appId`, `metroPort`, and `strategy`.
+Success, including exit 0 with `--json`, confirms that the request was sent.
+The command does not observe completion. Verify the expected UI on the reported
+device and inspect `stim logs --errors` before claiming recovery.
 
 ## `logs`
 

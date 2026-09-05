@@ -3,11 +3,13 @@ import { basename, dirname, join } from 'path';
 import * as expoFingerprint from '@expo/fingerprint';
 import type { Fingerprint, FingerprintSource, Options as FingerprintOptions } from '@expo/fingerprint';
 import { buildUploadTimeoutMs, type BuildCacheCapability, type ProviderCallResult } from '@stim-cli/cache';
-import { buildCacheKey as coreBuildCacheKey } from '@stim-cli/core';
 import { getExecutor } from './exec.ts';
 import { register } from './cache-manifest.ts';
 import { ASSET_MANIFEST_FILE, parseAssetManifest, type AssetManifest } from './engine/asset-manifest.ts';
-import { sharedBuildCache } from './paths.ts';
+import { sharedBuildCache as cacheRoot } from './paths.ts';
+
+export { buildCacheKey } from '@stim-cli/core';
+export { cacheRoot };
 
 export interface BuildRunOptions {
   variant?: string;
@@ -18,16 +20,8 @@ export interface BuildRunOptions {
   device?: string | boolean | null;
 }
 
-export function cacheRoot(): string {
-  return sharedBuildCache();
-}
-
 export function entryDir(platform: string, key: string, root: string = cacheRoot()): string {
   return join(root, platform, key);
-}
-
-export function buildCacheKey(platform: string, fingerprintHash: string, options: unknown = {}): string {
-  return coreBuildCacheKey(platform, fingerprintHash, options);
 }
 
 export function artifactIn(dir: string): string | null {
